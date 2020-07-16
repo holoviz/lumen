@@ -1,9 +1,18 @@
+"""
+The MetricView classes render the metrics returned by a QueryAdaptor
+as a Panel object. 
+"""
+
 import param
 import panel as pn
 
 from .adaptor import QueryAdaptor
 
-class Metric(param.Parameterized):
+
+class MetricView(param.Parameterized):
+    """
+    A MetricView renders a metric as an object.
+    """
 
     adaptor = param.ClassSelector(class_=QueryAdaptor)
 
@@ -22,10 +31,13 @@ class Metric(param.Parameterized):
 
     @classmethod
     def get(cls, metric_type):
+        """
+        Returns the matching 
+        """
         for metric in param.concrete_descendents(cls).values():
             if metric.metric_type == metric_type:
                 return metric
-        return DefaultMetric
+        return DefaultMetricView
 
     def get_data(self):
         query = {filt.name: filt.query for filt in self.filters}
@@ -41,7 +53,6 @@ class Metric(param.Parameterized):
         return self._layout
 
 
-class DefaultMetric(Metric):
+class DefaultMetricView(MetricView):
 
     metric_type = None
-

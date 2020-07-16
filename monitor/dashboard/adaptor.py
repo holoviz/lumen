@@ -27,7 +27,8 @@ class RESTAdaptor(QueryAdaptor):
     adaptor_type = 'rest'
 
     def get_metrics(self):
-        return requests.get(self.url+'/metrics').json()
+        response = requests.get(self.url+'/metrics')
+        return response.json()
 
     def get_metric(self, metric, **query):
         query = dict(metric=metric, **query)

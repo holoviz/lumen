@@ -1,23 +1,26 @@
+from itertools import product
+
 import param
 import panel as pn
 
 from .adaptor import QueryAdaptor
-from .metric import Metric
+from .filter import FacetFilter
+from .metric import MetricView
 
 
 class View(param.Parameterized):
 
     adaptor = param.ClassSelector(class_=QueryAdaptor)
 
-    title = param.String()
-
     current = param.List()
 
-    schema = param.Dict()
+    filters = param.List()
 
     metrics = param.List()
 
-    filters = param.List()
+    schema = param.Dict()
+
+    title = param.String()
 
     height = param.Integer(default=400)
 
@@ -25,21 +28,35 @@ class View(param.Parameterized):
 
     def __init__(self, **params):
         super(View, self).__init__(**params)
-        self._card = pn.Card(height=self.height, width=self.width, title=self.title)
+        self._cards = []
         self._update_metrics()
 
     @pn.depends('current')
     def _update_metrics(self):
-        metrics = []
-        for metric in self.metrics:
-            metric_type = metric.pop('type', None)
-            metric = Metric.get(metric_type)(
-                adaptor=self.adaptor, filters=self.filters, **metric
-            )
-            metrics.append(metric)
-        self._metrics = metrics
-        self._card[:] = [m.view() for m in metrics]
+        facets = [filt.filters for filt in self.filters
+                  if isinstance(filt, FacetFilter)]
+        filters = [filt for filt in self.filters
+                   if not isinstance(filt, FacetFilter)]
+        cards = []
+        for facet_filters in product(*facets):
+            metrics = []
+            metric_filters = filters + list(facet_filters)
+            for metric in self.metrics:
+                metric = dict(metric)
+                metric_type = metric.pop('type', None)
+                metric = MetricView.get(metric_type)(
+                    adaptor=self.adaptor, filters=metric_filters, **metric
+                )
+                metrics.append(metric)
+            if facet_filters:
+                title = ' '.join([f'{f.label}: {f.value}' for f in facet_filters])
+            else:
+                title = self.title
+            card = pn.Card(*(m.view() for m in metrics), height=self.height,
+                           width=self.width, title=title)
+            cards.append(card)
+        self._cards[:] = cards
 
     @property
-    def panel(self):
-        return self._card
+    def panels(self):
+        return self._cards
