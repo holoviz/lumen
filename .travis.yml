@@ -19,7 +19,7 @@ env:
     # conda build fills up travis /tmp (tmpfs)
     - TMPDIR=$HOME/tmp
     - PYPI="https://upload.pypi.org/legacy/"
-    - PYTHON_VERSION=3.6
+    - PYTHON_VERSION=3.7
     - OPTS="-o tests -o examples"
 
 # quick hack to determine what tag is (improvements welcomed)
@@ -60,12 +60,6 @@ jobs:
       script:
         - doit test_all
       after_success: codecov
-
-    # test using python 3.7
-    - <<: *default
-      env: PYTHON_VERSION=3.7
-      script:
-        - doit test_all
 
     ########## END-USER PACKAGES ##########
 

@@ -5,9 +5,9 @@ from itertools import product
 import param
 import panel as pn
 
-from .adaptor import QueryAdaptor
-from .filter import FacetFilter
-from .metric import MetricView
+from .adaptors import QueryAdaptor
+from .filters import FacetFilter
+from .metrics import MetricView
 
 
 class View(param.Parameterized):
@@ -147,7 +147,7 @@ class View(param.Parameterized):
 
             card = pn.Card(item, height=self.height, width=self.width, title=title)
             cards.append((tuple(sort_key), card))
-        if self.sort:
+        if self.sort_fields:
             cards = sorted(cards, key=lambda x: x[0])
             if self.sort_reverse:
                 cards = cards[::-1]
