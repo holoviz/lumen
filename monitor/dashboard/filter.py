@@ -92,11 +92,18 @@ class WidgetFilter(Filter):
 
     def __init__(self, **params):
         super(WidgetFilter, self).__init__(**params)
-        self.widget = JSONSchema(schema=self.schema, sizing_mode='stretch_width')._widgets[self.name]
+        self.widget = JSONSchema(
+            schema=self.schema, sizing_mode='stretch_width'
+        )._widgets[self.name]
+        if isinstance(self.widget, pn.widgets.Select):
+            self.widget.options.insert(0, ' ')
+            self.widget.value = ' '
         self.widget.link(self, value='value')
 
     @property
     def query(self):
+        if self.widget.value == ' ':
+            return None
         return self.widget.param.value.serialize(self.widget.value)
 
     @property

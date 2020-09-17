@@ -217,6 +217,8 @@ class MetricsHandler(web.RequestHandler):
 
 
 def monitor_rest_provider(files, endpoint):
+    from pane.io.rest import _exec_files
+    _exec_files(files)
     if endpoint:
         prefix = r'^/%s/' % endpoint
     else:
