@@ -1,6 +1,5 @@
 # Monitor
 
-
 ## Purpose
 
 The purpose of the Monitor dashboard is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server. 
@@ -76,13 +75,24 @@ The REST specification that we will publish alongside the monitor will have a sm
 
 The Monitor dashboard will be configured by a `dashboard.yml` file. The specification for the dashboard will consist of the following:
 
-- `targets`: This is the list of targets to monitor
-    - `adaptor`: The `QueryAdaptor` to use to read the target
-    - `filters`: Any filter specifications mapping from filter name to filter type
-        - <filter_var>: 
-            - `constant`: Declares any constant values to declare as a filter, e.g. when monitoring a specific facility
-            - `widget`: Declares that a widget should be generated for this filter
-            - `query`: Allows specifying the value as a URL query parameter to the dashboard
-    - `indicators`: Specifies how to display the metrics, mapping from indicator type to metric type, certain indicators can have more than one metric or even filter as input
-        - <indicator>: <metric>
-  
+- `config`:
+  - `title`: The title of the overall application
+  - `template`: The template to use for the monitoring application
+  - `ncols`: The number of columns to use in the grid of cards
+- `endpoints`: This is the list of targets to monitor
+  - `title`: The title of the monitoring endpoint
+  - `adaptor`: The `QueryAdaptor` used to monitor an endpoint
+    - `type`: The type of `QueryAdaptor` to use, e.g. 'rest' or 'live'
+	- ...: Additional parameters for the `QueryAdaptor`
+  - `metrics`: A list of metrics to monitor and display on the endpoint
+    - `name`: The name of the metric
+	- `type`: The type of `MetricView` to use for rendering the metric
+	- ...: Additional parameters for the `MetricView`
+  - `filters`: A list of `Filter` types to select a subset of the data
+    - `name`: The name of the filter
+	- `type`: The type of the `Filter` to use, e.g. 'constant', 'widget' or 'facet'
+	- ...: Additional parameters for the `Filter`
+  - `height`: The height of the card(s)
+  - `width`: The width of the card(s)
+  - `layout`: The layout of the card(s), e.g. 'row', 'column' or 'grid'
+  - `refresh_rate`: How frequently to poll for updates in milliseconds
