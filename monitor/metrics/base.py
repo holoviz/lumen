@@ -133,3 +133,29 @@ class IndicatorMetricView(MetricView):
                              'specifies a Panel ValueIndicator that '
                              'exists and has been imported')
         return indicator(**self.indicator_options, value=self.get_value())
+
+
+class hvPlotMetricView(MetricView):
+
+    kind = param.String()
+
+    x = param.String()
+
+    y = param.String()
+
+    kwargs = param.Dict()
+
+    opts = param.Dict()
+
+    metric_type = 'hvplot'
+
+    def __init__(self, **params):
+        import hvplot.pandas
+        super().__init__(**params)
+
+    def get_view(self):
+        df = self.get_data()
+        if df is None or not len(df):
+            return pn.pane.HTML('No data')
+        return df.hvplot(kind=self.kind, x=self.x, y=self.y,
+                         **self.kwargs).opts(**self.opts)
