@@ -21,6 +21,8 @@ class MetricView(param.Parameterized):
 
     filters = param.List()
 
+    transforms = param.List()
+
     view = param.Parameter()
 
     metric_type = None
@@ -52,7 +54,10 @@ class MetricView(param.Parameterized):
         if self._cache is not None:
             return self._cache
         query = {filt.name: filt.query for filt in self.filters if filt.query is not None}
-        self._cache = self.adaptor.get_metric(self.name, **query)
+        metric = self.adaptor.get_metric(self.name, **query)
+        for transform in self.transforms:
+            metric = transform.apply(metric)
+        self._cache = metric
         return self._cache
 
     def get_value(self):

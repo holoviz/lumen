@@ -8,6 +8,7 @@ import panel as pn
 from .adaptors import QueryAdaptor
 from .filters import FacetFilter
 from .metrics import MetricView
+from .transforms import Transform
 
 
 class View(param.Parameterized):
@@ -99,6 +100,15 @@ class View(param.Parameterized):
                 self.update, refresh_rate
             )
 
+    def _instantiate_transforms(self, transform_specs):
+        transforms = []
+        for transform in transform_specs:
+            transform = dict(transform)
+            transform_type = transform.pop('type', None)
+            transform = Transform.get(transform_type)(**transform)
+            transforms.append(transform)
+        return transforms
+
     @pn.depends('current')
     def _update_metrics(self):
         filters = [filt for filt in self.filters
@@ -113,10 +123,13 @@ class View(param.Parameterized):
             for metric in self.metrics:
                 metric = dict(metric)
                 metric_type = metric.pop('type', None)
+                transform_specs = metric.pop('transforms', [])
+                transforms = self._instantiate_transforms(transform_specs)
                 metric_key = key+(metric['name'],)
                 if metric_key not in self._cache:
                     metric = MetricView.get(metric_type)(
-                        adaptor=self.adaptor, filters=metric_filters, view=self, **metric
+                        adaptor=self.adaptor, filters=metric_filters,
+                        transforms=transforms, view=self, **metric
                     )
                     self._cache[metric_key] = metric
                 else:
