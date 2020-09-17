@@ -196,6 +196,4 @@ class AE5KubeAdaptor(QueryAdaptor):
             if id is not None and d['id'] != id:
                 continue
             usage[d['id']] = self.get_pod_info(d['id'])
-        for name, d in self.deployments.items():
-            info = usage[d['id']].get('usage', self._empty)
         self.pod_info = usage
