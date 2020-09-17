@@ -6,7 +6,7 @@ the data returned by a QueryAdaptor.
 import param
 import panel as pn
 
-from .schema import JSONSchema
+from ..schema import JSONSchema
 
 
 class Filter(param.Parameterized):

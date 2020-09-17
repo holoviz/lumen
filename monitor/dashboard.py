@@ -5,9 +5,9 @@ import panel as pn
 
 from panel.template.base import BasicTemplate
 
-from .adaptor import QueryAdaptor, RESTAdaptor # noqa
-from .filter import ConstantFilter, Filter, WidgetFilter # noqa
-from .metric import DefaultMetricView, MetricView # noqa
+from .adaptors import QueryAdaptor, RESTAdaptor # noqa
+from .filters import ConstantFilter, Filter, WidgetFilter # noqa
+from .metrics import DefaultMetricView, MetricView # noqa
 from .view import View # noqa
 
 

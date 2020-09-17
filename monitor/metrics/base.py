@@ -6,8 +6,8 @@ as a Panel object.
 import param
 import panel as pn
 
-from .adaptor import QueryAdaptor
-from .filter import ConstantFilter
+from ..adaptors import QueryAdaptor
+from ..filters import ConstantFilter
 
 
 class MetricView(param.Parameterized):
