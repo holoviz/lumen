@@ -19,15 +19,26 @@ class QueryAdaptor(param.Parameterized):
                 return adaptor
         return QueryAdaptor
 
+    def update(self):
+        """
+        QueryAdaptors that cache data should refresh the data when
+        this method is called.
+        """
+
 
 class RESTAdaptor(QueryAdaptor):
+    """
+    Queries a REST API which is expected to conform to the monitoring
+    REST API specification.
+    """
 
-    url = param.String()
+    url = param.String(doc="URL of the REST endpoint to monitor.")
 
     adaptor_type = 'rest'
 
     def get_metrics(self):
-        return requests.get(self.url+'/metrics').json()
+        response = requests.get(self.url+'/metrics')
+        return response.json()
 
     def get_metric(self, metric, **query):
         query = dict(metric=metric, **query)
@@ -36,8 +47,11 @@ class RESTAdaptor(QueryAdaptor):
 
 
 class LiveWebsite(QueryAdaptor):
+    """
+    Queries whether a website responds with a 400 status code.
+    """
 
-    url = param.String()
+    url = param.String(doc="URL of the website to monitor.")
 
     adaptor_type = 'live'
 

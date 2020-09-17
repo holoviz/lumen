@@ -1,0 +1,104 @@
+# TODO:
+#
+#  * restore previous sections
+language: python
+
+sudo: false
+os:
+  - linux
+
+dist: xenial
+
+env:
+  global:
+    - CHANS_DEV="-c pyviz/label/dev"
+    - CHANS_REL="-c pyviz"
+    - LABELS_DEV="--label dev"
+    - LABELS_REL="--label dev --label main"
+    - PKG_TEST_PYTHON="--test-python=py36"
+    # conda build fills up travis /tmp (tmpfs)
+    - TMPDIR=$HOME/tmp
+    - PYPI="https://upload.pypi.org/legacy/"
+    - PYTHON_VERSION=3.6
+    - OPTS="-o tests -o examples"
+
+# quick hack to determine what tag is (improvements welcomed)
+#     release: ^v(\d+|\.)*[^a-z]\d*$
+# dev release: ^v(\d+|\.)*[a-z]\d*$
+
+stages:
+  - test
+  - name: conda_dev_package
+    if: tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$
+  - name: pip_dev_package
+    if: tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$
+  - name: conda_package
+    if: tag =~ ^v(\d+|\.)+[^a-z]\d+$
+  - name: pip_package
+    if: tag =~ ^v(\d+|\.)+[^a-z]\d+$
+
+jobs:
+  include:
+
+    ########## DEVELOPER INSTALL ##########
+
+    - &default
+      stage: test
+      env: DESC="dev test_all"
+      before_install:
+        # install doit/pyctdev and use to install miniconda...
+        - pip install pyctdev && doit miniconda_install && pip uninstall -y doit pyctdev
+        - export PATH="$HOME/miniconda/bin:$PATH" && hash -r
+        - conda config --set always_yes True
+        # ...and now install doit/pyctdev into miniconda
+        - conda install -c pyviz "pyctdev>=0.5" && doit ecosystem_setup
+      install:
+        - doit env_create $CHANS_DEV --python=$PYTHON_VERSION --name=$PYTHON_VERSION
+        - source activate $PYTHON_VERSION
+        - doit develop_install $CHANS_DEV $OPTS
+        - doit env_capture
+      script:
+        - doit test_all
+      after_success: codecov
+
+    # test using python 3.7
+    - <<: *default
+      env: PYTHON_VERSION=3.7
+      script:
+        - doit test_all
+
+    ########## END-USER PACKAGES ##########
+
+    ## dev packages
+
+    - &pip_pkg
+      <<: *default
+      stage: pip_dev_package
+      env: PYPI=testpypi PYPIUSER=$TPPU PYPIPASS=$TPPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+      install:
+        - doit env_create $CHANS_DEV --python=$PYTHON_VERSION
+        - source activate test-environment
+        - doit develop_install $CHANS_DEV -o tests
+        - doit pip_on_conda
+        - doit ecosystem=pip package_build --test-python=py36 --test-group=unit
+      script: doit ecosystem=pip package_upload -u $PYPIUSER -p $PYPIPASS --pypi ${PYPI}
+
+    - &conda_pkg
+      <<: *default
+      stage: conda_dev_package
+      env: DESC="" LABELS=$LABELS_DEV CHANS=$CHANS_DEV TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+      install: doit package_build $CHANS $PKG_TEST_PYTHON --test-group=all
+      script: doit package_upload --token=$CONDA_UPLOAD_TOKEN $LABELS
+
+    ## release packages
+
+    - <<: *pip_pkg
+      env: PYPI=pypi PYPIUSER=$PPU PYPIPASS=$PPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+      stage: pip_package
+
+    - <<: *conda_pkg
+      stage: conda_package
+      env: DESC="" LABELS=$LABELS_REL CHANS=$CHANS_REL TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+
+notifications:
+  email: false

@@ -15,8 +15,6 @@ def get_setup_version(reponame):
 ########## dependencies ##########
 
 extras_require = {
-    # pip doesn't support tests_require
-    # (https://github.com/pypa/pip/issues/1197)
     'tests': [
         'pytest',
         'flake8'
@@ -38,7 +36,7 @@ setup_args = dict(
     maintainer_email="developers@holoviz.org",
     platforms=['Windows', 'Mac OS X', 'Linux'],
     license='BSD',
-    url='http://holoviz.org/',
+    url='https://github.com/holoviz/monitor',
     packages=find_packages(),
     provides=["monitor"],
     include_package_data = True,
@@ -49,8 +47,6 @@ setup_args = dict(
     classifiers=[
         "License :: OSI Approved :: BSD License",
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 2",
-        "Programming Language :: Python :: 2.7",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
