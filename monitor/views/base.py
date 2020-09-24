@@ -150,7 +150,7 @@ class hvPlotView(MetricView):
     view_type = 'hvplot'
 
     def __init__(self, **params):
-        import hvplot.pandas
+        import hvplot.pandas # noqa
         super().__init__(**params)
 
     def get_panel(self):
