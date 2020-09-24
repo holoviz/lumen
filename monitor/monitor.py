@@ -7,14 +7,14 @@ import panel as pn
 
 from .adaptors import QueryAdaptor
 from .filters import FacetFilter
-from .metrics import MetricView
 from .transforms import Transform
+from .views import MetricView
 
 
-class View(param.Parameterized):
+class Monitor(param.Parameterized):
     """
-    A View renders the results of a monitoring query using the defined
-    set of filters and metrics.
+    A Monitor renders the results of a monitoring query using the
+    defined set of filters and metrics.
     """
 
     adaptor = param.ClassSelector(class_=QueryAdaptor, doc="""
@@ -36,18 +36,18 @@ class View(param.Parameterized):
 
     schema = param.Dict()
 
-    title = param.String(doc="A title for this monitoring view.")
+    title = param.String(doc="A title for this monitor.")
 
     layout = param.ObjectSelector(default='column', objects=['row', 'column', 'grid'])
 
     refresh_rate = param.Integer(default=None, doc="""
-        How frequently to refresh the view by querying the adaptor.""")
+        How frequently to refresh the monitor by querying the adaptor.""")
 
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
 
-    height = param.Integer(default=400, doc="Height of the view cards.")
+    height = param.Integer(default=400, doc="Height of the monitor cards.")
 
-    width = param.Integer(default=400, doc="Width of the view cards.")
+    width = param.Integer(default=400, doc="Width of the monitor cards.")
 
     def __init__(self, **params):
         metrics = params.get('metrics', [])
@@ -66,7 +66,7 @@ class View(param.Parameterized):
             name='↻', width=50, css_classes=['reload'], margin=0
         )
         self._reload_button.on_click(self.update)
-        super(View, self).__init__(**params)
+        super(Monitor, self).__init__(**params)
         self._cards = []
         self._cache = {}
         self._stale = False
@@ -129,7 +129,7 @@ class View(param.Parameterized):
                 if metric_key not in self._cache:
                     metric = MetricView.get(metric_type)(
                         adaptor=self.adaptor, filters=metric_filters,
-                        transforms=transforms, view=self, **metric
+                        transforms=transforms, monitor=self, **metric
                     )
                     self._cache[metric_key] = metric
                 else:
@@ -188,5 +188,5 @@ class View(param.Parameterized):
         views.append(pn.layout.Divider())
         views.extend([pn.pane.Markdown('### Sort', margin=(0, 5)), self._sort_widget, self._reverse_widget])
         views.append(pn.layout.Divider())
-        views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))        
+        views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))
         return pn.Card(*views, title=self.title, sizing_mode='stretch_width') if views else None

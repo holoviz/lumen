@@ -7,9 +7,8 @@ from panel.template.base import BasicTemplate
 
 from .adaptors import QueryAdaptor, RESTAdaptor # noqa
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
-from .metrics import DefaultMetricView, MetricView # noqa
-from .view import View # noqa
-
+from .monitor import Monitor # noqa
+from .views import DefaultView, MetricView # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
 
@@ -45,12 +44,12 @@ class Dashboard(param.Parameterized):
         if not 'endpoints' in self._spec:
             raise ValueError('%s did not specify any endpoints.'
                              % self.specification)
-        self.filters = pn.Row(margin=0, sizing_mode='stretch_width')
-        self.views = pn.GridBox(ncols=self.config.get('ncols', 5), margin=10)
+        self.filters = pn.Column(margin=0, sizing_mode='stretch_width')
+        self.monitors = pn.GridBox(ncols=self.config.get('ncols', 5), margin=10)
         self._reload()
         if len(self.filters):
             self.template.sidebar[:] = [self.filters]
-        self.template.main[:] = [self.views]
+        self.template.main[:] = [self.monitors]
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -58,29 +57,29 @@ class Dashboard(param.Parameterized):
         self.template.header.append(self._reload_button)
 
     def _reload_data(self, *events):
-        for view in self._views:
-            view.update()
+        for monitor in self._monitors:
+            monitor.update()
 
     def _reload(self, *events):
-        self._views = self._resolve_endpoints(self._spec['endpoints'])
+        self._monitors = self._resolve_endpoints(self._spec['endpoints'])
         self._rerender()
         filters = []
-        for view in self._views:
-            panel = view.filter_panel
+        for monitor in self._monitors:
+            panel = monitor.filter_panel
             if panel is not None:
                 filters.append(panel)
         self.filters[:] = filters
 
     def _rerender(self):
-        self.views[:] = [p for view in self._views for p in view.panels]
+        self.monitors[:] = [p for monitor in self._monitors for p in monitor.panels]
 
     def _resolve_endpoints(self, endpoints, metadata={}):
-        views = []
+        monitors = []
         for endpoint in endpoints:
-            view_spec = dict(endpoint)
+            monitor_spec = dict(endpoint)
 
             # Create adaptor
-            endpoint_spec = dict(view_spec.pop('endpoint'))
+            endpoint_spec = dict(monitor_spec.pop('endpoint'))
             endpoint_type = endpoint_spec.pop('type', 'rest')
             adaptor = QueryAdaptor.get(endpoint_type)(**endpoint_spec)
             schema = adaptor.get_metrics()
@@ -103,22 +102,24 @@ class Dashboard(param.Parameterized):
                 )
                 endpoint_filters.append(filter_obj)
 
-            # Create view
-            view_spec['filters'] = endpoint_filters
-            view = View(adaptor=adaptor, application=self, schema=schema, **view_spec)
-            views.append(view)
-        return views
+            # Create monitor
+            monitor_spec['filters'] = endpoint_filters
+            monitor = Monitor(adaptor=adaptor, application=self, schema=schema, **monitor_spec)
+            monitors.append(monitor)
+        return monitors
 
     def show(self):
         """
+        Opens the monitoring dashboard in a new window.
         """
         self.template.show()
-        for view in self._views:
-            view.start()
+        for monitor in self._monitors:
+            monitor.start()
 
     def servable(self):
         """
+        Marks the monitoring dashboard for serving with `panel serve`.
         """
         self.template.servable(title=self.config.get('title', 'Monitoring Dashboard'))
-        for view in self._views:
-            view.start()
+        for monitor in self._monitors:
+            monitor.start()

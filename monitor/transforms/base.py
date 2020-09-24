@@ -1,6 +1,6 @@
 """
 A Transform component is given the data for a particular metric and
-transform it in some arbitrary way.
+transforms it in some arbitrary way.
 """
 
 import datetime as dt
