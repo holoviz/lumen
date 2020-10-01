@@ -1,6 +1,6 @@
-# Dashboard spec
+# Dashboard specification
 
-The Monitor dashboard will be configured by a `dashboard.yml` file. The specification for the dashboard will consist of the following:
+The Lumen dashboard can be configured by a `dashboard.yml` file. The dashboard yaml follows the following specification:
 
 - `config`:
   - `title`: The title of the overall application

@@ -1,6 +1,7 @@
 import panel as pn
 
-from monitor.schema import JSONSchema
+from lumen.schema import JSONSchema
+
 
 def test_boolean_schema():
     json_schema = JSONSchema(schema={'bool': {'type': 'boolean'}})

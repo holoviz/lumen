@@ -1,28 +1,28 @@
 # MetricViews
 
-The [`MetricView`](monitor.views.MetricView) type is the main visual
+The [`MetricView`](lumen.views.MetricView) type is the main visual
 type and determines how the metrics returned by a
-[`QueryAdaptor`](monitor.adaptors.QueryAdaptor) are rendered.
+[`QueryAdaptor`](lumen.adaptors.QueryAdaptor) are rendered.
 
 ```{eval-rst}
-.. autoclass:: monitor.views.MetricView
+.. autoclass:: lumen.views.MetricView
    :members:
 ```
 
 ## View types
 
 ```{eval-rst}
-.. autoclass:: monitor.views.DefaultView
+.. autoclass:: lumen.views.DefaultView
 ```
 
 ```{eval-rst}
-.. autoclass:: monitor.views.hvPlotView
+.. autoclass:: lumen.views.hvPlotView
 ```
 
 ```{eval-rst}
-.. autoclass:: monitor.views.IndicatorView
+.. autoclass:: lumen.views.IndicatorView
 ```
 
 ```{eval-rst}
-.. autoclass:: monitor.views.StringView
+.. autoclass:: lumen.views.StringView
 ```

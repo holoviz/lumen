@@ -1,14 +1,14 @@
-# Monitor
+# Lumen
 
 [![Build Status](https://travis-ci.com/holoviz/monitor.svg?branch=master)](https://travis-ci.com/holoviz/monitor)
 
 ## Purpose
 
-The purpose of the Monitor dashboard is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server. 
+The purpose of the Lumen project is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server.
 
 ## Architecture
 
-The Monitor dashboard can query information from any source using a so called `QueryAdaptor`. The `QueryAdaptor` can return any number of metrics and filters:
+The Lumen dashboard can query information from any source using a so called `QueryAdaptor`. The `QueryAdaptor` can return any number of metrics and filters:
 
 * `metric`: A `metric` is some quantitity that can be visualized
 * `filter`: A `filter` is a variable that can be filtered by usually using a widget or by specifying a constant in the dashboard specification.
@@ -75,7 +75,7 @@ The REST specification that we will publish alongside the monitor will have a sm
     
 ## Dashboard spec
 
-The Monitor dashboard will be configured by a `dashboard.yml` file. The specification for the dashboard will consist of the following:
+The Lumen dashboard can be configured by a `dashboard.yml` file. The dashboard.yml follows the following specification:
 
 - `config`:
   - `title`: The title of the overall application

@@ -18,6 +18,12 @@ extras_require = {
     'tests': [
         'pytest',
         'flake8'
+    ],
+    'docs': [
+        'sphinx',
+        'pydata_sphinx_theme',
+        'myst-parser',
+        'nbsite'
     ]
 }
 
@@ -26,8 +32,8 @@ extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 ########## metadata for setuptools ##########
 
 setup_args = dict(
-    name='monitor',
-    version=get_setup_version("monitor"),
+    name='lumen',
+    version=get_setup_version("lumen"),
     description='A monitoring solution built on Panel.',
     long_description=open('README.rst').read() if os.path.isfile('README.rst') else 'Consult README.rst',
     author="HoloViz",
@@ -36,9 +42,9 @@ setup_args = dict(
     maintainer_email="developers@holoviz.org",
     platforms=['Windows', 'Mac OS X', 'Linux'],
     license='BSD',
-    url='https://github.com/holoviz/monitor',
+    url='https://github.com/holoviz/lumen',
     packages=find_packages(),
-    provides=["monitor"],
+    provides=["lumen"],
     include_package_data = True,
     python_requires=">=3.6",
     install_requires=["panel"],
@@ -62,7 +68,7 @@ setup_args = dict(
     ],
     entry_points={
         'panel.io.rest': [
-            "monitor = monitor.rest:monitor_rest_provider"
+            "lumen = lumen.rest:lumen_rest_provider"
         ]
     }
 )

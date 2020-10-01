@@ -1,4 +1,4 @@
-# Welcome to Monitor's documentation!
+# Welcome to Lumen's documentation!
 
 ```{toctree}
 ---
@@ -11,4 +11,4 @@ REST Specification <rest>
 Dashboard Specification <dashboard>
 ```
 
-The purpose of the Monitor project is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server. 
+The purpose of the Lumen project is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server. 

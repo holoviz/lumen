@@ -17,7 +17,7 @@
 
 # -- Project information -----------------------------------------------------
 
-project = 'Monitor'
+project = 'Lumen'
 copyright = '2020, HoloViz Developers'
 author = 'HoloViz Developers'
 
