@@ -39,9 +39,7 @@ stages:
   - name: docs
     if: tag =~ ^v(\d+|\.)+[^a-z]\d+$
   - name: docs_dev
-    if: tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$
-  - name: docs_daily
-    if: ((type = cron and branch = master) OR (commit_message =~ /\[doc-build\]/))
+    if: ((tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$) OR (type = cron and branch = master) OR (commit_message =~ /\[doc-build\]/))
 
 jobs:
   include:
@@ -103,7 +101,7 @@ jobs:
     ########## DOCS ##########
 
     - &doc_build
-      <<: *conda_default
+      <<: *default
       stage: docs
       env: DESC="docs"
       script:
@@ -130,19 +128,7 @@ jobs:
         provider: pages
         skip_cleanup: true
         github_token: $GITHUB_TOKEN
-        local_dir: ./builtdocs
-        repo: pyviz-dev/lumen
-        on:
-          tags: true
-          all_branches: true
-
-    - <<: *doc_build
-      stage: docs_daily
-      deploy:
-        provider: pages
-        skip_cleanup: true
-        github_token: $GITHUB_TOKEN
-        local_dir: ./builtdocs
+        local_dir: ./_build
         repo: pyviz-dev/lumen
         on:
           all_branches: true
