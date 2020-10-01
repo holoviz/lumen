@@ -21,7 +21,7 @@ extras_require = {
     ],
     'doc': [
         'sphinx',
-        'pydata_sphinx_theme',
+        'pydata-sphinx-theme',
         'myst-parser',
         'nbsite'
     ]
