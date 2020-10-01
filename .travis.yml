@@ -113,7 +113,7 @@ jobs:
         - provider: pages
           skip_cleanup: true
           github_token: $GITHUB_TOKEN
-          local_dir: ./docs/_build
+          local_dir: ./docs/_build/html
           fqdn: lumen.holoviz.org
           on:
             tags: true
@@ -128,7 +128,7 @@ jobs:
         provider: pages
         skip_cleanup: true
         github_token: $GITHUB_TOKEN
-        local_dir: ./docs/_build
+        local_dir: ./docs/_build/html
         repo: pyviz-dev/lumen
         on:
           all_branches: true
