@@ -47,7 +47,7 @@ setup_args = dict(
     provides=["lumen"],
     include_package_data = True,
     python_requires=">=3.6",
-    install_requires=["panel"],
+    install_requires=["panel", "pandas"],
     extras_require=extras_require,
     tests_require=extras_require['tests'],
     classifiers=[
