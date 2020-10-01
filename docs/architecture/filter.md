@@ -1,14 +1,14 @@
 # Filters
 
-The [Filter](monitor.filters.Filter) classes provide the ability to
+The [Filter](lumen.filters.Filter) classes provide the ability to
 query just a subset of the data provided by a
-[QueryAdaptor](monitor.adaptors.QueryAdaptor). They therefore provide
+[QueryAdaptor](lumen.adaptors.QueryAdaptor). They therefore provide
 a powerful mechanism to drill down into just a subset of the data.
 
-The [Filter](monitor.filters.Filter) API is very simple:
+The [Filter](lumen.filters.Filter) API is very simple:
 
 ```{eval-rst}
-.. autoclass:: monitor.filters.Filter
+.. autoclass:: lumen.filters.Filter
    :members:
 ```
 
@@ -16,13 +16,13 @@ The [Filter](monitor.filters.Filter) API is very simple:
 
 
 ```{eval-rst}
-.. autoclass:: monitor.filters.ConstantFilter
+.. autoclass:: lumen.filters.ConstantFilter
 ```
 
 ```{eval-rst}
-.. autoclass:: monitor.filters.FacetFilter
+.. autoclass:: lumen.filters.FacetFilter
 ```
 
 ```{eval-rst}
-.. autoclass:: monitor.filters.WidgetFilter
+.. autoclass:: lumen.filters.WidgetFilter
 ```

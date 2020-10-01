@@ -8,7 +8,7 @@ Filter <filter>
 Transform <transform>
 ```
 
-The Monitor dashboard can query information from any source using a so called `QueryAdaptor`. The `QueryAdaptor` can return any number of metrics and filters:
+The Lumen dashboard can query information from any source using a so called `QueryAdaptor`. The `QueryAdaptor` can return any number of metrics and filters:
 
 * `metric`: A `metric` is some quantitity that can be visualized
 * `filter`: A `filter` is a variable that can be filtered by usually using a widget or by specifying a constant in the dashboard specification.

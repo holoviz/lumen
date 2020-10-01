@@ -1,22 +1,22 @@
 # QueryAdaptors
 
-The [QueryAdaptor](monitor.adaptors.QueryAdaptor) classes are the data
+The [QueryAdaptor](lumen.adaptors.QueryAdaptor) classes are the data
 provider for the entire dashboard. They handle querying some remote
 source such as a REST server, a website or some other provider and
 return the data in a common format for consumption by the
-[MetricView](monitor.views.MetricView) classes.
+[MetricView](lumen.views.MetricView) classes.
 
 ```{eval-rst}
-.. autoclass:: monitor.adaptors.QueryAdaptor
+.. autoclass:: lumen.adaptors.QueryAdaptor
    :members:
 ```
 
 ## QueryAdaptor types
 
 ```{eval-rst}
-.. autoclass:: monitor.adaptors.LiveWebsite
+.. autoclass:: lumen.adaptors.LiveWebsite
 ```
 
 ```{eval-rst}
-.. autoclass:: monitor.adaptors.RESTAdaptor
+.. autoclass:: lumen.adaptors.RESTAdaptor
 ```
