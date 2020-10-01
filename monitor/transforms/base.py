@@ -29,11 +29,26 @@ class Transform(param.Parameterized):
     def apply(self, metric_data):
         """
         Given some metric_data transform it in some way and return it.
+
+        Parameters
+        ----------
+        metric_data : pandas.DataFrame
+            The queried metric data as a pandas DataFrame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A DataFrame containing the transformed metric data.
         """
         return metric_data
 
 
 class HistoryTransform(Transform):
+    """
+    The HistoryTransform accumulates a history of the queried metric
+    data in a buffer up to the supplied length and (optionally) adds
+    a date_column to the data.
+    """
 
     date_column = param.String(doc="""
         If defined adds a date column with the supplied name.""")
@@ -48,6 +63,22 @@ class HistoryTransform(Transform):
         self._buffer = []
 
     def apply(self, metric_data):
+        """
+        Accumulates a history of the metric data in a buffer up to
+        the declared `length` and optionally adds the current datetime
+        to the declared `date_column`.
+
+        Parameters
+        ----------
+        metric_data : pandas.DataFrame
+            The queried metric data as a pandas DataFrame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A DataFrame containing the buffered history of the metric
+            data.
+        """
         if self.date_column:
             metric_data = metric_data.copy()
             metric_data[self.date_column] = dt.datetime.now()

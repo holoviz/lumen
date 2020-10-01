@@ -19,6 +19,35 @@ class QueryAdaptor(param.Parameterized):
                 return adaptor
         return QueryAdaptor
 
+    def get_metrics(self):
+        """
+        Should return a JSON schema describing the data returned by
+        the QueryAdaptor.
+
+        Returns
+        -------
+        dict
+           JSON schema describing the types of the data for each metric.
+        """
+
+    def get_metric(self, metric, **query):
+        """
+        Should return data for a particular metric given a query.
+
+        Parameters
+        ----------
+        metric : str
+            The name of the metric to query
+        query : dict
+            A dictionary containing all the query parameters
+
+        Returns
+        -------
+        list
+           A list of records (i.e. dictionaries) containing the values
+           for the metric and any indexes associated with them.
+        """
+
     def update(self):
         """
         QueryAdaptors that cache data should refresh the data when

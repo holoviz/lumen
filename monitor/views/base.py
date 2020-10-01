@@ -12,18 +12,28 @@ from ..filters import ConstantFilter
 
 class MetricView(param.Parameterized):
     """
-    A MetricView renders a metric as an object.
+    A MetricView renders a metric as a Panel Viewable. It provides
+    methods which query the QueryAdaptor for the latest data given the
+    current `filters`, applying all specified `transforms` and should
+    then render this data as a Panel object in the `get_panel` method.
     """
 
-    adaptor = param.ClassSelector(class_=QueryAdaptor)
+    adaptor = param.ClassSelector(class_=QueryAdaptor, constant=True, doc="""
+        The QueryAdaptor to query for metric data.""")
 
-    application = param.Parameter()
+    application = param.Parameter(constant=True, doc="""
+        The containing application.""")
 
-    filters = param.List()
+    filters = param.List(constant=True, doc="""
+        A list of Filter object providing the query parameters for the
+        QueryAdaptor.""")
 
-    transforms = param.List()
+    transforms = param.List(constant=True, doc="""
+        A list of transforms to apply to the data returned by the
+        QueryAdaptor before visualizing it.""")
 
-    monitor = param.Parameter()
+    monitor = param.Parameter(constant=True, doc="""
+        The Monitor class which owns this view.""")
 
     view_type = None
 
@@ -40,7 +50,7 @@ class MetricView(param.Parameterized):
     @classmethod
     def get(cls, view_type):
         """
-        Returns the matching 
+        Returns the matching
         """
         for view in param.concrete_descendents(cls).values():
             if view.view_type == view_type:
@@ -51,9 +61,22 @@ class MetricView(param.Parameterized):
         return len(self._cache) > 0
 
     def get_data(self):
+        """
+        Queries the QueryAdaptor for the data associated with a
+        particular metric applying any filters and transformations
+        specified on the MetricView. Unlike `get_value` this should be
+        used when multiple return values are expected.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The data associated with a particular metric aftering
+            filtering and transformations are applied.
+        """
         if self._cache is not None:
             return self._cache
-        query = {filt.name: filt.query for filt in self.filters if filt.query is not None}
+        query = {filt.name: filt.query for filt in self.filters
+                 if filt.query is not None}
         metric = self.adaptor.get_metric(self.name, **query)
         for transform in self.transforms:
             metric = transform.apply(metric)
@@ -61,22 +84,58 @@ class MetricView(param.Parameterized):
         return self._cache
 
     def get_value(self):
+        """
+        Queries the QueryAdaptor for the data associated with a
+        particular metric applying any filters and transformations
+        specified on the MetricView. Unlike `get_data` this method
+        returns a single scalar value associated with the metric and
+        should therefore only be used if only a single.
+
+        Returns
+        -------
+        object
+            A single scalar value representing the current value of the
+            metric.
+        """
         data = self.get_data()
         if not len(data):
             return None
-        row = data.iloc[0]
+        row = data.iloc[-1]
         return row[self.name]
 
     def get_panel(self):
+        """
+        Constructs and returns a Panel object which will represent a
+        view of the metric data.
+
+        Returns
+        -------
+        panel.Viewable
+            A Panel Viewable object representing a current
+            representation of the metric data.
+        """
         return pn.panel(self.get_data())
 
     def _update_panel(self, *events, rerender=True):
+        """
+        Updates the cached Panel object and notifies the containing
+        Monitor object if it is stale and has to rerender.
+        """
         self._cache = None
         self._panel = self.get_panel()
-        if rerender and any(isinstance(f, ConstantFilter) for f in self.filters) and not self:
-            self.view._stale = True
+        if (rerender and any(isinstance(f, ConstantFilter) for f in self.filters)
+            and not self):
+            self.monitor._stale = True
 
     def update(self, rerender=True):
+        """
+        Triggers an update in the MetricView.
+
+        Parameters
+        ----------
+        rerender : bool
+            Whether to force a rerender of the containing Monitor.
+        """
         self._update_panel(rerender=rerender)
 
     @property
@@ -85,13 +144,22 @@ class MetricView(param.Parameterized):
 
 
 class DefaultView(MetricView):
+    """
+    The DefaultView is what is used if no particular view type is
+    declared and renders the queried data as a table.
+    """
 
     view_type = None
 
 
 class StringView(MetricView):
+    """
+    The StringView renders the latest metric value as a HTML string
+    with a specified fontsize.
+    """
 
-    font_size = param.String(default='24pt')
+    font_size = param.String(default='24pt', doc="""
+        The font size of the rendered metric string.""")
 
     view_type = 'string'
 
@@ -103,12 +171,19 @@ class StringView(MetricView):
 
 
 class IndicatorView(MetricView):
+    """
+    The IndicatorView renders the latest metric value as a Panel
+    Indicator. An IndicatorView therefore usually represents a single
+    scalar value.
+    """
 
-    indicator = param.String()
+    indicator = param.String(doc="The name of the panel Indicator type")
 
-    indicator_options = param.Dict()
+    indicator_options = param.Dict(doc="""
+        A dictionary of options to supply to the Indicator.""")
 
-    label = param.String()
+    label = param.String(doc="""
+        A custom label to use for the Indicator.""")
 
     view_type = 'indicator'
 
@@ -136,16 +211,21 @@ class IndicatorView(MetricView):
 
 
 class hvPlotView(MetricView):
+    """
+    The hvPlotView renders the queried metric data as a bokeh plot
+    generated with hvPlot. hvPlot allows for a concise declaration
+    of a plot via its simple API.
+    """
 
-    kind = param.String()
+    kind = param.String(doc="The kind of plot, e.g. 'scatter' or 'line'.")
 
-    x = param.String()
+    x = param.String(doc="The column to render on the x-axis.")
 
-    y = param.String()
+    y = param.String(doc="The column to render on the y-axis.")
 
-    kwargs = param.Dict()
+    kwargs = param.Dict(doc="Dictionary of additional kwargs.x")
 
-    opts = param.Dict()
+    opts = param.Dict(doc="HoloVies option to apply on the plot.")
 
     view_type = 'hvplot'
 
