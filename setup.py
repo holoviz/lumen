@@ -19,9 +19,9 @@ extras_require = {
         'pytest',
         'flake8'
     ],
-    'docs': [
+    'doc': [
         'sphinx',
-        'pydata_sphinx_theme',
+        'pydata-sphinx-theme',
         'myst-parser',
         'nbsite'
     ]
