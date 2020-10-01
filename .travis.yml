@@ -108,7 +108,7 @@ jobs:
         - doit develop_install $CHANS_DEV -o doc -o examples
         - cd docs
         - make html
-        - touch ./_build/.nojekyll
+        - touch ./_build/html/.nojekyll
       deploy:
         - provider: pages
           skip_cleanup: true
