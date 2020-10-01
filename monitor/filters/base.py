@@ -17,11 +17,13 @@ class Filter(param.Parameterized):
 
     schema = param.Dict(doc="""
       The JSON schema provided by the QueryAdaptor declaring
-      information about the data.""" )
+      information about the data to be filtered.""" )
 
-    label = param.String(doc="")
+    label = param.String(doc="""
+      Provides a label for the filter usually declared in the
+      dashboard.yml specification.""")
 
-    value = param.Parameter(doc="The current filter value")
+    value = param.Parameter(doc="The current filter value.")
 
     filter_type = None
 
@@ -37,11 +39,22 @@ class Filter(param.Parameterized):
     @property
     def panel(self):
         """
-        Should return an object that can be displayed by Panel 
-        representing the Filter value. 
+        Returns
+        -------
+        panel.Viewable or None
+            A Panel Viewable object representing the filter.
         """
         raise NotImplementedError
 
+    @property
+    def query(self):
+        """
+        Returns
+        -------
+        object
+            The current filter query which will be used by the
+            QueryAdaptor to filter the data.
+        """
 
 class ConstantFilter(Filter):
     """
@@ -61,6 +74,10 @@ class ConstantFilter(Filter):
 
 
 class FacetFilter(Filter):
+    """
+    The FacetFilter allows faceting the data along some dimension
+    to allow a single MetricView to be exploded into multiple.
+    """
 
     filter_type = 'facet'
 
