@@ -19,7 +19,7 @@ extras_require = {
         'pytest',
         'flake8'
     ],
-    'docs': [
+    'doc': [
         'sphinx',
         'pydata_sphinx_theme',
         'myst-parser',

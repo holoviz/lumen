@@ -36,6 +36,12 @@ stages:
     if: tag =~ ^v(\d+|\.)+[^a-z]\d+$
   - name: pip_package
     if: tag =~ ^v(\d+|\.)+[^a-z]\d+$
+  - name: docs
+    if: tag =~ ^v(\d+|\.)+[^a-z]\d+$
+  - name: docs_dev
+    if: tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$
+  - name: docs_daily
+    if: ((type = cron and branch = master) OR (commit_message =~ /\[doc-build\]/))
 
 jobs:
   include:
@@ -93,6 +99,53 @@ jobs:
     - <<: *conda_pkg
       stage: conda_package
       env: DESC="" LABELS=$LABELS_REL CHANS=$CHANS_REL TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+
+    ########## DOCS ##########
+
+    - &doc_build
+      <<: *conda_default
+      stage: docs
+      env: DESC="docs"
+      script:
+        - doit develop_install $CHANS_DEV -o doc -o examples
+        - cd docs
+        - make html
+        - touch ./_build/.nojekyll
+      deploy:
+        - provider: pages
+          skip_cleanup: true
+          github_token: $GITHUB_TOKEN
+          local_dir: ./_build
+          fqdn: lumen.holoviz.org
+          on:
+            tags: true
+            all_branches: true
+      after_failure:
+        - cat /tmp/sphinx*
+        - sleep 10
+
+    - <<: *doc_build
+      stage: docs_dev
+      deploy:
+        provider: pages
+        skip_cleanup: true
+        github_token: $GITHUB_TOKEN
+        local_dir: ./builtdocs
+        repo: pyviz-dev/lumen
+        on:
+          tags: true
+          all_branches: true
+
+    - <<: *doc_build
+      stage: docs_daily
+      deploy:
+        provider: pages
+        skip_cleanup: true
+        github_token: $GITHUB_TOKEN
+        local_dir: ./builtdocs
+        repo: pyviz-dev/lumen
+        on:
+          all_branches: true
 
 notifications:
   email: false
