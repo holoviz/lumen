@@ -1,43 +1,47 @@
-# REST Endpoint Spec
+# REST Endpoint Specification
 
-The REST specification that we will publish alongside the monitor will have a small number of well defined endpoints which provide access to the JSON schema. 
+The REST specification defines the default format for data to be consumed by the dashboard. The API consists of three main endpoints providing access to the schema
 
-- `metrics`: Publishes a schema for each metric and all its associated filter variables, the schema should follow the [JSON schema](https://json-schema.org/) specification:
+- `schema`: Publishes a schema for each variable and all its associated indexes, the schema should follow the [JSON schema](https://json-schema.org/) specification:
 
+    - Query: A query may define the variable to return the schema for:
+        `{'variable': <variable>}`
+    - Output:
     ```
     {
-        <metric_name>: {
-            <metric>: {'description': string, 'schema': object, 'label': string},
-            <filter>: {'description': string, 'schema': object, 'label': string},
+        <variable>: {
+            <variable>: {'description': string, 'schema': object, 'label': string},
+            <index>: {'description': string, 'schema': object, 'label': string},
             ...
         },
         ...
     }
     ```
 
-- `metric`: This endpoints returns the actual data, it allows querying by one or more variables
+- `data`: This endpoints returns the actual data, it allows querying by one or more indexes:
 
-    - Query: A query must contain the metric to be returned and any number of filter queries:
-        `{'metric': <metric_name>, <filter>: <value>, ...}`
+    - Query: A query must contain the variable to be returned and any number of index queries:
+        `{'variable': <variable>, <index>: <value>, ...}`
     - Output: It will always return a list of records containing all the metric and filter values:
     ```
     [
-        {<metric_name>: <value>, <filter_name1>: <value>, ...},
-        {<metric_name>: <value>, <filter_name1>: <value>, ...},
+        {<variable>: <value>, <index>: <value>, ...},
+        {<variable>: <value>, <index>: <value>, ...},
         ...
     ]
     ```
+
 - `dump`: Returns a complete dump of all data:
-    
+
     - Query: None
     - Output:
     ```
     {
-        <metric_name>: [
-            {<metric_name>: <value>, <filter_name1>: <value>, ...},
-            {<metric_name>: <value>, <filter_name1>: <value>, ...},
+        <variable>: [
+            {<variable>: <value>, <index>: <value>, ...},
+            {<variable>: <value>, <index>: <value>, ...},
             ...
-        ], 
+        ],
         ...
     }
     ```

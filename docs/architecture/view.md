@@ -12,10 +12,6 @@ determines how the metrics returned by a
 ## View types
 
 ```{eval-rst}
-.. autoclass:: lumen.views.DefaultView
-```
-
-```{eval-rst}
 .. autoclass:: lumen.views.hvPlotView
 ```
 

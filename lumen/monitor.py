@@ -13,8 +13,8 @@ from .views import View
 
 class Monitor(param.Parameterized):
     """
-    A Monitor renders the results of a monitoring query using the
-    defined set of filters and metrics.
+    A Monitor renders the results of a Source query using the defined
+    set of filters and views.
     """
 
     application = param.Parameter(doc="""
@@ -22,9 +22,9 @@ class Monitor(param.Parameterized):
 
     current = param.List()
 
-    filters = param.List(doc="A list of filters to be rendered.")
+    height = param.Integer(default=400, doc="Height of the monitor cards.")
 
-    metrics = param.List(doc="A list of metrics to be displayed.")
+    filters = param.List(doc="A list of filters to be rendered.")
 
     sort_fields = param.List(default=[], doc="List of fields to sort by.")
 
@@ -45,19 +45,19 @@ class Monitor(param.Parameterized):
 
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
 
-    height = param.Integer(default=400, doc="Height of the monitor cards.")
+    views = param.List(doc="A list of views to be displayed.")
 
     width = param.Integer(default=400, doc="Width of the monitor cards.")
 
     def __init__(self, **params):
-        metrics = params.get('metrics', [])
+        views = params.get('views', [])
         sort = params.pop('sort', {})
         params['sort_fields'] = sort_fields = sort.get('fields', [])
         params['sort_reverse'] = sort_reverse = sort.get('reverse', False)
         self._sort_widget = pn.widgets.MultiSelect(
-            options=[m.get('name') for m in metrics],
+            options=[m.get('name') for m in views],
             sizing_mode='stretch_width', value=sort_fields,
-            size=len(metrics)
+            size=len(views)
         )
         self._reverse_widget = pn.widgets.Checkbox(
             value=sort_reverse, name='Reverse', margin=(5, 0, 0, 10)
@@ -75,7 +75,7 @@ class Monitor(param.Parameterized):
             f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
             align='end', margin=10, sizing_mode='stretch_width'
         )
-        self._update_metrics()
+        self._update_views()
         for filt in self.filters:
             if isinstance(filt, FacetFilter):
                 continue
@@ -85,7 +85,7 @@ class Monitor(param.Parameterized):
     def _resort(self, *events):
         self.sort_fields = self._sort_widget.value
         self.sort_reverse = self._reverse_widget.value
-        self._update_metrics()
+        self._update_views()
         self.application._rerender()
 
     @pn.depends('refresh_rate', watch=True)
@@ -105,44 +105,44 @@ class Monitor(param.Parameterized):
         for transform in transform_specs:
             transform = dict(transform)
             transform_type = transform.pop('type', None)
-            transform = Transform.get(transform_type)(**transform)
+            transform = Transform._get_type(transform_type)(**transform)
             transforms.append(transform)
         return transforms
 
     @pn.depends('current')
-    def _update_metrics(self):
+    def _update_views(self):
         filters = [filt for filt in self.filters
                    if not isinstance(filt, FacetFilter)]
         facets = [filt.filters for filt in self.filters
                   if isinstance(filt, FacetFilter)]
         cards = []
         for facet_filters in product(*facets):
-            metrics = []
-            metric_filters = filters + list(facet_filters)
+            views = []
+            view_filters = filters + list(facet_filters)
             key = tuple(str(f.value) for f in facet_filters)
-            for metric in self.metrics:
-                metric = dict(metric)
-                metric_type = metric.pop('type', None)
-                transform_specs = metric.pop('transforms', [])
+            for view_spec in self.views:
+                view_spec = dict(view_spec)
+                view_type = view_spec.pop('type', None)
+                transform_specs = view_spec.pop('transforms', [])
                 transforms = self._instantiate_transforms(transform_specs)
-                metric_key = key+(metric['name'],)
-                if metric_key not in self._cache:
-                    metric = View.get(metric_type)(
-                        source=self.source, filters=metric_filters,
-                        transforms=transforms, monitor=self, **metric
+                view_key = key+(view_spec['variable'],)
+                if view_key not in self._cache:
+                    view = View._get_type(view_type)(
+                        source=self.source, filters=view_filters,
+                        transforms=transforms, monitor=self, **view_spec
                     )
-                    self._cache[metric_key] = metric
+                    self._cache[view_key] = view
                 else:
-                    metric = self._cache.get(metric_key)
-                    metric.update(rerender=False)
-                if metric:
-                    metrics.append(metric)
-            if not metrics:
+                    view = self._cache.get(view_key)
+                    view.update(rerender=False)
+                if view:
+                    views.append(view)
+            if not views:
                 continue
 
             sort_key = []
             for field in self.sort_fields:
-                values = [m.get_value() for m in metrics if m.name == field]
+                values = [m.get_value() for m in views if m.name == field]
                 if values:
                     sort_key.append(values[0])
 
@@ -152,11 +152,11 @@ class Monitor(param.Parameterized):
                 title = self.title
 
             if self.layout == 'row':
-                item = pn.Row(*(m.panel for m in metrics))
+                item = pn.Row(*(view.panel for view in views))
             elif self.layout == 'grid':
-                item = pn.GridBox(*(m.panel for m in metrics), ncols=2)
+                item = pn.GridBox(*(view.panel for view in views), ncols=2)
             else:
-                item = pn.Column(*(m.panel for m in metrics))
+                item = pn.Column(*(view.panel for view in views))
 
             card = pn.Card(item, height=self.height, width=self.width, title=title)
             cards.append((tuple(sort_key), card))
@@ -169,13 +169,13 @@ class Monitor(param.Parameterized):
     def _rerender(self, *events):
         if not self._stale:
             return
-        self._update_metrics()
+        self._update_views()
         self.application._rerender()
 
     def update(self, *events):
-        self.source.update()
+        self.source.clear_cache()
         self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
-        self._update_metrics()
+        self._update_views()
 
     @property
     def panels(self):

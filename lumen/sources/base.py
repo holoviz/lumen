@@ -5,53 +5,61 @@ import requests
 
 class Source(param.Parameterized):
     """
-    Makes some query to get the metrics and their data
+    A Source provides a set of named variables and associated indexes
+    which can be queried. The Source must also be able to return a
+    schema describing the types of the variables and indexes in the
+    data.
     """
 
-    adaptor_type = None
+    source_type = None
 
     __abstract = True
 
     @classmethod
-    def get(cls, adaptor_type):
-        for adaptor in param.concrete_descendents(cls).values():
-            if adaptor.adaptor_type == adaptor_type:
-                return adaptor
+    def _get_type(cls, source_type):
+        for source in param.concrete_descendents(cls).values():
+            if source.source_type == source_type:
+                return source
         return Source
 
-    def get_metrics(self):
+    def get_schema(self, variable=None):
         """
-        Should return a JSON schema describing the data returned by
-        the Source.
+        Returns JSON schema describing the data returned by the
+        Source.
+
+        Parameters
+        ----------
+        variable : str or None
+            The name of the variable to return the schema for. If None
+            returns schema for all available variables.
 
         Returns
         -------
         dict
-           JSON schema describing the types of the data for each metric.
+           JSON schema describing the types of the data.
         """
 
-    def get_metric(self, metric, **query):
+    def get(self, variable, **query):
         """
-        Should return data for a particular metric given a query.
+        Return data for a particular variable given a query.
 
         Parameters
         ----------
-        metric : str
-            The name of the metric to query
+        variable : str
+            The name of the variable to query
         query : dict
             A dictionary containing all the query parameters
 
         Returns
         -------
-        list
-           A list of records (i.e. dictionaries) containing the values
-           for the metric and any indexes associated with them.
+        DataFrame
+           A DataFrame containing the indexes and data variables
+           declared in the schema.
         """
 
-    def update(self):
+    def clear_cache(self):
         """
-        Sources that cache data should refresh the data when
-        this method is called.
+        Clears any cached data.
         """
 
 
@@ -65,13 +73,14 @@ class RESTSource(Source):
 
     adaptor_type = 'rest'
 
-    def get_metrics(self):
-        response = requests.get(self.url+'/metrics')
+    def get_schema(self, variable=None):
+        query = {} if variable is None else {'variable': variable}
+        response = requests.get(self.url+'/schema', params=query)
         return response.json()
 
-    def get_metric(self, metric, **query):
-        query = dict(metric=metric, **query)
-        r = requests.get(self.url+'/metric', params=query)
+    def get(self, variable, **query):
+        query = dict(variable=variable, **query)
+        r = requests.get(self.url+'/data', params=query)
         return pd.DataFrame(r.json())
 
 
@@ -84,8 +93,8 @@ class WebsiteSource(Source):
 
     adaptor_type = 'live'
 
-    def get_metrics(self):
-        return {
+    def get_schema(self, variable=None):
+        schema = {
             "live": {
                 "type": "array",
                 "items": {
@@ -97,7 +106,8 @@ class WebsiteSource(Source):
                 }
             }
         }
+        return schema if variable is None else schema[variable]
 
-    def get_metric(self, metric, **query):
+    def get(self, variable, **query):
         r = requests.get(self.url)
         return [{"live": r.status_code == 200, "url": self.url}]

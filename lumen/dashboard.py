@@ -8,7 +8,7 @@ from panel.template.base import BasicTemplate
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
-from .views import DefaultView, View # noqa
+from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
 
@@ -81,8 +81,8 @@ class Dashboard(param.Parameterized):
             # Create source
             source_spec = dict(monitor_spec.pop('source'))
             source_type = source_spec.pop('type', 'rest')
-            source = Source.get(source_type)(**source_spec)
-            schema = source.get_metrics()
+            source = Source._get_type(source_type)(**source_spec)
+            schema = source.get_schema()
 
             # Initialize filters
             source_filters = []
@@ -91,13 +91,13 @@ class Dashboard(param.Parameterized):
                 filter_name = filter_spec['name']
                 filter_schema = None
                 for s in schema.values():
-                    metric_schema = s['items']['properties']
-                    if filter_name in metric_schema:
-                        filter_schema = metric_schema[filter_name]
+                    view_schema = s['items']['properties']
+                    if filter_name in view_schema:
+                        filter_schema = view_schema[filter_name]
                 if not filter_schema:
                     continue
                 filter_type = filter_spec.pop('type')
-                filter_obj = Filter.get(filter_type)(
+                filter_obj = Filter._get_type(filter_type)(
                     schema={filter_name: filter_schema}, **filter_spec
                 )
                 source_filters.append(filter_obj)

@@ -1,6 +1,6 @@
 """
-The Filter components of the monitor provide the ability to filter
-the data returned by a Source.
+The Filter components provide the ability to filter by returning a
+query which is applied to the Source.
 """
 
 import param
@@ -11,17 +11,15 @@ from ..schema import JSONSchema
 
 class Filter(param.Parameterized):
     """
-    A filter provides the ability to return a query which will be used
-    to filter the data returned by a Source.
+    A Filter provides a query which will be used to filter the data
+    returned by a Source.
     """
 
     schema = param.Dict(doc="""
-      The JSON schema provided by the Source declaring
-      information about the data to be filtered.""" )
+        The JSON schema provided by the Source declaring information
+        about the data to be filtered.""" )
 
-    label = param.String(doc="""
-      Provides a label for the filter usually declared in the
-      dashboard.yml specification.""")
+    label = param.String(doc="A label for the Filter.")
 
     value = param.Parameter(doc="The current filter value.")
 
@@ -30,7 +28,7 @@ class Filter(param.Parameterized):
     __abstract = True
 
     @classmethod
-    def get(cls, filter_type):
+    def _get_type(cls, filter_type):
         for filt in param.concrete_descendents(cls).values():
             if filt.filter_type == filter_type:
                 return filt
@@ -44,7 +42,6 @@ class Filter(param.Parameterized):
         panel.Viewable or None
             A Panel Viewable object representing the filter.
         """
-        raise NotImplementedError
 
     @property
     def query(self):
@@ -61,7 +58,7 @@ class ConstantFilter(Filter):
     The ConstantFilter allows requesting a constant value from the
     Source.
     """
-    
+
     filter_type = 'constant'
 
     @property
@@ -75,19 +72,12 @@ class ConstantFilter(Filter):
 
 class FacetFilter(Filter):
     """
-    The FacetFilter allows faceting the data along some dimension
-    to allow a single MetricView to be exploded into multiple.
+    The FacetFilter allows faceting the data along some dimension to
+    allow a single View to be exploded into multiple by grouping over
+    one of the indexes.
     """
 
     filter_type = 'facet'
-
-    @property
-    def query(self):
-        None
-        
-    @property
-    def panel(self):
-        None
 
     @property
     def filters(self):

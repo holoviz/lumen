@@ -14,7 +14,7 @@ classes.
 ## Source types
 
 ```{eval-rst}
-.. autoclass:: lumen.sourcs.RESTSource
+.. autoclass:: lumen.sources.RESTSource
 ```
 
 ```{eval-rst}
