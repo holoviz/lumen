@@ -4,16 +4,16 @@ The REST specification that we will publish alongside the monitor will have a sm
 
 - `metrics`: Publishes a schema for each metric and all its associated filter variables, the schema should follow the [JSON schema](https://json-schema.org/) specification:
 
-```
-{
-   <metric_name>: {
-       <metric>: {'description': string, 'schema': object, 'label': string},
-       <filter>: {'description': string, 'schema': object, 'label': string},
-       ...
-   },
-   ...
-}
-```
+    ```
+    {
+        <metric_name>: {
+            <metric>: {'description': string, 'schema': object, 'label': string},
+            <filter>: {'description': string, 'schema': object, 'label': string},
+            ...
+        },
+        ...
+    }
+    ```
 
 - `metric`: This endpoints returns the actual data, it allows querying by one or more variables
 
@@ -41,4 +41,3 @@ The REST specification that we will publish alongside the monitor will have a sm
         ...
     }
     ```
- 

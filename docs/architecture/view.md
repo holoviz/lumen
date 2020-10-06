@@ -1,11 +1,11 @@
-# MetricViews
+# Views
 
-The [`MetricView`](lumen.views.MetricView) type is the main visual
-type and determines how the metrics returned by a
-[`QueryAdaptor`](lumen.adaptors.QueryAdaptor) are rendered.
+The [`View`](lumen.views.View) type is the main visual type and
+determines how the metrics returned by a
+[`Source`](lumen.sources.Source) are rendered.
 
 ```{eval-rst}
-.. autoclass:: lumen.views.MetricView
+.. autoclass:: lumen.views.View
    :members:
 ```
 

@@ -12,7 +12,7 @@ import param
 class Transform(param.Parameterized):
     """
     A Transform provides the ability to transform the metric data
-    supplied by a QueryAdaptor.
+    supplied by a Source.
     """
 
     transform_type = None

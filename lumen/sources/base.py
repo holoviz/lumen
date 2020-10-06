@@ -3,7 +3,7 @@ import param
 import requests
 
 
-class QueryAdaptor(param.Parameterized):
+class Source(param.Parameterized):
     """
     Makes some query to get the metrics and their data
     """
@@ -17,12 +17,12 @@ class QueryAdaptor(param.Parameterized):
         for adaptor in param.concrete_descendents(cls).values():
             if adaptor.adaptor_type == adaptor_type:
                 return adaptor
-        return QueryAdaptor
+        return Source
 
     def get_metrics(self):
         """
         Should return a JSON schema describing the data returned by
-        the QueryAdaptor.
+        the Source.
 
         Returns
         -------
@@ -50,12 +50,12 @@ class QueryAdaptor(param.Parameterized):
 
     def update(self):
         """
-        QueryAdaptors that cache data should refresh the data when
+        Sources that cache data should refresh the data when
         this method is called.
         """
 
 
-class RESTAdaptor(QueryAdaptor):
+class RESTSource(Source):
     """
     Queries a REST API which is expected to conform to the monitoring
     REST API specification.
@@ -75,7 +75,7 @@ class RESTAdaptor(QueryAdaptor):
         return pd.DataFrame(r.json())
 
 
-class LiveWebsite(QueryAdaptor):
+class WebsiteSource(Source):
     """
     Queries whether a website responds with a 400 status code.
     """

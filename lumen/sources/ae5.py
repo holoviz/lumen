@@ -5,10 +5,10 @@ import pandas as pd
 
 from ae5_tools.api import AEUserSession
 
-from .base import QueryAdaptor
+from .base import Source
 
 
-class AE5KubeAdaptor(QueryAdaptor):
+class AE5KubeSource(Source):
     """
     Queries an endpoint on a Anaconda Enterprise 5 instance for
     information about sessions and deployments.

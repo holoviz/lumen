@@ -5,10 +5,10 @@ from itertools import product
 import param
 import panel as pn
 
-from .adaptors import QueryAdaptor
 from .filters import FacetFilter
+from .sources import Source
 from .transforms import Transform
-from .views import MetricView
+from .views import View
 
 
 class Monitor(param.Parameterized):
@@ -16,9 +16,6 @@ class Monitor(param.Parameterized):
     A Monitor renders the results of a monitoring query using the
     defined set of filters and metrics.
     """
-
-    adaptor = param.ClassSelector(class_=QueryAdaptor, doc="""
-       The adaptor queries the data from some data source.""")
 
     application = param.Parameter(doc="""
        The overall monitoring application.""")
@@ -42,6 +39,9 @@ class Monitor(param.Parameterized):
 
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
+
+    source = param.ClassSelector(class_=Source, doc="""
+       The Source queries the data from some data source.""")
 
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
 
@@ -127,8 +127,8 @@ class Monitor(param.Parameterized):
                 transforms = self._instantiate_transforms(transform_specs)
                 metric_key = key+(metric['name'],)
                 if metric_key not in self._cache:
-                    metric = MetricView.get(metric_type)(
-                        adaptor=self.adaptor, filters=metric_filters,
+                    metric = View.get(metric_type)(
+                        source=self.source, filters=metric_filters,
                         transforms=transforms, monitor=self, **metric
                     )
                     self._cache[metric_key] = metric
@@ -173,7 +173,7 @@ class Monitor(param.Parameterized):
         self.application._rerender()
 
     def update(self, *events):
-        self.adaptor.update()
+        self.source.update()
         self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
         self._update_metrics()
 

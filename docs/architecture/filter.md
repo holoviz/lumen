@@ -2,8 +2,8 @@
 
 The [Filter](lumen.filters.Filter) classes provide the ability to
 query just a subset of the data provided by a
-[QueryAdaptor](lumen.adaptors.QueryAdaptor). They therefore provide
-a powerful mechanism to drill down into just a subset of the data.
+[Source](lumen.sources.Source). They therefore provide a powerful
+mechanism to drill down into just a subset of the data.
 
 The [Filter](lumen.filters.Filter) API is very simple:
 

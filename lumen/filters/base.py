@@ -1,6 +1,6 @@
 """
 The Filter components of the monitor provide the ability to filter
-the data returned by a QueryAdaptor.
+the data returned by a Source.
 """
 
 import param
@@ -12,11 +12,11 @@ from ..schema import JSONSchema
 class Filter(param.Parameterized):
     """
     A filter provides the ability to return a query which will be used
-    to filter the data returned by a QueryAdaptor.
+    to filter the data returned by a Source.
     """
 
     schema = param.Dict(doc="""
-      The JSON schema provided by the QueryAdaptor declaring
+      The JSON schema provided by the Source declaring
       information about the data to be filtered.""" )
 
     label = param.String(doc="""
@@ -53,13 +53,13 @@ class Filter(param.Parameterized):
         -------
         object
             The current filter query which will be used by the
-            QueryAdaptor to filter the data.
+            Source to filter the data.
         """
 
 class ConstantFilter(Filter):
     """
     The ConstantFilter allows requesting a constant value from the
-    QueryAdaptor.
+    Source.
     """
     
     filter_type = 'constant'
@@ -100,7 +100,7 @@ class FacetFilter(Filter):
 class WidgetFilter(Filter):
     """
     The WidgetFilter generates a Widget from the schema used for
-    generate the query to the QueryAdaptor.
+    generate the query to the Source.
     """
 
     widget = param.ClassSelector(class_=pn.widgets.Widget)
