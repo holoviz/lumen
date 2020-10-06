@@ -1,29 +1,47 @@
 # Lumen
 
+*Illuminate your data*
+
 [![Build Status](https://travis-ci.com/holoviz/monitor.svg?branch=master)](https://travis-ci.com/holoviz/monitor)
 
 ## Purpose
 
-The purpose of the Lumen project is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server.
+The Lumen project provides a framework to build dashboards from a
+simple yaml specification. It is designed to query information from
+any source, filter it in various ways and then provide views of that
+information, which can be anything from a simply indicator to a table
+or plot.
+
+A Lumen dashboard can be configured using a minimal yaml specification
+configuring the data source, filters and views, making it easy to view
+and monitor your data.
 
 ## Architecture
 
-The Lumen dashboard can query information from any source using a so called `Source`. The `Source` can return any number of metrics and filters:
+The library is organized into a small number of simply object types including:
 
-* `metric`: A `metric` is some quantitity that can be visualized
-* `filter`: A `filter` is a variable that can be filtered by usually using a widget or by specifying a constant in the dashboard specification.
+* `Source`: A `Source` object provides any number of variables along
+  with associated indexes from some data source. Additionally it also
+  returns a schema describing the data.
+* `Filter`: A `Filter` object filters the data along any of the
+  indexes.
+* `View`: A `View` takes the queried data for a variable and
+  visualizes it as a Panel object.
+* `Transform`: A `Transform` can apply arbitrary transformation on the
+  queried data.
 
-In addition to the actual values the `Source` should provide a JSON schema which describes the types of the `metric` and `filter` variables. 
+The information that feeds the filters and views are queried from a `Source` object. The `Source` should return any number of variables with associated indexes:
 
-The main `Source` types we envision to ship are:
+* `variable`: A `variable` is some quantitity that is being visualized.
+* `index`: An `index` is a variable that can be filtered on usually using a widget or by specifying a constant in the dashboard specification.
+
+The main `Source` types provided by Lumen include:
 
 - REST API: A well defined specification to publish metrics and filters
-- File: A baseclass that can load data from a file (needs to be adapted for different file types)
+- File: A baseclass that can load data from a file:
   - CSV
   - Parquet
-  - ...
 - HTTP Status: A simple data source that returns the HTTP status of a web server
 - Intake: A simple adaptor that can load data from an Intake data catalogue
-- ...
 
-Additionally we will want a plugin system (like in Intake) that allows providing additional Sources.
+All of these base types can be subclassed to provide custom implementations.
