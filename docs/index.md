@@ -11,4 +11,12 @@ REST Specification <rest>
 Dashboard Specification <dashboard>
 ```
 
-The purpose of the Lumen project is to watch a number of metrics which are obtained from some source, this could be from a REST endpoint, from a file or a simple uptime status on an HTTP server. 
+The Lumen project provides a framework to build dashboards from a
+simple yaml specification. It is designed to query information from
+any source, filter it in various ways and then provide views of that
+information, which can be anything from a simply indicator to a table
+or plot.
+
+A Lumen dashboard can be configured using a minimal yaml specification
+configuring the data source, filters and views, making it easy to view
+and monitor your data.

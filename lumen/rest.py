@@ -16,23 +16,23 @@ from tornado import web
 # General API
 #-----------------------------------------------------------------------------
 
-_METRICS = {}
+_VARIABLES = {}
 
 
-class MetricEndpoint(param.Parameterized):
+class VariableEndpoint(param.Parameterized):
     """
-    A MetricEndpoint is an abstract class that publishes data 
-    associated with some metric. It consumes some data along with
-    a metric name a one or more indexes and provides APIs for 
-    returning the JSON schema of this data and a method to query
-    the data.
+    A VariableEndpoint is an abstract class that publishes data
+    associated with some variable. It consumes some data along with a
+    variable name a one or more indexes and provides APIs for
+    returning the JSON schema of this data and a method to query the
+    data.
     """
 
     data = param.Parameter(doc="The data to publish")
 
     index = param.List(default=[], doc="List of indexes")
 
-    metric = param.String(doc="Name of the metric to publish")
+    variable = param.String(doc="Name of the variable to publish")
     
     __abstract = True
 
@@ -49,14 +49,14 @@ class MetricEndpoint(param.Parameterized):
         return {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
 
 
-class DataFrameEndpoint(MetricEndpoint):
+class DataFrameEndpoint(VariableEndpoint):
 
     data = param.DataFrame()
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.metric not in self.data.columns:
-            raise ValueError(f"Metric column {self.metric} not found in published data.")
+        if self.variable not in self.data.columns:
+            raise ValueError(f"Variable column {self.variable} not found in published data.")
         not_found = [index for index in self.index if index not in self.data.columns]
         if not_found:
             raise ValueError(f"Indexes {not_found} not found in published data.")
@@ -88,7 +88,7 @@ class DataFrameEndpoint(MetricEndpoint):
             return schema
         properties = schema['items']['properties']
         for name, dtype in self.data.dtypes.iteritems():
-            if name != self.metric and name not in self.index:
+            if name != self.variable and name not in self.index:
                 continue
             column = self.data[name]
             if dtype.kind in 'uif':
@@ -115,18 +115,18 @@ class DataFrameEndpoint(MetricEndpoint):
         return {'type': 'array', 'items': {'type': 'object', 'properties': properties}}
 
 
-class ParameterEndpoint(MetricEndpoint):
+class ParameterEndpoint(VariableEndpoint):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.data and self.metric not in self.data[0].param:
-            raise ValueError(f"Metric column {self.metric} not found in published data.")
+        if self.data and self.variable not in self.data[0].param:
+            raise ValueError(f"Variable column {self.variable} not found in published data.")
         not_found = [index for index in self.index if self.data and index not in self.data[0].param]
         if not_found:
             raise ValueError(f"Indexes {not_found} not found in published data.")
 
     def query(self, **kwargs):
-        columns = [self.metric] + self.index
+        columns = [self.variable] + self.index
         objects = list(self.data)
         for k, v in kwargs.items():
             if k not in columns:
@@ -147,26 +147,26 @@ class ParameterEndpoint(MetricEndpoint):
             return schema
         properties = schema['items']['properties']
         sample = self.data[0]
-        properties[self.metric] = sample.param[self.metric].schema()
+        properties[self.variable] = sample.param[self.variable].schema()
         for index in self.index:
             properties[index] = sample.param[index].schema()
         schema = {'type': 'array', 'items': {'type': 'object', 'properties': properties}}
         
 
 
-def publish(metric, obj, index=None):
+def publish(variable, obj, index=None):
     """
-    Publishes a metric with one or more indexes.
+    Publishes a variable with one or more indexes.
 
     Arguments
     ---------
-    metric: str
-      The name of the metric to publish
+    variable: str
+      The name of the variable to publish
     obj: object
-      The object containing the metric data. Currently DataFrame
+      The object containing the variable data. Currently DataFrame
       and Parameterized objects are supported.
     index: str or list(str)
-      An index or list of indexes to publish alongside the metric.
+      An index or list of indexes to publish alongside the variable.
     """
     if isinstance(obj, param.Parameterized):
         obj = [obj]
@@ -180,27 +180,27 @@ def publish(metric, obj, index=None):
     else:
         raise ValueError("Object of type not recognized for publishing")
 
-    _METRICS[metric] = endpoint(data=obj, index=index, metric=metric)
+    _VARIABLES[variable] = endpoint(data=obj, index=index, variable=variable)
     
 
-def unpublish(metric):
+def unpublish(variable):
     """
-    Unpublishes a metric which was previously published.
+    Unpublishes a variable which was previously published.
     """
-    del _METRICS[metric]
+    del _VARIABLES[variable]
 
 #-----------------------------------------------------------------------------
 # Private API
 #-----------------------------------------------------------------------------
 
-class MetricHandler(web.RequestHandler):
+class VariableHandler(web.RequestHandler):
 
     def get(self):
         args = parse_qs(self.request.query)
-        metric = args.pop('metric', None)
-        if not metric:
+        variable = args.pop('variable', None)
+        if not variable:
             return
-        endpoint = _METRICS.get(metric[0])
+        endpoint = _VARIABLES.get(variable[0])
         if not endpoint:
             return
         json = endpoint.query(**args)
@@ -208,10 +208,15 @@ class MetricHandler(web.RequestHandler):
         self.write(json)
 
 
-class MetricsHandler(web.RequestHandler):
+class SchemaHandler(web.RequestHandler):
 
     def get(self):
-        schema = {metric: endpoint.schema() for metric, endpoint in _METRICS.items()}
+        args = parse_qs(self.request.query)
+        variable = args.pop('variable', None)
+        if variable is None:
+            schema = _VARIABLES[variable].schema()
+        else:
+            schema = {variable: endpoint.schema() for variable, endpoint in _VARIABLES.items()}
         self.set_header('Content-Type', 'application/json')
         self.write(schema)
 
@@ -224,6 +229,6 @@ def monitor_rest_provider(files, endpoint):
     else:
         prefix = r'^/'
     return [
-        (prefix + 'metric', MetricHandler),
-        (prefix + 'metrics', MetricsHandler)
+        (prefix + 'data', VariableHandler),
+        (prefix + 'schema', SchemaHandler)
     ]

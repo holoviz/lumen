@@ -1,43 +1,46 @@
 """
-The View classes render the metrics returned by a QueryAdaptor as a
-Panel object.
+The View classes render the data returned by a Source as a Panel
+object.
 """
 
 import param
 import panel as pn
 
-from ..adaptors import QueryAdaptor
 from ..filters import ConstantFilter
+from ..sources import Source
 
 
-class MetricView(param.Parameterized):
+class View(param.Parameterized):
     """
-    A MetricView renders a metric as a Panel Viewable. It provides
-    methods which query the QueryAdaptor for the latest data given the
-    current `filters`, applying all specified `transforms` and should
-    then render this data as a Panel object in the `get_panel` method.
-    """
+    A View renders the data returned by a Source as a Viewable Panel
+    object. The base class provides methods which query the Source for
+    the latest data given the current filters and applies all specified
+    `transforms`.
 
-    adaptor = param.ClassSelector(class_=QueryAdaptor, constant=True, doc="""
-        The QueryAdaptor to query for metric data.""")
+    Subclasses should use these methods to query the data and return
+    a Viewable Panel object in the `get_panel` method.
+    """
 
     application = param.Parameter(constant=True, doc="""
         The containing application.""")
 
     filters = param.List(constant=True, doc="""
         A list of Filter object providing the query parameters for the
-        QueryAdaptor.""")
-
-    transforms = param.List(constant=True, doc="""
-        A list of transforms to apply to the data returned by the
-        QueryAdaptor before visualizing it.""")
+        Source.""")
 
     monitor = param.Parameter(constant=True, doc="""
         The Monitor class which owns this view.""")
 
-    view_type = None
+    source = param.ClassSelector(class_=Source, constant=True, doc="""
+        The Source to query for the data.""")
 
-    __abstract = True
+    transforms = param.List(constant=True, doc="""
+        A list of transforms to apply to the data returned by the
+        Source before visualizing it.""")
+
+    variable = param.String(doc="The variable being visualized.")
+
+    view_type = None
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -48,73 +51,17 @@ class MetricView(param.Parameterized):
         self._update_panel(rerender=False)
 
     @classmethod
-    def get(cls, view_type):
+    def _get_type(cls, view_type):
         """
         Returns the matching
         """
         for view in param.concrete_descendents(cls).values():
             if view.view_type == view_type:
                 return view
-        return DefaultView
+        return View
 
     def __bool__(self):
         return len(self._cache) > 0
-
-    def get_data(self):
-        """
-        Queries the QueryAdaptor for the data associated with a
-        particular metric applying any filters and transformations
-        specified on the MetricView. Unlike `get_value` this should be
-        used when multiple return values are expected.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The data associated with a particular metric aftering
-            filtering and transformations are applied.
-        """
-        if self._cache is not None:
-            return self._cache
-        query = {filt.name: filt.query for filt in self.filters
-                 if filt.query is not None}
-        metric = self.adaptor.get_metric(self.name, **query)
-        for transform in self.transforms:
-            metric = transform.apply(metric)
-        self._cache = metric
-        return self._cache
-
-    def get_value(self):
-        """
-        Queries the QueryAdaptor for the data associated with a
-        particular metric applying any filters and transformations
-        specified on the MetricView. Unlike `get_data` this method
-        returns a single scalar value associated with the metric and
-        should therefore only be used if only a single.
-
-        Returns
-        -------
-        object
-            A single scalar value representing the current value of the
-            metric.
-        """
-        data = self.get_data()
-        if not len(data):
-            return None
-        row = data.iloc[-1]
-        return row[self.name]
-
-    def get_panel(self):
-        """
-        Constructs and returns a Panel object which will represent a
-        view of the metric data.
-
-        Returns
-        -------
-        panel.Viewable
-            A Panel Viewable object representing a current
-            representation of the metric data.
-        """
-        return pn.panel(self.get_data())
 
     def _update_panel(self, *events, rerender=True):
         """
@@ -127,9 +74,67 @@ class MetricView(param.Parameterized):
             and not self):
             self.monitor._stale = True
 
+    def get_data(self):
+        """
+        Queries the Source for the data associated with a particular
+        variable applying any filters and transformations specified on
+        the View. Unlike `get_value` this should be used when multiple
+        return values are expected.
+
+        Returns
+        -------
+        DataFrame
+            The data associated with a particular variable after
+            filtering and transformations are applied.
+        """
+        if self._cache is not None:
+            return self._cache
+        query = {filt.name: filt.query for filt in self.filters
+                 if filt.query is not None}
+        data = self.source.get(self.variable, **query)
+        for transform in self.transforms:
+            data = transform.apply(data)
+        self._cache = data
+        return data
+
+    def get_value(self):
+        """
+        Queries the Source for the data associated with a particular
+        variable applying any filters and transformations specified on
+        the View. Unlike `get_data` this method returns a single
+        scalar value associated with the variable and should therefore
+        only be used if only a single.
+
+        Returns
+        -------
+        object
+            A single scalar value representing the current value of
+            the queried variable.
+        """
+        data = self.get_data()
+        if not len(data):
+            return None
+        if len(data) > 1:
+            self.param.warning()
+        row = data.iloc[-1]
+        return row[self.variable]
+
+    def get_panel(self):
+        """
+        Constructs and returns a Panel object which will represent a
+        view of the queried data.
+
+        Returns
+        -------
+        panel.Viewable
+            A Panel Viewable object representing a current
+            representation of the data.
+        """
+        return pn.panel(self.get_data())
+
     def update(self, rerender=True):
         """
-        Triggers an update in the MetricView.
+        Triggers an update in the View.
 
         Parameters
         ----------
@@ -143,23 +148,14 @@ class MetricView(param.Parameterized):
         return self._panel
 
 
-class DefaultView(MetricView):
+class StringView(View):
     """
-    The DefaultView is what is used if no particular view type is
-    declared and renders the queried data as a table.
-    """
-
-    view_type = None
-
-
-class StringView(MetricView):
-    """
-    The StringView renders the latest metric value as a HTML string
-    with a specified fontsize.
+    The StringView renders the latest value of the variable as a HTML
+    string with a specified fontsize.
     """
 
     font_size = param.String(default='24pt', doc="""
-        The font size of the rendered metric string.""")
+        The font size of the rendered variable value.""")
 
     view_type = 'string'
 
@@ -170,11 +166,10 @@ class StringView(MetricView):
         return pn.pane.HTML(f'<p style="font-size: {self.font_size}>{value}</p>')
 
 
-class IndicatorView(MetricView):
+class IndicatorView(View):
     """
-    The IndicatorView renders the latest metric value as a Panel
-    Indicator. An IndicatorView therefore usually represents a single
-    scalar value.
+    The IndicatorView renders the latest variable value as a Panel
+    Indicator.
     """
 
     indicator = param.String(doc="The name of the panel Indicator type")
@@ -210,11 +205,11 @@ class IndicatorView(MetricView):
         return indicator(**self.indicator_options, value=self.get_value())
 
 
-class hvPlotView(MetricView):
+class hvPlotView(View):
     """
-    The hvPlotView renders the queried metric data as a bokeh plot
-    generated with hvPlot. hvPlot allows for a concise declaration
-    of a plot via its simple API.
+    The hvPlotView renders the queried data as a bokeh plot generated
+    with hvPlot. hvPlot allows for a concise declaration of a plot via
+    its simple API.
     """
 
     kind = param.String(doc="The kind of plot, e.g. 'scatter' or 'line'.")

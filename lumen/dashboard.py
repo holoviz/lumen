@@ -5,10 +5,10 @@ import panel as pn
 
 from panel.template.base import BasicTemplate
 
-from .adaptors import QueryAdaptor, RESTAdaptor # noqa
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
-from .views import DefaultView, MetricView # noqa
+from .sources import Source, RESTSource # noqa
+from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
 
@@ -41,8 +41,8 @@ class Dashboard(param.Parameterized):
         )
         tmpl = self.config.get('template', 'material')
         self.template = _templates[tmpl](title=self.config.get('title', 'Monitoring Dashboard'))
-        if not 'endpoints' in self._spec:
-            raise ValueError('%s did not specify any endpoints.'
+        if not 'sources' in self._spec:
+            raise ValueError('%s did not specify any sources.'
                              % self.specification)
         self.filters = pn.Column(margin=0, sizing_mode='stretch_width')
         self.monitors = pn.GridBox(ncols=self.config.get('ncols', 5), margin=10)
@@ -61,7 +61,7 @@ class Dashboard(param.Parameterized):
             monitor.update()
 
     def _reload(self, *events):
-        self._monitors = self._resolve_endpoints(self._spec['endpoints'])
+        self._monitors = self._resolve_sources(self._spec['sources'])
         self._rerender()
         filters = []
         for monitor in self._monitors:
@@ -73,38 +73,38 @@ class Dashboard(param.Parameterized):
     def _rerender(self):
         self.monitors[:] = [p for monitor in self._monitors for p in monitor.panels]
 
-    def _resolve_endpoints(self, endpoints, metadata={}):
+    def _resolve_sources(self, sources, metadata={}):
         monitors = []
-        for endpoint in endpoints:
-            monitor_spec = dict(endpoint)
+        for monitor_spec in sources:
+            monitor_spec = dict(monitor_spec)
 
-            # Create adaptor
-            endpoint_spec = dict(monitor_spec.pop('endpoint'))
-            endpoint_type = endpoint_spec.pop('type', 'rest')
-            adaptor = QueryAdaptor.get(endpoint_type)(**endpoint_spec)
-            schema = adaptor.get_metrics()
+            # Create source
+            source_spec = dict(monitor_spec.pop('source'))
+            source_type = source_spec.pop('type', 'rest')
+            source = Source._get_type(source_type)(**source_spec)
+            schema = source.get_schema()
 
             # Initialize filters
-            endpoint_filters = []
-            for filt in endpoint.get('filters', []):
-                filt = dict(filt)
-                fname = filt['name']
-                filt_schema = None
+            source_filters = []
+            for filter_spec in monitor_spec.get('filters', []):
+                filter_spec = dict(filter_spec)
+                filter_name = filter_spec['name']
+                filter_schema = None
                 for s in schema.values():
-                    metric_schema = s['items']['properties']
-                    if fname in metric_schema:
-                        filt_schema = metric_schema[fname]
-                if not filt_schema:
+                    view_schema = s['items']['properties']
+                    if filter_name in view_schema:
+                        filter_schema = view_schema[filter_name]
+                if not filter_schema:
                     continue
-                filter_type = filt.pop('type')
-                filter_obj = Filter.get(filter_type)(
-                    schema={fname: filt_schema}, **filt
+                filter_type = filter_spec.pop('type')
+                filter_obj = Filter._get_type(filter_type)(
+                    schema={filter_name: filter_schema}, **filter_spec
                 )
-                endpoint_filters.append(filter_obj)
+                source_filters.append(filter_obj)
 
             # Create monitor
-            monitor_spec['filters'] = endpoint_filters
-            monitor = Monitor(adaptor=adaptor, application=self, schema=schema, **monitor_spec)
+            monitor_spec['filters'] = source_filters
+            monitor = Monitor(source=source, application=self, schema=schema, **monitor_spec)
             monitors.append(monitor)
         return monitors
 
