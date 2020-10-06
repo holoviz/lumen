@@ -11,8 +11,8 @@ The Lumen dashboard can be configured by a `dashboard.yml` file. The dashboard y
   - `source`: The `Source` used to monitor an endpoint
     - `type`: The type of `Source` to use, e.g. 'rest' or 'live'
 	- ...: Additional parameters for the `Source`
-  - `metrics`: A list of metrics to monitor and display on the endpoint
-    - `name`: The name of the metric
+  - `views`: A list of metrics to monitor and display on the endpoint
+    - `variable`: The name of the metric
 	- `type`: The type of `View` to use for rendering the metric
 	- ...: Additional parameters for the `View`
   - `filters`: A list of `Filter` types to select a subset of the data
