@@ -5,8 +5,6 @@ data which can be queried by the monitoring dashboard or some other
 application.
 """
 
-import sys
-
 from urllib.parse import parse_qs
 
 import pandas as pd

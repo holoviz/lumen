@@ -17,6 +17,10 @@ class Source(param.Parameterized):
 
     @classmethod
     def _get_type(cls, source_type):
+        try:
+            __import__(f'lumen.sources.{source_type}')
+        except Exception:
+            pass
         for source in param.concrete_descendents(cls).values():
             if source.source_type == source_type:
                 return source
