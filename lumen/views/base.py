@@ -70,8 +70,7 @@ class View(param.Parameterized):
         """
         self._cache = None
         self._panel = self.get_panel()
-        if (rerender and any(isinstance(f, ConstantFilter) for f in self.filters)
-            and not self):
+        if (rerender and any(not isinstance(f, ConstantFilter) for f in self.filters)):
             self.monitor._stale = True
 
     def get_data(self):
