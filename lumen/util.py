@@ -13,7 +13,7 @@ def get_dataframe_schema(df, index, variable):
     df : pandas.DataFrame or dask.DataFrame
         The DataFrame to describe with the schema
     index: list(str) or str
-        The list of indexes
+        The index or list of indexes
     variable: str
         The data variable
 
