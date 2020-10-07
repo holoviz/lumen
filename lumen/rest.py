@@ -196,7 +196,7 @@ class SchemaHandler(web.RequestHandler):
         self.write(schema)
 
 
-def monitor_rest_provider(files, endpoint):
+def lumen_rest_provider(files, endpoint):
     from pane.io.rest import _exec_files
     _exec_files(files)
     if endpoint:
