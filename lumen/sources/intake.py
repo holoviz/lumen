@@ -12,7 +12,7 @@ class IntakeSource(Source):
     """
 
     catalog = param.String(doc="""
-        The name of the catalogue, must be provided.""")
+        The name of the catalog; must be provided.""")
 
     dask = param.Boolean(default=False, doc="""
         Whether to return a dask DataFrame.""")
@@ -33,9 +33,9 @@ class IntakeSource(Source):
             if len(cats) == 1:
                 self.catalog = cats[0]
             else:
-                raise ValueError("Could not determine catalogue to load.")
+                raise ValueError("Could not determine catalog to load.")
         elif self.catalog not in self.cat:
-            raise ValueError(f"'{self.catalog}' not found in catalogue.'")
+            raise ValueError(f"'{self.catalog}' not found in catalog.'")
 
     def get_schema(self, variable=None):
         cat = self.cat[self.catalog].to_dask()
