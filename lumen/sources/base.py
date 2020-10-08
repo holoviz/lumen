@@ -112,7 +112,8 @@ class RESTSource(Source):
     def get_schema(self, variable=None):
         query = {} if variable is None else {'variable': variable}
         response = requests.get(self.url+'/schema', params=query)
-        return response.json()
+        return {var: schema['items']['properties'] for var, schema in
+                response.json().items()}
 
     def get(self, variable, **query):
         query = dict(variable=variable, **query)
@@ -132,18 +133,13 @@ class WebsiteSource(Source):
     def get_schema(self, variable=None):
         schema = {
             "live": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "live": {"type": "boolean"},
-                        "url": {"type": "string"}
-                    }
-                }
+                "live": {"type": "boolean"},
+                "url": {"type": "string"}
             }
         }
         return schema if variable is None else schema[variable]
 
     def get(self, variable, **query):
         r = requests.get(self.url)
-        return [{"live": r.status_code == 200, "url": self.url}]
+        return pd.DataFrame([{"live": r.status_code == 200, "url": self.url}])
+

@@ -90,8 +90,7 @@ class Dashboard(param.Parameterized):
                 filter_spec = dict(filter_spec)
                 filter_name = filter_spec['name']
                 filter_schema = None
-                for s in schema.values():
-                    view_schema = s['items']['properties']
+                for view_schema in schema.values():
                     if filter_name in view_schema:
                         filter_schema = view_schema[filter_name]
                 if not filter_schema:
