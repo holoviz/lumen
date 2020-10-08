@@ -46,17 +46,5 @@ class IntakeSource(Source):
 
     def get(self, variable, **query):
         df = self.cat[self.catalog].to_dask()[self.index+[variable]]
-        filters = []
-        for k, val in query.items():
-            if np.isscalar(val):
-                filters.append(df[k] == val)
-            elif isinstance(val, list):
-                filters.append(df[k].isin(val))
-            elif isinstance(val, tuple):
-                filters.append((df[k]>val[0]) & (df[k]<=val[1]))
-        if filters:
-            mask = filters[0]
-            for f in filters:
-                mask &= f
-            df = df[mask]
+        df = self._filter_dataframe(df, **query)
         return df if self.dask else df.compute()

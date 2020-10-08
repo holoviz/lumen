@@ -26,6 +26,38 @@ class Source(param.Parameterized):
                 return source
         return Source
 
+    @classmethod
+    def _filter_dataframe(cls, df, **query):
+        """
+        Filter the DataFrame.
+
+        Parameters
+        ----------
+        df : DataFrame
+           The DataFrame to filter
+        query : dict
+            A dictionary containing all the query parameters
+
+        Returns
+        -------
+        DataFrame
+            The filtered DataFrame
+        """
+        filters = []
+        for k, val in query.items():
+            if np.isscalar(val):
+                filters.append(df[k] == val)
+            elif isinstance(val, list):
+                filters.append(df[k].isin(val))
+            elif isinstance(val, tuple):
+                filters.append((df[k]>val[0]) & (df[k]<=val[1]))
+        if filters:
+            mask = filters[0]
+            for f in filters:
+                mask &= f
+            df = df[mask]
+        return df
+
     def get_schema(self, variable=None):
         """
         Returns JSON schema describing the data returned by the
@@ -75,7 +107,7 @@ class RESTSource(Source):
 
     url = param.String(doc="URL of the REST endpoint to monitor.")
 
-    adaptor_type = 'rest'
+    source_type = 'rest'
 
     def get_schema(self, variable=None):
         query = {} if variable is None else {'variable': variable}
@@ -95,7 +127,7 @@ class WebsiteSource(Source):
 
     url = param.String(doc="URL of the website to monitor.")
 
-    adaptor_type = 'live'
+    source_type = 'live'
 
     def get_schema(self, variable=None):
         schema = {
