@@ -1,5 +1,4 @@
 import intake
-import numpy as np
 import param
 
 from ..util import get_dataframe_schema
