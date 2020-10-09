@@ -37,6 +37,10 @@ class Monitor(param.Parameterized):
 
     layout = param.ObjectSelector(default='column', objects=['row', 'column', 'grid'])
 
+    sizing_mode = param.ObjectSelector(default='fixed', objects=[
+        'stretch_width', 'stretch_both', 'stretch_height', 'fixed'], doc="""
+        Sizing mode to apply to the views.""")
+
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
 
@@ -157,8 +161,12 @@ class Monitor(param.Parameterized):
                 item = pn.GridBox(*(view.panel for view in views), ncols=2)
             else:
                 item = pn.Column(*(view.panel for view in views))
+            item.sizing_mode = self.sizing_mode
 
-            card = pn.Card(item, height=self.height, width=self.width, title=title)
+            card = pn.Card(
+                item, height=self.height, width=self.width, title=title,
+                sizing_mode=self.sizing_mode
+            )
             cards.append((tuple(sort_key), card))
         if self.sort_fields:
             cards = sorted(cards, key=lambda x: x[0])

@@ -122,63 +122,37 @@ class AE5KubeSource(Source):
         resources = sorted({d['resource_profile'] for d in self._deployment_cache})
         schema = {
             "cpu": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "enum": name},
-                        "state": {"type": "string", "enum": state},
-                        "owner": {"type": "string", "enum": owners},
-                        "resource_profile": {"type": "string", "enum": resources},
-                        "timestamp": {"type": "string", "format": "datetime"},
-                        "cpu": {"type": "number"}
-                    }
-                }
+                "name": {"type": "string", "enum": name},
+                "state": {"type": "string", "enum": state},
+                "owner": {"type": "string", "enum": owners},
+                "resource_profile": {"type": "string", "enum": resources},
+                "timestamp": {"type": "string", "format": "datetime"},
+                "cpu": {"type": "number"}
             },
             "memory": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "enum": name},
-                        "state": {"type": "string", "enum": state},
-                        "owner": {"type": "string", "enum": owners},
-                        "resource_profile": {"type": "string", "enum": resources},
-                        "timestamp": {"type": "string", "format": "datetime"},
-                        "memory": {"type": "number"}
-                    }
-                }
+                "name": {"type": "string", "enum": name},
+                "state": {"type": "string", "enum": state},
+                "owner": {"type": "string", "enum": owners},
+                "resource_profile": {"type": "string", "enum": resources},
+                "timestamp": {"type": "string", "format": "datetime"},
+                "memory": {"type": "number"}
             },
             'uptime': {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "enum": name},
-                        "state": {"type": "string", "enum": state},
-                        "owner": {"type": "string", "enum": owners},
-                        "uptime": {"type": "string"},
-                        "restarts": {"type": "number"}
-                    }
-                }
+                "name": {"type": "string", "enum": name},
+                "state": {"type": "string", "enum": state},
+                "owner": {"type": "string", "enum": owners},
+                "uptime": {"type": "string"},
+                "restarts": {"type": "number"}
             },
             'restarts': {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "enum": name},
-                        "state": {"type": "string", "enum": state},
-                        "owner": {"type": "string", "enum": owners},
-                        "uptime": {"type": "string"},
-                        "restarts": {"type": "number"}
-                    }
-                }
+                "name": {"type": "string", "enum": name},
+                "state": {"type": "string", "enum": state},
+                "owner": {"type": "string", "enum": owners},
+                "uptime": {"type": "string"},
+                "restarts": {"type": "number"}
             }
         }
-        if variable is None:
-            return schema
-        return schema[variable]
+        return schema if variable is None else schema[variable]
 
     def get(self, variable, **query):
         if self._deployment_cache is None:

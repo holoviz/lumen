@@ -12,6 +12,8 @@ import param
 
 from tornado import web
 
+from .util import get_dataframe_schema
+
 #-----------------------------------------------------------------------------
 # General API
 #-----------------------------------------------------------------------------
@@ -86,33 +88,7 @@ class DataFrameEndpoint(VariableEndpoint):
         schema = super().schema()
         if self.data is None:
             return schema
-        properties = schema['items']['properties']
-        for name, dtype in self.data.dtypes.iteritems():
-            if name != self.variable and name not in self.index:
-                continue
-            column = self.data[name]
-            if dtype.kind in 'uif':
-                if dtype.kind == 'f':
-                    cast = float
-                    kind = 'number'
-                else:
-                    cast = int
-                    kind = 'integer'
-                properties[name] = {
-                    'type': kind,
-                    'inclusiveMinimum': cast(column.min()),
-                    'inclusiveMaximum': cast(column.max())
-                }
-            elif dtype.kind == 'O':
-                properties[name] = {'type': 'string', 'enum': list(column.unique())}
-            elif dtype.kind == 'M':
-                properties[name] = {
-                    'type': 'string',
-                    'format': 'datetime',
-                    'inclusiveMinimum': column.min().isoformat(),
-                    'inclusiveMaximum': column.max().isoformat()
-                }
-        return {'type': 'array', 'items': {'type': 'object', 'properties': properties}}
+        return get_dataframe_schema(self.data, self.index, self.variable)
 
 
 class ParameterEndpoint(VariableEndpoint):
@@ -151,7 +127,6 @@ class ParameterEndpoint(VariableEndpoint):
         for index in self.index:
             properties[index] = sample.param[index].schema()
         schema = {'type': 'array', 'items': {'type': 'object', 'properties': properties}}
-        
 
 
 def publish(variable, obj, index=None):
@@ -221,7 +196,7 @@ class SchemaHandler(web.RequestHandler):
         self.write(schema)
 
 
-def monitor_rest_provider(files, endpoint):
+def lumen_rest_provider(files, endpoint):
     from pane.io.rest import _exec_files
     _exec_files(files)
     if endpoint:

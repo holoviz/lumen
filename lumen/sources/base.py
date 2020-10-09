@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import param
 import requests
@@ -17,10 +18,46 @@ class Source(param.Parameterized):
 
     @classmethod
     def _get_type(cls, source_type):
+        try:
+            __import__(f'lumen.sources.{source_type}')
+        except Exception:
+            pass
         for source in param.concrete_descendents(cls).values():
             if source.source_type == source_type:
                 return source
         return Source
+
+    @classmethod
+    def _filter_dataframe(cls, df, **query):
+        """
+        Filter the DataFrame.
+
+        Parameters
+        ----------
+        df : DataFrame
+           The DataFrame to filter
+        query : dict
+            A dictionary containing all the query parameters
+
+        Returns
+        -------
+        DataFrame
+            The filtered DataFrame
+        """
+        filters = []
+        for k, val in query.items():
+            if np.isscalar(val):
+                filters.append(df[k] == val)
+            elif isinstance(val, list):
+                filters.append(df[k].isin(val))
+            elif isinstance(val, tuple):
+                filters.append((df[k]>val[0]) & (df[k]<=val[1]))
+        if filters:
+            mask = filters[0]
+            for f in filters:
+                mask &= f
+            df = df[mask]
+        return df
 
     def get_schema(self, variable=None):
         """
@@ -71,12 +108,13 @@ class RESTSource(Source):
 
     url = param.String(doc="URL of the REST endpoint to monitor.")
 
-    adaptor_type = 'rest'
+    source_type = 'rest'
 
     def get_schema(self, variable=None):
         query = {} if variable is None else {'variable': variable}
         response = requests.get(self.url+'/schema', params=query)
-        return response.json()
+        return {var: schema['items']['properties'] for var, schema in
+                response.json().items()}
 
     def get(self, variable, **query):
         query = dict(variable=variable, **query)
@@ -91,23 +129,18 @@ class WebsiteSource(Source):
 
     url = param.String(doc="URL of the website to monitor.")
 
-    adaptor_type = 'live'
+    source_type = 'live'
 
     def get_schema(self, variable=None):
         schema = {
             "live": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "live": {"type": "boolean"},
-                        "url": {"type": "string"}
-                    }
-                }
+                "live": {"type": "boolean"},
+                "url": {"type": "string"}
             }
         }
         return schema if variable is None else schema[variable]
 
     def get(self, variable, **query):
         r = requests.get(self.url)
-        return [{"live": r.status_code == 200, "url": self.url}]
+        return pd.DataFrame([{"live": r.status_code == 200, "url": self.url}])
+

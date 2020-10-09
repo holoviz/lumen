@@ -61,7 +61,7 @@ class View(param.Parameterized):
         return View
 
     def __bool__(self):
-        return len(self._cache) > 0
+        return self._cache is not None and len(self._cache) > 0
 
     def _update_panel(self, *events, rerender=True):
         """
@@ -70,8 +70,7 @@ class View(param.Parameterized):
         """
         self._cache = None
         self._panel = self.get_panel()
-        if (rerender and any(isinstance(f, ConstantFilter) for f in self.filters)
-            and not self):
+        if (rerender and any(not isinstance(f, ConstantFilter) for f in self.filters)):
             self.monitor._stale = True
 
     def get_data(self):
@@ -218,9 +217,9 @@ class hvPlotView(View):
 
     y = param.String(doc="The column to render on the y-axis.")
 
-    kwargs = param.Dict(doc="Dictionary of additional kwargs.x")
+    kwargs = param.Dict(default={}, doc="Dictionary of additional kwargs.")
 
-    opts = param.Dict(doc="HoloVies option to apply on the plot.")
+    opts = param.Dict(default={}, doc="HoloVies option to apply on the plot.")
 
     view_type = 'hvplot'
 
@@ -232,5 +231,8 @@ class hvPlotView(View):
         df = self.get_data()
         if df is None or not len(df):
             return pn.pane.HTML('No data')
-        return df.hvplot(kind=self.kind, x=self.x, y=self.y,
-                         **self.kwargs).opts(**self.opts)
+        plot = df.hvplot(kind=self.kind, x=self.x, y=self.y,
+                         **self.kwargs)
+        if self.opts:
+            plot.opts(**self.opts)
+        return plot
