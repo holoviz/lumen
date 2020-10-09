@@ -18,10 +18,6 @@ class IntakeSource(Source):
 
     filename = param.String(doc="Filename of the catalog file.")
 
-    index = param.List(default=[], doc="List of index columns.")
-
-    variables = param.List(default=[], doc="List of data variable columns.")
-
     source_type = 'intake'
 
     def __init__(self, **params):
@@ -36,14 +32,15 @@ class IntakeSource(Source):
         elif self.catalog not in self.cat:
             raise ValueError(f"'{self.catalog}' not found in catalog.'")
 
-    def get_schema(self, variable=None):
-        cat = self.cat[self.catalog].to_dask()
-        if variable:
-            return get_dataframe_schema(cat, self.index, variable)
+    def get_schema(self, table=None):
+        if table:
+            cat = self.cat[table].to_dask()
+            return get_dataframe_schema(cat)
         else:
-            return {var: get_dataframe_schema(cat, self.index, var) for var in self.variables}
+            return {name: get_dataframe_schema(cat.to_dask())
+                    for name, cat in self.cat.items()}
 
-    def get(self, variable, **query):
-        df = self.cat[self.catalog].to_dask()[self.index+[variable]]
+    def get(self, table, **query):
+        df = self.cat[table].to_dask()
         df = self._filter_dataframe(df, **query)
         return df if self.dask else df.compute()

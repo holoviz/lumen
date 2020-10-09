@@ -38,6 +38,8 @@ class View(param.Parameterized):
         A list of transforms to apply to the data returned by the
         Source before visualizing it.""")
 
+    table = param.String(doc="The table being visualized.")
+
     variable = param.String(doc="The variable being visualized.")
 
     view_type = None
@@ -53,8 +55,12 @@ class View(param.Parameterized):
     @classmethod
     def _get_type(cls, view_type):
         """
-        Returns the matching
+        Returns the matching View type.
         """
+        try:
+            __import__(f'lumen.views.{view_type}')
+        except Exception:
+            pass
         for view in param.concrete_descendents(cls).values():
             if view.view_type == view_type:
                 return view
@@ -69,28 +75,33 @@ class View(param.Parameterized):
         Monitor object if it is stale and has to rerender.
         """
         self._cache = None
-        self._panel = self.get_panel()
-        if (rerender and any(not isinstance(f, ConstantFilter) for f in self.filters)):
+        new_panel = self.get_panel()
+        if isinstance(new_panel, type(self._panel)):
+            self._panel.param.set_param(**dict(new_panel.param.get_param_values()))
+        else:
+            self._panel = new_panel
+            rerender = True
+        if (rerender and (not self.filters or any(not isinstance(f, ConstantFilter) for f in self.filters))):
             self.monitor._stale = True
 
     def get_data(self):
         """
-        Queries the Source for the data associated with a particular
-        variable applying any filters and transformations specified on
-        the View. Unlike `get_value` this should be used when multiple
-        return values are expected.
+        Queries the Source for the specified table applying any
+        filters and transformations specified on the View. Unlike
+        `get_value` this should be used when multiple return values
+        are expected.
 
         Returns
         -------
         DataFrame
-            The data associated with a particular variable after
-            filtering and transformations are applied.
+            The queried table after filtering and transformations are
+            applied.
         """
         if self._cache is not None:
             return self._cache
         query = {filt.name: filt.query for filt in self.filters
                  if filt.query is not None}
-        data = self.source.get(self.variable, **query)
+        data = self.source.get(self.table, **query)
         for transform in self.transforms:
             data = transform.apply(data)
         self._cache = data
@@ -121,13 +132,13 @@ class View(param.Parameterized):
     def get_panel(self):
         """
         Constructs and returns a Panel object which will represent a
-        view of the queried data.
+        view of the queried table.
 
         Returns
         -------
         panel.Viewable
             A Panel Viewable object representing a current
-            representation of the data.
+            representation of the queried table.
         """
         return pn.panel(self.get_data())
 

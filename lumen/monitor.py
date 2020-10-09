@@ -17,8 +17,7 @@ class Monitor(param.Parameterized):
     set of filters and views.
     """
 
-    application = param.Parameter(doc="""
-       The overall monitoring application.""")
+    application = param.Parameter(doc="The overall monitoring application.")
 
     current = param.List()
 
@@ -104,7 +103,7 @@ class Monitor(param.Parameterized):
                 self.update, refresh_rate
             )
 
-    def _instantiate_transforms(self, transform_specs):
+    def _get_transforms(self, transform_specs):
         transforms = []
         for transform in transform_specs:
             transform = dict(transform)
@@ -112,6 +111,35 @@ class Monitor(param.Parameterized):
             transform = Transform._get_type(transform_type)(**transform)
             transforms.append(transform)
         return transforms
+
+    def _get_view(self, key, view_spec, filters):
+        view_type = view_spec.pop('type', None)
+        transform_specs = view_spec.pop('transforms', [])
+        transforms = self._get_transforms(transform_specs)
+        if key not in self._cache:
+            view = View._get_type(view_type)(
+                source=self.source, filters=filters,
+                transforms=transforms, monitor=self, **view_spec
+            )
+            self._cache[key] = view
+        else:
+            view = self._cache.get(key)
+            view.update(rerender=False)
+        return view
+
+    def _get_card(self, title, views):
+        if self.layout == 'row':
+            item = pn.Row(*(view.panel for view in views))
+        elif self.layout == 'grid':
+            item = pn.GridBox(*(view.panel for view in views), ncols=2)
+        else:
+            item = pn.Column(*(view.panel for view in views))
+        item.sizing_mode = self.sizing_mode
+
+        return pn.Card(
+            item, height=self.height, width=self.width, title=title,
+            sizing_mode=self.sizing_mode
+        )
 
     @pn.depends('current')
     def _update_views(self):
@@ -125,20 +153,7 @@ class Monitor(param.Parameterized):
             view_filters = filters + list(facet_filters)
             key = tuple(str(f.value) for f in facet_filters)
             for view_spec in self.views:
-                view_spec = dict(view_spec)
-                view_type = view_spec.pop('type', None)
-                transform_specs = view_spec.pop('transforms', [])
-                transforms = self._instantiate_transforms(transform_specs)
-                view_key = key+(view_spec['variable'],)
-                if view_key not in self._cache:
-                    view = View._get_type(view_type)(
-                        source=self.source, filters=view_filters,
-                        transforms=transforms, monitor=self, **view_spec
-                    )
-                    self._cache[view_key] = view
-                else:
-                    view = self._cache.get(view_key)
-                    view.update(rerender=False)
+                view = self._get_view(key+(id(view_spec),), dict(view_spec), view_filters)
                 if view:
                     views.append(view)
             if not views:
@@ -155,23 +170,14 @@ class Monitor(param.Parameterized):
             else:
                 title = self.title
 
-            if self.layout == 'row':
-                item = pn.Row(*(view.panel for view in views))
-            elif self.layout == 'grid':
-                item = pn.GridBox(*(view.panel for view in views), ncols=2)
-            else:
-                item = pn.Column(*(view.panel for view in views))
-            item.sizing_mode = self.sizing_mode
-
-            card = pn.Card(
-                item, height=self.height, width=self.width, title=title,
-                sizing_mode=self.sizing_mode
-            )
+            card = self._get_card(title, views)
             cards.append((tuple(sort_key), card))
+
         if self.sort_fields:
             cards = sorted(cards, key=lambda x: x[0])
             if self.sort_reverse:
                 cards = cards[::-1]
+
         self._cards[:] = [card for _, card in cards]
 
     def _rerender(self, *events):
@@ -180,21 +186,26 @@ class Monitor(param.Parameterized):
         self._update_views()
         self.application._rerender()
 
-    def update(self, *events):
-        self.source.clear_cache()
-        self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
-        self._update_views()
+    # Public API
+        
+    @property
+    def filter_panel(self):
+        views = []
+        filters = [filt.panel for filt in self.filters if filt.panel is not None]
+        if filters:
+            views.append(pn.pane.Markdown('### Filters', margin=(0, 5)))
+            views.extend(filters)
+            views.append(pn.layout.Divider())
+        views.extend([pn.pane.Markdown('### Sort', margin=(0, 5)), self._sort_widget, self._reverse_widget])
+        views.append(pn.layout.Divider())
+        views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))
+        return pn.Card(*views, title=self.title, sizing_mode='stretch_width') if views else None
 
     @property
     def panels(self):
         return self._cards
 
-    @property
-    def filter_panel(self):
-        views = [pn.pane.Markdown('### Filters', margin=(0, 5))]
-        views.extend([filt.panel for filt in self.filters if filt.panel is not None])
-        views.append(pn.layout.Divider())
-        views.extend([pn.pane.Markdown('### Sort', margin=(0, 5)), self._sort_widget, self._reverse_widget])
-        views.append(pn.layout.Divider())
-        views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))
-        return pn.Card(*views, title=self.title, sizing_mode='stretch_width') if views else None
+    def update(self, *events):
+        self.source.clear_cache()
+        self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
+        self._update_views()

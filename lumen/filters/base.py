@@ -1,6 +1,6 @@
 """
-The Filter components provide the ability to filter by returning a
-query which is applied to the Source.
+The Filter components supply query parameters used to filter the
+tables returned by a Source.
 """
 
 import param
@@ -29,6 +29,10 @@ class Filter(param.Parameterized):
 
     @classmethod
     def _get_type(cls, filter_type):
+        try:
+            __import__(f'lumen.filters.{filter_type}')
+        except Exception:
+            pass
         for filt in param.concrete_descendents(cls).values():
             if filt.filter_type == filter_type:
                 return filt
@@ -42,6 +46,7 @@ class Filter(param.Parameterized):
         panel.Viewable or None
             A Panel Viewable object representing the filter.
         """
+        return None
 
     @property
     def query(self):
@@ -52,6 +57,7 @@ class Filter(param.Parameterized):
             The current filter query which will be used by the
             Source to filter the data.
         """
+
 
 class ConstantFilter(Filter):
     """
@@ -67,7 +73,7 @@ class ConstantFilter(Filter):
 
     @property
     def panel(self):
-        None
+        return None
 
 
 class FacetFilter(Filter):
@@ -89,8 +95,9 @@ class FacetFilter(Filter):
 
 class WidgetFilter(Filter):
     """
-    The WidgetFilter generates a Widget from the schema used for
-    generate the query to the Source.
+    The WidgetFilter generates a Widget from the table schema provided
+    by a Source and returns the current widget value to query the data
+    returned by the Source.
     """
 
     widget = param.ClassSelector(class_=pn.widgets.Widget)
