@@ -5,8 +5,7 @@ from pandas.core.dtypes.dtypes import CategoricalDtype
 
 def get_dataframe_schema(df, columns=None):
     """
-    Returns a JSON schema for a dataframe given a set of indexes and
-    the variable.
+    Returns a JSON schema optionally filtered by a subset of the columns.
 
     Parameters
     ----------

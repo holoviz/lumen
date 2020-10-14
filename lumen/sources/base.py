@@ -6,10 +6,10 @@ import requests
 
 class Source(param.Parameterized):
     """
-    A Source provides a set of tables which declare their indexes and
-    variables. The Source must also be able to return a schema
-    describing the types of the variables and indexes in each table
-    and allow querying the data.
+    A Source provides a set of tables which declare their available
+    fields. The Source must also be able to return a schema describing
+    the types of the variables and indexes in each table and allow
+    querying the data.
     """
 
     source_type = None

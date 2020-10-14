@@ -121,7 +121,7 @@ class Monitor(param.Parameterized):
             item = pn.Column(*(view.panel for view in views), **kwargs)
 
         return pn.Card(
-            item, title=title, **self.kwargs
+            item, title=title, name=title, **self.kwargs
         )
 
     def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True):

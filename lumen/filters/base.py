@@ -15,11 +15,13 @@ class Filter(param.Parameterized):
     returned by a Source.
     """
 
+    field = param.String(doc="The field being filtered.")
+
+    label = param.String(doc="A label for the Filter.")
+
     schema = param.Dict(doc="""
         The JSON schema provided by the Source declaring information
         about the data to be filtered.""" )
-
-    label = param.String(doc="A label for the Filter.")
 
     value = param.Parameter(doc="The current filter value.")
 
@@ -88,8 +90,8 @@ class FacetFilter(Filter):
     @property
     def filters(self):
         return [
-            ConstantFilter(name=self.name, value=value, label=self.label)
-            for value in self.schema[self.name]['enum']
+            ConstantFilter(field=self.field, value=value, label=self.label)
+            for value in self.schema[self.field]['enum']
         ]
 
 
@@ -108,7 +110,7 @@ class WidgetFilter(Filter):
         super(WidgetFilter, self).__init__(**params)
         self.widget = JSONSchema(
             schema=self.schema, sizing_mode='stretch_width'
-        )._widgets[self.name]
+        )._widgets[self.field]
         if isinstance(self.widget, pn.widgets.Select):
             self.widget.options.insert(0, ' ')
             self.widget.value = ' '

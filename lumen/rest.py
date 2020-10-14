@@ -53,8 +53,6 @@ class DataFrameEndpoint(TableEndpoint):
 
     data = param.DataFrame()
 
-    columns = param.List(default=None, doc="The list of columns in the table.")
-
     def __init__(self, **params):
         super().__init__(**params)
         if self.columns is None:
@@ -106,10 +104,9 @@ class ParameterEndpoint(TableEndpoint):
             raise ValueError(f"Columns {not_found} not found in published data.")
 
     def query(self, **kwargs):
-        columns = self.variables + self.index
         objects = list(self.data)
         for k, v in kwargs.items():
-            if k not in columns:
+            if k not in self.columns:
                 self.param.warning(f"Query {k}={v} could not be resolved "
                                    "data does not have queried column.")
             if isinstance(v, list):
@@ -127,10 +124,8 @@ class ParameterEndpoint(TableEndpoint):
             return schema
         properties = schema['items']['properties']
         sample = self.data[0]
-        for var in self.variables:
-            properties[var] = sample.param[var].schema()
-        for index in self.index:
-            properties[index] = sample.param[index].schema()
+        for col in self.columns:
+            properties[col] = sample.param[col].schema()
         return schema
 
 
@@ -146,7 +141,7 @@ def publish(name, obj, columns):
         The object containing the table data. Currently DataFrame
         and Parameterized objects are supported.
     columns: str or list(str)
-        The name or list of names of the variable(s) to publish
+        The name or list of names of the column(s) to publish
     """
     if isinstance(obj, param.Parameterized):
         obj = [obj]
@@ -161,11 +156,11 @@ def publish(name, obj, columns):
     _TABLES[name] = endpoint(data=obj, columns=columns)
 
 
-def unpublish(variable):
+def unpublish(table):
     """
-    Unpublishes a variable which was previously published.
+    Unpublishes a table which was previously published.
     """
-    del _VARIABLES[variable]
+    del _VARIABLES[table]
 
 #-----------------------------------------------------------------------------
 # Private API

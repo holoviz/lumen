@@ -31,27 +31,41 @@ class Dashboard(param.Parameterized):
     specification = param.Filename()
 
     def __init__(self, specification, **params):
+        # Load config
         with open(specification) as f:
             self._spec = yaml.load(f.read(), Loader=yaml.CLoader)
-        self.config = self._spec.get('config', {}) 
+        if not 'targets' in self._spec:
+            raise ValueError('Yaml specification did not declare any targets.')
+        self.config = self._spec.get('config', {})
         super(Dashboard, self).__init__(
             specification=specification, **params
         )
+
+        # Construct template
         tmpl = self.config.get('template', 'material')
-        title = self._spec.get('title', 'Lumen Dashboard')
-        self.template = _templates[tmpl](title=title)
-        if not 'targets' in self._spec:
-            raise ValueError('Yaml specification did not declare any targets.')
+        kwargs = {'title': self.config.get('title', 'Lumen Dashboard')}
+        if 'logo' in self.config:
+            logo = self.config['logo']
+        self.template = _templates[tmpl](**kwargs)
+
+        # Build layouts
         self.filters = pn.Column(margin=0, sizing_mode='stretch_width')
-        self.targets = pn.GridBox(ncols=self.config.get('ncols', 5), margin=10)
-        self._reload()
-        if len(self.filters):
-            self.template.sidebar[:] = [self.filters]
-        self.template.main[:] = [self.targets]
+        layout = self.config.get('layout', 'grid')
+        if layout == 'grid':
+            self.targets = pn.GridBox(ncols=self.config.get('ncols', 5),
+                                      margin=10, sizing_mode='stretch_width')
+        elif layout == 'tabs':
+            self.targets = pn.Tabs(sizing_mode='stretch_width')
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
         self._reload_button.on_click(self._reload_data)
+        self._reload()
+
+        # Populate template
+        if len(self.filters):
+            self.template.sidebar[:] = [self.filters]
+        self.template.main[:] = [self.targets]
         self.template.header.append(self._reload_button)
 
     def _reload_data(self, *events):
@@ -86,7 +100,7 @@ class Dashboard(param.Parameterized):
             source_filters = []
             for filter_spec in target_spec.get('filters', []):
                 filter_spec = dict(filter_spec)
-                filter_name = filter_spec['name']
+                filter_name = filter_spec['field']
                 filter_schema = None
                 for view_schema in schema.values():
                     if filter_name in view_schema:

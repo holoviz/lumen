@@ -14,8 +14,8 @@ class View(param.Parameterized):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
-    the latest data given the current filters and applies all specified
-    `transforms`.
+    the latest data given the current filters and applies all
+    specified `transforms`.
 
     Subclasses should use these methods to query the data and return
     a Viewable Panel object in the `get_panel` method.
@@ -40,7 +40,7 @@ class View(param.Parameterized):
 
     table = param.String(doc="The table being visualized.")
 
-    variable = param.String(doc="The variable being visualized.")
+    field = param.String(doc="The field being visualized.")
 
     view_type = None
 
@@ -101,7 +101,7 @@ class View(param.Parameterized):
         """
         if self._cache is not None:
             return self._cache
-        query = {filt.name: filt.query for filt in self.filters
+        query = {filt.field: filt.query for filt in self.filters
                  if filt.query is not None}
         data = self.source.get(self.table, **query)
         for transform in self.transforms:
@@ -111,31 +111,31 @@ class View(param.Parameterized):
         self._cache = data
         return data
 
-    def get_value(self, variable=None):
+    def get_value(self, field=None):
         """
         Queries the Source for the data associated with a particular
-        variable applying any filters and transformations specified on
+        field applying any filters and transformations specified on
         the View. Unlike `get_data` this method returns a single
-        scalar value associated with the variable and should therefore
+        scalar value associated with the field and should therefore
         only be used if only a single.
 
         Parameters
         ----------
-        variable: str (optional)
-            The variable from the table to return; if None uses
-            variable defined on the View.
+        field: str (optional)
+            The field from the table to return; if None uses
+            field defined on the View.
 
         Returns
         -------
         object
             A single scalar value representing the current value of
-            the queried variable.
+            the queried field.
         """
         data = self.get_data()
         if not len(data):
             return None
         row = data.iloc[-1]
-        return row[self.variable if variable is None else variable]
+        return row[self.field if field is None else field]
 
     def get_panel(self):
         """
@@ -173,12 +173,12 @@ class View(param.Parameterized):
 
 class StringView(View):
     """
-    The StringView renders the latest value of the variable as a HTML
+    The StringView renders the latest value of the field as a HTML
     string with a specified fontsize.
     """
 
     font_size = param.String(default='24pt', doc="""
-        The font size of the rendered variable value.""")
+        The font size of the rendered field value.""")
 
     view_type = 'string'
 
@@ -198,7 +198,7 @@ class StringView(View):
 
 class IndicatorView(View):
     """
-    The IndicatorView renders the latest variable value as a Panel
+    The IndicatorView renders the latest field value as a Panel
     Indicator.
     """
 
@@ -211,7 +211,7 @@ class IndicatorView(View):
 
     def __init__(self, **params):
         super().__init__(**params)
-        name = params.get('label', params.get('variable', ''))
+        name = params.get('label', params.get('field', ''))
         self.kwargs['name'] = name
         self._panel.name = name
 
