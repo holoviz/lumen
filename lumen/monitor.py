@@ -44,7 +44,6 @@ class Monitor(param.Parameterized):
     views = param.List(doc="A list of views to be displayed.")
 
     def __init__(self, **params):
-        views = params.get('views', [])
         sort = params.pop('sort', {})
         params['sort_fields'] = sort_fields = sort.get('fields', [])
         params['sort_reverse'] = sort_reverse = sort.get('reverse', False)

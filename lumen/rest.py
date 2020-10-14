@@ -116,7 +116,7 @@ class ParameterEndpoint(TableEndpoint):
             else:
                 filter_fn = lambda o: getattr(o, k) == v
             objects = list(filter(objects, filter_fn))
-        return [o.param.serialize_parameters(columns) for o in self.objects]
+        return [o.param.serialize_parameters(self.columns) for o in self.objects]
 
     def schema(self):
         schema = super().schema()
@@ -160,7 +160,7 @@ def unpublish(table):
     """
     Unpublishes a table which was previously published.
     """
-    del _VARIABLES[table]
+    del _TABLES[table]
 
 #-----------------------------------------------------------------------------
 # Private API

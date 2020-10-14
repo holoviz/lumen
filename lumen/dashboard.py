@@ -45,7 +45,7 @@ class Dashboard(param.Parameterized):
         tmpl = self.config.get('template', 'material')
         kwargs = {'title': self.config.get('title', 'Lumen Dashboard')}
         if 'logo' in self.config:
-            logo = self.config['logo']
+            kwargs['logo'] = self.config['logo']
         self.template = _templates[tmpl](**kwargs)
 
         # Build layouts

@@ -6,7 +6,6 @@ object.
 import param
 import panel as pn
 
-from ..filters import ConstantFilter
 from ..sources import Source
 
 
@@ -66,7 +65,7 @@ class View(param.Parameterized):
             if view.view_type == view_type:
                 return view
         if view_type is not None:
-            self.param.warning(f"View type '{view_type}' could not be found.")
+            raise ValueError(f"View type '{view_type}' could not be found.")
         return View
 
     def __bool__(self):

@@ -43,7 +43,7 @@ class Transform(param.Parameterized):
         DataFrame
             A DataFrame containing the transformed data.
         """
-        return data
+        return table
 
 
 class HistoryTransform(Transform):
