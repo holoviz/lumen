@@ -66,12 +66,14 @@ class DataFrameEndpoint(TableEndpoint):
 
     def query(self, **kwargs):
         query = None
-        columns = [] if self.data is None else self.data.columns
+        data = self.data
+        columns = [] if self.data is None else list(self.data.columns)
+        selected_cols = kwargs.pop('columns', columns)
         for k, v in kwargs.items():
             if k not in columns:
                 self.param.warning(f"Query {k}={v} could not be resolved "
                                    "data does not have queried column.")
-            column = self.data[k]
+            column = data[k]
             if isinstance(v, list):
                 q = column.isin(v)
             elif isinstance(v, tuple):
@@ -82,6 +84,8 @@ class DataFrameEndpoint(TableEndpoint):
                 query = q
             else:
                 query &= q
+        if selected_cols is not columns:
+            data = data[selected_cols]
         data = self.data if query is None else self.data[query]
         return data.to_json(orient='records')
 

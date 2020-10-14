@@ -88,7 +88,7 @@ class AE5KubeSource(Source):
         if statuses:
             status = statuses[0]
             state = status['state']
-            started = state.get('running', state.get('waiting')).get('startedAt')
+            started = state.get('running', state.get('waiting', {})).get('startedAt')
             record["restarts"] = status['restartCount']
             if started:
                 started_dt = dt.datetime.fromisoformat(started.replace('Z', ''))

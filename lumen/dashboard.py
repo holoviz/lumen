@@ -30,8 +30,6 @@ class Dashboard(param.Parameterized):
 
     specification = param.Filename()
 
-    reload = param.Action(default=lambda x: x._reload())
-
     def __init__(self, specification, **params):
         with open(specification) as f:
             self._spec = yaml.load(f.read(), Loader=yaml.CLoader)
@@ -40,16 +38,16 @@ class Dashboard(param.Parameterized):
             specification=specification, **params
         )
         tmpl = self.config.get('template', 'material')
-        self.template = _templates[tmpl](title=self.config.get('title', 'Monitoring Dashboard'))
-        if not 'sources' in self._spec:
-            raise ValueError('%s did not specify any sources.'
-                             % self.specification)
+        title = self._spec.get('title', 'Lumen Dashboard')
+        self.template = _templates[tmpl](title=title)
+        if not 'targets' in self._spec:
+            raise ValueError('Yaml specification did not declare any targets.')
         self.filters = pn.Column(margin=0, sizing_mode='stretch_width')
-        self.monitors = pn.GridBox(ncols=self.config.get('ncols', 5), margin=10)
+        self.targets = pn.GridBox(ncols=self.config.get('ncols', 5), margin=10)
         self._reload()
         if len(self.filters):
             self.template.sidebar[:] = [self.filters]
-        self.template.main[:] = [self.monitors]
+        self.template.main[:] = [self.targets]
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -57,36 +55,36 @@ class Dashboard(param.Parameterized):
         self.template.header.append(self._reload_button)
 
     def _reload_data(self, *events):
-        for monitor in self._monitors:
-            monitor.update()
+        for target in self._targets:
+            target.update()
 
     def _reload(self, *events):
-        self._monitors = self._resolve_sources(self._spec['sources'])
+        self._targets = self._resolve_sources(self._spec['targets'])
         self._rerender()
         filters = []
-        for monitor in self._monitors:
-            panel = monitor.filter_panel
+        for target in self._targets:
+            panel = target.filter_panel
             if panel is not None:
                 filters.append(panel)
         self.filters[:] = filters
 
     def _rerender(self):
-        self.monitors[:] = [p for monitor in self._monitors for p in monitor.panels]
+        self.targets[:] = [p for target in self._targets for p in target.panels]
 
     def _resolve_sources(self, sources, metadata={}):
-        monitors = []
-        for monitor_spec in sources:
-            monitor_spec = dict(monitor_spec)
+        targets = []
+        for target_spec in sources:
+            target_spec = dict(target_spec)
 
             # Create source
-            source_spec = dict(monitor_spec.pop('source'))
+            source_spec = dict(target_spec.pop('source'))
             source_type = source_spec.pop('type', 'rest')
             source = Source._get_type(source_type)(**source_spec)
             schema = source.get_schema()
 
             # Initialize filters
             source_filters = []
-            for filter_spec in monitor_spec.get('filters', []):
+            for filter_spec in target_spec.get('filters', []):
                 filter_spec = dict(filter_spec)
                 filter_name = filter_spec['name']
                 filter_schema = None
@@ -101,24 +99,25 @@ class Dashboard(param.Parameterized):
                 )
                 source_filters.append(filter_obj)
 
-            # Create monitor
-            monitor_spec['filters'] = source_filters
-            monitor = Monitor(source=source, application=self, schema=schema, **monitor_spec)
-            monitors.append(monitor)
-        return monitors
+            # Create target
+            target_spec['filters'] = source_filters
+            target = Monitor(source=source, application=self, schema=schema, **target_spec)
+            targets.append(target)
+        return targets
 
     def show(self):
         """
-        Opens the monitoring dashboard in a new window.
+        Opens the dashboard in a new window.
         """
         self.template.show()
-        for monitor in self._monitors:
-            monitor.start()
+        for target in self._targets:
+            target.start()
 
     def servable(self):
         """
-        Marks the monitoring dashboard for serving with `panel serve`.
+        Marks the dashboard for serving with `panel serve`.
         """
-        self.template.servable(title=self.config.get('title', 'Monitoring Dashboard'))
-        for monitor in self._monitors:
-            monitor.start()
+        title = self.config.get('title', 'Lumen Dashboard')
+        self.template.servable(title=title)
+        for target in self._targets:
+            target.start()

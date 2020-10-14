@@ -25,7 +25,7 @@ class Source(param.Parameterized):
         for source in param.concrete_descendents(cls).values():
             if source.source_type == source_type:
                 return source
-        return Source
+        raise ValueError(f"No Source for source_type '{source_type}' could be found.")
 
     @classmethod
     def _filter_dataframe(cls, df, **query):
@@ -160,7 +160,7 @@ class PanelSessionSource(Source):
     def get_schema(self, table=None):
         schema = {
             "summary": {
-                "url": {"type": "string"},
+                "url": {"type": "string", "enum": self.urls},
                 "total": {"type": "int"},
                 "live": {"type": "int"},
                 "render_duration": {"type": "float"},
