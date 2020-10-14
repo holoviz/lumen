@@ -5,7 +5,7 @@ The REST specification defines the default format for data to be consumed by the
 - `schema`: Publishes a schema for each variable and all its associated indexes, the schema should follow the [JSON schema](https://json-schema.org/) specification:
 
     - Query: A query may define the variable to return the schema for:
-        `{'variable': <variable>}`
+        `{'table': <table>}`
     - Output:
     ```
     {
@@ -18,15 +18,15 @@ The REST specification defines the default format for data to be consumed by the
     }
     ```
 
-- `data`: This endpoints returns the actual data, it allows querying by one or more indexes:
+- `data`: This endpoints returns the actual data, it also allows filtering the data along the columns with query:
 
-    - Query: A query must contain the variable to be returned and any number of index queries:
-        `{'variable': <variable>, <index>: <value>, ...}`
+    - Query: A query must contain the table to be returned and may optionally provide a subset of columns and filters for the table columns:
+        `{'table': <table>, 'columns': [<column>, ...], <column>: <value>, ...}`
     - Output: It will always return a list of records containing all the metric and filter values:
     ```
     [
-        {<variable>: <value>, <index>: <value>, ...},
-        {<variable>: <value>, <index>: <value>, ...},
+        {<column>: <value>, <column>: <value>, ...},
+        {<column>: <value>, <column>: <value>, ...},
         ...
     ]
     ```
@@ -37,9 +37,9 @@ The REST specification defines the default format for data to be consumed by the
     - Output:
     ```
     {
-        <variable>: [
-            {<variable>: <value>, <index>: <value>, ...},
-            {<variable>: <value>, <index>: <value>, ...},
+        <table>: [
+            {<column>: <value>, <column>: <value>, ...},
+            {<column>: <value>, <column>: <value>, ...},
             ...
         ],
         ...

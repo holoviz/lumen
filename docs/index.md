@@ -12,11 +12,7 @@ Dashboard Specification <dashboard>
 ```
 
 The Lumen project provides a framework to build dashboards from a
-simple yaml specification. It is designed to query information from
-any source, filter it in various ways and then provide views of that
+simple yaml specification. It is designed to query data from any
+source, filter it in various ways and then provide views of that
 information, which can be anything from a simply indicator to a table
 or plot.
-
-A Lumen dashboard can be configured using a minimal yaml specification
-configuring the data source, filters and views, making it easy to view
-and monitor your data.

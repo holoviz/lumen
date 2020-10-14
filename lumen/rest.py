@@ -18,24 +18,22 @@ from .util import get_dataframe_schema
 # General API
 #-----------------------------------------------------------------------------
 
-_VARIABLES = {}
+_TABLES = {}
 
 
-class VariableEndpoint(param.Parameterized):
+class TableEndpoint(param.Parameterized):
     """
-    A VariableEndpoint is an abstract class that publishes data
-    associated with some variable. It consumes some data along with a
-    variable name a one or more indexes and provides APIs for
-    returning the JSON schema of this data and a method to query the
-    data.
+    A TableEndpoint is an abstract class that publishes data
+    associated with some table. It defines an API for querying and
+    publishing a table consisting of multiple columns. In addition to
+    publishing the data the endpoint also defines an API for returning
+    a JSON schema of the table.
     """
 
     data = param.Parameter(doc="The data to publish")
 
-    index = param.List(default=[], doc="List of indexes")
+    columns = param.List(doc="The list of columns in the table.")
 
-    variable = param.String(doc="Name of the variable to publish")
-    
     __abstract = True
 
     def query(self, **kwargs):
@@ -51,26 +49,29 @@ class VariableEndpoint(param.Parameterized):
         return {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
 
 
-class DataFrameEndpoint(VariableEndpoint):
+class DataFrameEndpoint(TableEndpoint):
 
     data = param.DataFrame()
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.variable not in self.data.columns:
-            raise ValueError(f"Variable column {self.variable} not found in published data.")
-        not_found = [index for index in self.index if index not in self.data.columns]
-        if not_found:
-            raise ValueError(f"Indexes {not_found} not found in published data.")
+        if self.columns is None:
+            self.columns = self.data.columns
+        else:
+            not_found = [col for col in self.columns if col not in self.data.columns]
+            if not_found:
+                raise ValueError(f"Columns {not_found} not found in published data.")
 
     def query(self, **kwargs):
         query = None
-        columns = [] if self.data is None else self.data.columns
+        data = self.data
+        columns = [] if self.data is None else list(self.data.columns)
+        selected_cols = kwargs.pop('columns', columns)
         for k, v in kwargs.items():
             if k not in columns:
                 self.param.warning(f"Query {k}={v} could not be resolved "
                                    "data does not have queried column.")
-            column = self.data[k]
+            column = data[k]
             if isinstance(v, list):
                 q = column.isin(v)
             elif isinstance(v, tuple):
@@ -81,6 +82,8 @@ class DataFrameEndpoint(VariableEndpoint):
                 query = q
             else:
                 query &= q
+        if selected_cols is not columns:
+            data = data[selected_cols]
         data = self.data if query is None else self.data[query]
         return data.to_json(orient='records')
 
@@ -88,24 +91,22 @@ class DataFrameEndpoint(VariableEndpoint):
         schema = super().schema()
         if self.data is None:
             return schema
-        return get_dataframe_schema(self.data, self.index, self.variable)
+        return get_dataframe_schema(self.data, self.columns)
 
 
-class ParameterEndpoint(VariableEndpoint):
+class ParameterEndpoint(TableEndpoint):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.data and self.variable not in self.data[0].param:
-            raise ValueError(f"Variable column {self.variable} not found in published data.")
-        not_found = [index for index in self.index if self.data and index not in self.data[0].param]
+        not_found = [col for col in self.columns if self.data is not None
+                     and col not in self.data.columns]
         if not_found:
-            raise ValueError(f"Indexes {not_found} not found in published data.")
+            raise ValueError(f"Columns {not_found} not found in published data.")
 
     def query(self, **kwargs):
-        columns = [self.variable] + self.index
         objects = list(self.data)
         for k, v in kwargs.items():
-            if k not in columns:
+            if k not in self.columns:
                 self.param.warning(f"Query {k}={v} could not be resolved "
                                    "data does not have queried column.")
             if isinstance(v, list):
@@ -115,7 +116,7 @@ class ParameterEndpoint(VariableEndpoint):
             else:
                 filter_fn = lambda o: getattr(o, k) == v
             objects = list(filter(objects, filter_fn))
-        return [o.param.serialize_parameters(columns) for o in self.objects]
+        return [o.param.serialize_parameters(self.columns) for o in self.objects]
 
     def schema(self):
         schema = super().schema()
@@ -123,31 +124,28 @@ class ParameterEndpoint(VariableEndpoint):
             return schema
         properties = schema['items']['properties']
         sample = self.data[0]
-        properties[self.variable] = sample.param[self.variable].schema()
-        for index in self.index:
-            properties[index] = sample.param[index].schema()
-        schema = {'type': 'array', 'items': {'type': 'object', 'properties': properties}}
+        for col in self.columns:
+            properties[col] = sample.param[col].schema()
+        return schema
 
 
-def publish(variable, obj, index=None):
+def publish(name, obj, columns):
     """
-    Publishes a variable with one or more indexes.
+    Publishes a table given an object.
 
     Arguments
     ---------
-    variable: str
-      The name of the variable to publish
+    name: str
+        The name of the table to publish.
     obj: object
-      The object containing the variable data. Currently DataFrame
-      and Parameterized objects are supported.
-    index: str or list(str)
-      An index or list of indexes to publish alongside the variable.
+        The object containing the table data. Currently DataFrame
+        and Parameterized objects are supported.
+    columns: str or list(str)
+        The name or list of names of the column(s) to publish
     """
     if isinstance(obj, param.Parameterized):
         obj = [obj]
-    if index is not None and not isinstance(index, list):
-        index = [index]
-    
+
     if isinstance(obj, pd.DataFrame):
         endpoint = DataFrameEndpoint
     elif isinstance(obj, list) and all(isinstance(o, param.Parameterized) for o in obj):
@@ -155,27 +153,27 @@ def publish(variable, obj, index=None):
     else:
         raise ValueError("Object of type not recognized for publishing")
 
-    _VARIABLES[variable] = endpoint(data=obj, index=index, variable=variable)
-    
+    _TABLES[name] = endpoint(data=obj, columns=columns)
 
-def unpublish(variable):
+
+def unpublish(table):
     """
-    Unpublishes a variable which was previously published.
+    Unpublishes a table which was previously published.
     """
-    del _VARIABLES[variable]
+    del _TABLES[table]
 
 #-----------------------------------------------------------------------------
 # Private API
 #-----------------------------------------------------------------------------
 
-class VariableHandler(web.RequestHandler):
+class TableHandler(web.RequestHandler):
 
     def get(self):
         args = parse_qs(self.request.query)
-        variable = args.pop('variable', None)
-        if not variable:
+        table = args.pop('table', None)
+        if not table:
             return
-        endpoint = _VARIABLES.get(variable[0])
+        endpoint = _TABLES.get(table[0])
         if not endpoint:
             return
         json = endpoint.query(**args)
@@ -187,11 +185,11 @@ class SchemaHandler(web.RequestHandler):
 
     def get(self):
         args = parse_qs(self.request.query)
-        variable = args.pop('variable', None)
-        if variable is None:
-            schema = _VARIABLES[variable].schema()
+        table = args.pop('table', None)
+        if table is None:
+            schema = _TABLES[table].schema()
         else:
-            schema = {variable: endpoint.schema() for variable, endpoint in _VARIABLES.items()}
+            schema = {table: endpoint.schema() for table, endpoint in _TABLES.items()}
         self.set_header('Content-Type', 'application/json')
         self.write(schema)
 
@@ -204,6 +202,6 @@ def lumen_rest_provider(files, endpoint):
     else:
         prefix = r'^/'
     return [
-        (prefix + 'data', VariableHandler),
+        (prefix + 'data', TableHandler),
         (prefix + 'schema', SchemaHandler)
     ]

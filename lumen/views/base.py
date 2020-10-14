@@ -6,7 +6,6 @@ object.
 import param
 import panel as pn
 
-from ..filters import ConstantFilter
 from ..sources import Source
 
 
@@ -14,8 +13,8 @@ class View(param.Parameterized):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
-    the latest data given the current filters and applies all specified
-    `transforms`.
+    the latest data given the current filters and applies all
+    specified `transforms`.
 
     Subclasses should use these methods to query the data and return
     a Viewable Panel object in the `get_panel` method.
@@ -38,109 +37,133 @@ class View(param.Parameterized):
         A list of transforms to apply to the data returned by the
         Source before visualizing it.""")
 
-    variable = param.String(doc="The variable being visualized.")
+    table = param.String(doc="The table being visualized.")
+
+    field = param.String(doc="The field being visualized.")
 
     view_type = None
 
     def __init__(self, **params):
-        super().__init__(**params)
+        self.kwargs = {k: v for k, v in params.items() if k not in self.param}
+        super().__init__(**{k: v for k, v in params.items() if k in self.param})
         self._panel = None
         for filt in self.filters:
-            filt.param.watch(self._update_panel, 'value')
+            filt.param.watch(self.update, 'value')
         self._cache = None
-        self._update_panel(rerender=False)
+        self.update()
 
     @classmethod
     def _get_type(cls, view_type):
         """
-        Returns the matching
+        Returns the matching View type.
         """
+        try:
+            __import__(f'lumen.views.{view_type}')
+        except Exception:
+            pass
         for view in param.concrete_descendents(cls).values():
             if view.view_type == view_type:
                 return view
+        if view_type is not None:
+            raise ValueError(f"View type '{view_type}' could not be found.")
         return View
 
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
 
-    def _update_panel(self, *events, rerender=True):
+    def _update_panel(self, *events):
         """
         Updates the cached Panel object and notifies the containing
         Monitor object if it is stale and has to rerender.
         """
-        self._cache = None
+        try:
+            if self._panel is not None:
+                self.update_panel(self._panel)
+                return
+        except NotImplementedError:
+            pass
         self._panel = self.get_panel()
-        if (rerender and any(not isinstance(f, ConstantFilter) for f in self.filters)):
-            self.monitor._stale = True
+        self.monitor._stale = True
 
     def get_data(self):
         """
-        Queries the Source for the data associated with a particular
-        variable applying any filters and transformations specified on
-        the View. Unlike `get_value` this should be used when multiple
-        return values are expected.
+        Queries the Source for the specified table applying any
+        filters and transformations specified on the View. Unlike
+        `get_value` this should be used when multiple return values
+        are expected.
 
         Returns
         -------
         DataFrame
-            The data associated with a particular variable after
-            filtering and transformations are applied.
+            The queried table after filtering and transformations are
+            applied.
         """
         if self._cache is not None:
             return self._cache
-        query = {filt.name: filt.query for filt in self.filters
+        query = {filt.field: filt.query for filt in self.filters
                  if filt.query is not None}
-        data = self.source.get(self.variable, **query)
+        data = self.source.get(self.table, **query)
         for transform in self.transforms:
             data = transform.apply(data)
+        if len(data):
+            data = self.source._filter_dataframe(data, **query)
         self._cache = data
         return data
 
-    def get_value(self):
+    def get_value(self, field=None):
         """
         Queries the Source for the data associated with a particular
-        variable applying any filters and transformations specified on
+        field applying any filters and transformations specified on
         the View. Unlike `get_data` this method returns a single
-        scalar value associated with the variable and should therefore
+        scalar value associated with the field and should therefore
         only be used if only a single.
+
+        Parameters
+        ----------
+        field: str (optional)
+            The field from the table to return; if None uses
+            field defined on the View.
 
         Returns
         -------
         object
             A single scalar value representing the current value of
-            the queried variable.
+            the queried field.
         """
         data = self.get_data()
         if not len(data):
             return None
-        if len(data) > 1:
-            self.param.warning()
         row = data.iloc[-1]
-        return row[self.variable]
+        return row[self.field if field is None else field]
 
     def get_panel(self):
         """
         Constructs and returns a Panel object which will represent a
-        view of the queried data.
+        view of the queried table.
 
         Returns
         -------
         panel.Viewable
             A Panel Viewable object representing a current
-            representation of the data.
+            representation of the queried table.
         """
         return pn.panel(self.get_data())
 
-    def update(self, rerender=True):
+    def update(self, invalidate_cache=True):
         """
         Triggers an update in the View.
 
         Parameters
         ----------
-        rerender : bool
+        invalidate_cache : bool
             Whether to force a rerender of the containing Monitor.
         """
-        self._update_panel(rerender=rerender)
+        if invalidate_cache:
+            self._cache = None
+        self._update_panel()
+
+    def update_panel(self, panel):
+        raise NotImplementedError
 
     @property
     def panel(self):
@@ -149,12 +172,12 @@ class View(param.Parameterized):
 
 class StringView(View):
     """
-    The StringView renders the latest value of the variable as a HTML
+    The StringView renders the latest value of the field as a HTML
     string with a specified fontsize.
     """
 
     font_size = param.String(default='24pt', doc="""
-        The font size of the rendered variable value.""")
+        The font size of the rendered field value.""")
 
     view_type = 'string'
 
@@ -162,19 +185,23 @@ class StringView(View):
         value = self.get_value()
         if value is None:
             return pn.pane.HTML('No info')
-        return pn.pane.HTML(f'<p style="font-size: {self.font_size}>{value}</p>')
+        return pn.pane.HTML(f'<p style="font-size: {self.font_size}>{value}</p>',
+                            **self.kwargs)
+
+    def update_panel(self, panel):
+        value = self.get_value()
+        if value is None:
+            panel.object = 'No info'
+        panel.object = f'<p style="font-size: {self.font_size}>{value}</p>'
 
 
 class IndicatorView(View):
     """
-    The IndicatorView renders the latest variable value as a Panel
+    The IndicatorView renders the latest field value as a Panel
     Indicator.
     """
 
     indicator = param.String(doc="The name of the panel Indicator type")
-
-    indicator_options = param.Dict(doc="""
-        A dictionary of options to supply to the Indicator.""")
 
     label = param.String(doc="""
         A custom label to use for the Indicator.""")
@@ -182,12 +209,10 @@ class IndicatorView(View):
     view_type = 'indicator'
 
     def __init__(self, **params):
-        self_params = {k: v for k, v in params.items() if k in self.param}
-        options = {
-            k: v for k, v in params.items() if k not in list(self.param)
-        }
-        options['name'] = self_params.pop('label', self_params.get('name', ''))
-        super().__init__(indicator_options=options, **self_params)
+        super().__init__(**params)
+        name = params.get('label', params.get('field', ''))
+        self.kwargs['name'] = name
+        self._panel.name = name
 
     def get_panel(self):
         value = self.get_value()
@@ -201,7 +226,7 @@ class IndicatorView(View):
                              'ensure the indicator option in the spec '
                              'specifies a Panel ValueIndicator that '
                              'exists and has been imported')
-        return indicator(**self.indicator_options, value=self.get_value())
+        return indicator(**self.kwargs, value=self.get_value())
 
 
 class hvPlotView(View):
@@ -217,9 +242,7 @@ class hvPlotView(View):
 
     y = param.String(doc="The column to render on the y-axis.")
 
-    kwargs = param.Dict(default={}, doc="Dictionary of additional kwargs.")
-
-    opts = param.Dict(default={}, doc="HoloVies option to apply on the plot.")
+    opts = param.Dict(default={}, doc="HoloViews option to apply on the plot.")
 
     view_type = 'hvplot'
 
@@ -227,12 +250,20 @@ class hvPlotView(View):
         import hvplot.pandas # noqa
         super().__init__(**params)
 
+    def get_plot(self, df):
+        plot = df.hvplot(
+            kind=self.kind, x=self.x, y=self.y, **self.kwargs
+        )
+        return plot.opts(**self.opts) if self.opts else plot
+
     def get_panel(self):
         df = self.get_data()
         if df is None or not len(df):
             return pn.pane.HTML('No data')
-        plot = df.hvplot(kind=self.kind, x=self.x, y=self.y,
-                         **self.kwargs)
-        if self.opts:
-            plot.opts(**self.opts)
-        return plot
+        return pn.pane.HoloViews(self.get_plot(df))
+
+    def update_panel(self, panel):
+        df = self.get_data()
+        if (df is None or not len(df)) and not isinstance(panel, pn.pane.HTML):
+            raise NotImplementedError
+        panel.object = self.get_plot(df)

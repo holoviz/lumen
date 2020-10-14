@@ -3,39 +3,35 @@ import sys
 from pandas.core.dtypes.dtypes import CategoricalDtype
 
 
-def get_dataframe_schema(df, index, variable):
+def get_dataframe_schema(df, columns=None):
     """
-    Returns a JSON schema for a dataframe given a set of indexes and
-    the variable.
+    Returns a JSON schema optionally filtered by a subset of the columns.
 
     Parameters
     ----------
     df : pandas.DataFrame or dask.DataFrame
         The DataFrame to describe with the schema
-    index: list(str) or str
-        The index or list of indexes
-    variable: str
-        The data variable
+    columns: list(str) or None
+        List of columns to include in schema
 
     Returns
     -------
     dict
         The JSON schema describing the DataFrame
     """
-    if not isinstance(index, list):
-        index = [index]
-
     if 'dask.dataframe' in sys.modules:
         import dask.dataframe as dd
         is_dask = isinstance(df, dd.DataFrame)
     else:
         is_dask = False
 
+    if columns is None:
+        columns = list(df.columns)
+
     schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
     properties = schema['items']['properties']
-    for name, dtype in df.dtypes.iteritems():
-        if name != variable and name not in index:
-            continue
+    for name in columns:
+        dtype = df.dtypes[name]
         column = df[name]
         if dtype.kind in 'uifM':
             vmin, vmax = column.min(), column.max()

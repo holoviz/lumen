@@ -42,60 +42,63 @@ class AE5KubeSource(Source):
         self._resources = None
         self._update_cache()
 
-    def _get_usage(self, name, d, variable):
-        info = self._pod_info[d['id']].get('usage', self._empty)
-        containers = [container for container in info['containers'] if container['name'] == 'app']
-        if not containers:
-            return None
-        container = containers[0]
+    def _get_record(self, name, d):
+        pod_info = self._pod_info[d['id']]
+        usage_info = pod_info.get('usage', self._empty)
+        status_info = pod_info.get('status')
+
         record = {
             "name": name,
             "state": d['state'],
             "owner": d['owner'],
             "resource_profile": d['resource_profile'],
-            "timestamp": info['timestamp']
+            "timestamp": usage_info['timestamp']
         }
-        resource = self._resources[self._resources['name']==d['resource_profile']]
-        usage = container['usage']
-        if variable == 'cpu':
+
+        # Resource usage
+        containers = [
+            container for container in usage_info['containers']
+            if container['name'] == 'app'
+        ]
+        if containers:
+            container = containers[0]
+            resource = self._resources[self._resources['name']==d['resource_profile']]
+            usage = container['usage']
             cpu_cap = int(resource.cpu.item())
             if 'cpu' not in usage or 'm' not in usage['cpu']:
                 cpu = 0
             else:
                 cpu = int(usage['cpu'][:-1])
             record['cpu'] = round(((cpu/1000.) / cpu_cap)*100, 2)
-        else:
             mem_cap = int(resource.memory.item()[:-2])
             if 'memory' not in usage:
                 mem = 0
             else:
                 mem = int(usage['memory'][:-2])
             record['memory'] = round(((mem/1024.) / mem_cap)*100, 2)
-        return record
-
-    def _get_uptime(self, name, d, variable):
-        info = self._pod_info[d['id']].get('status')
-        statuses = [status for status in info['containerStatuses'] if status['name'] == 'app']
-        if not statuses:
-            return None
-
-        status = statuses[0]
-        started = status['state'].get('running', {}).get('startedAt')
-        if variable == 'uptime' and started is None:
-            return
-        record = {
-            "name": name,
-            "state": d['state'],
-            "owner": d['owner'],
-            "resource_profile": d['resource_profile'],
-
-        }
-        if variable == 'uptime':
-            started_dt = dt.datetime.fromisoformat(started.replace('Z', ''))
-            uptime = str(dt.datetime.now()-started_dt)
-            record['uptime'] = uptime[:uptime.index('.')]
         else:
+            record['cpu'] = float('NaN')
+            record['memory'] = float('NaN')
+
+        # Status
+        statuses = [
+            status for status in status_info['containerStatuses']
+            if status['name'] == 'app'
+        ]
+        if statuses:
+            status = statuses[0]
+            state = status['state']
+            started = state.get('running', state.get('waiting', {})).get('startedAt')
             record["restarts"] = status['restartCount']
+            if started:
+                started_dt = dt.datetime.fromisoformat(started.replace('Z', ''))
+                uptime = str(dt.datetime.now()-started_dt)
+                record["uptime"] = uptime[:uptime.index('.')]
+        else:
+            record["restarts"] = float('NaN')
+        if 'uptime' not in record:
+            record["uptime"] = '-' 
+        
         return record
 
     def _get_pod_info(self, pod=None):
@@ -115,54 +118,32 @@ class AE5KubeSource(Source):
 
     # Public API
 
-    def get_schema(self, variable=None):
+    def get_schema(self, table=None):
         name = sorted({d['name'] for d in self._deployment_cache})
         owners = sorted({d['project_owner'] for d in self._deployment_cache})
         state = sorted({d['state'] for d in self._deployment_cache})
         resources = sorted({d['resource_profile'] for d in self._deployment_cache})
         schema = {
-            "cpu": {
+            "deployments": {
                 "name": {"type": "string", "enum": name},
                 "state": {"type": "string", "enum": state},
                 "owner": {"type": "string", "enum": owners},
                 "resource_profile": {"type": "string", "enum": resources},
                 "timestamp": {"type": "string", "format": "datetime"},
-                "cpu": {"type": "number"}
-            },
-            "memory": {
-                "name": {"type": "string", "enum": name},
-                "state": {"type": "string", "enum": state},
-                "owner": {"type": "string", "enum": owners},
-                "resource_profile": {"type": "string", "enum": resources},
-                "timestamp": {"type": "string", "format": "datetime"},
-                "memory": {"type": "number"}
-            },
-            'uptime': {
-                "name": {"type": "string", "enum": name},
-                "state": {"type": "string", "enum": state},
-                "owner": {"type": "string", "enum": owners},
-                "uptime": {"type": "string"},
-                "restarts": {"type": "number"}
-            },
-            'restarts': {
-                "name": {"type": "string", "enum": name},
-                "state": {"type": "string", "enum": state},
-                "owner": {"type": "string", "enum": owners},
+                "cpu": {"type": "number"},
+                "memory": {"type": "number"},
                 "uptime": {"type": "string"},
                 "restarts": {"type": "number"}
             }
         }
-        return schema if variable is None else schema[variable]
+        return schema if table is None else schema[table]
 
-    def get(self, variable, **query):
+    def get(self, table, **query):
         if self._deployment_cache is None:
             self._update_cache()
         records = []
         for name, d in self._deployments.items():
-            if variable in ('cpu', 'memory'):
-                record = self._get_usage(name, d, variable)
-            else:
-                record = self._get_uptime(name, d, variable)
+            record = self._get_record(name, d)
             if record is None:
                 continue
             skip = False

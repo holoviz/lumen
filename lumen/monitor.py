@@ -1,5 +1,6 @@
 import datetime as dt
 
+from functools import partial
 from itertools import product
 
 import param
@@ -17,14 +18,11 @@ class Monitor(param.Parameterized):
     set of filters and views.
     """
 
-    application = param.Parameter(doc="""
-       The overall monitoring application.""")
-
-    current = param.List()
-
-    height = param.Integer(default=400, doc="Height of the monitor cards.")
+    application = param.Parameter(doc="The overall monitoring application.")
 
     filters = param.List(doc="A list of filters to be rendered.")
+
+    layout = param.ObjectSelector(default='column', objects=['row', 'column', 'grid'])
 
     sort_fields = param.List(default=[], doc="List of fields to sort by.")
 
@@ -34,12 +32,6 @@ class Monitor(param.Parameterized):
     schema = param.Dict()
 
     title = param.String(doc="A title for this monitor.")
-
-    layout = param.ObjectSelector(default='column', objects=['row', 'column', 'grid'])
-
-    sizing_mode = param.ObjectSelector(default='fixed', objects=[
-        'stretch_width', 'stretch_both', 'stretch_height', 'fixed'], doc="""
-        Sizing mode to apply to the views.""")
 
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
@@ -51,17 +43,15 @@ class Monitor(param.Parameterized):
 
     views = param.List(doc="A list of views to be displayed.")
 
-    width = param.Integer(default=400, doc="Width of the monitor cards.")
-
     def __init__(self, **params):
-        views = params.get('views', [])
         sort = params.pop('sort', {})
         params['sort_fields'] = sort_fields = sort.get('fields', [])
         params['sort_reverse'] = sort_reverse = sort.get('reverse', False)
         self._sort_widget = pn.widgets.MultiSelect(
-            options=[m.get('name') for m in views],
-            sizing_mode='stretch_width', value=sort_fields,
-            size=len(views)
+            options=sort_fields,
+            sizing_mode='stretch_width',
+            size=len(sort_fields),
+            value=sort_fields,
         )
         self._reverse_widget = pn.widgets.Checkbox(
             value=sort_reverse, name='Reverse', margin=(5, 0, 0, 10)
@@ -70,11 +60,12 @@ class Monitor(param.Parameterized):
             name='↻', width=50, css_classes=['reload'], margin=0
         )
         self._reload_button.on_click(self.update)
-        super(Monitor, self).__init__(**params)
+        self.kwargs = {k: v for k, v in params.items() if k not in self.param}
+        super().__init__(**{k: v for k, v in params.items() if k in self.param})
         self._cards = []
         self._cache = {}
-        self._stale = False
         self._cb = None
+        self._stale = False
         self.timestamp = pn.pane.HTML(
             f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
             align='end', margin=10, sizing_mode='stretch_width'
@@ -83,14 +74,139 @@ class Monitor(param.Parameterized):
         for filt in self.filters:
             if isinstance(filt, FacetFilter):
                 continue
-            filt.param.watch(self._rerender, 'value')
+            filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
 
     @pn.depends('_sort_widget.value', '_reverse_widget.value', watch=True)
     def _resort(self, *events):
         self.sort_fields = self._sort_widget.value
         self.sort_reverse = self._reverse_widget.value
-        self._update_views()
-        self.application._rerender()
+        self._rerender(update_views=False)
+
+    def _get_transforms(self, transform_specs):
+        transforms = []
+        for transform in transform_specs:
+            transform = dict(transform)
+            transform_type = transform.pop('type', None)
+            transform = Transform._get_type(transform_type)(**transform)
+            transforms.append(transform)
+        return transforms
+
+    def _get_view(self, view_spec, filters):
+        view_type = view_spec.pop('type', None)
+        transform_specs = view_spec.pop('transforms', [])
+        transforms = self._get_transforms(transform_specs)
+        view = View._get_type(view_type)(
+            source=self.source, filters=filters,
+            transforms=transforms, monitor=self,
+            **view_spec
+        )
+        return view
+
+    def _get_sort_key(self, views):
+        sort_key = []
+        for field in self.sort_fields:
+            values = [v.get_value(field) for v in views]
+            if values:
+                sort_key.append(values[0])
+        return tuple(sort_key)
+
+    def _construct_card(self, title, views):
+        kwargs = self.kwargs
+        if self.layout == 'row':
+            item = pn.Row(*(view.panel for view in views), **kwargs)
+        elif self.layout == 'grid':
+            item = pn.GridBox(*(view.panel for view in views), ncols=2, **kwargs)
+        else:
+            item = pn.Column(*(view.panel for view in views), **kwargs)
+
+        return pn.Card(
+            item, title=title, name=title, **self.kwargs
+        )
+
+    def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True):
+        view_filters = filters + list(facet_filters)
+        key = (tuple(str(f.value) for f in facet_filters) +
+               tuple(id(view) for view in self.views))
+
+        if key in self._cache:
+            card, views = self._cache[key]
+        else:
+            card = None
+            views = [self._get_view(dict(view_spec), view_filters)
+                     for view_spec in self.views]
+        if not any(view for view in views):
+            return None, None
+
+        sort_key = self._get_sort_key(views)
+
+        if facet_filters:
+            title = ' '.join([f'{f.label}: {f.value}' for f in facet_filters])
+        else:
+            title = self.title
+
+        if card is None:
+            card = self._construct_card(title, views)
+            self._cache[key] = (card, views)
+        else:
+            card.title = title
+            if update_views:
+                for view in views:
+                    view.update(invalidate_cache)
+        return sort_key, card
+
+    def _update_views(self, invalidate_cache=True, update_views=True):
+        filters = [filt for filt in self.filters
+                   if not isinstance(filt, FacetFilter)]
+        facets = [filt.filters for filt in self.filters
+                  if isinstance(filt, FacetFilter)]
+        cards = []
+        for facet_filters in product(*facets):
+            key, card = self._get_card(
+                filters, facet_filters, invalidate_cache, update_views
+            )
+            if card is None:
+                continue
+            cards.append((key, card))
+
+        if self.sort_fields:
+            cards = sorted(cards, key=lambda x: x[0])
+            if self.sort_reverse:
+                cards = cards[::-1]
+
+        cards = [card for _, card in cards]
+        if cards != self._cards:
+            self._cards[:] = cards
+            self._stale = True
+
+    def _rerender(self, *events, invalidate_cache=False, update_views=True):
+        self._update_views(invalidate_cache, update_views)
+        if self._stale:
+            self.application._rerender()
+            self._stale = False
+
+    # Public API
+
+    @property
+    def filter_panel(self):
+        views = []
+        filters = [filt.panel for filt in self.filters if filt.panel is not None]
+        if filters:
+            views.append(pn.pane.Markdown('### Filters', margin=(0, 5)))
+            views.extend(filters)
+            views.append(pn.layout.Divider())
+        if self.sort_fields:
+            views.extend([
+                pn.pane.Markdown('### Sort', margin=(0, 5)),
+                self._sort_widget,
+                self._reverse_widget
+            ])
+            views.append(pn.layout.Divider())
+        views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))
+        return pn.Card(*views, title=self.title, sizing_mode='stretch_width') if views else None
+
+    @property
+    def panels(self):
+        return self._cards
 
     @pn.depends('refresh_rate', watch=True)
     def start(self, event=None):
@@ -104,97 +220,7 @@ class Monitor(param.Parameterized):
                 self.update, refresh_rate
             )
 
-    def _instantiate_transforms(self, transform_specs):
-        transforms = []
-        for transform in transform_specs:
-            transform = dict(transform)
-            transform_type = transform.pop('type', None)
-            transform = Transform._get_type(transform_type)(**transform)
-            transforms.append(transform)
-        return transforms
-
-    @pn.depends('current')
-    def _update_views(self):
-        filters = [filt for filt in self.filters
-                   if not isinstance(filt, FacetFilter)]
-        facets = [filt.filters for filt in self.filters
-                  if isinstance(filt, FacetFilter)]
-        cards = []
-        for facet_filters in product(*facets):
-            views = []
-            view_filters = filters + list(facet_filters)
-            key = tuple(str(f.value) for f in facet_filters)
-            for view_spec in self.views:
-                view_spec = dict(view_spec)
-                view_type = view_spec.pop('type', None)
-                transform_specs = view_spec.pop('transforms', [])
-                transforms = self._instantiate_transforms(transform_specs)
-                view_key = key+(view_spec['variable'],)
-                if view_key not in self._cache:
-                    view = View._get_type(view_type)(
-                        source=self.source, filters=view_filters,
-                        transforms=transforms, monitor=self, **view_spec
-                    )
-                    self._cache[view_key] = view
-                else:
-                    view = self._cache.get(view_key)
-                    view.update(rerender=False)
-                if view:
-                    views.append(view)
-            if not views:
-                continue
-
-            sort_key = []
-            for field in self.sort_fields:
-                values = [m.get_value() for m in views if m.name == field]
-                if values:
-                    sort_key.append(values[0])
-
-            if facet_filters:
-                title = ' '.join([f'{f.label}: {f.value}' for f in facet_filters])
-            else:
-                title = self.title
-
-            if self.layout == 'row':
-                item = pn.Row(*(view.panel for view in views))
-            elif self.layout == 'grid':
-                item = pn.GridBox(*(view.panel for view in views), ncols=2)
-            else:
-                item = pn.Column(*(view.panel for view in views))
-            item.sizing_mode = self.sizing_mode
-
-            card = pn.Card(
-                item, height=self.height, width=self.width, title=title,
-                sizing_mode=self.sizing_mode
-            )
-            cards.append((tuple(sort_key), card))
-        if self.sort_fields:
-            cards = sorted(cards, key=lambda x: x[0])
-            if self.sort_reverse:
-                cards = cards[::-1]
-        self._cards[:] = [card for _, card in cards]
-
-    def _rerender(self, *events):
-        if not self._stale:
-            return
-        self._update_views()
-        self.application._rerender()
-
     def update(self, *events):
         self.source.clear_cache()
         self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
-        self._update_views()
-
-    @property
-    def panels(self):
-        return self._cards
-
-    @property
-    def filter_panel(self):
-        views = [pn.pane.Markdown('### Filters', margin=(0, 5))]
-        views.extend([filt.panel for filt in self.filters if filt.panel is not None])
-        views.append(pn.layout.Divider())
-        views.extend([pn.pane.Markdown('### Sort', margin=(0, 5)), self._sort_widget, self._reverse_widget])
-        views.append(pn.layout.Divider())
-        views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))
-        return pn.Card(*views, title=self.title, sizing_mode='stretch_width') if views else None
+        self._rerender(invalidate_cache=True)

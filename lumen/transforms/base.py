@@ -1,6 +1,5 @@
 """
-A Transform component is given the data for a particular variable and
-transforms it.
+The Transform components allow transforming tables in arbitrary ways.
 """
 
 import datetime as dt
@@ -11,7 +10,7 @@ import param
 
 class Transform(param.Parameterized):
     """
-    A Transform provides the ability to transform the data supplied by
+    A Transform provides the ability to transform a table supplied by
     a Source.
     """
 
@@ -21,26 +20,30 @@ class Transform(param.Parameterized):
 
     @classmethod
     def _get_type(cls, transform_type):
+        try:
+            __import__(f'lumen.transforms.{transform_type}')
+        except Exception:
+            pass
         for transform in param.concrete_descendents(cls).values():
             if transform.transform_type == transform_type:
                 return transform
         raise ValueError(f"No Transform for transform_type '{transform_type}' could be found.")
 
-    def apply(self, data):
+    def apply(self, table):
         """
-        Given some data transform it in some way and return it.
+        Given a table transform it in some way and return it.
 
         Parameters
         ----------
-        data : pandas.DataFrame
-            The queried data as a pandas DataFrame.
+        table : DataFrame
+            The queried table as a DataFrame.
 
         Returns
         -------
-        pandas.DataFrame
+        DataFrame
             A DataFrame containing the transformed data.
         """
-        return data
+        return table
 
 
 class HistoryTransform(Transform):
@@ -62,7 +65,7 @@ class HistoryTransform(Transform):
         super().__init__(**params)
         self._buffer = []
 
-    def apply(self, data):
+    def apply(self, table):
         """
         Accumulates a history of the data in a buffer up to the
         declared `length` and optionally adds the current datetime to
@@ -70,17 +73,17 @@ class HistoryTransform(Transform):
 
         Parameters
         ----------
-        data : pandas.DataFrame
-            The queried data as a pandas DataFrame.
+        data : DataFrame
+            The queried table as a DataFrame.
 
         Returns
         -------
-        pandas.DataFrame
+        DataFrame
             A DataFrame containing the buffered history of the data.
         """
         if self.date_column:
-            data = data.copy()
-            data[self.date_column] = dt.datetime.now()
-        self._buffer.append(data)
+            table = table.copy()
+            table[self.date_column] = dt.datetime.now()
+        self._buffer.append(table)
         self._buffer[:] = self._buffer[-self.length:]
         return pd.concat(self._buffer)

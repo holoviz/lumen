@@ -6,10 +6,10 @@ import requests
 
 class Source(param.Parameterized):
     """
-    A Source provides a set of named variables and associated indexes
-    which can be queried. The Source must also be able to return a
-    schema describing the types of the variables and indexes in the
-    data.
+    A Source provides a set of tables which declare their available
+    fields. The Source must also be able to return a schema describing
+    the types of the variables and indexes in each table and allow
+    querying the data.
     """
 
     source_type = None
@@ -25,7 +25,7 @@ class Source(param.Parameterized):
         for source in param.concrete_descendents(cls).values():
             if source.source_type == source_type:
                 return source
-        return Source
+        raise ValueError(f"No Source for source_type '{source_type}' could be found.")
 
     @classmethod
     def _filter_dataframe(cls, df, **query):
@@ -59,39 +59,38 @@ class Source(param.Parameterized):
             df = df[mask]
         return df
 
-    def get_schema(self, variable=None):
+    def get_schema(self, table=None):
         """
-        Returns JSON schema describing the data returned by the
+        Returns JSON schema describing the tables returned by the
         Source.
 
         Parameters
         ----------
-        variable : str or None
-            The name of the variable to return the schema for. If None
-            returns schema for all available variables.
+        table : str or None
+            The name of the table to return the schema for. If None
+            returns schema for all available tables.
 
         Returns
         -------
         dict
-           JSON schema describing the types of the data.
+           JSON schema(s) for one or all the tables.
         """
 
-    def get(self, variable, **query):
+    def get(self, table, **query):
         """
-        Return data for a particular variable given a query.
+        Return a table; optionally filtered by the given query.
 
         Parameters
         ----------
-        variable : str
-            The name of the variable to query
+        table : str
+            The name of the table to query
         query : dict
             A dictionary containing all the query parameters
 
         Returns
         -------
         DataFrame
-           A DataFrame containing the indexes and data variables
-           declared in the schema.
+           A DataFrame containing the queried table.
         """
 
     def clear_cache(self):
@@ -110,14 +109,14 @@ class RESTSource(Source):
 
     source_type = 'rest'
 
-    def get_schema(self, variable=None):
-        query = {} if variable is None else {'variable': variable}
+    def get_schema(self, table=None):
+        query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
-        return {var: schema['items']['properties'] for var, schema in
+        return {table: schema['items']['properties'] for table, schema in
                 response.json().items()}
 
-    def get(self, variable, **query):
-        query = dict(variable=variable, **query)
+    def get(self, table, **query):
+        query = dict(table=table, **query)
         r = requests.get(self.url+'/data', params=query)
         return pd.DataFrame(r.json())
 
@@ -127,20 +126,90 @@ class WebsiteSource(Source):
     Queries whether a website responds with a 400 status code.
     """
 
-    url = param.String(doc="URL of the website to monitor.")
+    urls = param.List(doc="URLs of the websites to monitor.")
 
     source_type = 'live'
 
-    def get_schema(self, variable=None):
+    def get_schema(self, table=None):
         schema = {
-            "live": {
-                "live": {"type": "boolean"},
-                "url": {"type": "string"}
+            "status": {
+                "url": {"type": "string"},
+                "live": {"type": "boolean"}
             }
         }
-        return schema if variable is None else schema[variable]
+        return schema if table is None else schema[table]
 
-    def get(self, variable, **query):
-        r = requests.get(self.url)
-        return pd.DataFrame([{"live": r.status_code == 200, "url": self.url}])
+    def get(self, table, **query):
+        data = []
+        for url in self.urls:
+            try:
+                r = requests.get(url)
+                live = r.status_code == 200
+            except Exception:
+                live = False
+            data.append({"live": live, "url": self.url})
+        return pd.DataFrame(data)
 
+
+class PanelSessionSource(Source):
+
+    urls = param.List(doc="URL of the websites to monitor.")
+
+    source_type = 'session_info'
+
+    def get_schema(self, table=None):
+        schema = {
+            "summary": {
+                "url": {"type": "string", "enum": self.urls},
+                "total": {"type": "int"},
+                "live": {"type": "int"},
+                "render_duration": {"type": "float"},
+                "session_duration": {"type": "float"}
+            },
+            "sessions": {
+                "url": {"type": "string", "enum": self.urls},
+                "id": {"type": "string"},
+                "started": {"type": "float"},
+                "ended": {"type": "float"},
+                "rendered": {"type": "float"},
+                "render_duration": {"type": "float"},
+                "session_duration": {"type": "float"},
+                "user_agent": {"type": "string"}
+            }
+        }
+        return schema if table is None else schema[table]
+
+    def get(self, table, **query):
+        data = []
+        for url in self.urls:
+            r = requests.get(url).json()
+            session_info = r['session_info']
+            sessions = session_info['sessions']
+            if table == "summary":
+                rendered = [s for s in sessions.values()
+                            if s['rendered'] is not None]
+                ended = [s for s in sessions.values()
+                         if s['ended'] is not None]
+                row = {
+                    'url': url,
+                    'total': session_info['total'],
+                    'live': session_info['live'],
+                    'render_duration': np.mean([s['rendered']-s['started']
+                                                for s in rendered]),
+                    'session_duration': np.mean([s['ended']-s['started']
+                                                for s in ended])
+                }
+                data.append(row)
+            elif table == "sessions":
+                for sid, session in sessions.items():
+                    row = dict(url=url, id=sid, **session)
+                    if session["rendered"]:
+                        row["render_duration"] = session["rendered"]-session["started"]
+                    else:
+                        row["render_duration"] = float('NaN')
+                    if session["ended"]:
+                        row["session_duration"] = session["ended"]-session["started"]
+                    else:
+                        row["session_duration"] = float('NaN')
+                    data.push(row)
+        return pd.DataFrame(data)
