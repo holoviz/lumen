@@ -115,7 +115,9 @@ class Monitor(param.Parameterized):
         if self.layout == 'row':
             item = pn.Row(*(view.panel for view in views), **kwargs)
         elif self.layout == 'grid':
-            item = pn.GridBox(*(view.panel for view in views), ncols=2, **kwargs)
+            if 'ncols' not in kwargs:
+                kwargs['ncols'] = 2
+            item = pn.GridBox(*(view.panel for view in views), **kwargs)
         else:
             item = pn.Column(*(view.panel for view in views), **kwargs)
 
