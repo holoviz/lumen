@@ -215,9 +215,6 @@ class IndicatorView(View):
         self._panel.name = name
 
     def get_panel(self):
-        value = self.get_value()
-        if value is None:
-            return pn.pane.HTML('No info')
         indicators = param.concrete_descendents(pn.widgets.indicators.ValueIndicator)
         indicator_name = self.indicator[0].upper() + self.indicator[1:]
         indicator = indicators.get(indicator_name)
@@ -264,6 +261,4 @@ class hvPlotView(View):
 
     def update_panel(self, panel):
         df = self.get_data()
-        if (df is None or not len(df)) and not isinstance(panel, pn.pane.HTML):
-            raise NotImplementedError
         panel.object = self.get_plot(df)

@@ -123,7 +123,8 @@ class Dashboard(param.Parameterized):
         """
         Opens the dashboard in a new window.
         """
-        self.template.show()
+        title = self.config.get('title', 'Lumen Dashboard')
+        self.template.show(title=title)
         for target in self._targets:
             target.start()
 

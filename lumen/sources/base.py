@@ -46,6 +46,8 @@ class Source(param.Parameterized):
         """
         filters = []
         for k, val in query.items():
+            if k not in df.columns:
+                continue
             if np.isscalar(val):
                 filters.append(df[k] == val)
             elif isinstance(val, list):
@@ -214,12 +216,16 @@ class PanelSessionSource(Source):
         return schema if table is None else schema[table]
 
     def get(self, table, **query):
-        cached = self._get_cache(table, **query)
+        cached = self._get_cache(table)
         if cached is not None:
-            return cached
+            return self._filter_dataframe(cached, **query)
         data = []
         for url in self.urls:
-            r = requests.get(url + self.endpoint, verify=False).json()
+            try:
+                r = requests.get(url + self.endpoint, verify=False,
+                                 timeout=(0.5, 2)).json()
+            except Exception:
+                continue
             session_info = r['session_info']
             sessions = session_info['sessions']
             if table == "summary":
@@ -249,9 +255,9 @@ class PanelSessionSource(Source):
                     else:
                         row["session_duration"] = float('NaN')
                 data.push(row)
-        df = pd.DataFrame(data)
-        self._set_cache(df, table, **query)
-        return df
+        df = pd.DataFrame(data, columns=list(self.get_schema(table)))
+        self._set_cache(df, table)
+        return self._filter_dataframe(df, **query)
 
 
 class JoinedSource(Source):
@@ -361,3 +367,8 @@ class JoinedSource(Source):
                               right_on=spec.get('index'))
         self._set_cache(df, table, **query)
         return df
+
+    def clear_cache(self):
+        super().clear_cache()
+        for source in self._sources.values():
+            source.clear_cache()

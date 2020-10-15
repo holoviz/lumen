@@ -160,7 +160,10 @@ class AE5KubeSource(Source):
             if skip:
                 continue
             records.append(record)
-        df = pd.DataFrame(records)
+        df = pd.DataFrame(records, columns=[
+            'name', 'state', 'owner', 'resource_profile', 'timestamp',
+            'url', 'cpu', 'memory', 'uptime', 'restarts'
+        ])
         self._set_cache(df, table, **query)
         return df
 
