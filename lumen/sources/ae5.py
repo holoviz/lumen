@@ -51,6 +51,7 @@ class AE5KubeSource(Source):
             "name": name,
             "state": d['state'],
             "owner": d['owner'],
+            "url": d['url'],
             "resource_profile": d['resource_profile'],
             "timestamp": usage_info['timestamp']
         }
@@ -121,6 +122,7 @@ class AE5KubeSource(Source):
     def get_schema(self, table=None):
         name = sorted({d['name'] for d in self._deployment_cache})
         owners = sorted({d['project_owner'] for d in self._deployment_cache})
+        urls = sorted({d['url'] for d in self._deployment_cache})
         state = sorted({d['state'] for d in self._deployment_cache})
         resources = sorted({d['resource_profile'] for d in self._deployment_cache})
         schema = {
@@ -130,6 +132,7 @@ class AE5KubeSource(Source):
                 "owner": {"type": "string", "enum": owners},
                 "resource_profile": {"type": "string", "enum": resources},
                 "timestamp": {"type": "string", "format": "datetime"},
+                "url": {"type": "string", "enum": urls},
                 "cpu": {"type": "number"},
                 "memory": {"type": "number"},
                 "uptime": {"type": "string"},
@@ -139,6 +142,9 @@ class AE5KubeSource(Source):
         return schema if table is None else schema[table]
 
     def get(self, table, **query):
+        cached = self._get_cache(table, **query)
+        if cached is not None:
+            return cached
         if self._deployment_cache is None:
             self._update_cache()
         records = []
@@ -154,9 +160,12 @@ class AE5KubeSource(Source):
             if skip:
                 continue
             records.append(record)
-        return pd.DataFrame(records)
+        df = pd.DataFrame(records)
+        self._set_cache(df, table, **query)
+        return df
 
     def clear_cache(self):
+        self._cache = {}
         self._deployment_cache = None
         self._deployments.clear()
         self._resources = None

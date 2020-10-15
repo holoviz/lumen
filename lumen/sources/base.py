@@ -59,6 +59,27 @@ class Source(param.Parameterized):
             df = df[mask]
         return df
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._cache = {}
+
+    def _get_key(self, table, **query):
+        key = (table,)
+        for k, v in sorted(query.items()):
+            if isinstance(v, list):
+                v = tuple(v)
+            key += (k, v)
+        return key
+
+    def _get_cache(self, table, **query):
+        key = self._get_key(table, **query)
+        if key in self._cache:
+            return self._cache[key]
+
+    def _set_cache(self, data, table, **query):
+        key = self._get_key(table, **query)
+        self._cache[key] = data
+
     def get_schema(self, table=None):
         """
         Returns JSON schema describing the tables returned by the
@@ -97,6 +118,7 @@ class Source(param.Parameterized):
         """
         Clears any cached data.
         """
+        self._cache = {}
 
 
 class RESTSource(Source):
@@ -116,9 +138,14 @@ class RESTSource(Source):
                 response.json().items()}
 
     def get(self, table, **query):
+        cached = self._get_cache(table, **query)
+        if cached is not None:
+            return cached
         query = dict(table=table, **query)
         r = requests.get(self.url+'/data', params=query)
-        return pd.DataFrame(r.json())
+        df = pd.DataFrame(r.json())
+        self._set_cache(df, table, **query)
+        return df
 
 
 class WebsiteSource(Source):
@@ -140,6 +167,9 @@ class WebsiteSource(Source):
         return schema if table is None else schema[table]
 
     def get(self, table, **query):
+        cached = self._get_cache(table, **query)
+        if cached is not None:
+            return cached
         data = []
         for url in self.urls:
             try:
@@ -148,10 +178,14 @@ class WebsiteSource(Source):
             except Exception:
                 live = False
             data.append({"live": live, "url": self.url})
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        self._set_cache(df, table, **query)
+        return df
 
 
 class PanelSessionSource(Source):
+
+    endpoint = param.String(default="rest/session_info")
 
     urls = param.List(doc="URL of the websites to monitor.")
 
@@ -180,9 +214,12 @@ class PanelSessionSource(Source):
         return schema if table is None else schema[table]
 
     def get(self, table, **query):
+        cached = self._get_cache(table, **query)
+        if cached is not None:
+            return cached
         data = []
         for url in self.urls:
-            r = requests.get(url).json()
+            r = requests.get(url + self.endpoint, verify=False).json()
             session_info = r['session_info']
             sessions = session_info['sessions']
             if table == "summary":
@@ -211,5 +248,116 @@ class PanelSessionSource(Source):
                         row["session_duration"] = session["ended"]-session["started"]
                     else:
                         row["session_duration"] = float('NaN')
-                    data.push(row)
-        return pd.DataFrame(data)
+                data.push(row)
+        df = pd.DataFrame(data)
+        self._set_cache(df, table, **query)
+        return df
+
+
+class JoinedSource(Source):
+    """
+    A JoinedSource applies a join on two or more sources returning
+    new table(s) with data from all sources. It iterates over the
+    `tables` specification and merges the specified tables from the
+    declared sources on the supplied index.
+
+    In this way multiple tables from multiple sources can be merged.
+    Individual tables from sources that should not be joined may also
+    be surfaced by declaring a single source and table in the
+    specification.
+
+    As a simple example we may have sources A and B, which contain
+    tables 'foo' and 'bar' respectively. We now want to merge these
+    tables on column 'a' in Table A with column 'b' in Table B:
+
+        {'new_table': [
+          {'source': 'A', 'table': 'foo', 'index': 'a'},
+          {'source': 'B', 'table': 'bar', 'index': 'b'}
+        ]}
+
+    The joined source will now publish the "new_table" with all
+    columns from tables "foo" and "bar" except for the index column
+    from table "bar", which was merged with the index column "a" from
+    table "foo".
+    """
+
+    sources = param.Dict(default={}, doc="""
+        A dictionary of sources indexed by their assigned name.""")
+
+    tables = param.Dict(default={}, doc="""
+        A dictionary with the names of the joined sources as keys
+        and a specification of the source, table and index to merge
+        on.
+
+        {"new_table": [
+            {'source': <source_name>,
+             'table': <table_name>,
+             'index': <index_name>
+            },
+            {'source': <source_name>,
+             'table': <table_name>,
+             'index': <index_name>
+            },
+            ...
+        ]}""")
+
+    source_type = 'join'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._sources = {}
+        for name, source_spec in self.sources.items():
+            source_spec = dict(source_spec)
+            source_type = source_spec.pop('type')
+            self._sources[name] = Source._get_type(source_type)(**source_spec)
+
+    def get_schema(self, table=None):
+        schemas = {}
+        for name, specs in self.tables.items():
+            if table is not None and name != table:
+                continue
+            schemas[name] = schema = {}
+            for spec in specs:
+                source, subtable = spec['source'], spec['table']
+                table_schema = self._sources[source].get_schema(subtable)
+                if not schema:
+                    schema.update(table_schema)
+                else:
+                    for column, col_schema in table_schema.items():
+                        prev_schema = schema.get(column)
+                        if prev_schema is None:
+                            schema[column] = col_schema
+                        elif col_schema['type'] != prev_schema['type']:
+                            continue
+                        elif 'enum' in col_schema and 'enum' in prev_schema:
+                            prev_enum = schema[column]['enum']
+                            for enum in col_schema['enum']:
+                                if enum not in prev_enum:
+                                    prev_enum.append(enum)
+                        elif 'inclusiveMinimum' in col_schema and 'inclusiveMinimum' in prev_schema:
+                            prev_schema['inclusiveMinimum'] = min(
+                                col_schema['inclusiveMinimum'],
+                                prev_schema['inclusiveMinimum']
+                            )
+                            prev_schema['inclusiveMaximum'] = max(
+                                col_schema['inclusiveMaximum'],
+                                prev_schema['inclusiveMaximum']
+                            )
+        return schemas if table is None else schemas[table]
+
+    def get(self, table, **query):
+        cached = self._get_cache(table, **query)
+        if cached is not None:
+            return cached
+        df = None
+        for spec in self.tables[table]:
+            source, subtable = spec['source'], spec['table']
+            df_merge = self._sources[source].get(subtable, **query)
+            if df is None:
+                df = df_merge
+                left_key = spec.get('index')
+            else:
+                df = pd.merge(df, df_merge, left_on=left_key,
+                              right_on=spec.get('index'))
+        self._set_cache(df, table, **query)
+        return df
