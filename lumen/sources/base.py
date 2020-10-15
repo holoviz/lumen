@@ -361,3 +361,8 @@ class JoinedSource(Source):
                               right_on=spec.get('index'))
         self._set_cache(df, table, **query)
         return df
+
+    def clear_cache(self):
+        super().clear_cache()
+        for source in self._sources.values():
+            source.clear_cache()

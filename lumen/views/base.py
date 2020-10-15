@@ -216,8 +216,6 @@ class IndicatorView(View):
 
     def get_panel(self):
         value = self.get_value()
-        if value is None:
-            return pn.pane.HTML('No info')
         indicators = param.concrete_descendents(pn.widgets.indicators.ValueIndicator)
         indicator_name = self.indicator[0].upper() + self.indicator[1:]
         indicator = indicators.get(indicator_name)
