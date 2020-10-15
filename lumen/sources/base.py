@@ -257,7 +257,28 @@ class PanelSessionSource(Source):
 class JoinedSource(Source):
     """
     A JoinedSource applies a join on two or more sources returning
-    new table(s) with data from both sources.
+    new table(s) with data from all sources. It iterates over the
+    `tables` specification and merges the specified tables from the
+    declared sources on the supplied index.
+
+    In this way multiple tables from multiple sources can be merged.
+    Individual tables from sources that should not be joined may also
+    be surfaced by declaring a single source and table in the
+    specification.
+
+    As a simple example we may have sources A and B, which contain
+    tables 'foo' and 'bar' respectively. We now want to merge these
+    tables on column 'a' in Table A with column 'b' in Table B:
+
+        {'new_table': [
+          {'source': 'A', 'table': 'foo', 'index': 'a'},
+          {'source': 'B', 'table': 'bar', 'index': 'b'}
+        ]}
+
+    The joined source will now publish the "new_table" with all
+    columns from tables "foo" and "bar" except for the index column
+    from table "bar", which was merged with the index column "a" from
+    table "foo".
     """
 
     sources = param.Dict(default={}, doc="""
@@ -297,7 +318,7 @@ class JoinedSource(Source):
                 continue
             schemas[name] = schema = {}
             for spec in specs:
-                source, subtable, key = spec['source'], spec['table'], spec['index']
+                source, subtable = spec['source'], spec['table']
                 table_schema = self._sources[source].get_schema(subtable)
                 if not schema:
                     schema.update(table_schema)
@@ -330,12 +351,13 @@ class JoinedSource(Source):
             return cached
         df = None
         for spec in self.tables[table]:
-            source, subtable, key = spec['source'], spec['table'], spec['index']
+            source, subtable = spec['source'], spec['table']
             df_merge = self._sources[source].get(subtable, **query)
             if df is None:
                 df = df_merge
-                left_key = key
+                left_key = spec.get('index')
             else:
-                df = pd.merge(df, df_merge, left_on=left_key, right_on=key)
+                df = pd.merge(df, df_merge, left_on=left_key,
+                              right_on=spec.get('index'))
         self._set_cache(df, table, **query)
         return df
