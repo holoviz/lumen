@@ -224,7 +224,7 @@ class PanelSessionSource(Source):
             try:
                 r = requests.get(url + self.endpoint, verify=False,
                                  timeout=(0.5, 2)).json()
-            except Exception as e:
+            except Exception:
                 continue
             session_info = r['session_info']
             sessions = session_info['sessions']
