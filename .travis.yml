@@ -12,7 +12,7 @@ dist: xenial
 env:
   global:
     - CHANS_DEV="-c pyviz/label/dev -c conda-forge"
-    - CHANS_REL="-c pyviz -c conda-forge"
+    - CHANS_REL="-c pyviz/label/dev -c conda-forge"
     - LABELS_DEV="--label dev"
     - LABELS_REL="--label dev --label main"
     - PKG_TEST_PYTHON="--test-python=py36"
