@@ -262,6 +262,4 @@ class hvPlotView(View):
 
     def update_panel(self, panel):
         df = self.get_data()
-        if (df is None or not len(df)) and not isinstance(panel, pn.pane.HTML):
-            raise NotImplementedError
         panel.object = self.get_plot(df)
