@@ -20,20 +20,12 @@ and monitor your data.
 
 The library is organized into a small number of simply object types including:
 
-* `Source`: A `Source` object provides any number of variables along
-  with associated indexes from some data source. Additionally it also
-  returns a schema describing the data.
-* `Filter`: A `Filter` object filters the data along any of the
-  indexes.
-* `View`: A `View` takes the queried data for a variable and
-  visualizes it as a Panel object.
-* `Transform`: A `Transform` can apply arbitrary transformation on the
-  queried data.
+* `Source`: A `Source` object can provide one or more tables along with a JSON schema describing the columns or fields in the tables.
+* `Filter`: A `Filter` can filter the data along any field.
+* `View`: A `View` queries a table from one of the sources and visualizes it in some form, e.g. as an indicator, plot or table.
+* `Transform`: A `Transform` can apply arbitrary transformation on the tables before it is given to the `View`.
 
-The information that feeds the filters and views are queried from a `Source` object. The `Source` should return any number of variables with associated indexes:
-
-* `variable`: A `variable` is some quantitity that is being visualized.
-* `index`: An `index` is a variable that can be filtered on usually using a widget or by specifying a constant in the dashboard specification.
+The tables that feed the filters, transforms and views are queried from a `Source` object. The `Source` may return any number of tables which can contain any number of fields and rows.
 
 The main `Source` types provided by Lumen include:
 
@@ -43,5 +35,4 @@ The main `Source` types provided by Lumen include:
   - Parquet
 - HTTP Status: A simple data source that returns the HTTP status of a web server
 - Intake: A simple adaptor that can load data from an Intake data catalogue
-
-All of these base types can be subclassed to provide custom implementations.
+- Panel Session Info: Queries the Panel session_info REST endpoint and returns information about deployed dashboards.
