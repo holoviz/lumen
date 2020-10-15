@@ -125,6 +125,9 @@ class Monitor(param.Parameterized):
             item, title=title, name=title, **self.kwargs
         )
 
+    def _update_card(self, card, views):
+        card[0][:] = [view.panel for view in views]
+
     def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True):
         view_filters = filters + list(facet_filters)
         key = (tuple(str(f.value) for f in facet_filters) +
@@ -152,8 +155,12 @@ class Monitor(param.Parameterized):
         else:
             card.title = title
             if update_views:
+                update_card = False
                 for view in views:
-                    view.update(invalidate_cache)
+                    view_stale = view.update(invalidate_cache)
+                    update_card = update_card or view_stale
+                if update_card:
+                    self._update_card(card, views)
         return sort_key, card
 
     def _update_views(self, invalidate_cache=True, update_views=True):

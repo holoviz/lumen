@@ -79,11 +79,11 @@ class View(param.Parameterized):
         try:
             if self._panel is not None:
                 self.update_panel(self._panel)
-                return
+                return False
         except NotImplementedError:
             pass
         self._panel = self.get_panel()
-        self.monitor._stale = True
+        return True
 
     def get_data(self):
         """
@@ -157,10 +157,16 @@ class View(param.Parameterized):
         ----------
         invalidate_cache : bool
             Whether to force a rerender of the containing Monitor.
+
+        Returns
+        -------
+        stale : bool
+            Whether the panel on the View is stale and needs to be
+            rerendered.
         """
         if invalidate_cache:
             self._cache = None
-        self._update_panel()
+        return self._update_panel()
 
     def update_panel(self, panel):
         raise NotImplementedError
@@ -224,6 +230,9 @@ class IndicatorView(View):
                              'specifies a Panel ValueIndicator that '
                              'exists and has been imported')
         return indicator(**self.kwargs, value=self.get_value())
+
+    def update_panel(self, panel):
+        panel.value = self.get_value()
 
 
 class hvPlotView(View):
