@@ -1,0 +1,20 @@
+config:
+  title: "Precipitation Dashboard"
+  ncols: 1
+targets:
+  - title: Southern Rockies
+    source:
+      type: intake
+      filename: catalog.yml
+    filters:
+      - field: model
+        type: widget
+    views:
+      - table: southern_rockies
+        type: hvplot
+        kind: line
+        x: time
+        y: precip
+        by: model
+        responsive: true
+    sizing_mode: stretch_width
