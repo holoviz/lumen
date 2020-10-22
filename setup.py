@@ -69,6 +69,9 @@ setup_args = dict(
     entry_points={
         'panel.io.rest': [
             "lumen = lumen.rest:lumen_rest_provider"
+        ],
+        'console_scripts': [
+            'lumen = lumen.command:main'
         ]
     }
 )
