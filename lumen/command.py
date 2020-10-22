@@ -1,8 +1,6 @@
-import subprocess
 import sys
 
 import panel as pn
-
 
 def main():
     filename = sys.argv[1]
