@@ -1,11 +1,13 @@
 import datetime as dt
 
+from concurrent import futures
+
 import param
 import pandas as pd
 
 from ae5_tools.api import AEUserSession
 
-from .base import Source
+from .base import Source, cached
 
 
 class AE5KubeSource(Source):
@@ -98,8 +100,8 @@ class AE5KubeSource(Source):
         else:
             record["restarts"] = float('NaN')
         if 'uptime' not in record:
-            record["uptime"] = '-' 
-        
+            record["uptime"] = '-'
+
         return record
 
     def _get_pod_info(self, pod=None):
@@ -112,9 +114,18 @@ class AE5KubeSource(Source):
         self._deployment_cache = self._session.deployment_list()
         self._resources = self._session.resource_profile_list(format='dataframe')
         self._deployments = {d['name']: d for d in self._deployment_cache}
+
         usage = dict(self._pod_info)
-        for i, d in self._deployments.items():
-            usage[d['id']] = self._get_pod_info(d['id'])
+        with futures.ThreadPoolExecutor(len(self._deployments)) as executor:
+            tasks = {executor.submit(self._get_pod_info, d['id']): d['id']
+                     for d in self._deployments.values()}
+            for future in futures.as_completed(tasks):
+                deployment = tasks[future]
+                try:
+                    usage[deployment] = future.result()
+                except Exception:
+                    continue
+
         self._pod_info = usage
 
     # Public API
@@ -141,10 +152,8 @@ class AE5KubeSource(Source):
         }
         return schema if table is None else schema[table]
 
+    @cached(with_query=False)
     def get(self, table, **query):
-        cached = self._get_cache(table, **query)
-        if cached is not None:
-            return cached
         if self._deployment_cache is None:
             self._update_cache()
         records = []
@@ -152,19 +161,11 @@ class AE5KubeSource(Source):
             record = self._get_record(name, d)
             if record is None:
                 continue
-            skip = False
-            for k, v in query.items():
-                if record[k] != v:
-                    skip = True
-                    break
-            if skip:
-                continue
             records.append(record)
         df = pd.DataFrame(records, columns=[
             'name', 'state', 'owner', 'resource_profile', 'timestamp',
             'url', 'cpu', 'memory', 'uptime', 'restarts'
         ])
-        self._set_cache(df, table, **query)
         return df
 
     def clear_cache(self):

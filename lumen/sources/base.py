@@ -1,7 +1,39 @@
+from concurrent import futures
+from functools import partial, wraps
+
 import numpy as np
 import pandas as pd
 import param
 import requests
+
+
+def cached(with_query=True):
+    """
+    Adds caching to a Source.get query.
+
+    Arguments
+    ---------
+    with_query: boolean
+        Whether the Source.get query uses the query parameters.
+        Sources that have no ability to pre-filter the data can
+        use this option to cache the full query and the decorator
+        will apply the filtering after the fact.
+
+    Returns
+    -------
+    Returns method wrapped in caching functionality.
+    """
+    def _inner_cached(method):
+        @wraps(method)
+        def wrapped(self, table, **query):
+            cache_query = query if with_query else {}
+            df = self._get_cache(table, **cache_query)
+            if df is None:
+                df = method(self, table, **cache_query)
+                self._set_cache(df, table, **cache_query)
+            return df if with_query else self._filter_dataframe(df, **query)
+        return wrapped
+    return _inner_cached
 
 
 class Source(param.Parameterized):
@@ -139,14 +171,11 @@ class RESTSource(Source):
         return {table: schema['items']['properties'] for table, schema in
                 response.json().items()}
 
+    @cached()
     def get(self, table, **query):
-        cached = self._get_cache(table, **query)
-        if cached is not None:
-            return cached
         query = dict(table=table, **query)
         r = requests.get(self.url+'/data', params=query)
         df = pd.DataFrame(r.json())
-        self._set_cache(df, table, **query)
         return df
 
 
@@ -168,10 +197,8 @@ class WebsiteSource(Source):
         }
         return schema if table is None else schema[table]
 
+    @cached()
     def get(self, table, **query):
-        cached = self._get_cache(table, **query)
-        if cached is not None:
-            return cached
         data = []
         for url in self.urls:
             try:
@@ -181,7 +208,6 @@ class WebsiteSource(Source):
                 live = False
             data.append({"live": live, "url": self.url})
         df = pd.DataFrame(data)
-        self._set_cache(df, table, **query)
         return df
 
 
@@ -190,6 +216,8 @@ class PanelSessionSource(Source):
     endpoint = param.String(default="rest/session_info")
 
     urls = param.List(doc="URL of the websites to monitor.")
+
+    timeout = param.Parameter(default=(0.5, 2))
 
     source_type = 'session_info'
 
@@ -215,49 +243,55 @@ class PanelSessionSource(Source):
         }
         return schema if table is None else schema[table]
 
-    def get(self, table, **query):
-        cached = self._get_cache(table)
-        if cached is not None:
-            return self._filter_dataframe(cached, **query)
+    def _get_session_info(self, table, url):
+        r = requests.get(
+            url + self.endpoint, verify=False, timeout=self.timeout
+        ).json()
+        session_info = r['session_info']
+        sessions = session_info['sessions']
+
         data = []
-        for url in self.urls:
-            try:
-                r = requests.get(url + self.endpoint, verify=False,
-                                 timeout=(0.5, 2)).json()
-            except Exception:
-                continue
-            session_info = r['session_info']
-            sessions = session_info['sessions']
-            if table == "summary":
-                rendered = [s for s in sessions.values()
-                            if s['rendered'] is not None]
-                ended = [s for s in sessions.values()
-                         if s['ended'] is not None]
-                row = {
-                    'url': url,
-                    'total': session_info['total'],
-                    'live': session_info['live'],
-                    'render_duration': np.mean([s['rendered']-s['started']
-                                                for s in rendered]),
-                    'session_duration': np.mean([s['ended']-s['started']
-                                                for s in ended])
-                }
-                data.append(row)
-            elif table == "sessions":
-                for sid, session in sessions.items():
-                    row = dict(url=url, id=sid, **session)
-                    if session["rendered"]:
-                        row["render_duration"] = session["rendered"]-session["started"]
-                    else:
-                        row["render_duration"] = float('NaN')
-                    if session["ended"]:
-                        row["session_duration"] = session["ended"]-session["started"]
-                    else:
-                        row["session_duration"] = float('NaN')
+        if table == "summary":
+            rendered = [s for s in sessions.values()
+                        if s['rendered'] is not None]
+            ended = [s for s in sessions.values()
+                     if s['ended'] is not None]
+            row = {
+                'url': url,
+                'total': session_info['total'],
+                'live': session_info['live'],
+                'render_duration': np.mean([s['rendered']-s['started']
+                                            for s in rendered]),
+                'session_duration': np.mean([s['ended']-s['started']
+                                             for s in ended])
+            }
+            data.append(row)
+        elif table == "sessions":
+            for sid, session in sessions.items():
+                row = dict(url=url, id=sid, **session)
+                if session["rendered"]:
+                    row["render_duration"] = session["rendered"]-session["started"]
+                else:
+                    row["render_duration"] = float('NaN')
+                if session["ended"]:
+                    row["session_duration"] = session["ended"]-session["started"]
+                else:
+                    row["session_duration"] = float('NaN')
                 data.push(row)
-        df = pd.DataFrame(data, columns=list(self.get_schema(table)))
-        self._set_cache(df, table)
-        return self._filter_dataframe(df, **query)
+        return data
+
+    @cached(with_query=False)
+    def get(self, table, **query):
+        data = []
+        with futures.ThreadPoolExecutor(len(self.urls)) as executor:
+            tasks = [executor.submit(self._get_session_info, table, url)
+                     for url in self.urls]
+            for future in futures.as_completed(tasks):
+                try:
+                    data.extend(future.result())
+                except Exception:
+                    continue
+        return pd.DataFrame(data, columns=list(self.get_schema(table)))
 
 
 class JoinedSource(Source):
@@ -351,10 +385,8 @@ class JoinedSource(Source):
                             )
         return schemas if table is None else schemas[table]
 
+    @cached()
     def get(self, table, **query):
-        cached = self._get_cache(table, **query)
-        if cached is not None:
-            return cached
         df = None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
@@ -365,7 +397,6 @@ class JoinedSource(Source):
             else:
                 df = pd.merge(df, df_merge, left_on=left_key,
                               right_on=spec.get('index'))
-        self._set_cache(df, table, **query)
         return df
 
     def clear_cache(self):

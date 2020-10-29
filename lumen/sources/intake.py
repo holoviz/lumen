@@ -2,7 +2,7 @@ import intake
 import param
 
 from ..util import get_dataframe_schema
-from .base import Source
+from .base import Source, cached
 
 
 class IntakeSource(Source):
@@ -40,6 +40,7 @@ class IntakeSource(Source):
             return {name: get_dataframe_schema(cat.to_dask())['items']['properties']
                     for name, cat in self.cat.items()}
 
+    @cached()
     def get(self, table, **query):
         df = self.cat[table].to_dask()
         df = self._filter_dataframe(df, **query)
