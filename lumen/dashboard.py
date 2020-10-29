@@ -1,3 +1,4 @@
+import os
 import yaml
 
 import param
@@ -31,15 +32,10 @@ class Dashboard(param.Parameterized):
     specification = param.Filename()
 
     def __init__(self, specification, **params):
-        # Load config
-        with open(specification) as f:
-            self._spec = yaml.load(f.read(), Loader=yaml.CLoader)
-        if not 'targets' in self._spec:
-            raise ValueError('Yaml specification did not declare any targets.')
-        self.config = self._spec.get('config', {})
         super(Dashboard, self).__init__(
             specification=specification, **params
         )
+        self._load_config(from_file=True)
 
         # Construct template
         tmpl = self.config.get('template', 'material')
@@ -47,6 +43,23 @@ class Dashboard(param.Parameterized):
         if 'logo' in self.config:
             kwargs['logo'] = self.config['logo']
         self.template = _templates[tmpl](**kwargs)
+
+        # Add editor modal
+        self._editor = pn.widgets.Ace(
+            value=self._yaml, filename=self.specification,
+            sizing_mode='stretch_both', min_height=600,
+            theme='monokai'
+        )
+        self._edit_button = pn.widgets.Button(
+            name='✎', width=50, css_classes=['reload'], margin=0
+        )
+        self._editor.link(self, value='_yaml')
+        self._edit_button.on_click(self._open_modal)
+        self._editor_layout = pn.Column(
+            f'## Edit {os.path.basename(self.specification)}',
+            self._editor, sizing_mode='stretch_both'
+        )
+        self.template.modal.append(self._editor_layout)
 
         # Build layouts
         self.filters = pn.Column(margin=0, sizing_mode='stretch_width')
@@ -59,20 +72,40 @@ class Dashboard(param.Parameterized):
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
-        self._reload_button.on_click(self._reload_data)
+        self._reload_button.on_click(self._reload)
         self._reload()
 
         # Populate template
         if len(self.filters):
             self.template.sidebar[:] = [self.filters]
         self.template.main[:] = [self.targets]
-        self.template.header.append(self._reload_button)
+        self.template.header.append(pn.Row(
+            self._reload_button,
+            self._edit_button
+        ))
+
+    def _open_modal(self, event):
+        # Workaround until Panel https://github.com/holoviz/panel/pull/1719
+        # is released
+        self.template.close_modal()
+        self.template.open_modal()
 
     def _reload_data(self, *events):
         for target in self._targets:
             target.update()
 
+    def _load_config(self, from_file=False):
+        # Load config
+        if from_file or self._yaml is None:
+            with open(self.specification) as f:
+                self._yaml = f.read()
+        self._spec = yaml.load(self._yaml, Loader=yaml.CLoader)
+        if not 'targets' in self._spec:
+            raise ValueError('Yaml specification did not declare any targets.')
+        self.config = self._spec.get('config', {})
+
     def _reload(self, *events):
+        self._load_config()
         self._targets = self._resolve_sources(self._spec['targets'])
         self._rerender()
         filters = []
