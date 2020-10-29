@@ -1,5 +1,5 @@
 from concurrent import futures
-from functools import partial, wraps
+from functools import wraps
 
 import numpy as np
 import pandas as pd
