@@ -82,26 +82,6 @@ class Monitor(param.Parameterized):
         self.sort_reverse = self._reverse_widget.value
         self._rerender(update_views=False)
 
-    def _get_transforms(self, transform_specs):
-        transforms = []
-        for transform in transform_specs:
-            transform = dict(transform)
-            transform_type = transform.pop('type', None)
-            transform = Transform._get_type(transform_type)(**transform)
-            transforms.append(transform)
-        return transforms
-
-    def _get_view(self, view_spec, filters):
-        view_type = view_spec.pop('type', None)
-        transform_specs = view_spec.pop('transforms', [])
-        transforms = self._get_transforms(transform_specs)
-        view = View._get_type(view_type)(
-            source=self.source, filters=filters,
-            transforms=transforms, monitor=self,
-            **view_spec
-        )
-        return view
-
     def _get_sort_key(self, views):
         sort_key = []
         for field in self.sort_fields:
@@ -137,8 +117,10 @@ class Monitor(param.Parameterized):
             card, views = self._cache[key]
         else:
             card = None
-            views = [self._get_view(dict(view_spec), view_filters)
-                     for view_spec in self.views]
+            views = [
+                View.from_spec(view_spec, self, self.source, view_filters)
+                for view_spec in self.views
+            ]
         if not any(view for view in views):
             return None, None
 

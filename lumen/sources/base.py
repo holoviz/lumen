@@ -93,6 +93,43 @@ class Source(param.Parameterized):
             df = df[mask]
         return df
 
+    @classmethod
+    def from_spec(cls, spec, sources={}):
+        """
+        Creates a Source object from a specification. If a Source
+        specification references other sources these may be supplied
+        in the sources dictionary and be referenced by name.
+
+        Parameters
+        ----------
+        spec : dict or str
+            Specification declared as a dictionary of parameter values
+            or a string referencing a source in the sources dictionary.
+        sources: dict
+            Dictionary of other Source objects
+
+        Returns
+        -------
+        Resolved and instantiated Source object
+        """
+        if source_spec is None:
+            raise ValueError('Source specification empty.')
+        elif isinstance(source, str):
+            if source_spec in sources:
+                source = sources[source_spec]
+            else:
+                raise ValueError(f'Source with name {source_spec} was not found.')
+            return source
+
+        spec = dict(spec)
+        source_type = Source._get_type(spec.pop('type'))
+        if 'sources' in source_type.param and 'sources' in spec:
+            resolved_sources = [
+                cls.from_spec(source, sources) for source in spec['sources']
+            ]
+            spec['sources'] = resolved_sources
+        return source_type(**spec)
+
     def __init__(self, **params):
         super().__init__(**params)
         self._cache = {}

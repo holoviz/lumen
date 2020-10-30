@@ -106,7 +106,11 @@ class Dashboard(param.Parameterized):
 
     def _reload(self, *events):
         self._load_config()
-        self._targets = self._resolve_sources(self._spec['targets'])
+        self._sources = {
+            name: Source.from_spec(source_spec)
+            for name, source_spec in source_specs.items()
+        }
+        self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
         filters = []
         for target in self._targets:
@@ -118,37 +122,26 @@ class Dashboard(param.Parameterized):
     def _rerender(self):
         self.targets[:] = [p for target in self._targets for p in target.panels]
 
-    def _resolve_sources(self, sources, metadata={}):
+    def _resolve_targets(self, target_specs, metadata={}):
         targets = []
-        for target_spec in sources:
+        for target_spec in target_specs:
             target_spec = dict(target_spec)
 
-            # Create source
-            source_spec = dict(target_spec.pop('source'))
-            source_type = source_spec.pop('type', 'rest')
-            source = Source._get_type(source_type)(**source_spec)
+            # Resolve source
+            source_spec = target_spec.pop('source', None)
+            source = Source.from_spec(source_spec, self._sources)
             schema = source.get_schema()
 
-            # Initialize filters
-            source_filters = []
-            for filter_spec in target_spec.get('filters', []):
-                filter_spec = dict(filter_spec)
-                filter_name = filter_spec['field']
-                filter_schema = None
-                for view_schema in schema.values():
-                    if filter_name in view_schema:
-                        filter_schema = view_schema[filter_name]
-                if not filter_schema:
-                    continue
-                filter_type = filter_spec.pop('type')
-                filter_obj = Filter._get_type(filter_type)(
-                    schema={filter_name: filter_schema}, **filter_spec
-                )
-                source_filters.append(filter_obj)
+            # Resolve filters
+            filters = [
+                Filter.from_spec(filter_spec, schema)
+                for filter_spec in target_spec.get('filters', [])
+            ]
 
             # Create target
-            target_spec['filters'] = source_filters
-            target = Monitor(source=source, application=self, schema=schema, **target_spec)
+            target = Monitor(
+                application=self, filters=filters, source=source,
+                schema=schema, **target_spec)
             targets.append(target)
         return targets
 

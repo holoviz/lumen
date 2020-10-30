@@ -7,6 +7,7 @@ import param
 import panel as pn
 
 from ..sources import Source
+from ..transforms import Transform
 
 
 class View(param.Parameterized):
@@ -67,6 +68,37 @@ class View(param.Parameterized):
         if view_type is not None:
             raise ValueError(f"View type '{view_type}' could not be found.")
         return View
+
+    @classmethod
+    def from_spec(cls, spec, monitor, source, filters):
+        """
+        Resolves a View specification given the schema of the Source
+        it will be filtering on.
+
+        Parameters
+        ----------
+        spec: dict
+            Specification declared as a dictionary of parameter values.
+        monitor: lumen.monitor.Monitor
+            The Monitor object that holds this View.
+        source: lumen.sources.Source
+            The Source object containing the tables the View renders.
+        filters: list(lumen.filters.Filter)
+            A list of Filter objects which provide query values for
+            the Source.
+
+        Returns
+        -------
+        The resolved View object.
+        """
+        spec = dict(spec)
+        transform_specs = spec.pop('transforms', [])
+        transforms = [Transform.from_spec(tspec) for tspec in transform_specs]
+        view_type = View._get_type(spec.pop('type', None))
+        return view_type(
+            filters=filters, monitor=monitor, source=source,
+            transforms=transforms, **spec
+        )
 
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
