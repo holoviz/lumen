@@ -29,6 +29,24 @@ class Transform(param.Parameterized):
                 return transform
         raise ValueError(f"No Transform for transform_type '{transform_type}' could be found.")
 
+    @classmethod
+    def from_spec(cls, spec):
+        """
+        Resolves a Transform specification.
+
+        Parameters
+        ----------
+        spec: dict
+            Specification declared as a dictionary of parameter values.
+
+        Returns
+        -------
+        The resolved Transform object.
+        """
+        spec = dict(spec)
+        transform_type = Transform._get_type(spec.pop('type', None))
+        return transform_type(**spec)
+
     def apply(self, table):
         """
         Given a table transform it in some way and return it.

@@ -40,6 +40,39 @@ class Filter(param.Parameterized):
                 return filt
         raise ValueError(f"No Filter for filter_type '{filter_type}' could be found.")
 
+    @classmethod
+    def from_spec(cls, spec, source_schema):
+        """
+        Resolves a Filter specification given the schema of the Source
+        it will be filtering on.
+
+        Parameters
+        ----------
+        spec: dict
+            Specification declared as a dictionary of parameter values.
+        source_schema: dict
+            A dictionary containing the JSON schema of the Source to
+            be filtered on.
+
+        Returns
+        -------
+        The resolved Filter object.
+        """
+        spec = dict(spec)
+        if not 'field' in spec:
+            raise ValueError('Filter specification must declare field to filter on.')
+        field = spec['field']
+        schema = None
+        for table_schema in source_schema.values():
+            schema = table_schema.get(field)
+            if schema is not None:
+                break
+        if not schema:
+            raise ValueError("Source did not declare a schema for "
+                             f"'{field}' filter.")
+        filter_type = Filter._get_type(spec.pop('type'))
+        return filter_type(schema={field: schema}, **spec)
+
     @property
     def panel(self):
         """
