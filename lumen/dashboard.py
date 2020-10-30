@@ -108,7 +108,7 @@ class Dashboard(param.Parameterized):
         self._load_config()
         self._sources = {
             name: Source.from_spec(source_spec)
-            for name, source_spec in source_specs.items()
+            for name, source_spec in self._spec.get('sources', {}).items()
         }
         self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
@@ -133,9 +133,10 @@ class Dashboard(param.Parameterized):
             schema = source.get_schema()
 
             # Resolve filters
+            filter_specs = target_spec.pop('filters', [])
             filters = [
                 Filter.from_spec(filter_spec, schema)
-                for filter_spec in target_spec.get('filters', [])
+                for filter_spec in filter_specs
             ]
 
             # Create target

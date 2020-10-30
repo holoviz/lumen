@@ -45,7 +45,7 @@ class Transform(param.Parameterized):
         """
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
-        return transform_type(**transform)
+        return transform_type(**spec)
 
     def apply(self, table):
         """

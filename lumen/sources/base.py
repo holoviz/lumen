@@ -112,21 +112,22 @@ class Source(param.Parameterized):
         -------
         Resolved and instantiated Source object
         """
-        if source_spec is None:
+        if spec is None:
             raise ValueError('Source specification empty.')
-        elif isinstance(source, str):
-            if source_spec in sources:
-                source = sources[source_spec]
+        elif isinstance(spec, str):
+            if spec in sources:
+                source = sources[spec]
             else:
-                raise ValueError(f'Source with name {source_spec} was not found.')
+                raise ValueError(f'Source with name {spec} was not found.')
             return source
 
         spec = dict(spec)
         source_type = Source._get_type(spec.pop('type'))
         if 'sources' in source_type.param and 'sources' in spec:
-            resolved_sources = [
-                cls.from_spec(source, sources) for source in spec['sources']
-            ]
+            resolved_sources = {
+                source: cls.from_spec(source, sources)
+                for source in spec['sources']
+            }
             spec['sources'] = resolved_sources
         return source_type(**spec)
 
@@ -380,14 +381,6 @@ class JoinedSource(Source):
 
     source_type = 'join'
 
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._sources = {}
-        for name, source_spec in self.sources.items():
-            source_spec = dict(source_spec)
-            source_type = source_spec.pop('type')
-            self._sources[name] = Source._get_type(source_type)(**source_spec)
-
     def get_schema(self, table=None):
         schemas = {}
         for name, specs in self.tables.items():
@@ -396,7 +389,7 @@ class JoinedSource(Source):
             schemas[name] = schema = {}
             for spec in specs:
                 source, subtable = spec['source'], spec['table']
-                table_schema = self._sources[source].get_schema(subtable)
+                table_schema = self.sources[source].get_schema(subtable)
                 if not schema:
                     schema.update(table_schema)
                 else:
@@ -427,7 +420,7 @@ class JoinedSource(Source):
         df = None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
-            df_merge = self._sources[source].get(subtable, **query)
+            df_merge = self.sources[source].get(subtable, **query)
             if df is None:
                 df = df_merge
                 left_key = spec.get('index')
@@ -438,5 +431,5 @@ class JoinedSource(Source):
 
     def clear_cache(self):
         super().clear_cache()
-        for source in self._sources.values():
+        for source in self.sources.values():
             source.clear_cache()

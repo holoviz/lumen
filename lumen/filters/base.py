@@ -61,7 +61,7 @@ class Filter(param.Parameterized):
         spec = dict(spec)
         if not 'field' in spec:
             raise ValueError('Filter specification must declare field to filter on.')
-        field = filter_spec['field']
+        field = spec['field']
         schema = None
         for table_schema in source_schema.values():
             schema = table_schema.get(field)
@@ -69,9 +69,9 @@ class Filter(param.Parameterized):
                 break
         if not schema:
             raise ValueError("Source did not declare a schema for "
-                             f"'{filter_name}' filter.")
+                             f"'{field}' filter.")
         filter_type = Filter._get_type(spec.pop('type'))
-        return filter_type(schema={name: filter_schema}, **spec)
+        return filter_type(schema={field: schema}, **spec)
 
     @property
     def panel(self):

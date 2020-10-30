@@ -8,7 +8,6 @@ import panel as pn
 
 from .filters import FacetFilter
 from .sources import Source
-from .transforms import Transform
 from .views import View
 
 
