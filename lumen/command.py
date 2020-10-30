@@ -3,7 +3,6 @@ import os
 import sys
 
 import bokeh.command.util
-import panel as pn
 
 from bokeh.application import Application
 from bokeh.application.handlers.code import CodeHandler
@@ -29,7 +28,7 @@ class YamlHandler(CodeHandler):
             raise ValueError('Must pass a filename to YamlHandler')
         filename = kwargs['filename']
 
-        kwargs['source'] = source = f"from lumen import Dashboard; Dashboard('{filename}').servable();"
+        kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}').servable();"
         super().__init__(*args, **kwargs)
 
 
