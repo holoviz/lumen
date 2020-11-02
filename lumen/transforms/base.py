@@ -110,15 +110,17 @@ class HistoryTransform(Transform):
 class Aggregate(Transform):
     """
     Aggregate one or more columns or indexes, see `pandas.DataFrame.groupby`.
+
+    df.groupby(<by>)[<columns>].<method>()[.reset_index()]
     """
 
-    by = param.List(default=[], doc="""
+    by = param.ClassSelector(class_=(list, str, int), doc="""
         Columns or indexes to group by.""")
 
     columns = param.List(doc="""
         Columns to aggregate.""")
 
-    as_index = param.Boolean(default=True, doc="""
+    with_index = param.Boolean(default=True, doc="""
         Whether to make the groupby columns indexes.""")
 
     method = param.String(default=None, doc="""
@@ -130,18 +132,21 @@ class Aggregate(Transform):
     transform_type = 'aggregate'
 
     def apply(self, table):
-        grouped = table.groupby(self.by, as_index=self.as_index)
+        grouped = table.groupby(self.by)
         if self.columns:
-            grouped = grouped[columns]
-        return getattr(grouped, self.method)(**self.kwargs)
+            grouped = grouped[self.columns]
+        agg = getattr(grouped, self.method)(**self.kwargs)
+        return agg if self.with_index else agg.reset_index()
 
 
 class Sort(Transform):
     """
     Sort on one or more columns, see `pandas.DataFrame.sort_values`.
+
+    df.sort_values(<by>, ascending=<ascending>)
     """
 
-    by = param.List(default=[], doc="""
+    by = param.ClassSelector(class_=(list, str, int), doc="""
        Columns or indexes to sort by.""")
 
     ascending = param.ClassSelector(default=True, class_=(bool, list), doc="""
@@ -158,6 +163,8 @@ class Sort(Transform):
 class Query(Transform):
     """
     Applies the `pandas.DataFrame.query` method.
+
+    df.query(<query>)
     """
 
     query = param.String(doc="""
@@ -172,6 +179,8 @@ class Query(Transform):
 class Columns(Transform):
     """
     Selects a subset of columns.
+
+    df[<columns>]
     """
 
     columns = param.List(doc="""
@@ -186,6 +195,8 @@ class Columns(Transform):
 class Stack(Transform):
     """
     Stacks the declared level, see `pandas.DataFrame.stack`.
+
+    df.stack(<level>)
     """
 
     level = param.ClassSelector(class_=(int, list, str), doc="""
@@ -200,9 +211,11 @@ class Stack(Transform):
 class Unstack(Transform):
     """
     Unstacks the declared level(s), see `pandas.DataFrame.stack`.
+
+    df.unstack(<level>)
     """
 
-    level = param.ClassSelector(class_=(list, str), doc="""
+    level = param.ClassSelector(class_=(int, list, str), doc="""
         The indexes to unstack.""")
 
     transform_type = 'unstack'
