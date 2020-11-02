@@ -105,3 +105,107 @@ class HistoryTransform(Transform):
         self._buffer.append(table)
         self._buffer[:] = self._buffer[-self.length:]
         return pd.concat(self._buffer)
+
+
+class Aggregate(Transform):
+    """
+    Aggregate one or more columns or indexes, see `pandas.DataFrame.groupby`.
+    """
+
+    by = param.List(default=[], doc="""
+        Columns or indexes to group by.""")
+
+    columns = param.List(doc="""
+        Columns to aggregate.""")
+
+    as_index = param.Boolean(default=True, doc="""
+        Whether to make the groupby columns indexes.""")
+
+    method = param.String(default=None, doc="""
+        Name of aggregation method.""")
+
+    kwargs = param.Dict(doc="""
+        Keyword arguments to the aggregation method.""")
+
+    transform_type = 'aggregate'
+
+    def apply(self, table):
+        grouped = table.groupby(self.by, as_index=self.as_index)
+        if self.columns:
+            grouped = grouped[columns]
+        return getattr(grouped, self.method)(**self.kwargs)
+
+
+class Sort(Transform):
+    """
+    Sort on one or more columns, see `pandas.DataFrame.sort_values`.
+    """
+
+    by = param.List(default=[], doc="""
+       Columns or indexes to sort by.""")
+
+    ascending = param.ClassSelector(default=True, class_=(bool, list), doc="""
+       Sort ascending vs. descending. Specify list for multiple sort
+       orders. If this is a list of bools, must match the length of
+       the by.""")
+
+    transform_type = 'sort'
+
+    def apply(self, table):
+        return table.sort_values(self.by, ascending=self.ascending)
+
+
+class Query(Transform):
+    """
+    Applies the `pandas.DataFrame.query` method.
+    """
+
+    query = param.String(doc="""
+        The query to apply to the table.""")
+
+    transform_type = 'query'
+
+    def apply(self, table):
+        return table.query(self.query)
+
+
+class Columns(Transform):
+    """
+    Selects a subset of columns.
+    """
+
+    columns = param.List(doc="""
+        The subset of columns to select.""")
+
+    transform_type = 'columns'
+
+    def apply(self, table):
+        return table[self.columns]
+
+
+class Stack(Transform):
+    """
+    Stacks the declared level, see `pandas.DataFrame.stack`.
+    """
+
+    level = param.ClassSelector(class_=(int, list, str), doc="""
+        The indexes to stack.""")
+
+    transform_type = 'stack'
+
+    def apply(self, table):
+        return table.stack(self.level)
+
+
+class Unstack(Transform):
+    """
+    Unstacks the declared level(s), see `pandas.DataFrame.stack`.
+    """
+
+    level = param.ClassSelector(class_=(list, str), doc="""
+        The indexes to unstack.""")
+
+    transform_type = 'unstack'
+
+    def apply(self, table):
+        return table.unstack(self.level)
