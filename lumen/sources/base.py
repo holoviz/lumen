@@ -94,6 +94,24 @@ class Source(param.Parameterized):
         return df
 
     @classmethod
+    def _resolve_reference(cls, reference, sources={}):
+        refs = reference[1:].split('.')
+        if len(refs) != 3:
+            raise ValueError(f"Reference string '{reference} not valid. "
+                             "Must take the form @source.table.field.")
+        sourceref, table, field = refs
+        source = cls.from_spec(sourceref, sources)
+        table_schema = source.get_schema(table)
+        if field not in table_schema:
+            raise ValueError(f"Field '{field}' was not found in "
+                             "'{sourceref}' table '{table}'.")
+        field_schema = table_schema[field]
+        if 'enum' not in field_schema:
+            raise ValueError(f"Field '{field}' schema does not "
+                             "declare an enum.")
+        return field_schema['enum']
+
+    @classmethod
     def from_spec(cls, spec, sources={}):
         """
         Creates a Source object from a specification. If a Source
@@ -129,7 +147,13 @@ class Source(param.Parameterized):
                 for source in spec['sources']
             }
             spec['sources'] = resolved_sources
-        return source_type(**spec)
+
+        resolved_spec = {}
+        for k, v in spec.items():
+            if isinstance(v, str) and v.startswith('@'):
+                v = cls._resolve_reference(v, sources)
+            resolved_spec[k] = v
+        return source_type(**resolved_spec)
 
     def __init__(self, **params):
         super().__init__(**params)
