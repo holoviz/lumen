@@ -126,7 +126,7 @@ class Aggregate(Transform):
     method = param.String(default=None, doc="""
         Name of aggregation method.""")
 
-    kwargs = param.Dict(doc="""
+    kwargs = param.Dict(default={}, doc="""
         Keyword arguments to the aggregation method.""")
 
     transform_type = 'aggregate'

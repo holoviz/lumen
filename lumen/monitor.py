@@ -90,16 +90,17 @@ class Monitor(param.Parameterized):
         return tuple(sort_key)
 
     def _construct_card(self, title, views):
-        kwargs = self.kwargs
-        if self.layout == 'row':
-            item = pn.Row(*(view.panel for view in views), **kwargs)
-        elif self.layout == 'grid':
+        kwargs = dict(self.kwargs)
+        if self.layout == 'grid':
             if 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
-            item = pn.GridBox(*(view.panel for view in views), **kwargs)
-        else:
-            item = pn.Column(*(view.panel for view in views), **kwargs)
-
+        layout = {
+            'column': pn.Column,
+            'grid': pn.GridBox,
+            'row': pn.Row,
+            'tabs': pn.Tabs
+        }[self.layout]
+        item = layout(*(view.panel for view in views), **kwargs)
         return pn.Card(
             item, title=title, name=title, **self.kwargs
         )
