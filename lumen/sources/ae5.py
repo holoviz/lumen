@@ -181,6 +181,11 @@ class AE5KubeSource(Source):
 
 
 class PrometheusSource(Source):
+    """
+    Queries an endpoint on a Anaconda Enterprise 5 instance that exposes
+    the Prometheus PromQL REST API for timeseries information about
+    sessions and deployments.
+    """
 
     hostname = param.String(doc="Hostname of the AE5 instance e.g ae5.organization.com")
 
