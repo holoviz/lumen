@@ -96,11 +96,18 @@ class Source(param.Parameterized):
     @classmethod
     def _resolve_reference(cls, reference, sources={}):
         refs = reference[1:].split('.')
-        if len(refs) != 3:
-            raise ValueError(f"Reference string '{reference} not valid. "
-                             "Must take the form @source.table.field.")
-        sourceref, table, field = refs
+        if len(refs) == 3:
+            sourceref, table, field = refs
+        elif len(refs) == 2:
+            sourceref, table = refs
+        elif len(refs) == 1:
+            (sourceref,) = refs
+
         source = cls.from_spec(sourceref, sources)
+        if len(refs) == 1:
+            return source
+        if len(refs) == 2:
+            return source.get(table)
         table_schema = source.get_schema(table)
         if field not in table_schema:
             raise ValueError(f"Field '{field}' was not found in "
