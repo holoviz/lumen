@@ -286,7 +286,7 @@ class PanelSessionSource(Source):
 
     urls = param.List(doc="URL of the websites to monitor.")
 
-    timeout = param.Parameter(default=(0.5, 2))
+    timeout = param.Parameter(default=None)
 
     source_type = 'session_info'
 
@@ -353,13 +353,16 @@ class PanelSessionSource(Source):
     def get(self, table, **query):
         data = []
         with futures.ThreadPoolExecutor(len(self.urls)) as executor:
-            tasks = [executor.submit(self._get_session_info, table, url)
-                     for url in self.urls]
+            tasks = {executor.submit(self._get_session_info, table, url): url
+                     for url in self.urls}
             for future in futures.as_completed(tasks):
+                url = tasks[future] + self.endpoint
                 try:
                     data.extend(future.result())
-                except Exception:
-                    continue
+                except Exception as e:
+                    exception = f"{type(e).__name__}({e})"
+                    self.param.warning("Failed to fetch session_info from "
+                                       f"{url}, errored with {exception}.")
         return pd.DataFrame(data, columns=list(self.get_schema(table)))
 
 
