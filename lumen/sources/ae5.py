@@ -358,11 +358,6 @@ class PrometheusSource(Source):
 
 
     def get_schema(self, table=None):
-        name = sorted({d['name'] for d in self._deployment_cache})
-        owners = sorted({d['project_owner'] for d in self._deployment_cache})
-        urls = sorted({d['url'] for d in self._deployment_cache})
-        state = sorted({d['state'] for d in self._deployment_cache})
-        resources = sorted({d['resource_profile'] for d in self._deployment_cache})
         schema = {"url": {"type": "string"},
                   "timestamp" : {"type": "string", "format": "datetime"}}
         schema = dict({k:mdef['schema'] for k,mdef in self._metrics.items()}, **schema)
