@@ -451,13 +451,17 @@ class JoinedSource(Source):
         df = None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
-            df_merge = self.sources[source].get(subtable, **query)
+            source_query = dict(query)
+            right_key = spec.get('index')
+            if df is not None and right_key not in query:
+                source_query[right_key] = list(df[left_key].unique())
+            df_merge = self.sources[source].get(subtable, **source_query)
             if df is None:
                 df = df_merge
                 left_key = spec.get('index')
             else:
                 df = pd.merge(df, df_merge, left_on=left_key,
-                              right_on=spec.get('index'))
+                              right_on=right_key, how='outer')
         return df
 
     def clear_cache(self):
