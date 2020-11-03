@@ -7,6 +7,7 @@ from collections import defaultdict
 
 import param
 import pandas as pd
+import numpy as np
 
 from ae5_tools.api import AEUserSession
 
@@ -347,6 +348,11 @@ class PrometheusSource(Source):
                     df = data_df
                 else:
                     df = pd.merge(df, data_df, on='timestamp')
+            url_matches = [v['url'] for v in self._deployment_cache
+                           if v['id'].endswith(pod_id)]
+
+            urls = np.full(len(df), url_matches[0])
+            df.insert(2, "url", urls, True)
             dfs.append(df.reset_index())
         return pd.concat(dfs)
 
@@ -357,13 +363,8 @@ class PrometheusSource(Source):
         urls = sorted({d['url'] for d in self._deployment_cache})
         state = sorted({d['state'] for d in self._deployment_cache})
         resources = sorted({d['resource_profile'] for d in self._deployment_cache})
-        schema = {
-                "name": {"type": "string", "enum": name},
-                "state": {"type": "string", "enum": state},
-                "owner": {"type": "string", "enum": owners},
-                "resource_profile": {"type": "string", "enum": resources}
-        }
-        schema["timestamp"] = {"type": "string", "format": "datetime"} # CHECK!
+        schema = {"url": {"type": "string"},
+                  "timestamp" : {"type": "string", "format": "datetime"}}
         schema = dict({k:mdef['schema'] for k,mdef in self._metrics.items()}, **schema)
         schemas = {"deployments": schema}
         return schemas if table is None else schemas[table]
