@@ -93,10 +93,11 @@ class PrometheusSource(Source):
         regexp = f'anaconda-app-{pod_id}-.*'
         query = query.replace("pod_name=POD_NAME", f"pod_name=~'{regexp}'")
         query = query.replace("pod=POD_NAME", f"pod=~'{regexp}'")
-        query = query.replace('\n',' ')
-        query = query.replace(' ','%20')
-        query_escaped = query.replace('\"','%22')
-        return f'query={query_escaped}&start={start_timestamp}&end={end_timestamp}&step={self.step}'
+        query_params = {
+            'query': query, 'start': start_timestamp,
+            'end': end_timestamp, 'step': self.step
+        }
+        return urlparse.urlencode(query_params)
 
     def _get_query_url(self, metric, pod_id):
         "Return the full query URL"
