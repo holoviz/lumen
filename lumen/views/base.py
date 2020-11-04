@@ -3,6 +3,7 @@ The View classes render the data returned by a Source as a Panel
 object.
 """
 
+import numpy as np
 import param
 import panel as pn
 
@@ -163,7 +164,7 @@ class View(param.Parameterized):
             the queried field.
         """
         data = self.get_data()
-        if not len(data):
+        if not len(data) or field is not None and field not in data.columns:
             return None
         row = data.iloc[-1]
         return row[self.field if field is None else field]
@@ -261,7 +262,11 @@ class IndicatorView(View):
                              'ensure the indicator option in the spec '
                              'specifies a Panel ValueIndicator that '
                              'exists and has been imported')
-        return indicator(**self.kwargs, value=self.get_value())
+        value = self.get_value()
+        if (not isinstance(value, (type(None), str)) and np.isnan(value) and
+            isinstance(indicator.param.value, param.String)):
+            value = None
+        return indicator(**self.kwargs, value=value)
 
     def update_panel(self, panel):
         panel.value = self.get_value()
