@@ -456,7 +456,7 @@ class JoinedSource(Source):
             source, subtable = spec['source'], spec['table']
             source_query = dict(query)
             right_key = spec.get('index')
-            if df is not None and right_key not in query:
+            if df is not None and left_key and right_key not in query:
                 source_query[right_key] = list(df[left_key].unique())
             df_merge = self.sources[source].get(subtable, **source_query)
             if df is None:
