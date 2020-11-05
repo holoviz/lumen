@@ -1,4 +1,7 @@
+import re
 import sys
+
+import datetime as dt
 
 from pandas.core.dtypes.dtypes import CategoricalDtype
 
@@ -65,3 +68,17 @@ def get_dataframe_schema(df, columns=None):
                 cats = list(cats)
             properties[name] = {'type': 'string', 'enum': cats}
     return schema
+
+_period_regex = re.compile(r'((?P<weeks>\d+?)w)?((?P<days>\d+?)d)?((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?')
+
+
+def parse_timedelta(time_str):
+    parts = _period_regex.match(time_str)
+    if not parts:
+        return
+    parts = parts.groupdict()
+    time_params = {}
+    for (name, param) in parts.items():
+        if param:
+            time_params[name] = int(param)
+    return dt.timedelta(**time_params)

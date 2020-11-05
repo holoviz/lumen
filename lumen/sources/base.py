@@ -96,11 +96,18 @@ class Source(param.Parameterized):
     @classmethod
     def _resolve_reference(cls, reference, sources={}):
         refs = reference[1:].split('.')
-        if len(refs) != 3:
-            raise ValueError(f"Reference string '{reference} not valid. "
-                             "Must take the form @source.table.field.")
-        sourceref, table, field = refs
+        if len(refs) == 3:
+            sourceref, table, field = refs
+        elif len(refs) == 2:
+            sourceref, table = refs
+        elif len(refs) == 1:
+            (sourceref,) = refs
+
         source = cls.from_spec(sourceref, sources)
+        if len(refs) == 1:
+            return source
+        if len(refs) == 2:
+            return source.get(table)
         table_schema = source.get_schema(table)
         if field not in table_schema:
             raise ValueError(f"Field '{field}' was not found in "
@@ -279,7 +286,7 @@ class PanelSessionSource(Source):
 
     urls = param.List(doc="URL of the websites to monitor.")
 
-    timeout = param.Parameter(default=(0.5, 2))
+    timeout = param.Parameter(default=None)
 
     source_type = 'session_info'
 
@@ -308,11 +315,14 @@ class PanelSessionSource(Source):
     def _get_session_info(self, table, url):
         r = requests.get(
             url + self.endpoint, verify=False, timeout=self.timeout
-        ).json()
+        )
+        data = []
+        if r.status_code != 200:
+            return data
+        r = r.json()
         session_info = r['session_info']
         sessions = session_info['sessions']
 
-        data = []
         if table == "summary":
             rendered = [s for s in sessions.values()
                         if s['rendered'] is not None]
@@ -346,13 +356,16 @@ class PanelSessionSource(Source):
     def get(self, table, **query):
         data = []
         with futures.ThreadPoolExecutor(len(self.urls)) as executor:
-            tasks = [executor.submit(self._get_session_info, table, url)
-                     for url in self.urls]
+            tasks = {executor.submit(self._get_session_info, table, url): url
+                     for url in self.urls}
             for future in futures.as_completed(tasks):
+                url = tasks[future] + self.endpoint
                 try:
                     data.extend(future.result())
-                except Exception:
-                    continue
+                except Exception as e:
+                    exception = f"{type(e).__name__}({e})"
+                    self.param.warning("Failed to fetch session_info from "
+                                       f"{url}, errored with {exception}.")
         return pd.DataFrame(data, columns=list(self.get_schema(table)))
 
 
@@ -441,16 +454,20 @@ class JoinedSource(Source):
 
     @cached()
     def get(self, table, **query):
-        df = None
+        df, left_key = None, None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
-            df_merge = self.sources[source].get(subtable, **query)
+            source_query = dict(query)
+            right_key = spec.get('index')
+            if df is not None and left_key and right_key not in query:
+                source_query[right_key] = list(df[left_key].unique())
+            df_merge = self.sources[source].get(subtable, **source_query)
             if df is None:
                 df = df_merge
                 left_key = spec.get('index')
             else:
                 df = pd.merge(df, df_merge, left_on=left_key,
-                              right_on=spec.get('index'))
+                              right_on=right_key, how='outer')
         return df
 
     def clear_cache(self):

@@ -106,10 +106,9 @@ class Dashboard(param.Parameterized):
 
     def _reload(self, *events):
         self._load_config()
-        self._sources = {
-            name: Source.from_spec(source_spec)
-            for name, source_spec in self._spec.get('sources', {}).items()
-        }
+        self._sources = {}
+        for name, source_spec in self._spec.get('sources', {}).items():
+            self._sources[name] = Source.from_spec(source_spec, self._sources)
         self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
         filters = []
