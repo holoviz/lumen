@@ -7,6 +7,8 @@ import numpy as np
 import param
 import panel as pn
 
+from bokeh.models import NumeralTickFormatter
+
 from ..sources import Source
 from ..transforms import Transform
 
@@ -52,6 +54,7 @@ class View(param.Parameterized):
         for filt in self.filters:
             filt.param.watch(self.update, 'value')
         self._cache = None
+        self._updates = None
         self.update()
 
     @classmethod
@@ -109,12 +112,10 @@ class View(param.Parameterized):
         Updates the cached Panel object and notifies the containing
         Monitor object if it is stale and has to rerender.
         """
-        try:
-            if self._panel is not None:
-                self.update_panel(self._panel)
+        if self._panel is not None:
+            self._updates = self._get_params()
+            if self._updates is not None:
                 return False
-        except NotImplementedError:
-            pass
         self._panel = self.get_panel()
         return True
 
@@ -201,8 +202,8 @@ class View(param.Parameterized):
             self._cache = None
         return self._update_panel()
 
-    def update_panel(self, panel):
-        raise NotImplementedError
+    def _get_params(self):
+        return None
 
     @property
     def panel(self):
@@ -221,17 +222,16 @@ class StringView(View):
     view_type = 'string'
 
     def get_panel(self):
-        value = self.get_value()
-        if value is None:
-            return pn.pane.HTML('No info')
-        return pn.pane.HTML(f'<p style="font-size: {self.font_size}>{value}</p>',
-                            **self.kwargs)
+        return pn.pane.HTML(**self._get_params())
 
-    def update_panel(self, panel):
+    def _get_params(self):
         value = self.get_value()
+        params = dict(self.kwargs)
         if value is None:
-            panel.object = 'No info'
-        panel.object = f'<p style="font-size: {self.font_size}>{value}</p>'
+            params['object'] = 'No info'
+        else:
+            params['object'] = f'<p style="font-size: {self.font_size}>{value}</p>'
+        return params
 
 
 class IndicatorView(View):
@@ -255,21 +255,24 @@ class IndicatorView(View):
 
     def get_panel(self):
         indicators = param.concrete_descendents(pn.widgets.indicators.ValueIndicator)
-        indicator_name = self.indicator[0].upper() + self.indicator[1:]
+        indicator_name = self.indicator.title()
         indicator = indicators.get(indicator_name)
         if indicator is None:
             raise ValueError(f'No such indicator as {self.indicator}, '
                              'ensure the indicator option in the spec '
                              'specifies a Panel ValueIndicator that '
                              'exists and has been imported')
+        return indicator(**self._get_params())
+
+    def _get_params(self):
+        indicators = param.concrete_descendents(pn.widgets.indicators.ValueIndicator)
+        indicator_name = self.indicator.title()
+        indicator = indicators.get(indicator_name)
         value = self.get_value()
         if (not isinstance(value, (type(None), str)) and np.isnan(value) and
             isinstance(indicator.param.value, param.String)):
             value = None
-        return indicator(**self.kwargs, value=value)
-
-    def update_panel(self, panel):
-        panel.value = self.get_value()
+        return dict(self.kwargs, value=value)
 
 
 class hvPlotView(View):
@@ -294,17 +297,19 @@ class hvPlotView(View):
         super().__init__(**params)
 
     def get_plot(self, df):
+        processed = {}
+        for k, v in self.kwargs.items():
+            if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
+                v = NumeralTickFormatter(format=v)
+            processed[k] = v
         plot = df.hvplot(
-            kind=self.kind, x=self.x, y=self.y, **self.kwargs
+            kind=self.kind, x=self.x, y=self.y, **processed
         )
         return plot.opts(**self.opts) if self.opts else plot
 
     def get_panel(self):
-        df = self.get_data()
-        if df is None or not len(df):
-            return pn.pane.HTML('No data')
-        return pn.pane.HoloViews(self.get_plot(df))
+        return pn.pane.HoloViews(**self._get_params())
 
-    def update_panel(self, panel):
+    def _get_params(self):
         df = self.get_data()
-        panel.object = self.get_plot(df)
+        return dict(object=self.get_plot(df))
