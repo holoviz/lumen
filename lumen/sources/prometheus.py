@@ -38,7 +38,11 @@ class PrometheusSource(Source):
           - Second: '1s'
     """)
 
-    step = param.String(default='10s', doc="""
+    samples = param.Integer(default=200, doc="""
+        Number of samples in the selected period to query. May
+        be overridden by explicit step value.""")
+
+    step = param.String(doc="""
         Step value to use in PromQL query_range query.""")
 
     source_type = 'prometheus'
@@ -85,6 +89,11 @@ class PrometheusSource(Source):
         start_formatted = start.isoformat("T") + "Z"
         return start_formatted, end_formatted
 
+    def _step_value(self):
+        if self.step:
+            return self.step
+        return (parse_timedelta(self.period)/self.samples).total_seconds()
+
     def _url_query_parameters(self, pod_id, query):
         """
         Uses regular expression to map ae5-tools pod_id to full id.
@@ -95,7 +104,7 @@ class PrometheusSource(Source):
         query = query.replace("pod=POD_NAME", f"pod=~'{regexp}'")
         query_params = {
             'query': query, 'start': start_timestamp,
-            'end': end_timestamp, 'step': self.step
+            'end': end_timestamp, 'step': self._step_value()
         }
         return urlparse.urlencode(query_params)
 
@@ -131,9 +140,10 @@ class PrometheusSource(Source):
         ]
         fetched_json = defaultdict(dict)
         with futures.ThreadPoolExecutor(len(triples)) as executor:
-            tasks = {executor.submit(self._get_query_json, query_url):
-                     (pod_id, metric, query_url)
-                     for pod_id, metric, query_url in triples}
+            tasks = {
+                executor.submit(self._get_query_json, t[2]): t
+                for t in triples
+            }
             for future in futures.as_completed(tasks):
                 (pod_id, metric, query_url) = tasks[future]
                 try:
@@ -146,12 +156,8 @@ class PrometheusSource(Source):
                     )
         return fetched_json
 
-    def _make_query(self, **query):
-        pod_ids = [
-            pod_id for pod_id in self.ids
-            if 'id' not in query or pod_id in query['id']
-        ]
-        json_data = self._fetch_data(pod_ids)
+    def _make_query(self):
+        json_data = self._fetch_data(self.ids)
         dfs = []
         for pod_id, pod_data in json_data.items():
             df = None
@@ -178,9 +184,9 @@ class PrometheusSource(Source):
             schema[k] = mdef['schema']
         return {"timeseries": schema} if table is None else schema
 
-    @cached(with_query=True)
+    @cached(with_query=False)
     def get(self, table, **query):
         if table not in ('timeseries',):
             raise ValueError(f"PrometheusSource has no '{table}' table, "
                              "it currently only has a 'timeseries' table.")
-        return self._make_query(**query)
+        return self._make_query()
