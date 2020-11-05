@@ -5,6 +5,7 @@ import param
 import panel as pn
 
 from panel.template.base import BasicTemplate
+from panel.template import DefaultTheme, DarkTheme
 
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
@@ -12,6 +13,8 @@ from .sources import Source, RESTSource # noqa
 from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
+
+_THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
 
 pn.config.raw_css.append("""
 .reload .bk-btn {
@@ -39,7 +42,9 @@ class Dashboard(param.Parameterized):
 
         # Construct template
         tmpl = self.config.get('template', 'material')
-        kwargs = {'title': self.config.get('title', 'Lumen Dashboard')}
+        theme = self.config.get('theme', 'default').lower()
+        kwargs = {'title': self.config.get('title', 'Lumen Dashboard'),
+                  'theme': _THEMES[theme]}
         if 'logo' in self.config:
             kwargs['logo'] = self.config['logo']
         self.template = _templates[tmpl](**kwargs)
@@ -68,7 +73,7 @@ class Dashboard(param.Parameterized):
             self.targets = pn.GridBox(ncols=self.config.get('ncols', 5),
                                       margin=10, sizing_mode='stretch_width')
         elif layout == 'tabs':
-            self.targets = pn.Tabs(sizing_mode='stretch_width')
+            self.targets = pn.Tabs(sizing_mode='stretch_width', dynamic=True)
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -89,10 +94,6 @@ class Dashboard(param.Parameterized):
         # is released
         self.template.close_modal()
         self.template.open_modal()
-
-    def _reload_data(self, *events):
-        for target in self._targets:
-            target.update()
 
     def _load_config(self, from_file=False):
         # Load config
@@ -117,6 +118,16 @@ class Dashboard(param.Parameterized):
             if panel is not None:
                 filters.append(panel)
         self.filters[:] = filters
+
+    def _loading(self, name=''):
+        if not isinstance(self.targets, pn.GridBox):
+            return
+        items = [pn.pane.HTML(width=self.targets[i].width)
+                 for i in range(self.targets.ncols)]
+        index = int(self.targets.ncols / 2)
+        loading = pn.indicators.LoadingSpinner(value=True, align='center')
+        items[index] = pn.Column(loading, f'**Reloading {name}...**')
+        self.targets[:] = items
 
     def _rerender(self):
         self.targets[:] = [p for target in self._targets for p in target.panels]

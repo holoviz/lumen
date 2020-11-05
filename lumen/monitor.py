@@ -69,6 +69,7 @@ class Monitor(param.Parameterized):
             f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
             align='end', margin=10, sizing_mode='stretch_width'
         )
+        self._updates = {}
         self._update_views()
         for filt in self.filters:
             if isinstance(filt, FacetFilter):
@@ -101,12 +102,10 @@ class Monitor(param.Parameterized):
             'tabs': pn.Tabs
         }[self.layout]
         item = layout(*(view.panel for view in views), **kwargs)
+        params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
         return pn.Card(
-            item, title=title, name=title, **self.kwargs
+            item, title=title, name=title, **params
         )
-
-    def _update_card(self, card, views):
-        card[0][:] = [view.panel for view in views]
 
     def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True):
         view_filters = filters + list(facet_filters)
@@ -142,7 +141,7 @@ class Monitor(param.Parameterized):
                     view_stale = view.update(invalidate_cache)
                     update_card = update_card or view_stale
                 if update_card:
-                    self._update_card(card, views)
+                    self._updates[card] = views
         return sort_key, card
 
     def _update_views(self, invalidate_cache=True, update_views=True):
@@ -171,7 +170,17 @@ class Monitor(param.Parameterized):
 
     def _rerender(self, *events, invalidate_cache=False, update_views=True):
         self._update_views(invalidate_cache, update_views)
-        if self._stale:
+        if update_views:
+            self.application._loading(self.title)
+            for card, views in self._updates.items():
+                card[0][:] = [view.panel for view in views]
+            self._updates = {}
+            for _, (_, views) in self._cache.items():
+                for view in views:
+                    if view._updates:
+                        view._panel.param.set_param(**view._updates)
+                        view._updates = None
+        if self._stale or update_views:
             self.application._rerender()
             self._stale = False
 
