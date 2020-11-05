@@ -454,7 +454,7 @@ class JoinedSource(Source):
 
     @cached()
     def get(self, table, **query):
-        df = None
+        df, left_key = None, None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
             source_query = dict(query)
