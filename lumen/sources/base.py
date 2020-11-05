@@ -315,11 +315,14 @@ class PanelSessionSource(Source):
     def _get_session_info(self, table, url):
         r = requests.get(
             url + self.endpoint, verify=False, timeout=self.timeout
-        ).json()
+        )
+        data = []
+        if r.status_code != 200:
+            return data
+        r = r.json()
         session_info = r['session_info']
         sessions = session_info['sessions']
 
-        data = []
         if table == "summary":
             rendered = [s for s in sessions.values()
                         if s['rendered'] is not None]
