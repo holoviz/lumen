@@ -50,7 +50,7 @@ class PrometheusSource(Source):
     _memory_usage_query = """sum by(container_name)
     (container_memory_usage_bytes{job="kubelet",
     cluster="", namespace="default", pod_name=POD_NAME,
-    container_name=~"app|app-proxy", container_name!="POD"})"""
+    container_name=~"app", container_name!="POD"})"""
 
     _network_receive_bytes_query = """sort_desc(sum by (pod_name)
     (rate(container_network_receive_bytes_total{job="kubelet", cluster="",
@@ -63,12 +63,12 @@ class PrometheusSource(Source):
     _cpu_usage_query = """sum by (container_name)
     (rate(container_cpu_usage_seconds_total{job="kubelet", cluster="",
      namespace="default", image!="", pod_name=POD_NAME,
-     container_name=~"app|app-proxy", container_name!="POD"}[1m]))"""
+     container_name=~"app", container_name!="POD"}[1m]))"""
 
     _restarts_query = """max by (container)
      (kube_pod_container_status_restarts_total{job="kube-state-metrics",
     cluster="", namespace="default", pod=POD_NAME,
-    container=~"app|app-proxy"})"""
+    container=~"app"})"""
 
 
     _metrics = {
@@ -142,7 +142,13 @@ class PrometheusSource(Source):
 
     def _json_to_df(self, metric, response_json):
         "Convert JSON response to pandas DataFrame"
-        df = pd.DataFrame(response_json, columns=['timestamp', metric])
+        assert response_json["status"]== "success"
+        if response_json["data"]["resultType"] != "matrix":
+            raise Exception('PrometheusSource can currently only handle results'
+                            'of type "matrix"')
+        results = response_json["data"]['result']
+        assert len(results) == 1, 'Multi-column matrix results not yet handled'
+        df = pd.DataFrame(results[0]['values'], columns=['timestamp', metric])
         df[metric] = df[metric].astype(float)
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
         return df.set_index('timestamp')
@@ -154,7 +160,7 @@ class PrometheusSource(Source):
         # ToDo: Remove need to slice
         triples = [
             (pod_id, metric, self._get_query_url(metric, pod_id[3:]))
-            for pod_id in pod_ids for metric in self.metrics 
+            for pod_id in pod_ids for metric in self.metrics
         ]
         fetched_json = defaultdict(dict)
         with futures.ThreadPoolExecutor(len(triples)) as executor:
