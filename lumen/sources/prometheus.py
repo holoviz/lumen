@@ -142,7 +142,13 @@ class PrometheusSource(Source):
 
     def _json_to_df(self, metric, response_json):
         "Convert JSON response to pandas DataFrame"
-        df = pd.DataFrame(response_json, columns=['timestamp', metric])
+        assert response_json["status"]== "success"
+        if response_json["data"]["resultType"] != "matrix":
+            raise Exception('PrometheusSource can currently only handle results'
+                            'of type "matrix"')
+        results = response_json["data"]['result']
+        assert len(results) == 1, 'Multi-column matrix results not yet handled'
+        df = pd.DataFrame(results[0]['values'], columns=['timestamp', metric])
         df[metric] = df[metric].astype(float)
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
         return df.set_index('timestamp')
@@ -154,7 +160,7 @@ class PrometheusSource(Source):
         # ToDo: Remove need to slice
         triples = [
             (pod_id, metric, self._get_query_url(metric, pod_id[3:]))
-            for pod_id in pod_ids for metric in self.metrics 
+            for pod_id in pod_ids for metric in self.metrics
         ]
         fetched_json = defaultdict(dict)
         with futures.ThreadPoolExecutor(len(triples)) as executor:
