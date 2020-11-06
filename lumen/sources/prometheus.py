@@ -95,7 +95,7 @@ class PrometheusSource(Source):
     }
 
     def _format_timestamps(self):
-        end = dt.datetime.now()
+        end = dt.datetime.utcnow()
         end_formatted = end.isoformat("T") + "Z"
         period = parse_timedelta(self.period)
         if period is None:
@@ -200,9 +200,18 @@ class PrometheusSource(Source):
             return pd.DataFrame(columns=list(self.get_schema('timeseries')))
 
     def get_schema(self, table=None):
+        dt_start, dt_end = self._format_timestamps()
         schema = {
-            "id": {"type": "string", "enum": self.ids},
-            "timestamp" : {"type": "string", "format": "datetime"}
+            "id": {
+                "type": "string",
+                "enum": self.ids
+            },
+            "timestamp" : {
+                "type": "string",
+                "format": "date-time",
+                "formatMinimum": dt_start,
+                "formatMaximum": dt_end
+            }
         }
         for k, mdef in self._metrics.items():
             schema[k] = mdef['schema']

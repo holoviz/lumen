@@ -80,12 +80,24 @@ class Source(param.Parameterized):
         for k, val in query.items():
             if k not in df.columns:
                 continue
+            column = df[k]
             if np.isscalar(val):
-                filters.append(df[k] == val)
+                mask = column == val
             elif isinstance(val, list):
-                filters.append(df[k].isin(val))
+                if not val:
+                    continue
+                mask = column.isin(val)
             elif isinstance(val, tuple):
-                filters.append((df[k]>val[0]) & (df[k]<=val[1]))
+                start, end = val
+                if start is None and end is None:
+                    continue
+                elif start is None:
+                    mask = column<=end
+                elif end is None:
+                    mask = column>=start
+                else:
+                    mask = (column>=start) & (column<=end)
+            filters.append(mask)
         if filters:
             mask = filters[0]
             for f in filters:

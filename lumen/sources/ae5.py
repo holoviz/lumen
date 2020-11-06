@@ -96,8 +96,7 @@ class AE5KubeSource(Source):
             {'name': 'app',
              'usage': {'cpu': '', 'mem': ''}
             }
-        ],
-        'timestamp': ''
+        ]
     }
 
     def _get_record(self, deployment, resources, pod_info):
@@ -108,7 +107,6 @@ class AE5KubeSource(Source):
             "id": deployment['id'],
             "name": deployment['name'],
             "url": deployment['url'],
-            "timestamp": usage_info['timestamp']
         }
 
         # Resource usage
@@ -198,7 +196,5 @@ class AE5KubeSource(Source):
             if record is None:
                 continue
             records.append(record)
-        return pd.DataFrame(records, columns=[
-            'id', 'name', 'url', 'timestamp',
-            'cpu', 'memory', 'uptime', 'restarts'
-        ])
+        columns = ['id', 'name', 'url', 'cpu', 'memory', 'uptime', 'restarts']
+        return pd.DataFrame(records, columns=columns)
