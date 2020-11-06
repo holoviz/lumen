@@ -11,7 +11,6 @@ import requests
 from .base import Source, cached
 from ..util import parse_timedelta
 
-
 class PrometheusSource(Source):
     """
     Queries a Prometheus PromQL endpoint for timeseries information
@@ -22,7 +21,8 @@ class PrometheusSource(Source):
        List of pod IDs to query.""")
 
     metrics = param.List(
-        default=['memory_usage', 'cpu_usage', 'network_receive_bytes'],
+        default=['memory_usage', 'cpu_usage', 'restarts',
+                 'network_receive_bytes', 'network_transmit_bytes'],
         doc="Names of metric queries to execute")
 
     promql_api = param.String(doc="""
@@ -56,10 +56,20 @@ class PrometheusSource(Source):
     (rate(container_network_receive_bytes_total{job="kubelet", cluster="",
     namespace="default", pod_name=POD_NAME}[1m])))"""
 
+    _network_transmit_bytes_query = """sort_desc(sum by (pod_name)
+    (rate(container_network_transmit_bytes_total{job="kubelet", cluster="",
+    namespace="default", pod_name=POD_NAME}[1m])))"""
+
     _cpu_usage_query = """sum by (container_name)
     (rate(container_cpu_usage_seconds_total{job="kubelet", cluster="",
      namespace="default", image!="", pod_name=POD_NAME,
      container_name=~"app|app-proxy", container_name!="POD"}[1m]))"""
+
+    _restarts_query = """max by (container)
+     (kube_pod_container_status_restarts_total{job="kube-state-metrics",
+    cluster="", namespace="default", pod=POD_NAME,
+    container=~"app|app-proxy"})"""
+
 
     _metrics = {
         'memory_usage': {
@@ -70,8 +80,16 @@ class PrometheusSource(Source):
             'query': _network_receive_bytes_query,
             'schema': {"type": "number"}
         },
+        'network_transmit_bytes': {
+            'query': _network_transmit_bytes_query,
+            'schema': {"type": "number"}
+        },
         'cpu_usage': {
             'query': _cpu_usage_query,
+            'schema': {"type": "number"}
+        },
+        'restarts': {
+            'query': _restarts_query,
             'schema': {"type": "number"}
         }
     }
