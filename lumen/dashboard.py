@@ -67,13 +67,14 @@ class Dashboard(param.Parameterized):
         self.template.modal.append(self._editor_layout)
 
         # Build layouts
-        self.filters = pn.Column(margin=0, sizing_mode='stretch_width')
+        self.filters = pn.Accordion(margin=0, sizing_mode='stretch_width')
         layout = self.config.get('layout', 'grid')
         if layout == 'grid':
             self.targets = pn.GridBox(ncols=self.config.get('ncols', 5),
                                       margin=10, sizing_mode='stretch_width')
         elif layout == 'tabs':
             self.targets = pn.Tabs(sizing_mode='stretch_width', dynamic=True)
+            self.targets.param.watch(self._activate_filters, 'active')
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -88,6 +89,9 @@ class Dashboard(param.Parameterized):
             self._reload_button,
             self._edit_button
         ))
+
+    def _activate_filters(self, event):
+        self.filters.active = [event.new]
 
     def _open_modal(self, event):
         # Workaround until Panel https://github.com/holoviz/panel/pull/1719
@@ -118,6 +122,7 @@ class Dashboard(param.Parameterized):
             if panel is not None:
                 filters.append(panel)
         self.filters[:] = filters
+        self.filters.active = [0]
 
     def _loading(self, name=''):
         if not isinstance(self.targets, pn.GridBox):

@@ -202,7 +202,7 @@ class Monitor(param.Parameterized):
             ])
             views.append(pn.layout.Divider())
         views.append(pn.Row(self._reload_button, self.timestamp, sizing_mode='stretch_width'))
-        return pn.Card(*views, title=self.title, sizing_mode='stretch_width') if views else None
+        return pn.Column(*views, name=self.title, sizing_mode='stretch_width') if views else None
 
     @property
     def panels(self):
