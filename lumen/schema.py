@@ -35,6 +35,7 @@ class JSONSchema(pn.pane.PaneBase):
     _unbounded_number_widget = pn.widgets.FloatInput
     _list_select_widget = pn.widgets.MultiSelect
     _bounded_int_widget = pn.widgets.IntSlider
+    _bounded_int_range_widget = pn.widgets.IntRangeSlider
     _unbounded_int_widget = pn.widgets.IntInput
     _string_widget = pn.widgets.TextInput
     _boolean_widget = pn.widgets.Checkbox
@@ -105,9 +106,8 @@ class JSONSchema(pn.pane.PaneBase):
         return self._string_widget, {}
 
     def _enum(self, schema):
-        if self.multi:
-            self._select_widget
-        return self._multi_select_widget, {'options': schema['enum']}
+        wtype = self._multi_select_widget if self.multi else self._select_widget
+        return wtype, {'options': schema['enum']}
 
     def __init__(self, object=None, schema=None, **params):
         if schema is not None:
