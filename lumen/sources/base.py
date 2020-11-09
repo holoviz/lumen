@@ -5,6 +5,7 @@ from functools import wraps
 
 import numpy as np
 import pandas as pd
+import panel as pn
 import param
 import requests
 
@@ -181,6 +182,10 @@ class Source(param.Parameterized):
     def __init__(self, **params):
         super().__init__(**params)
         self._cache = {}
+
+    @property
+    def panel(self):
+        return None
 
     def _get_key(self, table, **query):
         key = (table,)
@@ -548,6 +553,17 @@ class JoinedSource(Source):
                 df = pd.merge(df, df_merge, left_on=left_key,
                               right_on=right_key, how='outer')
         return df
+
+    @property
+    def panel(self):
+        column = pn.Column(sizing_mode='stretch_width')
+        for name, source in self.sources.items():
+            panel = source.panel
+            if not panel:
+                continue
+            header = pn.pane.Markdown(f'#### {name.title()}', margin=(0, 5))
+            column.extend([header, *source.panel])
+        return column
 
     def clear_cache(self):
         super().clear_cache()

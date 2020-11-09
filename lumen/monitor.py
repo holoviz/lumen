@@ -189,6 +189,10 @@ class Monitor(param.Parameterized):
     @property
     def filter_panel(self):
         views = []
+        source_panel = self.source.panel
+        if source_panel:
+            source_header = pn.pane.Markdown('### Source', margin=(0, 5))
+            views.extend([source_header, source_panel, pn.layout.Divider()])
         filters = [filt.panel for filt in self.filters if filt.panel is not None]
         if filters:
             views.append(pn.pane.Markdown('### Filters', margin=(0, 5)))
