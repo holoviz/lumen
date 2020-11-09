@@ -21,7 +21,12 @@ class Monitor(param.Parameterized):
 
     filters = param.List(doc="A list of filters to be rendered.")
 
-    layout = param.ObjectSelector(default='column', objects=['row', 'column', 'grid'])
+    layout = param.ClassSelector(default='column', class_=(str, list), doc="""
+        Defines the layout of the views in the monitor target. Can be
+        'column', 'row', 'grid', 'row' or a nested list of indexes
+        corresponding to the views, e.g. [[0, 1], [2]] will create
+        a Column of one row containing views 0 and 1 and a second Row
+        containing view 2.""" )
 
     sort_fields = param.List(default=[], doc="List of fields to sort by.")
 
@@ -92,16 +97,24 @@ class Monitor(param.Parameterized):
 
     def _construct_card(self, title, views):
         kwargs = dict(self.kwargs)
-        if self.layout == 'grid':
-            if 'ncols' not in kwargs:
+        if isinstance(self.layout, list):
+            item = pn.Column(sizing_mode='stretch_both')
+            for row_spec in self.layout:
+                row = pn.Row(sizing_mode='stretch_both')
+                for index in row_spec:
+                    row.append(views[index].panel)
+                item.append(row)
+        else:
+            if self.layout == 'grid' and 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
-        layout = {
-            'column': pn.Column,
-            'grid': pn.GridBox,
-            'row': pn.Row,
-            'tabs': pn.Tabs
-        }[self.layout]
-        item = layout(*(view.panel for view in views), **kwargs)
+            layout = {
+                'column': pn.Column,
+                'grid': pn.GridBox,
+                'row': pn.Row,
+                'tabs': pn.Tabs
+            }[self.layout]
+            item = layout(*(view.panel for view in views), **kwargs)
+
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
         return pn.Card(
             item, title=title, name=title, **params
