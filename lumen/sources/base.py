@@ -1,3 +1,5 @@
+import os
+
 from concurrent import futures
 from functools import wraps
 
@@ -5,6 +7,8 @@ import numpy as np
 import pandas as pd
 import param
 import requests
+
+from ..util import get_dataframe_schema
 
 
 def cached(with_query=True):
@@ -258,6 +262,69 @@ class RESTSource(Source):
         r = requests.get(self.url+'/data', params=query)
         df = pd.DataFrame(r.json())
         return df
+
+
+class FileSource(Source):
+    """
+    Loads CSV, Excel and Parquet using pandas.read_* or dask.read_*
+    functions.
+    """
+
+    files = param.List(doc="""
+        List of files to load. The filenames will become the table
+        names.""")
+
+    use_dask = param.Boolean(default=True, doc="""
+        Whether to use dask to load files.""")
+
+    _pd_load_fns = {
+        'csv': pd.read_csv,
+        'xlsx': pd.read_excel,
+        'xls': pd.read_excel,
+        'parq': pd.read_parquet
+    }
+
+    source_type = 'file'
+
+    def _load_fn(self, ext):
+        if self.use_dask:
+            import dask.dataframe as dd
+            if ext == 'csv':
+                return dd.read_csv
+            elif ext == 'parq':
+                return dd.read_parquet
+        if ext not in self._pd_load_fns:
+            raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
+        return self._pd_load_fns[ext]
+
+    def get_schema(self, table=None):
+        schemas = {}
+        for file in self.files:
+            name = '.'.join(file.split('.')[:-1])
+            if table is not None and name != table:
+                continue
+            df = self.get(name)
+            schemas[name] = get_dataframe_schema(df)['items']['properties']
+        return schemas if table is None else schemas[table]
+
+    def _load_table(self, table):
+        df = None
+        for file in self.files:
+            (*names), ext = os.path.basename(file).split('.')
+            name = '.'.join(names)
+            if name != table:
+                continue
+            df = self._load_fn(ext)(file)
+        if df is None:
+            tables = ['.'.join(f.split('.')[:-1]) for f in self.files]
+            raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
+        return df
+
+    @cached()
+    def get(self, table, **query):
+        df = self._load_table(table)
+        df = self._filter_dataframe(df, **query)
+        return df.compute() if hasattr(df, 'compute') else df
 
 
 class WebsiteSource(Source):
