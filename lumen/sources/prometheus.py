@@ -5,6 +5,7 @@ from collections import defaultdict
 from concurrent import futures
 
 import pandas as pd
+import panel as pn
 import param
 import requests
 
@@ -93,6 +94,11 @@ class PrometheusSource(Source):
             'schema': {"type": "number"}
         }
     }
+
+    @property
+    def panel(self):
+        return pn.Param(self.param, parameters=['period', 'samples', 'step'],
+                        sizing_mode='stretch_width', show_name=False)
 
     def _format_timestamps(self):
         end = dt.datetime.utcnow()
