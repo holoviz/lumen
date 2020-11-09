@@ -1,3 +1,4 @@
+import pandas as pd
 import panel as pn
 import param
 
@@ -8,6 +9,9 @@ class JSONSchema(pn.pane.PaneBase):
                                          is_instance=False, doc="""
         Defines the layout the model(s) returned by the pane will
         be placed in.""")
+
+    multi = param.Boolean(default=True, doc="""
+        Whether to pick multi-select and range widgets by default.""")
 
     properties = param.List(default=[], doc="""
         If set this serves as a whitelist of properties to display on
@@ -25,17 +29,28 @@ class JSONSchema(pn.pane.PaneBase):
     _unpack = True
 
     _select_widget = pn.widgets.Select
+    _multi_select_widget = pn.widgets.MultiSelect
     _bounded_number_widget = pn.widgets.FloatSlider
-    _unbounded_number_widget = pn.widgets.Spinner
+    _bounded_number_range_widget = pn.widgets.RangeSlider
+    _unbounded_number_widget = pn.widgets.FloatInput
     _list_select_widget = pn.widgets.MultiSelect
     _bounded_int_widget = pn.widgets.IntSlider
+    _bounded_int_range_widget = pn.widgets.IntRangeSlider
+    _unbounded_int_widget = pn.widgets.IntInput
     _string_widget = pn.widgets.TextInput
     _boolean_widget = pn.widgets.Checkbox
     _literal_widget = pn.widgets.LiteralInput
-    _date_widget = pn.widgets.DatetimeInput
+    _unbounded_datetime_widget = pn.widgets.DatetimeInput
+    _unbounded_date_widget = pn.widgets.DatePicker
+    _date_range_widget = pn.widgets.DateRangeSlider
 
-    @classmethod
-    def _array_type(cls, schema):
+    # Not available until Panel 0.11
+    try:
+        _datetime_range_widget = pn.widgets.DatetimeRangeInput
+    except Exception:
+        _datetime_range_widget = pn.widgets.DateRangeSlider
+
+    def _array_type(self, schema):
         if 'items' in schema and not schema.get('additionalItems', True):
             items = schema['items']
             if len(items) == 2:
@@ -44,37 +59,60 @@ class JSONSchema(pn.pane.PaneBase):
                 elif all(s['type'] == 'integer' for s in items):
                     return pn.widgets.IntRangeSlider, {}
             elif 'enum' in items:
-                return cls._list_select_type, {'options': items['enum']}
+                return self._list_select_type, {'options': items['enum']}
         else:
-            return cls._literal_widget, {'type': (list, tuple)}
+            return self._literal_widget, {'type': (list, tuple)}
 
-    @classmethod
-    def _number_type(cls, schema):
-        if 'maximum' in schema and 'minimum' in schema:
-            return cls._bounded_number_widget, {'start': schema['minimum'], 'end': schema['maximum']}
+    def _number_type(self, schema):
+        if 'inclusiveMaximum' in schema and 'inclusiveMinimum' in schema:
+            if self.multi:
+                wtype = self._bounded_number_range_widget
+            else:
+                wtype = self._bounded_number_widget
+            return wtype, {'start': schema['inclusiveMinimum'],
+                           'end': schema['inclusiveMaximum']}
         else:
-            return cls._bounded_number_widget, {}
+            return self._unbounded_number_widget, {}
 
-    @classmethod
-    def _integer_type(cls, schema):
-        if 'maximum' in schema and 'minimum' in schema:
-            return cls._bounded_int_widget, {'start': schema['minimum'], 'end': schema['maximum']}
+    def _integer_type(self, schema):
+        if 'inclusiveMaximum' in schema and 'inclusiveMinimum' in schema:
+            if self.multi:
+                wtype = self._bounded_int_range_widget
+            else:
+                wtype = self._bounded_int_widget
+            return wtype, {'start': schema['inclusiveMinimum'],
+                           'end': schema['inclusiveMaximum']}
         else:
-            return cls._bounded_number_widget, {'step': 1}
+            return self._unbounded_int_widget, {'step': 1}
 
-    @classmethod
-    def _boolean_type(cls, schema):
-        return cls._boolean_widget, {}
+    def _boolean_type(self, schema):
+        return self._boolean_widget, {}
 
-    @classmethod
-    def _string_type(cls, schema):
-        if schema.get('format') == 'date-time':
-            return cls._date_widget, {}
-        return cls._string_widget, {}
+    def _string_type(self, schema):
+        if schema.get('format') in ('date', 'date-time'):
+            if 'formatMaximum' in schema and 'formatMinimum' in schema:
+                dt_min = pd.to_datetime(schema['formatMinimum'])
+                if dt_min.tz:
+                    dt_min = dt_min.astimezone('UTC').tz_localize(None)
+                dt_max = pd.to_datetime(schema['formatMaximum'])
+                if dt_max.tz:
+                    dt_max = dt_max.astimezone('UTC').tz_localize(None)
+                dt_range = {'start': dt_min.to_pydatetime(),
+                            'end': dt_max.to_pydatetime()}
+                if schema.get('format') == 'date':
+                    wtype = self._date_range_widget
+                else:
+                    wtype = self._datetime_range_widget
+                return wtype, dt_range
+            elif schema.get('format') == 'date':
+                return self._unbounded_date_widget, {}
+            else:
+                return self._unbounded_datetime_widget, {}
+        return self._string_widget, {}
 
-    @classmethod
-    def _enum(cls, schema):
-        return cls._select_widget, {'options': schema['enum']}
+    def _enum(self, schema):
+        wtype = self._multi_select_widget if self.multi else self._select_widget
+        return wtype, {'options': schema['enum']}
 
     def __init__(self, object=None, schema=None, **params):
         if schema is not None:

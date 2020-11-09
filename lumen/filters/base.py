@@ -135,6 +135,14 @@ class WidgetFilter(Filter):
     returned by the Source.
     """
 
+    default = param.Parameter(doc="""
+        The default value to use on the widget.""")
+
+    multi = param.Boolean(default=True, doc="""
+        Whether to use a single-value or multi-value selection widget,
+        e.g. for a numeric value this could be a regular slider or a
+        range slider.""")
+
     widget = param.ClassSelector(class_=pn.widgets.Widget)
 
     filter_type = 'widget'
@@ -142,12 +150,14 @@ class WidgetFilter(Filter):
     def __init__(self, **params):
         super(WidgetFilter, self).__init__(**params)
         self.widget = JSONSchema(
-            schema=self.schema, sizing_mode='stretch_width'
+            schema=self.schema, sizing_mode='stretch_width',
+            multi=self.multi
         )._widgets[self.field]
         if isinstance(self.widget, pn.widgets.Select):
             self.widget.options.insert(0, ' ')
             self.widget.value = ' '
         self.widget.link(self, value='value')
+        self.widget.value = self.default
 
     @property
     def query(self):
