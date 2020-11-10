@@ -10,6 +10,7 @@ from panel.template import DefaultTheme, DarkTheme
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
+from .transforms import Transform # noqa
 from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
@@ -108,6 +109,15 @@ class Dashboard(param.Parameterized):
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})
+        self._apply_defaults(self._spec['defaults'])
+
+    def _apply_defaults(self, defaults):
+        for key, obj in (('filters', Filter), ('sources', Source),
+                         ('transforms', Transform), ('views', View)):
+            for default in defaults.get(key, []):
+                defaults = dict(default)
+                obj_type = obj._get_type(defaults.pop('type', None))
+                obj_type.param.set_param(**defaults)
 
     def _reload(self, *events):
         self._load_config()
