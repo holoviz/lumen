@@ -171,7 +171,6 @@ class Source(param.Parameterized):
                 for source in spec['sources']
             }
             spec['sources'] = resolved_sources
-
         resolved_spec = {}
         for k, v in spec.items():
             if isinstance(v, str) and v.startswith('@'):
@@ -203,6 +202,14 @@ class Source(param.Parameterized):
     def _set_cache(self, data, table, **query):
         key = self._get_key(table, **query)
         self._cache[key] = data
+
+    @property
+    def panel(self):
+        """
+        A Source can return a Panel object which displays information
+        about the Source or controls how the Source queries data.
+        """
+        return None
 
     def get_schema(self, table=None):
         """
@@ -289,18 +296,23 @@ class FileSource(Source):
         'parq': pd.read_parquet
     }
 
+    _load_kwargs = {
+        'csv': {'parse_dates': True}
+    }
+
     source_type = 'file'
 
     def _load_fn(self, ext):
+        kwargs = self._load_kwargs.get(ext, {})
         if self.use_dask:
             import dask.dataframe as dd
             if ext == 'csv':
-                return dd.read_csv
+                return dd.read_csv, kwargs
             elif ext == 'parq':
-                return dd.read_parquet
+                return dd.read_parquet, kwargs
         if ext not in self._pd_load_fns:
             raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
-        return self._pd_load_fns[ext]
+        return self._pd_load_fns[ext], kwargs
 
     def get_schema(self, table=None):
         schemas = {}
@@ -319,7 +331,8 @@ class FileSource(Source):
             name = '.'.join(names)
             if name != table:
                 continue
-            df = self._load_fn(ext)(file)
+            load_fn, kwargs = self._load_fn(ext)
+            df = load_fn(file, **kwargs)
         if df is None:
             tables = ['.'.join(f.split('.')[:-1]) for f in self.files]
             raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
