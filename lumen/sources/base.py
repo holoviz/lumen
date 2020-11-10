@@ -182,10 +182,6 @@ class Source(param.Parameterized):
         super().__init__(**params)
         self._cache = {}
 
-    @property
-    def panel(self):
-        return None
-
     def _get_key(self, table, **query):
         key = (table,)
         for k, v in sorted(query.items()):
