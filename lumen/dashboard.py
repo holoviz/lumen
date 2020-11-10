@@ -135,13 +135,19 @@ class Dashboard(param.Parameterized):
         self.filters.active = [0]
 
     def _loading(self, name=''):
-        if not isinstance(self.targets, pn.GridBox):
+        if not isinstance(self.targets, pn.GridBox) or len(self.targets) < self.config.get('loading_threshold', 10):
             return
         items = [pn.pane.HTML(width=self.targets[i].width)
-                 for i in range(self.targets.ncols)]
-        index = int(self.targets.ncols / 2)
-        loading = pn.indicators.LoadingSpinner(value=True, align='center')
-        items[index] = pn.Column(loading, f'**Reloading {name}...**')
+                 for i in range(self.targets.ncols) if i < len(self.targets)]
+        index = int(min(self.targets.ncols, (len(self.targets)-1)) / 2)
+        loading = pn.Column(
+            pn.indicators.LoadingSpinner(value=True, align='center'),
+            f'**Reloading {name}...**'
+        )
+        if items:
+            items[index] = loading
+        else:
+            items = [loading]
         self.targets[:] = items
 
     def _rerender(self):
