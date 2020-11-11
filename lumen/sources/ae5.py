@@ -1,7 +1,5 @@
 import datetime as dt
 
-from concurrent import futures
-
 import param
 import pandas as pd
 import requests
