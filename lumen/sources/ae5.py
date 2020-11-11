@@ -86,9 +86,6 @@ class AE5KubeSource(Source):
 
     ae5_source = param.ClassSelector(class_=AE5Source)
 
-    kubernetes_api = param.String(doc="""
-        Endpoint of the kube-control deployment on AE5.""")
-
     source_type = 'ae5kube'
 
     _empty = {
@@ -156,16 +153,10 @@ class AE5KubeSource(Source):
 
         return record
 
-    def _get_pod_info(self, pod=None):
-        url = self.kubernetes_api+'/podinfo'
-        if pod is not None:
-            url += '?id='+pod
-        return self.ae5_source._session.session.get(url).json()
-
     def _fetch_data(self, deployments):
         pod_info = {}
         with futures.ThreadPoolExecutor(len(deployments)) as executor:
-            tasks = {executor.submit(self._get_pod_info, d['id']): d['id']
+            tasks = {executor.submit(self.ae5_source._session.pod_info, d['id']): d['id']
                      for i, d in deployments.iterrows()}
             for future in futures.as_completed(tasks):
                 deployment = tasks[future]
