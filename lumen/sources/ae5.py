@@ -20,6 +20,8 @@ class AE5Source(Source):
 
     password = param.String(doc="Password to authenticate with AE5.")
 
+    k8s_endpoint = param.String(default='k8s')
+
     pool_size = param.Integer(default=100, doc="""
         Size of HTTP socket pool.""")
 
@@ -36,156 +38,93 @@ class AE5Source(Source):
     def __init__(self, **params):
         super().__init__(**params)
         self._session = AEUserSession(
-            self.hostname, self.username, self.password, persist=False
+            self.hostname, self.username, self.password, persist=False,
+            k8s_endpoint=self.k8s_endpoint
         )
         adapter = requests.adapters.HTTPAdapter(pool_maxsize=self.pool_size)
         self._session.session.mount('https://', adapter)
         self._session.session.mount('http://', adapter)
 
-    def get_schema(self, table=None):
-        if table in (None, 'deployments'):
-            deployments = self.get('deployments')
-            deployment_schema = get_dataframe_schema(deployments)['items']['properties']
-            if table is not None:
-                return deployment_schema
-        if table in (None, 'sessions'):
-            sessions = self.get('sessions')
-            session_schema = get_dataframe_schema(sessions)['items']['properties']
-            if table is not None:
-                return session_schema
-        if table in (None, 'resources'):
-            resources = self.get('resources')
-            resource_schema = get_dataframe_schema(resources)['items']['properties']
-        return {
-            'deployments': deployment_schema,
-            'resources': resource_schema,
-            'sessions': session_schema
-        }
-
-    @cached(with_query=False)
-    def get(self, table, **query):
-        if table not in ('deployments', 'resources', 'sessions'):
-            raise ValueError(f"AE5Source has no '{table}' table, choose "
-                             "from 'deployments', 'resources' and 'sessions'.")
-        if table == 'deployments':
-            deployments = self._session.deployment_list(format='dataframe')
-            return deployments[self._deployment_columns]
-        elif table == 'resources':
-            resources = self._session.resource_profile_list(format='dataframe')
-            return resources
-        else:
-            sessions = self._session.session_list(format='dataframe')
-            return sessions[self._session_columns]
-
-
-class AE5KubeSource(Source):
-    """
-    Queries an endpoint on a Anaconda Enterprise 5 instance for
-    information about sessions and deployments.
-    """
-
-    ae5_source = param.ClassSelector(class_=AE5Source)
-
-    source_type = 'ae5kube'
-
-    _empty = {
-        'containers': [
-            {'name': 'app',
-             'usage': {'cpu': '', 'mem': ''}
-            }
-        ]
-    }
-
-    def _get_record(self, deployment, resources, pod_info):
-        usage_info = pod_info.get('usage', self._empty)
-        status_info = pod_info.get('status')
-
+    def _get_record(self, deployment, resources):
+        container_info = deployment.get('_k8s', {}).get('containers', {})
         record = {
             "id": deployment['id'],
             "name": deployment['name'],
             "url": deployment['url'],
         }
 
-        # Resource usage
-        containers = [
-            container for container in usage_info['containers']
-            if container['name'] == 'app'
-        ]
-        if containers:
-            container = containers[0]
-            profile = deployment['resource_profile']
-            resource = resources[resources['name']==profile]
-            usage = container['usage']
-            cpu_cap = int(resource.cpu.item())
-            if 'cpu' not in usage or 'm' not in usage['cpu']:
-                cpu = 0
-            else:
-                cpu = int(usage['cpu'][:-1])
-            record['cpu'] = round(((cpu/1000.) / cpu_cap)*100, 2)
-            mem_cap = int(resource.memory.item()[:-2])
-            if 'memory' not in usage:
-                mem = 0
-            else:
-                mem = int(usage['memory'][:-2])
-            record['memory'] = round(((mem/1024.) / mem_cap)*100, 2)
-        else:
-            record['cpu'] = float('NaN')
-            record['memory'] = float('NaN')
+        if 'app' not in container_info:
+            nan = float('NaN')
+            return dict(record, cpu=nan, memory=nan, restarts=nan, uptime='-')
 
-        # Status
-        statuses = [
-            status for status in status_info['containerStatuses']
-            if status['name'] == 'app'
-        ]
-        if statuses:
-            status = statuses[0]
-            state = status['state']
-            started = state.get('running', state.get('waiting', {})).get('startedAt')
-            record["restarts"] = status['restartCount']
-            if started:
-                started_dt = dt.datetime.fromisoformat(started.replace('Z', ''))
-                uptime = str(dt.datetime.now()-started_dt)
-                record["uptime"] = uptime[:uptime.index('.')]
+        container = container_info['app']
+        profile = deployment['resource_profile']
+        resource = resources[resources['name']==profile]
+        usage = container['usage']
+
+        # CPU Usage
+        cpu_cap = int(resource.cpu.item())
+        if 'cpu' not in usage or 'm' not in usage['cpu']:
+            cpu = 0
         else:
-            record["restarts"] = float('NaN')
-        if 'uptime' not in record:
+            cpu = int(usage['cpu'][:-1])
+        record['cpu'] = round(((cpu/1000.) / cpu_cap)*100, 2)
+
+        # Memory usage
+        mem_cap = int(resource.memory.item()[:-2])
+        mem = int(usage['memory'][:-2]) if 'memory' in usage else 0
+        record['memory'] = round(((mem/1024.) / mem_cap)*100, 2)
+
+        # Uptime
+        started = container.get('since')
+        record["restarts"] = container['restarts']
+        if started:
+            started_dt = dt.datetime.fromisoformat(started.replace('Z', ''))
+            uptime = str(dt.datetime.now()-started_dt)
+            record["uptime"] = uptime[:uptime.index('.')]
+        else:
             record["uptime"] = '-'
 
         return record
 
-    def _fetch_data(self, deployments):
-        pod_info = {}
-        with futures.ThreadPoolExecutor(len(deployments)) as executor:
-            tasks = {executor.submit(self.ae5_source._session.pod_info, d['id']): d['id']
-                     for i, d in deployments.iterrows()}
-            for future in futures.as_completed(tasks):
-                deployment = tasks[future]
-                try:
-                    pod_info[deployment] = future.result()
-                except Exception:
-                    continue
-        return pod_info
-
-    # Public API
-
     def get_schema(self, table=None):
-        deployments = self.get('deployments')
-        schema = get_dataframe_schema(deployments)['items']['properties']
-        return {'deployments': schema} if table is None else schema
+        schemas = {}
+        if table in (None, 'deployments'):
+            deployments = self.get('deployments')
+            schemas['deployments'] = get_dataframe_schema(deployments)['items']['properties']
+        if table in (None, 'sessions'):
+            sessions = self.get('sessions')
+            schemas['sessions'] = get_dataframe_schema(sessions)['items']['properties']
+        if table in (None, 'usage'):
+            usage = self.get('usage')
+            schemas['usage'] = get_dataframe_schema(usage)['items']['properties']
+        if table in (None, 'resources'):
+            resources = self.get('resources')
+            schemas['resources'] = get_dataframe_schema(resources)['items']['properties']
+        return schemas if table is None else schemas[table]
 
     @cached(with_query=False)
     def get(self, table, **query):
-        if table not in ('deployments',):
-            raise ValueError(f"AE5KubeSource has no '{table}' table, "
-                             "it currently only has a 'deployments' table.")
-        deployments = self.ae5_source.get('deployments')
-        resources = self.ae5_source.get('resources')
-        pod_info = self._fetch_data(deployments)
-        records = []
-        for i, row in deployments.iterrows():
-            record = self._get_record(row, resources, pod_info[row['id']])
-            if record is None:
-                continue
-            records.append(record)
-        columns = ['id', 'name', 'url', 'cpu', 'memory', 'uptime', 'restarts']
-        return pd.DataFrame(records, columns=columns)
+        if table not in ('deployments', 'resources', 'sessions', 'usage'):
+            raise ValueError(f"AE5Source has no '{table}' table, choose "
+                             "from 'deployments', 'resources', 'usage', "
+                             "'sessions'.")
+        if table == 'deployments':
+            deployments = self._session.deployment_list(format='dataframe')
+            return deployments[self._deployment_columns]
+        elif table == 'resources':
+            resources = self._session.resource_profile_list(format='dataframe')
+            return resources
+        elif table == 'usage':
+            resources = self.get('resources')
+            records = []
+            for deployment in self._session.deployment_list(k8s=True):
+                record = self._get_record(deployment, resources)
+                if record is None:
+                    continue
+                records.append(record)
+            columns = ['id', 'name', 'url', 'cpu', 'memory', 'uptime', 'restarts']
+            return pd.DataFrame(records, columns=columns)
+        else:
+            sessions = self._session.session_list(format='dataframe')
+            return sessions[self._session_columns]
