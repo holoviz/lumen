@@ -34,6 +34,7 @@ class AE5Source(Source):
     ]
 
     _units = {
+        'm': 1,
         'Ki': 1024,
         'Mi': 1024**2,
         'Gi': 1024**3,
@@ -50,7 +51,7 @@ class AE5Source(Source):
         self._session.session.mount('https://', adapter)
         self._session.session.mount('http://', adapter)
 
-    def _get_record(self, deployment, resources):
+    def _get_record(self, deployment):
         container_info = deployment.get('_k8s', {}).get('containers', {})
         record = {
             "id": deployment['id'],
@@ -63,12 +64,11 @@ class AE5Source(Source):
             return dict(record, cpu=nan, memory=nan, restarts=nan, uptime='-')
 
         container = container_info['app']
-        profile = deployment['resource_profile']
-        resource = resources[resources['name']==profile]
+        limits = container['limits']
         usage = container['usage']
 
         # CPU Usage
-        cpu_cap_str = resource.cpu.item()
+        cpu_cap_str = limits['cpu']
         if cpu_cap_str.endswith('m'):
             cpu_cap = float(cpu_cap_str[:-1])/1000
         else:
@@ -84,8 +84,10 @@ class AE5Source(Source):
         record['cpu'] = round((cpu / cpu_cap)*100, 2)
 
         # Memory usage
-        mem_cap_str = resource.memory.item()
-        mem_cap = float(mem_cap_str[:-2])*self._units[mem_cap_str[-2:]]
+        mem_cap_str = limits['memory']
+        mem_unit = [m for m in self._units if mem_cap_str.endswith(m)]
+        mem_unit = mem_unit[0] if mem_unit else None
+        mem_cap = float(mem_cap_str[:-len(mem_unit)])*self._units.get(mem_unit, 1)
         if 'memory' in usage:
             mem_str = usage['memory']
             mem = float(mem_str[:-2])*self._units[mem_str[-2:]]
@@ -134,10 +136,9 @@ class AE5Source(Source):
             resources = self._session.resource_profile_list(format='dataframe')
             return resources
         elif table == 'usage':
-            resources = self.get('resources')
             records = []
             for deployment in self._session.deployment_list(k8s=True):
-                record = self._get_record(deployment, resources)
+                record = self._get_record(deployment)
                 if record is None:
                     continue
                 records.append(record)

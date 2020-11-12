@@ -379,7 +379,7 @@ class PanelSessionSource(Source):
 
     urls = param.List(doc="URL of the websites to monitor.")
 
-    timeout = param.Parameter(default=None)
+    timeout = param.Parameter(default=5)
 
     source_type = 'session_info'
 
