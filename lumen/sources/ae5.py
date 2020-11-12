@@ -65,12 +65,12 @@ class AE5Source(Source):
         if 'cpu' not in usage or 'm' not in usage['cpu']:
             cpu = 0
         else:
-            cpu = int(usage['cpu'][:-1])
+            cpu = float(usage['cpu'][:-1])
         record['cpu'] = round(((cpu/1000.) / cpu_cap)*100, 2)
 
         # Memory usage
-        mem_cap = int(resource.memory.item()[:-2])
-        mem = int(usage['memory'][:-2]) if 'memory' in usage else 0
+        mem_cap = float(resource.memory.item()[:-2])
+        mem = float(usage['memory'][:-2]) if 'memory' in usage else 0
         record['memory'] = round(((mem/1024.) / mem_cap)*100, 2)
 
         # Uptime
