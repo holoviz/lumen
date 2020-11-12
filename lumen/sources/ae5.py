@@ -61,7 +61,7 @@ class AE5Source(Source):
         usage = container['usage']
 
         # CPU Usage
-        cpu_cap = int(resource.cpu.item())
+        cpu_cap = float(resource.cpu.item())
         if 'cpu' not in usage or 'm' not in usage['cpu']:
             cpu = 0
         else:
