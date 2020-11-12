@@ -33,6 +33,13 @@ class AE5Source(Source):
         'id', 'name', 'url', 'owner', 'resource_profile', 'state'
     ]
 
+    _units = {
+        'Ki': 1024,
+        'Mi': 1024**2,
+        'Gi': 1024**3,
+        'Ti': 1024**4
+    }
+
     def __init__(self, **params):
         super().__init__(**params)
         self._session = AEUserSession(
@@ -61,17 +68,30 @@ class AE5Source(Source):
         usage = container['usage']
 
         # CPU Usage
-        cpu_cap = float(resource.cpu.item())
-        if 'cpu' not in usage or 'm' not in usage['cpu']:
-            cpu = 0
+        cpu_cap_str = resource.cpu.item()
+        if cpu_cap_str.endswith('m'):
+            cpu_cap = float(cpu_cap_str[:-1])/1000
         else:
-            cpu = float(usage['cpu'][:-1])
-        record['cpu'] = round(((cpu/1000.) / cpu_cap)*100, 2)
+            cpu_cap = float(cpu_cap_str)
+        if 'cpu' in usage:
+            cpu_str = usage['cpu']
+            if cpu_str.endswith('m'):
+                cpu = float(cpu_str[:-1])/1000
+            else:
+                cpu = float(cpu_str)
+        else:
+            cpu = float('nan')
+        record['cpu'] = round((cpu / cpu_cap)*100, 2)
 
         # Memory usage
-        mem_cap = float(resource.memory.item()[:-2])
-        mem = float(usage['memory'][:-2]) if 'memory' in usage else 0
-        record['memory'] = round(((mem/1024.) / mem_cap)*100, 2)
+        mem_cap_str = resource.memory.item()
+        mem_cap = float(mem_cap_str[:-2])*self._units[mem_cap_str[-2:]]
+        if 'memory' in usage:
+            mem_str = usage['memory']
+            mem = float(mem_str[:-2])*self._units[mem_str[-2:]]
+            record['memory'] = round((mem / mem_cap)*100, 2)
+        else:
+            record['memory'] = float('nan')
 
         # Uptime
         started = container.get('since')
