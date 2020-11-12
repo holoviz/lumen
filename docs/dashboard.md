@@ -49,16 +49,16 @@ objects.
 defaults:
   filters:
     - type: Type to override the default on
-	  ...: Parameter to override
+      ...: Parameter to override
   sources:
     - type: Type to override the default on
-	  ...: Parameter to override
+      ...: Parameter to override
   transforms:
     - type: Type to override the default on
-	  ...: Parameter to override
+      ...: Parameter to override
   views:
     - type: Type to override the default on
-	  ...: Parameter to override
+      ...: Parameter to override
 ```
 
 As an example we may want to override the default `WidgetFilter.multi`
