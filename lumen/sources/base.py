@@ -323,11 +323,11 @@ class FileSource(Source):
     def _load_table(self, table):
         df = None
         for file in self.files:
-            (*names), ext = os.path.basename(file).split('.')
-            name = '.'.join(names)
+            split_filename = os.path.basename(file).split('.')
+            name = '.'.join(split_filename[:-1])
             if name != table:
                 continue
-            load_fn, kwargs = self._load_fn(ext)
+            load_fn, kwargs = self._load_fn(split_filename[-1])
             df = load_fn(file, **kwargs)
         if df is None:
             tables = ['.'.join(f.split('.')[:-1]) for f in self.files]
