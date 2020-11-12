@@ -64,7 +64,6 @@ class AE5Source(Source):
             return dict(record, cpu=nan, memory=nan, restarts=nan, uptime='-')
 
         container = container_info['app']
-        profile = deployment['resource_profile']
         limits = container['limits']
         usage = container['usage']
 
