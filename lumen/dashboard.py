@@ -109,7 +109,7 @@ class Dashboard(param.Parameterized):
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})
-        self._apply_defaults(self._spec['defaults'])
+        self._apply_defaults(self._spec.get('defaults', {}))
 
     def _apply_defaults(self, defaults):
         for key, obj in (('filters', Filter), ('sources', Source),
