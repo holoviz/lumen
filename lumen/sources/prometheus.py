@@ -153,8 +153,9 @@ class PrometheusSource(Source):
             raise Exception('PrometheusSource can currently only handle results'
                             'of type "matrix"')
         results = response_json["data"]['result']
-        assert len(results) == 1, 'Multi-column matrix results not yet handled'
-        df = pd.DataFrame(results[0]['values'], columns=['timestamp', metric])
+        assert len(results) <= 1, 'Multi-column matrix results not yet handled'
+        values = results[0]['values'] if results else []
+        df = pd.DataFrame(values, columns=['timestamp', metric])
         df[metric] = df[metric].astype(float)
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
         return df.set_index('timestamp')

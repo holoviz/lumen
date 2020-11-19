@@ -34,7 +34,8 @@ class AE5Source(Source):
     ]
 
     _units = {
-        'm': 1,
+        'm': 0.001,
+        None: 1,
         'Ki': 1024,
         'Mi': 1024**2,
         'Gi': 1024**3,
@@ -85,7 +86,7 @@ class AE5Source(Source):
 
         # Memory usage
         mem_cap_str = limits['memory']
-        mem_unit = [m for m in self._units if mem_cap_str.endswith(m)]
+        mem_unit = [m for m in self._units if m is not None and mem_cap_str.endswith(m)]
         mem_unit = mem_unit[0] if mem_unit else None
         mem_cap = float(mem_cap_str[:-len(mem_unit)])*self._units.get(mem_unit, 1)
         if 'memory' in usage:
