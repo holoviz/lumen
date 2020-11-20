@@ -27,7 +27,8 @@ env:
 # dev release: ^v(\d+|\.)*[a-z]\d*$
 
 stages:
-  - test
+  - name: test
+    if: tag =~ ^v(\d+|\.)+([a-z]|rc)?\d?$
   - name: conda_dev_package
     if: tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$
   - name: pip_dev_package

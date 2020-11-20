@@ -1,0 +1,67 @@
+# things not included
+# language
+# notifications - no email notifications set up
+
+name: pytest
+on:
+  pull_request:
+    branches:
+    - '*'
+
+jobs:
+  test_suite:
+    name: Pytest on ${{ matrix.python-version }}, ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
+        python-version: [3.6, 3.7, 3.8]
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -l {0} 
+    env:
+      PYTHON_VERSION: ${{ matrix.python-version }}
+      CHANS_DEV: "-c pyviz/label/dev"
+      CHANS: "-c pyviz"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: "100"
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: conda-incubator/setup-miniconda@v2
+        with:
+          miniconda-version: "latest"
+      - name: Fetch
+        run: git fetch --prune --tags
+      - name: conda setup
+        run: |
+          conda config --set always_yes True
+          conda install -c pyviz "pyctdev>=0.5"
+          doit ecosystem_setup
+          doit env_create ${{ env.CHANS_DEV}} --python=${{ matrix.python-version }}
+      - name: doit develop_install
+        run: |
+          eval "$(conda shell.bash hook)"
+          conda activate test-environment
+          conda list
+          doit develop_install ${{ env.CHANS_DEV}} -o tests  
+      - name: doit env_capture
+        run: |
+          eval "$(conda shell.bash hook)"
+          conda activate test-environment
+          doit env_capture
+      - name: doit test_lint
+        run: |
+          eval "$(conda shell.bash hook)"
+          conda activate test-environment
+          doit test_lint
+      - name: doit test_unit
+        run: |
+          eval "$(conda shell.bash hook)"
+          conda activate test-environment
+          doit test_unit_deploy
