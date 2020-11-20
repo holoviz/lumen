@@ -64,4 +64,4 @@ jobs:
         run: |
           eval "$(conda shell.bash hook)"
           conda activate test-environment
-          doit test_unit
+          doit test_unit_deploy
