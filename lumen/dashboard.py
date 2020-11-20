@@ -177,6 +177,28 @@ class Dashboard(param.Parameterized):
             targets.append(target)
         return targets
 
+    def layout(self):
+        """
+        Returns a layout rendering the dashboard contents.
+        """
+        spinner = pn.indicators.LoadingSpinner(width=40, height=40)
+        pn.state.sync_busy(spinner)
+
+        title = self.config.get('title', 'Lumen Dashboard')
+        title_html = '<font color="white"><h1>'+title+'</h1></font>'
+        return pn.Column(
+            pn.Row(
+               pn.pane.HTML(title_html),
+                pn.layout.HSpacer(),
+                spinner,
+                background='#00aa41'
+            ),
+            pn.Row(
+                pn.Column(dashboard.filters, width=300),
+                dashboard.targets
+            )
+        )
+
     def show(self):
         """
         Opens the dashboard in a new window.
