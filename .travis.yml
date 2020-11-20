@@ -27,7 +27,8 @@ env:
 # dev release: ^v(\d+|\.)*[a-z]\d*$
 
 stages:
-  - test
+  - name: test
+    if: tag =~ ^v(\d+|\.)+([a-z]|rc)?\d?$
   - name: conda_dev_package
     if: tag =~ ^v(\d+|\.)+([a-z]|rc)\d+$
   - name: pip_dev_package
@@ -72,7 +73,7 @@ jobs:
     - &pip_pkg
       <<: *default
       stage: pip_dev_package
-      env: PYPI=testpypi PYPIUSER=$TPPU PYPIPASS=$TPPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+      env: PYPIUSER=$PPU PYPIPASS=$PPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
       install:
         - doit env_create $CHANS_DEV --python=$PYTHON_VERSION
         - source activate test-environment
