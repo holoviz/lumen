@@ -188,14 +188,14 @@ class Dashboard(param.Parameterized):
         title_html = '<font color="white"><h1>'+title+'</h1></font>'
         return pn.Column(
             pn.Row(
-               pn.pane.HTML(title_html),
+                pn.pane.HTML(title_html),
                 pn.layout.HSpacer(),
                 spinner,
                 background='#00aa41'
             ),
             pn.Row(
-                pn.Column(dashboard.filters, width=300),
-                dashboard.targets
+                pn.Column(self.filters, width=300),
+                self.targets
             )
         )
 
