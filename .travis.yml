@@ -72,7 +72,7 @@ jobs:
     - &pip_pkg
       <<: *default
       stage: pip_dev_package
-      env: PYPI=testpypi PYPIUSER=$TPPU PYPIPASS=$TPPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+      env: PYPIUSER=$PPU PYPIPASS=$PPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
       install:
         - doit env_create $CHANS_DEV --python=$PYTHON_VERSION
         - source activate test-environment
