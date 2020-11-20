@@ -18,7 +18,7 @@ env:
     - PKG_TEST_PYTHON="--test-python=py36"
     # conda build fills up travis /tmp (tmpfs)
     - TMPDIR=$HOME/tmp
-    - PYPI="https://upload.pypi.org/legacy/"
+    - PYPI="pypi"
     - PYTHON_VERSION=3.7
     - OPTS="-o tests -o examples"
 
@@ -92,7 +92,7 @@ jobs:
     ## release packages
 
     - <<: *pip_pkg
-      env: PYPI=pypi PYPIUSER=$PPU PYPIPASS=$PPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
+      env: PYPIUSER=$PPU PYPIPASS=$PPP TRAVIS_NOCACHE=$TRAVIS_JOB_ID
       stage: pip_package
 
     - <<: *conda_pkg
