@@ -230,7 +230,7 @@ class StringView(View):
         if value is None:
             params['object'] = 'No info'
         else:
-            params['object'] = f'<p style="font-size: {self.font_size}>{value}</p>'
+            params['object'] = f'<p style="font-size: {self.font_size}">{value}</p>'
         return params
 
 
