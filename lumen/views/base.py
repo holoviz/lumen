@@ -185,14 +185,14 @@ class StringView(View):
         value = self.get_value()
         if value is None:
             return pn.pane.HTML('No info')
-        return pn.pane.HTML(f'<p style="font-size: {self.font_size}>{value}</p>',
+        return pn.pane.HTML(f'<p style="font-size: {self.font_size}">{value}</p>',
                             **self.kwargs)
 
     def update_panel(self, panel):
         value = self.get_value()
         if value is None:
             panel.object = 'No info'
-        panel.object = f'<p style="font-size: {self.font_size}>{value}</p>'
+        panel.object = f'<p style="font-size: {self.font_size}">{value}</p>'
 
 
 class IndicatorView(View):
