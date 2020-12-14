@@ -168,7 +168,7 @@ class WidgetFilter(Filter):
         if self.widget.value == ' ' and self.empty_select:
             return None
         if not hasattr(self.widget.param.value, 'serialize'):
-            self.widget.value
+            return self.widget.value
         else:
             return self.widget.param.value.serialize(self.widget.value)
 
