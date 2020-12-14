@@ -167,7 +167,10 @@ class WidgetFilter(Filter):
     def query(self):
         if self.widget.value == ' ' and self.empty_select:
             return None
-        return self.widget.param.value.serialize(self.widget.value)
+        if not hasattr(self.widget.param, 'serialize'):
+            self.widget.value
+        else:
+            return self.widget.param.value.serialize(self.widget.value)
 
     @property
     def panel(self):
