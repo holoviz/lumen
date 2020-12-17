@@ -37,8 +37,8 @@ class IntakeSource(Source):
             cat = self.cat[table].to_dask()
             return get_dataframe_schema(cat)['items']['properties']
         else:
-            return {name: get_dataframe_schema(cat.to_dask())['items']['properties']
-                    for name, cat in self.cat.items()}
+            return {name: get_dataframe_schema(self.cat[name].to_dask())['items']['properties']
+                    for name in list(self.cat)}
 
     @cached()
     def get(self, table, **query):
