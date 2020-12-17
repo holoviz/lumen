@@ -13,8 +13,6 @@ class IntakeSource(Source):
     dask = param.Boolean(default=False, doc="""
         Whether to return a dask DataFrame.""")
 
-    filename = param.String(doc="Deprecated alias for the URI")
-
     uri = param.String(doc="URI of the catalog file.")
 
     specification = param.Dict(default="An inlined Catalog specification.")
@@ -23,10 +21,6 @@ class IntakeSource(Source):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.filename:
-            self.param.warning("IntakeSource filename parameter is "
-                               "deprecated in favor of uri parameter.")
-            self.uri = self.filename
         if self.uri and self.specification:
             raise ValueError("Either specify a Catalog uri or an "
                              "inlined catalog specification, not both.")
