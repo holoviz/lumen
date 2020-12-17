@@ -69,6 +69,7 @@ class AE5Source(Source):
             "id": deployment['id'],
             "name": deployment['name'],
             "url": deployment['url'],
+            "resource_profile": deployment['resource_profile']
         }
 
         if 'app' not in container_info:
@@ -142,7 +143,8 @@ class AE5Source(Source):
                 if record is None:
                     continue
                 records.append(record)
-            columns = ['id', 'name', 'url', 'cpu', 'memory', 'uptime', 'restarts']
+            columns = ['id', 'name', 'url', 'resource_profile', 'cpu',
+                       'memory', 'uptime', 'restarts']
             return pd.DataFrame(records, columns=columns)
         else:
             sessions = self._session.session_list(format='dataframe')
