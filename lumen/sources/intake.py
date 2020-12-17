@@ -22,7 +22,7 @@ class IntakeSource(Source):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.cat = intake.Catalog(self.filename)
+        self.cat = intake.open_catalog(self.filename)
         if not self.catalog:
             cats = list(self.cat)
             if len(cats) == 1:
