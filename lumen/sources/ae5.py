@@ -52,12 +52,24 @@ class AE5Source(Source):
         self._session.session.mount('https://', adapter)
         self._session.session.mount('http://', adapter)
 
+    @classmethod
+    def _convert_value(cls, value):
+        if value == '0':
+            return 0
+        val_unit = [m for m in cls._units if m is not None and value.endswith(m)]
+        val_unit = val_unit[0] if val_unit else None
+        if not val_unit:
+            return float(value)
+        scale_factor = cls._units[val_unit]
+        return float(value[:-len(val_unit)]) * scale_factor
+
     def _get_record(self, deployment):
         container_info = deployment.get('_k8s', {}).get('containers', {})
         record = {
             "id": deployment['id'],
             "name": deployment['name'],
             "url": deployment['url'],
+            "resource_profile": deployment['resource_profile']
         }
 
         if 'app' not in container_info:
@@ -69,29 +81,17 @@ class AE5Source(Source):
         usage = container['usage']
 
         # CPU Usage
-        cpu_cap_str = limits['cpu']
-        if cpu_cap_str.endswith('m'):
-            cpu_cap = float(cpu_cap_str[:-1])/1000
-        else:
-            cpu_cap = float(cpu_cap_str)
+        cpu_cap = self._convert_value(limits['cpu'])
         if 'cpu' in usage:
-            cpu_str = usage['cpu']
-            if cpu_str.endswith('m'):
-                cpu = float(cpu_str[:-1])/1000
-            else:
-                cpu = float(cpu_str)
+            cpu = self._convert_value(usage['cpu'])
+            record['cpu'] = round((cpu / cpu_cap)*100, 2)
         else:
-            cpu = float('nan')
-        record['cpu'] = round((cpu / cpu_cap)*100, 2)
+            record['cpu'] = float('nan')
 
         # Memory usage
-        mem_cap_str = limits['memory']
-        mem_unit = [m for m in self._units if m is not None and mem_cap_str.endswith(m)]
-        mem_unit = mem_unit[0] if mem_unit else None
-        mem_cap = float(mem_cap_str[:-len(mem_unit)])*self._units.get(mem_unit, 1)
+        mem_cap = self._convert_value(limits['memory'])
         if 'memory' in usage:
-            mem_str = usage['memory']
-            mem = float(mem_str[:-2])*self._units[mem_str[-2:]]
+            mem = self._convert_value(usage['memory'])
             record['memory'] = round((mem / mem_cap)*100, 2)
         else:
             record['memory'] = float('nan')
@@ -143,7 +143,8 @@ class AE5Source(Source):
                 if record is None:
                     continue
                 records.append(record)
-            columns = ['id', 'name', 'url', 'cpu', 'memory', 'uptime', 'restarts']
+            columns = ['id', 'name', 'url', 'resource_profile', 'cpu',
+                       'memory', 'uptime', 'restarts']
             return pd.DataFrame(records, columns=columns)
         else:
             sessions = self._session.session_list(format='dataframe')

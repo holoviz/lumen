@@ -70,12 +70,15 @@ class Dashboard(param.Parameterized):
         # Build layouts
         self.filters = pn.Accordion(margin=0, sizing_mode='stretch_width')
         layout = self.config.get('layout', 'grid')
-        if layout == 'grid':
-            self.targets = pn.GridBox(ncols=self.config.get('ncols', 5),
-                                      margin=10, sizing_mode='stretch_width')
-        elif layout == 'tabs':
+        if layout == 'tabs':
             self.targets = pn.Tabs(sizing_mode='stretch_width', dynamic=True)
             self.targets.param.watch(self._activate_filters, 'active')
+        elif layout == 'column':
+            self.targets = pn.Column(margin=10, sizing_mode='stretch_width')
+        elif layout == 'grid':
+            ncols = self.config.get('ncols', 3)
+            self.targets = pn.GridBox(margin=10, ncols=ncols,
+                                      sizing_mode='stretch_width')
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -135,23 +138,29 @@ class Dashboard(param.Parameterized):
         self.filters.active = [0]
 
     def _loading(self, name=''):
-        if not isinstance(self.targets, pn.GridBox) or len(self.targets) < self.config.get('loading_threshold', 10):
-            return
-        items = [pn.pane.HTML(width=self.targets[i].width)
-                 for i in range(self.targets.ncols) if i < len(self.targets)]
-        index = int(min(self.targets.ncols, (len(self.targets)-1)) / 2)
         loading = pn.Column(
             pn.indicators.LoadingSpinner(value=True, align='center'),
             f'**Reloading {name}...**'
         )
-        if items:
-            items[index] = loading
+        if isinstance(self.targets, pn.GridBox):
+            items = [pn.pane.HTML(width=self.targets[i].width)
+                     for i in range(self.targets.ncols) if i < len(self.targets)]
+            index = int(min(self.targets.ncols, (len(self.targets)-1)) / 2)
+            if items:
+                items[index] = loading
+            else:
+                items = [loading]
+        elif isinstance(self.targets, pn.Tabs):
+            items = list(zip(self.targets._names, list(self.targets.objects)))
+            items[self.targets.active] = pn.Row(
+                pn.layout.HSpacer(), loading, pn.layout.HSpacer()
+            )
         else:
-            items = [loading]
+            items = [pn.Row(pn.layout.HSpacer(), loading, pn.layout.HSpacer())]
         self.targets[:] = items
 
     def _rerender(self):
-        self.targets[:] = [p for target in self._targets for p in target.panels]
+        self.targets[:] = [target.panels for target in self._targets]
 
     def _resolve_targets(self, target_specs, metadata={}):
         targets = []
