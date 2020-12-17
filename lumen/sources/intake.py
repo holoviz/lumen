@@ -40,7 +40,7 @@ class IntakeSource(Source):
                     "".format(self.path, "\n".join(result.errors)), result.errors)
             cfg = result.data
             del cfg['plugin_sources']
-            self.cat = Catalog(cfg.pop('data_sources'), **cfg)
+            self.cat = intake.catalog.Catalog(cfg.pop('data_sources'), **cfg)
 
     def _read(self, table, dask=True):
         if self.dask or dask:
