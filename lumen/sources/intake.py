@@ -22,7 +22,7 @@ class IntakeSource(Source):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.cat = intake.Catalog(self.filename)
+        self.cat = intake.open_catalog(self.filename)
         if not self.catalog:
             cats = list(self.cat)
             if len(cats) == 1:
@@ -37,8 +37,8 @@ class IntakeSource(Source):
             cat = self.cat[table].to_dask()
             return get_dataframe_schema(cat)['items']['properties']
         else:
-            return {name: get_dataframe_schema(cat.to_dask())['items']['properties']
-                    for name, cat in self.cat.items()}
+            return {name: get_dataframe_schema(self.cat[name].to_dask())['items']['properties']
+                    for name in list(self.cat)}
 
     @cached()
     def get(self, table, **query):
