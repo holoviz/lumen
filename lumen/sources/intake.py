@@ -39,6 +39,7 @@ class IntakeSource(Source):
                     "Catalog '{}' has validation errors:\n\n{}"
                     "".format(self.path, "\n".join(result.errors)), result.errors)
             cfg = result.data
+            del cfg['plugin_sources']
             self.cat = Catalog(cfg.pop('data_sources'), **cfg)
 
     def _read(self, table, dask=True):
