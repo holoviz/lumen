@@ -265,12 +265,8 @@ class IndicatorView(View):
         return indicator(**self._get_params())
 
     def _get_params(self):
-        indicators = param.concrete_descendents(pn.widgets.indicators.ValueIndicator)
-        indicator_name = self.indicator.title()
-        indicator = indicators.get(indicator_name)
         value = self.get_value()
-        if (not isinstance(value, (type(None), str)) and np.isnan(value) and
-            isinstance(indicator.param.value, param.String)):
+        if (not isinstance(value, (type(None), str)) and np.isnan(value)):
             value = None
         return dict(self.kwargs, value=value)
 

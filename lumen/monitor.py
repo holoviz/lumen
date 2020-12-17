@@ -64,6 +64,7 @@ class Monitor(param.Parameterized):
             name='↻', width=50, css_classes=['reload'], margin=0
         )
         self._reload_button.on_click(self.update)
+        self._config = params.pop('config', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
         self._cards = []
@@ -125,8 +126,13 @@ class Monitor(param.Parameterized):
         key = (tuple(str(f.value) for f in facet_filters) +
                tuple(id(view) for view in self.views))
 
+        update_card = False
         if key in self._cache:
             card, views = self._cache[key]
+            if update_views:
+                for view in views:
+                    view_stale = view.update(invalidate_cache)
+                    update_card = update_card or view_stale
         else:
             card = None
             views = [
@@ -148,13 +154,8 @@ class Monitor(param.Parameterized):
             self._cache[key] = (card, views)
         else:
             card.title = title
-            if update_views:
-                update_card = False
-                for view in views:
-                    view_stale = view.update(invalidate_cache)
-                    update_card = update_card or view_stale
-                if update_card:
-                    self._updates[card] = views
+            if update_card:
+                self._updates[card] = views
         return sort_key, card
 
     def _update_views(self, invalidate_cache=True, update_views=True):
@@ -162,6 +163,7 @@ class Monitor(param.Parameterized):
                    if not isinstance(filt, FacetFilter)]
         facets = [filt.filters for filt in self.filters
                   if isinstance(filt, FacetFilter)]
+
         cards = []
         for facet_filters in product(*facets):
             key, card = self._get_card(
@@ -223,7 +225,14 @@ class Monitor(param.Parameterized):
 
     @property
     def panels(self):
-        return self._cards
+        default = 'grid' if len(self._cards) > 1 else 'column'
+        layout = self._config.get('layout', default)
+        kwargs = dict(name=self.title, sizing_mode='stretch_width')
+        if layout == 'grid':
+            kwargs['ncols'] = self._config.get('ncols', 3)
+            return pn.GridBox(*self._cards, **kwargs)
+        elif layout == 'column':
+            return pn.Column(*self._cards, **kwargs)
 
     @pn.depends('refresh_rate', watch=True)
     def start(self, event=None):
