@@ -88,7 +88,7 @@ jobs:
         run: |
           eval "$(conda shell.bash hook)"
           conda activate test-environment
-          doit ecosystem=pip package_build $CHANS_DEV $PKG_TEST_PYTHON --test-group=all
+          doit ecosystem=pip package_build $PKG_TEST_PYTHON --test-group=all
       - name: pip upload
         run: |
           eval "$(conda shell.bash hook)"
