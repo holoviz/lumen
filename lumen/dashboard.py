@@ -1,5 +1,6 @@
 import os
 import yaml
+import importlib.util
 
 import param
 import panel as pn
@@ -40,6 +41,7 @@ class Dashboard(param.Parameterized):
             specification=specification, **params
         )
         self._load_config(from_file=True)
+        self._load_local_modules()
 
         # Construct template
         tmpl = self.config.get('template', 'material')
@@ -114,6 +116,15 @@ class Dashboard(param.Parameterized):
         self.config = self._spec.get('config', {})
         self._apply_defaults(self._spec.get('defaults', {}))
         self._root = os.path.abspath(os.path.dirname(self.specification))
+
+    def _load_local_modules(self):
+        for imp in ('filters', 'sources', 'transforms', 'views'):
+            path = os.path.join(self._root, imp+'.py')
+            if not os.path.isfile(path):
+                continue
+            spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
 
     def _apply_defaults(self, defaults):
         for key, obj in (('filters', Filter), ('sources', Source),
