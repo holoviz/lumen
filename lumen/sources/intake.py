@@ -39,14 +39,20 @@ class IntakeSource(Source):
             self.cat = intake.catalog.Catalog(entries, **cfg)
 
     def _read(self, table, dask=True):
+        try:
+            entry = self.cat[table]
+        except KeyError:
+            raise KeyError(f"'{table}' table could not be found in Intake "
+                           "catalog. Available tables include: "
+                           f"{list(self.cat)}.")
         if self.dask or dask:
             try:
-                return self.cat[table].to_dask()
+                return entry.to_dask()
             except Exception:
                 if self.dask:
                     self.param.warning(f"Could not load {table} table with dask.")
                 pass
-        return self.cat[table].read()
+        return entry.read()
 
     def get_schema(self, table=None):
         schemas = {}
