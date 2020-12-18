@@ -36,7 +36,8 @@ class IntakeSource(Source):
             cfg = result.data
             del cfg['plugin_sources']
             entries = {entry.name: entry for entry in cfg.pop('data_sources')}
-            self.cat = intake.catalog.Catalog(entries, **cfg)
+            self.cat = intake.catalog.Catalog(**cfg)
+            self.cat._entries = entries
 
     def _read(self, table, dask=True):
         try:
