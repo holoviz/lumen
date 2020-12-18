@@ -49,7 +49,8 @@ class Source(param.Parameterized):
     querying the data.
     """
 
-    root = param.String(default=None)
+    root = param.String(default=None, doc="""
+        Root directory where the dashboard specification was loaded from.""")
 
     source_type = None
 
