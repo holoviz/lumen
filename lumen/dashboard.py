@@ -111,7 +111,7 @@ class Dashboard(param.Parameterized):
         if from_file or self._yaml is None:
             with open(self.specification) as f:
                 self._yaml = f.read()
-        self._spec = yaml.load(self._yaml, Loader=yaml.CLoader)
+        self._spec = yaml.load(self._yaml, Loader=yaml.Loader)
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})
