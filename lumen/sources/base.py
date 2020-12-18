@@ -49,6 +49,9 @@ class Source(param.Parameterized):
     querying the data.
     """
 
+    root = param.String(default=None, doc="""
+        Root directory where the dashboard specification was loaded from.""")
+
     source_type = None
 
     __abstract = True
@@ -136,7 +139,7 @@ class Source(param.Parameterized):
         return field_schema['enum']
 
     @classmethod
-    def from_spec(cls, spec, sources={}):
+    def from_spec(cls, spec, sources={}, root=None):
         """
         Creates a Source object from a specification. If a Source
         specification references other sources these may be supplied
@@ -149,6 +152,9 @@ class Source(param.Parameterized):
             or a string referencing a source in the sources dictionary.
         sources: dict
             Dictionary of other Source objects
+        root: str
+            Root directory where dashboard specification was loaded
+            from.
 
         Returns
         -------
@@ -176,6 +182,7 @@ class Source(param.Parameterized):
             if isinstance(v, str) and v.startswith('@'):
                 v = cls._resolve_reference(v, sources)
             resolved_spec[k] = v
+        resolved_spec['root'] = root
         return source_type(**resolved_spec)
 
     def __init__(self, **params):

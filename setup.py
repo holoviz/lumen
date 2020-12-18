@@ -17,7 +17,8 @@ def get_setup_version(reponame):
 extras_require = {
     'tests': [
         'pytest',
-        'flake8'
+        'flake8',
+        'intake'
     ],
     'doc': [
         'sphinx',

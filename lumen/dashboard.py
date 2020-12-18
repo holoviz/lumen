@@ -113,6 +113,7 @@ class Dashboard(param.Parameterized):
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})
         self._apply_defaults(self._spec.get('defaults', {}))
+        self._root = os.path.abspath(os.path.dirname(self.specification))
 
     def _apply_defaults(self, defaults):
         for key, obj in (('filters', Filter), ('sources', Source),
@@ -126,7 +127,8 @@ class Dashboard(param.Parameterized):
         self._load_config()
         self._sources = {}
         for name, source_spec in self._spec.get('sources', {}).items():
-            self._sources[name] = Source.from_spec(source_spec, self._sources)
+            self._sources[name] = Source.from_spec(source_spec, self._sources,
+                                                   root=self._root)
         self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
         filters = []
@@ -169,7 +171,7 @@ class Dashboard(param.Parameterized):
 
             # Resolve source
             source_spec = target_spec.pop('source', None)
-            source = Source.from_spec(source_spec, self._sources)
+            source = Source.from_spec(source_spec, self._sources, root=self._root)
             schema = source.get_schema()
 
             # Resolve filters

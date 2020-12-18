@@ -1,0 +1,8 @@
+sources:
+  test:
+    description: Generated using pandas.util.testing.makeMixedDataFrame()
+    driver: csv
+    args:
+      urlpath: '{{ CATALOG_DIR }}/test.csv'
+      csv_kwargs:
+        parse_dates: ['D']
