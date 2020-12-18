@@ -320,7 +320,7 @@ class FileSource(Source):
     def get_schema(self, table=None):
         schemas = {}
         for file in self.files:
-            name = '.'.join(file.split('.')[:-1])
+            name = '.'.join(os.path.basename(file).split('.')[:-1])
             if table is not None and name != table:
                 continue
             df = self.get(name)
@@ -335,7 +335,7 @@ class FileSource(Source):
             if name != table:
                 continue
             load_fn, kwargs = self._load_fn(split_filename[-1])
-            df = load_fn(file, **kwargs)
+            df = load_fn(os.path.join(self.root, file), **kwargs)
         if df is None:
             tables = ['.'.join(f.split('.')[:-1]) for f in self.files]
             raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")

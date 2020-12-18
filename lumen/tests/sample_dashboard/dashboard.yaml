@@ -1,0 +1,10 @@
+sources:
+  test:
+    type: 'file'
+    files: ['../sources/test.csv']
+targets:
+  - title: "Test"
+    source: test
+    views:
+      - table: test
+        type: test
