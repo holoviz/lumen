@@ -148,3 +148,11 @@ sources:
 The `@csv.websites.url` syntax will look up a `Source` called 'csv',
 request a table called 'websites' and then feed the 'url' column in
 that table to the `urls` parameter of the `WebsiteSource`.
+
+## Local components
+
+While Lumen ships with a wide range of components users may also
+define custom components in files which live alongside the
+`dashboard.yml` file. Specifically Lumen will automatically import
+`filters.py`, `sources.py`, `transforms.py` and `views.py` if these
+files exist alongside the dashboard specification.
