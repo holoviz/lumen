@@ -22,8 +22,8 @@ jobs:
       CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
     steps:
       - uses: actions/checkout@v2
-        with:
-          fetch-depth: "0"
+      - name: Fetch unshallow
+        run: git fetch --prune --tags --unshallow -f
       - uses: actions/setup-python@v2
         with:
           python-version: ${{ matrix.python-version }}

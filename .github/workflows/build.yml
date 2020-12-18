@@ -23,8 +23,8 @@ jobs:
       CONDA_UPLOAD_TOKEN: ${{ secrets.CONDA_UPLOAD_TOKEN }}
     steps:
       - uses: actions/checkout@v2
-        with:
-          fetch-depth: "0"
+      - name: Fetch unshallow
+        run: git fetch --prune --tags --unshallow -f
       - uses: actions/setup-python@v2
         with:
           python-version: ${{ matrix.python-version }}
@@ -64,8 +64,8 @@ jobs:
       PYPI: "https://upload.pypi.org/legacy/"
     steps:
       - uses: actions/checkout@v2
-        with:
-          fetch-depth: "0"
+      - name: Fetch unshallow
+        run: git fetch --prune --tags --unshallow -f
       - uses: actions/setup-python@v2
         with:
           python-version: ${{ matrix.python-version }}
