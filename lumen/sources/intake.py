@@ -15,7 +15,7 @@ class IntakeSource(Source):
 
     uri = param.String(doc="URI of the catalog file.")
 
-    specification = param.Dict(default="An inlined Catalog specification.")
+    specification = param.Dict(doc="An inlined Catalog specification.")
 
     source_type = 'intake'
 
@@ -27,14 +27,16 @@ class IntakeSource(Source):
         elif self.uri:
             self.cat = intake.open_catalog(self.uri)
         elif self.specification:
-            result = intake.catalog.local.CatalogParser(self.specification)
+            context = {'root': self.root}
+            result = intake.catalog.local.CatalogParser(self.specification, context=context)
             if result.errors:
                 raise intake.catalog.exceptions.ValidationError(
                     "Catalog '{}' has validation errors:\n\n{}"
                     "".format(self.path, "\n".join(result.errors)), result.errors)
             cfg = result.data
             del cfg['plugin_sources']
-            self.cat = intake.catalog.Catalog(cfg.pop('data_sources'), **cfg)
+            entries = {entry.name: entry for entry in cfg.pop('data_sources')}
+            self.cat = intake.catalog.Catalog(entries, **cfg)
 
     def _read(self, table, dask=True):
         if self.dask or dask:
@@ -47,12 +49,13 @@ class IntakeSource(Source):
         return self.cat[table].read()
 
     def get_schema(self, table=None):
-        if table:
-            cat = self.get(table, dask=True)
-            return get_dataframe_schema(cat)['items']['properties']
-        else:
-            return {name: get_dataframe_schema(self.get(name, dask=True))['items']['properties']
-                    for name in list(self.cat)}
+        schemas = {}
+        for entry in list(self.cat):
+            if table is not None and entry != table:
+                continue
+            data = self.get(entry, dask=True)
+            schemas[entry] = get_dataframe_schema(data)['items']['properties']
+        return schemas if table is None else schemas[table]
 
     @cached()
     def get(self, table, **query):
