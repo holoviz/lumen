@@ -10,12 +10,12 @@ class IntakeSource(Source):
     An IntakeSource loads data from an Intake catalog.
     """
 
+    catalog = param.Dict(doc="An inlined Catalog specification.")
+
     dask = param.Boolean(default=False, doc="""
         Whether to return a dask DataFrame.""")
 
     uri = param.String(doc="URI of the catalog file.")
-
-    specification = param.Dict(doc="An inlined Catalog specification.")
 
     source_type = 'intake'
 
@@ -26,9 +26,9 @@ class IntakeSource(Source):
                              "inlined catalog specification, not both.")
         elif self.uri:
             self.cat = intake.open_catalog(self.uri)
-        elif self.specification:
+        elif self.catalog:
             context = {'root': self.root}
-            result = intake.catalog.local.CatalogParser(self.specification, context=context)
+            result = intake.catalog.local.CatalogParser(self.catalog, context=context)
             if result.errors:
                 raise intake.catalog.exceptions.ValidationError(
                     "Catalog '{}' has validation errors:\n\n{}"
