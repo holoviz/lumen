@@ -41,6 +41,7 @@ class Dashboard(param.Parameterized):
             specification=specification, **params
         )
         self._load_config(from_file=True)
+        self._modules = {}
         self._load_local_modules()
 
         # Construct template
@@ -123,7 +124,7 @@ class Dashboard(param.Parameterized):
             if not os.path.isfile(path):
                 continue
             spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
-            module = importlib.util.module_from_spec(spec)
+            self._modules[imp] = module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
     def _apply_defaults(self, defaults):
