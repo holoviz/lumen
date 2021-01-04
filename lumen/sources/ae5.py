@@ -161,7 +161,10 @@ class AE5Source(Source):
             records = []
             user = self._user
             for deployment in self._session.deployment_list(k8s=True, collaborators=bool(user)):
-                if user and (!deployment['public'] and user != deployment['owner'] and user not in deployment['_collaborators']):
+                public = deployment['public']
+                owner = deployment['owner']
+                collaborators = deployment.get('_collaborators')
+                if user and (not public and user != owner and user not in collaborators):
                     continue
                 record = self._get_record(deployment)
                 if record is None:
