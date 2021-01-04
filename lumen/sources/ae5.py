@@ -21,7 +21,11 @@ class AE5Source(Source):
     k8s_endpoint = param.String(default='k8s')
 
     pool_size = param.Integer(default=100, doc="""
-        Size of HTTP socket pool.""")
+      Size of HTTP socket pool.""")
+
+    private = param.Boolean(default=True, doc="""
+      Whether to limit the deployments visible to a user based on
+      their authorization.""")
 
     source_type = 'ae5'
 
@@ -108,6 +112,20 @@ class AE5Source(Source):
 
         return record
 
+    @property
+    def _user(self):
+        return pn.state.headers.get('Anaconda-User') if self.private else None
+
+    def _filter_deployments(self, deployments):
+        user = self._user
+        if not self.private or user is None:
+            return deployments
+        return deployments[
+            deployments.public |
+            (deployments.owner == user) |
+            deployments._collaborators.apply(lambda x: user in x)
+        ]
+
     def get_schema(self, table=None):
         schemas = {}
         if table in (None, 'deployments'):
@@ -131,14 +149,20 @@ class AE5Source(Source):
                              "from 'deployments', 'resources', 'usage', "
                              "'sessions'.")
         if table == 'deployments':
-            deployments = self._session.deployment_list(format='dataframe')
+            deployments = self._session.deployment_list(
+                format='dataframe', collaborators=bool(self._user)
+            )
+            deployments = self._filter_deployments(deployments)
             return deployments[self._deployment_columns]
         elif table == 'resources':
             resources = self._session.resource_profile_list(format='dataframe')
             return resources
         elif table == 'usage':
             records = []
-            for deployment in self._session.deployment_list(k8s=True):
+            user = self._user
+            for deployment in self._session.deployment_list(k8s=True, collaborators=bool(user)):
+                if user and (!deployment['public'] and user != deployment['owner'] and user not in deployment['_collaborators']):
+                    continue
                 record = self._get_record(deployment)
                 if record is None:
                     continue
@@ -148,4 +172,6 @@ class AE5Source(Source):
             return pd.DataFrame(records, columns=columns)
         else:
             sessions = self._session.session_list(format='dataframe')
+            if self._user:
+                sessions = sessions[sessions.owner==self._user]
             return sessions[self._session_columns]
