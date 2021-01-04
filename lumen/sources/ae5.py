@@ -5,6 +5,7 @@ import pandas as pd
 import requests
 
 from ae5_tools.api import AEUserSession
+from panel import state
 
 from .base import Source, cached
 from ..util import get_dataframe_schema
@@ -114,7 +115,7 @@ class AE5Source(Source):
 
     @property
     def _user(self):
-        return pn.state.headers.get('Anaconda-User') if self.private else None
+        return state.headers.get('Anaconda-User') if self.private else None
 
     def _filter_deployments(self, deployments):
         user = self._user
