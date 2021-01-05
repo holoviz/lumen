@@ -1,7 +1,10 @@
 import re
+import os
 import sys
 
 import datetime as dt
+
+from jinja2 import Environment, meta, Undefined
 
 from pandas.core.dtypes.dtypes import CategoricalDtype
 
@@ -82,3 +85,54 @@ def parse_timedelta(time_str):
         if param:
             time_params[name] = int(param)
     return dt.timedelta(**time_params)
+
+
+def _j_getenv(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    return os.getenv(x, '')
+
+
+def _j_getshell(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    try:
+        return subprocess.check_output(x).decode()
+    except (IOError, OSError):
+        return ""
+
+
+def expand_spec(pars, context={}, getenv=True, getshell=True):
+    """
+    Render variables in context into the set of parameters with jinja2.
+
+    For variables that are not strings, nothing happens.
+
+    Parameters
+    ----------
+    pars: dict
+        values are strings containing some jinja2 controls
+    context: dict
+        values to use while rendering
+
+    Returns
+    -------
+    dict with the same keys as ``pars``, but updated values
+    """
+    if isinstance(pars, dict):
+        return {k: _expand(v, context, all_vars, getenv, getshell)
+                for k, v in pars.items()}
+    elif isinstance(pars, (list, tuple, set)):
+        return type(pars)(_expand(v, context, getenv, getshell)
+                          for v in pars)
+    elif isinstance(pars, str):
+        jinja = Environment()
+        if getenv:
+            jinja.globals['env'] = _j_getenv
+        if getshell:
+            jinja.globals['shell'] = _j_getshell
+        ast = jinja.parse(pars)
+        return jinja.from_string(pars).render(context)
+    else:
+        # no expansion
+        return pars

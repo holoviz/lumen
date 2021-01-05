@@ -12,6 +12,7 @@ from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
 from .transforms import Transform # noqa
+from .util import expand_spec
 from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
@@ -110,7 +111,7 @@ class Dashboard(param.Parameterized):
         # Load config
         if from_file or self._yaml is None:
             with open(self.specification) as f:
-                self._yaml = f.read()
+                self._yaml = expand_spec(f.read())
         self._spec = yaml.load(self._yaml, Loader=yaml.Loader)
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
