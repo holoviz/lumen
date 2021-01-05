@@ -23,7 +23,7 @@ class Filter(param.Parameterized):
       The JSON schema provided by the Source declaring information
       about the data to be filtered.""")
 
-    table = param.String(doc="""
+    table = param.String(default=None, doc="""
       The table being filtered. If None "applies to all tables.""")
 
     value = param.Parameter(doc="The current filter value.")
