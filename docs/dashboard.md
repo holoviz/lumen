@@ -150,6 +150,16 @@ The `@csv.websites.url` syntax will look up a `Source` called 'csv',
 request a table called 'websites' and then feed the 'url' column in
 that table to the `urls` parameter of the `WebsiteSource`.
 
+### Templating
+
+In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command or as a CLI argument. This can be achieved using templating syntax:
+
+- `{{env("USER")}}`: look in the set environment variables for the named variable
+
+- `{{shell("get_login thisuser -t")}}`: execute the command, and use the output as the value. The output will be trimmed of any trailing whitespace.
+
+- `{{USER}}`: Arguments passed in using `--template-vars="{'USER': 'lumen_user'}"` when using `lumen serve` on the commandline.
+
 ## Local components
 
 While Lumen ships with a wide range of components users may also
