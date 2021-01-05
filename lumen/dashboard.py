@@ -109,9 +109,10 @@ class Dashboard(param.Parameterized):
 
     def _load_config(self, from_file=False):
         # Load config
+        from . import config
         if from_file or self._yaml is None:
             with open(self.specification) as f:
-                self._yaml = expand_spec(f.read())
+                self._yaml = expand_spec(f.read(), config.template_vars)
         self._spec = yaml.load(self._yaml, Loader=yaml.Loader)
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
