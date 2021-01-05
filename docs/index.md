@@ -7,8 +7,8 @@ caption: Contents
 ---
 Home <self>
 Architecture <architecture/index>
-REST Specification <rest>
 Dashboard Specification <dashboard>
+REST Specification <rest>
 ```
 
 The Lumen project provides a framework to build dashboards from a
