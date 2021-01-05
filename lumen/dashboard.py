@@ -12,6 +12,7 @@ from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
 from .transforms import Transform # noqa
+from .util import expand_spec
 from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
@@ -54,6 +55,7 @@ class Dashboard(param.Parameterized):
         self.template = _templates[tmpl](**kwargs)
 
         # Add editor modal
+        self._edited = False
         self._editor = pn.widgets.Ace(
             value=self._yaml, filename=self.specification,
             sizing_mode='stretch_both', min_height=600,
@@ -62,7 +64,7 @@ class Dashboard(param.Parameterized):
         self._edit_button = pn.widgets.Button(
             name='✎', width=50, css_classes=['reload'], margin=0
         )
-        self._editor.link(self, value='_yaml')
+        self._editor.param.watch(self._edit, 'value')
         self._edit_button.on_click(self._open_modal)
         self._editor_layout = pn.Column(
             f'## Edit {os.path.basename(self.specification)}',
@@ -97,6 +99,10 @@ class Dashboard(param.Parameterized):
             self._edit_button
         ))
 
+    def _edit(self, event):
+        self._yaml = event.new
+        self._edited = True
+
     def _activate_filters(self, event):
         self.filters.active = [event.new]
 
@@ -108,10 +114,15 @@ class Dashboard(param.Parameterized):
 
     def _load_config(self, from_file=False):
         # Load config
+        from . import config
+        kwargs = {}
         if from_file or self._yaml is None:
             with open(self.specification) as f:
                 self._yaml = f.read()
-        self._spec = yaml.load(self._yaml, Loader=yaml.Loader)
+        elif self._edited:
+            kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
+        spec = expand_spec(self._yaml, config.template_vars, **kwargs)
+        self._spec = yaml.load(spec, Loader=yaml.Loader)
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})

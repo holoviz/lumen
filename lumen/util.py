@@ -1,9 +1,14 @@
 import re
+import os
 import sys
+import subprocess
 
 import datetime as dt
 
+from jinja2 import Environment, Undefined
+
 from pandas.core.dtypes.dtypes import CategoricalDtype
+from panel import state
 
 
 def get_dataframe_schema(df, columns=None):
@@ -82,3 +87,77 @@ def parse_timedelta(time_str):
         if param:
             time_params[name] = int(param)
     return dt.timedelta(**time_params)
+
+
+def _j_getenv(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    return os.getenv(x, '')
+
+def _j_getshell(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    try:
+        return subprocess.check_output(x).decode()
+    except (IOError, OSError):
+        return ""
+
+def _j_getheaders(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    return state.headers.get(x, '')
+
+def _j_getcookies(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    return state.cookies.get(x, '')
+
+def _j_getoauth(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    if state.user_info is None:
+        return ''
+    return state.user_info.get(x, '')
+
+def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
+                getcookies=True, getoauth=True):
+    """
+    Render variables in context into the set of parameters with jinja2.
+
+    For variables that are not strings, nothing happens.
+
+    Parameters
+    ----------
+    pars: dict
+        values are strings containing some jinja2 controls
+    context: dict
+        values to use while rendering
+
+    Returns
+    -------
+    dict with the same keys as ``pars``, but updated values
+    """
+    if isinstance(pars, dict):
+        return {k: expand_spec(
+            v, context, getenv, getshell, getheaders, getcookies, getoauth
+        ) for k, v in pars.items()}
+    elif isinstance(pars, (list, tuple, set)):
+        return type(pars)(expand_spec(
+            v, context, getenv, getshell, getheaders, getcookies, getoauth
+        ) for v in pars)
+    elif isinstance(pars, str):
+        jinja = Environment()
+        if getenv:
+            jinja.globals['env'] = _j_getenv
+        if getshell:
+            jinja.globals['shell'] = _j_getshell
+        if getheaders:
+            jinja.globals['header'] = _j_getheaders
+        if getcookies:
+            jinja.globals['cookie'] = _j_getcookies
+        if getoauth:
+            jinja.globals['oauth'] = _j_getoauth
+        return jinja.from_string(pars).render(context)
+    else:
+        # no expansion
+        return pars
