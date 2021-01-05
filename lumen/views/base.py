@@ -312,3 +312,17 @@ class hvPlotView(View):
     def _get_params(self):
         df = self.get_data()
         return dict(object=self.get_plot(df))
+
+
+class Table(View):
+    """
+    Renders a Source table using a Panel Table widget.
+    """
+
+    view_type = 'table'
+
+    def get_panel(self):
+        return pn.widgets.tables.Tabulator(**self._get_params())
+
+    def _get_params(self):
+        return dict(value=self.get_data(), disabled=True, **self.kwargs)
