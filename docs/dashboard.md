@@ -152,11 +152,17 @@ that table to the `urls` parameter of the `WebsiteSource`.
 
 ### Templating
 
-In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command or as a CLI argument. This can be achieved using templating syntax:
+In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command, a CLI argument, a HTTP request header or cookie, or a OAuth token variable. This can be achieved using the following templating syntax:
 
 - `{{env("USER")}}`: look in the set environment variables for the named variable
 
 - `{{shell("get_login thisuser -t")}}`: execute the command, and use the output as the value. The output will be trimmed of any trailing whitespace.
+
+- `{{cookie("USER")}}`: look in the HTTP request cookies of the served application
+
+- `{{header("USER")}}`: look in the HTTP request headers of the served application
+
+- `{{oauth("USER")}}`: look in the OAuth user token
 
 - `{{USER}}`: Arguments passed in using `--template-vars="{'USER': 'lumen_user'}"` when using `lumen serve` on the commandline.
 

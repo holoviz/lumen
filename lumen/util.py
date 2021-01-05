@@ -7,6 +7,7 @@ import datetime as dt
 from jinja2 import Environment, meta, Undefined
 
 from pandas.core.dtypes.dtypes import CategoricalDtype
+from panel import state
 
 
 def get_dataframe_schema(df, columns=None):
@@ -92,7 +93,6 @@ def _j_getenv(x):
         x = x._undefined_name
     return os.getenv(x, '')
 
-
 def _j_getshell(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
@@ -101,8 +101,25 @@ def _j_getshell(x):
     except (IOError, OSError):
         return ""
 
+def _j_getheaders(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    return state.headers.get(x, '')
 
-def expand_spec(pars, context={}, getenv=True, getshell=True):
+def _j_getcookies(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    return state.cookies.get(x, '')
+
+def _j_getoauth(x):
+    if isinstance(x, Undefined):
+        x = x._undefined_name
+    if state.user_info is None:
+        return ''
+    return state.user_info.get(x, '')
+
+def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
+                getcookies=True, getoauth=True):
     """
     Render variables in context into the set of parameters with jinja2.
 
@@ -131,6 +148,12 @@ def expand_spec(pars, context={}, getenv=True, getshell=True):
             jinja.globals['env'] = _j_getenv
         if getshell:
             jinja.globals['shell'] = _j_getshell
+        if getheaders:
+            jinja.globals['header'] = _j_getheaders
+        if getcookies:
+            jinja.globals['cookie'] = _j_getcookies
+        if getoauth:
+            jinja.globals['oauth'] = _j_getoauth
         ast = jinja.parse(pars)
         return jinja.from_string(pars).render(context)
     else:
