@@ -20,8 +20,11 @@ class Filter(param.Parameterized):
     label = param.String(doc="A label for the Filter.")
 
     schema = param.Dict(doc="""
-        The JSON schema provided by the Source declaring information
-        about the data to be filtered.""" )
+      The JSON schema provided by the Source declaring information
+      about the data to be filtered.""")
+
+    table = param.String(doc="""
+      The table being filtered. If None "applies to all tables.""")
 
     value = param.Parameter(doc="The current filter value.")
 
@@ -44,7 +47,7 @@ class Filter(param.Parameterized):
     def from_spec(cls, spec, source_schema):
         """
         Resolves a Filter specification given the schema of the Source
-        it will be filtering on.
+        (and optionally the table) it will be filtering on.
 
         Parameters
         ----------
@@ -62,8 +65,11 @@ class Filter(param.Parameterized):
         if not 'field' in spec:
             raise ValueError('Filter specification must declare field to filter on.')
         field = spec['field']
+        table = spec.get('table')
         schema = None
-        for table_schema in source_schema.values():
+        for key, table_schema in source_schema.items():
+            if table is not None and key != table:
+                continue
             schema = table_schema.get(field)
             if schema is not None:
                 break

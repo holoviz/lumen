@@ -134,8 +134,11 @@ class View(param.Parameterized):
         """
         if self._cache is not None:
             return self._cache
-        query = {filt.field: filt.query for filt in self.filters
-                 if filt.query is not None}
+        query = {
+            filt.field: filt.query for filt in self.filters
+            if filt.query is not None and
+            (filt.table is None or filt.table == self.table)
+        }
         data = self.source.get(self.table, **query)
         for transform in self.transforms:
             data = transform.apply(data)
