@@ -1,10 +1,11 @@
 import re
 import os
 import sys
+import subprocess
 
 import datetime as dt
 
-from jinja2 import Environment, meta, Undefined
+from jinja2 import Environment, Undefined
 
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
@@ -137,11 +138,13 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
     dict with the same keys as ``pars``, but updated values
     """
     if isinstance(pars, dict):
-        return {k: _expand(v, context, all_vars, getenv, getshell)
-                for k, v in pars.items()}
+        return {k: expand_spec(
+            v, context, getenv, getshell, getheaders, getcookies, getoauth
+        ) for k, v in pars.items()}
     elif isinstance(pars, (list, tuple, set)):
-        return type(pars)(_expand(v, context, getenv, getshell)
-                          for v in pars)
+        return type(pars)(expand_spec(
+            v, context, getenv, getshell, getheaders, getcookies, getoauth
+        ) for v in pars)
     elif isinstance(pars, str):
         jinja = Environment()
         if getenv:
@@ -154,7 +157,6 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
             jinja.globals['cookie'] = _j_getcookies
         if getoauth:
             jinja.globals['oauth'] = _j_getoauth
-        ast = jinja.parse(pars)
         return jinja.from_string(pars).render(context)
     else:
         # no expansion
