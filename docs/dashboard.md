@@ -113,7 +113,8 @@ targets: This is the list of targets to monitor
         ...: Additional parameters for the View
     filters: A list of Filter types to select a subset of the data
       - field: The name of the filter
-        type: The type of the Filter to use, e.g. 'constant', 'widget' or 'facet'
+        table: If set filters only on a specific table.
+	    type: The type of the Filter to use, e.g. 'constant', 'widget' or 'facet'
         ...: Additional parameters for the Filter
     layout: The layout of the card(s), e.g. 'row', 'column' or 'grid'
     refresh_rate: How frequently to poll for updates in milliseconds
