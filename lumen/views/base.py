@@ -3,6 +3,8 @@ The View classes render the data returned by a Source as a Panel
 object.
 """
 
+from io import StringIO
+
 import numpy as np
 import param
 import panel as pn
@@ -326,3 +328,42 @@ class Table(View):
 
     def _get_params(self):
         return dict(value=self.get_data(), disabled=True, **self.kwargs)
+
+
+class Download(View):
+    """
+    The Download View allows downloading the current table as a csv or
+    xlsx file.
+    """
+
+    filename = param.String(default='data', doc="""
+      Filename of the downloaded file.""")
+
+    filetype = param.Selector(default='csv', objects=['csv', 'xlsx'], doc="""
+      File type of the downloaded file.""")
+
+    save_kwargs = param.Dict(default={}, doc="""
+      Options for the to_csv or to_excel methods.""")
+
+    view_type = 'download'
+
+    def __bool__(self):
+        return True
+
+    def _get_file_data(self):
+        df = self.get_data()
+        sio = StringIO()
+        if self.filetype == 'csv':
+            savefn = df.to_csv
+        elif self.filetype == 'xlsx':
+            savefn = df.to_excel
+        savefn(sio, **self.save_kwargs)
+        sio.seek(0)
+        return sio
+
+    def get_panel(self):
+        return pn.widgets.FileDownload(**self._get_params())
+
+    def _get_params(self):
+        filename = f'{self.filename}.{self.filetype}'
+        return dict(filename=filename, callback=self._get_file_data, **self.kwargs)
