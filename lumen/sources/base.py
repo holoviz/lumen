@@ -40,6 +40,7 @@ def cached(with_query=True):
                 if not with_query and hasattr(self, 'dask'):
                     cache_query['dask'] = True
                 df = method(self, table, **cache_query)
+                cache_query.pop('dask', None)
                 self._set_cache(df, table, **cache_query)
             filtered = df if with_query else self._filter_dataframe(df, **query)
             if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
@@ -221,8 +222,12 @@ class Source(param.Parameterized):
         if key in self._cache:
             return self._cache[key]
         elif self.cache_dir:
-            sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
-            path = os.path.join(self.root, self.cache_dir, f'{sha}_{table}.parq')
+            if query:
+                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                filename = f'{sha}_{table}.parq'
+            else:
+                filename = f'{table}.parq'
+            path = os.path.join(self.root, self.cache_dir, filename)
             if os.path.isfile(path):
                 if 'dask.dataframe' in sys.modules:
                     import dask.dataframe as dd
@@ -235,9 +240,12 @@ class Source(param.Parameterized):
         if self.cache_dir:
             path = os.path.join(self.root, self.cache_dir)
             Path(path).mkdir(parents=True, exist_ok=True)
-            sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
-            filename = os.path.join(path, f'{sha}_{table}.parq')
-            data.to_parquet(filename)
+            if query:
+                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                filename = f'{sha}_{table}.parq'
+            else:
+                filename = f'{table}.parq'
+            data.to_parquet(os.path.join(path, filename))
 
     def clear_cache(self):
         """

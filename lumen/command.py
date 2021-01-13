@@ -43,8 +43,10 @@ class YamlHandler(CodeHandler):
         spec = yaml.load(expanded, Loader=yaml.Loader)
         for name, source_spec in spec.get('sources', {}).items():
             if source_spec.get('shared'):
-                config.sources[name] = Source.from_spec(
+                config.sources[name] = source = Source.from_spec(
                     source_spec, config.sources, root=root)
+                if source.cache_dir:
+                    source.clear_cache()
 
 
 def build_single_handler_application(path, argv):
