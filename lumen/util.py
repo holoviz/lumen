@@ -5,7 +5,7 @@ import subprocess
 
 import datetime as dt
 
-from jinja2 import Environment, Undefined
+from jinja2 import Environment, Undefined, DebugUndefined
 
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
@@ -146,7 +146,7 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
             v, context, getenv, getshell, getheaders, getcookies, getoauth
         ) for v in pars)
     elif isinstance(pars, str):
-        jinja = Environment()
+        jinja = Environment(undefined=DebugUndefined)
         if getenv:
             jinja.globals['env'] = _j_getenv
         if getshell:
