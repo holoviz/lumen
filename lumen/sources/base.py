@@ -34,9 +34,14 @@ def cached(with_query=True):
             cache_query = query if with_query else {}
             df = self._get_cache(table, **cache_query)
             if df is None:
+                if not with_query and hasattr(self, 'dask'):
+                    cache_query['dask'] = True
                 df = method(self, table, **cache_query)
                 self._set_cache(df, table, **cache_query)
-            return df if with_query else self._filter_dataframe(df, **query)
+            filtered = df if with_query else self._filter_dataframe(df, **query)
+            if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
+                return filtered
+            return filtered.compute()
         return wrapped
     return _inner_cached
 
