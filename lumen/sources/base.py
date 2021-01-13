@@ -1,7 +1,10 @@
+import hashlib
 import os
+import shutil
 
 from concurrent import futures
 from functools import wraps
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -53,6 +56,9 @@ class Source(param.Parameterized):
     the types of the variables and indexes in each table and allow
     querying the data.
     """
+
+    cache_dir = param.String(default=None, doc="""
+        Whether to enable local cache and write file to disk.""")
 
     root = param.String(default=None, doc="""
         Root directory where the dashboard specification was loaded from.""")
@@ -214,10 +220,34 @@ class Source(param.Parameterized):
         key = self._get_key(table, **query)
         if key in self._cache:
             return self._cache[key]
+        elif self.cache_dir:
+            sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+            path = os.path.join(self.root, self.cache_dir, f'{sha}_{table}.parq')
+            if os.path.isfile(path):
+                if 'dask.dataframe' in sys.modules:
+                    import dask.dataframe as dd
+                    return dd.read_parquet(path)
+                return pd.read_parquet(path)
 
     def _set_cache(self, data, table, **query):
         key = self._get_key(table, **query)
         self._cache[key] = data
+        if self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir)
+            Path(path).mkdir(parents=True, exist_ok=True)
+            sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+            filename = os.path.join(path, f'{sha}_{table}.parq')
+            data.to_parquet(filename)
+
+    def clear_cache(self):
+        """
+        Clears any cached data.
+        """
+        self._cache = {}
+        if self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
 
     @property
     def panel(self):
@@ -260,12 +290,6 @@ class Source(param.Parameterized):
         DataFrame
            A DataFrame containing the queried table.
         """
-
-    def clear_cache(self):
-        """
-        Clears any cached data.
-        """
-        self._cache = {}
 
 
 class RESTSource(Source):
