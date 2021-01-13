@@ -12,6 +12,7 @@ import requests
 from .base import Source, cached
 from ..util import parse_timedelta
 
+
 class PrometheusSource(Source):
     """
     Queries a Prometheus PromQL endpoint for timeseries information
@@ -19,7 +20,7 @@ class PrometheusSource(Source):
     """
 
     ids = param.List(default=[], doc="""
-       List of pod IDs to query.""")
+      List of pod IDs to query.""")
 
     metrics = param.List(
         default=['memory_usage', 'cpu_usage', 'restarts',
@@ -27,21 +28,24 @@ class PrometheusSource(Source):
         doc="Names of metric queries to execute")
 
     promql_api = param.String(doc="""
-       Name of the AE5 deployment exposing the Prometheus API""")
+      Name of the AE5 deployment exposing the Prometheus API""")
 
     period = param.String(default='3h', doc="""
-        Period to query over specified as a string. Supports:
+      Period to query over specified as a string. Supports:
 
-          - Week:   '1w'
-          - Day:    '1d'
-          - Hour:   '1h'
-          - Minute: '1m'
-          - Second: '1s'
+        - Week:   '1w'
+        - Day:    '1d'
+        - Hour:   '1h'
+        - Minute: '1m'
+        - Second: '1s'
     """)
 
     samples = param.Integer(default=200, doc="""
-        Number of samples in the selected period to query. May
-        be overridden by explicit step value.""")
+      Number of samples in the selected period to query. May be
+      overridden by explicit step value.""")
+
+    shared = param.Boolean(default=False, readonly=True, doc="""
+      PrometheusSource cannot be shared because it has per-user state.""")
 
     step = param.String(doc="""
         Step value to use in PromQL query_range query.""")
@@ -70,7 +74,6 @@ class PrometheusSource(Source):
      (kube_pod_container_status_restarts_total{job="kube-state-metrics",
     cluster="", namespace="default", pod=POD_NAME,
     container=~"app"})"""
-
 
     _metrics = {
         'memory_usage': {

@@ -64,9 +64,8 @@ class IntakeSource(Source):
             schemas[entry] = get_dataframe_schema(data)['items']['properties']
         return schemas if table is None else schemas[table]
 
-    @cached()
+    @cached(with_query=False)
     def get(self, table, **query):
         dask = query.pop('dask', self.dask)
         df = self._read(table)
-        df = self._filter_dataframe(df, **query)
         return df if dask or not hasattr(df, 'compute') else df.compute()

@@ -1,7 +1,11 @@
+import hashlib
 import os
+import shutil
+import sys
 
 from concurrent import futures
 from functools import wraps
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -34,9 +38,15 @@ def cached(with_query=True):
             cache_query = query if with_query else {}
             df = self._get_cache(table, **cache_query)
             if df is None:
+                if not with_query and hasattr(self, 'dask'):
+                    cache_query['dask'] = True
                 df = method(self, table, **cache_query)
+                cache_query.pop('dask', None)
                 self._set_cache(df, table, **cache_query)
-            return df if with_query else self._filter_dataframe(df, **query)
+            filtered = df if with_query else self._filter_dataframe(df, **query)
+            if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
+                return filtered
+            return filtered.compute()
         return wrapped
     return _inner_cached
 
@@ -49,8 +59,16 @@ class Source(param.Parameterized):
     querying the data.
     """
 
+    cache_dir = param.String(default=None, doc="""
+        Whether to enable local cache and write file to disk.""")
+
     root = param.String(default=None, doc="""
         Root directory where the dashboard specification was loaded from.""")
+
+    shared = param.Boolean(default=False, doc="""
+        Whether the Source can be shared across all instances of the
+        dashboard. If set to `True` the Source will be loaded on
+        initial server load.""")
 
     source_type = None
 
@@ -160,11 +178,14 @@ class Source(param.Parameterized):
         -------
         Resolved and instantiated Source object
         """
+        from .. import config
         if spec is None:
             raise ValueError('Source specification empty.')
         elif isinstance(spec, str):
             if spec in sources:
                 source = sources[spec]
+            elif spec.get('shared') and spec in config.sources:
+                source = config.sources[spec]
             else:
                 raise ValueError(f'Source with name {spec} was not found.')
             return source
@@ -201,10 +222,41 @@ class Source(param.Parameterized):
         key = self._get_key(table, **query)
         if key in self._cache:
             return self._cache[key]
+        elif self.cache_dir:
+            if query:
+                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                filename = f'{sha}_{table}.parq'
+            else:
+                filename = f'{table}.parq'
+            path = os.path.join(self.root, self.cache_dir, filename)
+            if os.path.isfile(path):
+                if 'dask.dataframe' in sys.modules:
+                    import dask.dataframe as dd
+                    return dd.read_parquet(path)
+                return pd.read_parquet(path)
 
     def _set_cache(self, data, table, **query):
         key = self._get_key(table, **query)
         self._cache[key] = data
+        if self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir)
+            Path(path).mkdir(parents=True, exist_ok=True)
+            if query:
+                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                filename = f'{sha}_{table}.parq'
+            else:
+                filename = f'{table}.parq'
+            data.to_parquet(os.path.join(path, filename))
+
+    def clear_cache(self):
+        """
+        Clears any cached data.
+        """
+        self._cache = {}
+        if self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
 
     @property
     def panel(self):
@@ -247,12 +299,6 @@ class Source(param.Parameterized):
         DataFrame
            A DataFrame containing the queried table.
         """
-
-    def clear_cache(self):
-        """
-        Clears any cached data.
-        """
-        self._cache = {}
 
 
 class RESTSource(Source):

@@ -2,6 +2,7 @@ import argparse
 import ast
 import os
 import sys
+import yaml
 
 import bokeh.command.util
 
@@ -11,6 +12,8 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
+from .sources import Source
+from .util import expand_spec
 
 
 class YamlHandler(CodeHandler):
@@ -28,9 +31,22 @@ class YamlHandler(CodeHandler):
         if 'filename' not in kwargs:
             raise ValueError('Must pass a filename to YamlHandler')
         filename = kwargs['filename']
-
         kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}').servable();"
         super().__init__(*args, **kwargs)
+
+        # Initialize cached and shared sources
+        from . import config
+        root = os.path.abspath(os.path.dirname(filename))
+        with open(filename) as f:
+            yaml_spec = f.read()
+        expanded = expand_spec(yaml_spec, config.template_vars)
+        spec = yaml.load(expanded, Loader=yaml.Loader)
+        for name, source_spec in spec.get('sources', {}).items():
+            if source_spec.get('shared'):
+                config.sources[name] = source = Source.from_spec(
+                    source_spec, config.sources, root=root)
+                if source.cache_dir:
+                    source.clear_cache()
 
 
 def build_single_handler_application(path, argv):
