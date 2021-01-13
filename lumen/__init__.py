@@ -4,8 +4,17 @@ from .dashboard import Dashboard # noqa
 
 
 class _config(_param.Parameterized):
+    """
+    Stores shared configuration for the entire Lumen application.
+    """
 
-    template_vars = _param.Dict(default={})
+    sources = _param.Dict(default={}, doc="""
+      A global dictionary of shared Source objects.""")
+
+    template_vars = _param.Dict(default={}, doc="""
+      Template variables which may be referenced in a dashboard yaml
+      specification.""")
+
 
 
 config = _config()

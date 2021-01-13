@@ -52,6 +52,11 @@ class Source(param.Parameterized):
     root = param.String(default=None, doc="""
         Root directory where the dashboard specification was loaded from.""")
 
+    shared = param.Boolean(default=False, doc="""
+        Whether the Source can be shared across all instances of the
+        dashboard. If set to `True` the Source will be loaded on
+        initial server load.""")
+
     source_type = None
 
     __abstract = True
@@ -160,11 +165,14 @@ class Source(param.Parameterized):
         -------
         Resolved and instantiated Source object
         """
+        from .. import config
         if spec is None:
             raise ValueError('Source specification empty.')
         elif isinstance(spec, str):
             if spec in sources:
                 source = sources[spec]
+            elif spec.get('shared') and spec in config.sources:
+                source = config.sources[spec]
             else:
                 raise ValueError(f'Source with name {spec} was not found.')
             return source
