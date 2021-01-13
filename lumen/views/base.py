@@ -291,10 +291,14 @@ class hvPlotView(View):
 
     opts = param.Dict(default={}, doc="HoloViews option to apply on the plot.")
 
+    streaming = param.Boolean(default=False, doc="""
+      Whether to stream new data to the plot or rerender the plot.""")
+
     view_type = 'hvplot'
 
     def __init__(self, **params):
         import hvplot.pandas # noqa
+        self._stream = None
         super().__init__(**params)
 
     def get_plot(self, df):
@@ -303,6 +307,8 @@ class hvPlotView(View):
             if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
                 v = NumeralTickFormatter(format=v)
             processed[k] = v
+        if self.streaming:
+            processed['stream'] = self._stream
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, **processed
         )
@@ -313,7 +319,32 @@ class hvPlotView(View):
 
     def _get_params(self):
         df = self.get_data()
+        if self.streaming:
+            from holoviews.streams import Pipe
+            self._stream = Pipe(data=df)
         return dict(object=self.get_plot(df))
+
+    def update(self, invalidate_cache=True):
+        """
+        Triggers an update in the View.
+
+        Parameters
+        ----------
+        invalidate_cache : bool
+            Whether to force a rerender of the containing Monitor.
+
+        Returns
+        -------
+        stale : bool
+            Whether the panel on the View is stale and needs to be
+            rerendered.
+        """
+        if invalidate_cache:
+            self._cache = None
+        if not self.streaming or self._stream is None:
+            return self._update_panel()
+        self._stream.send(self.get_data())
+        return False
 
 
 class Table(View):

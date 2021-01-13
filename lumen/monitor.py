@@ -185,7 +185,11 @@ class Monitor(param.Parameterized):
 
     def _rerender(self, *events, invalidate_cache=False, update_views=True):
         self._update_views(invalidate_cache, update_views)
-        if update_views:
+        has_updates = (
+            any(view._updates for _, (_, views) in self._cache.items() for view in views) or
+            bool(self._updates)
+        )
+        if update_views and has_updates:
             self.application._loading(self.title)
             for card, views in self._updates.items():
                 card[0][:] = [view.panel for view in views]
@@ -195,7 +199,7 @@ class Monitor(param.Parameterized):
                     if view._updates:
                         view._panel.param.set_param(**view._updates)
                         view._updates = None
-        if self._stale or update_views:
+        if self._stale or (update_views and has_updates):
             self.application._rerender()
             self._stale = False
 
