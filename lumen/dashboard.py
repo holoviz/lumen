@@ -108,17 +108,12 @@ class Dashboard(param.Parameterized):
     def _authorized(self):
         authorized = True
         for k, value in self._spec.get('auth', {}).items():
+            if not isinstance(value, list): value = [value]
             if k in pn.state.user_info:
                 user_value = pn.state.user_info[k]
-                if isinstance(value, list):
-                    if isinstance(user_value, list):
-                        authorized &= any(uv == v for v in value for uv in user_value)
-                    else:
-                        authorized &= any(user_value == v for v in value)
-                elif isinstance(user_value, list):
-                    authorized &= any(v == value for v in user_value)
-                else:
-                    authorized &= (value == user_value)
+                if not isinstance(user_value, list):
+                    user_value = [user_value]
+                authorized &= any(uv == v for v in value for uv in user_value)
         return authorized
 
     def _edit(self, event):
