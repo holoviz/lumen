@@ -174,7 +174,7 @@ class Dashboard(param.Parameterized):
             error = ('## Unauthorized User\n'
                      f'{pn.state.user} is not authorized. Ensure '
                      f'{pn.state.user} is permissioned correctly on '
-                     f'{auth_keys} field(s) in OAuth user data.')
+                     f'the {auth_keys} field(s) in OAuth user data.')
             self.targets[:] = [pn.pane.Alert(error, alert_type='danger')]
             self._targets = []
             return

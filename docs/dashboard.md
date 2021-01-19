@@ -121,6 +121,29 @@ targets: This is the list of targets to monitor
     ...: Additional parameters passed to the Card layout(s), e.g. width or height
 ```
 
+### `auth`
+
+The `auth` field may provide a dictionary of any number of fields
+which are validated against the user information provided the the Auth
+provider, which is made available by Panel in the
+`panel.state.user_info` dictionary. To discover how to configure an
+Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
+
+As an example the GitHub OAuth provider returns the login of the user
+that is visiting the dashboard. If we add the following field to the
+yaml:
+
+```yaml
+auth:
+  login: [philippjfr]
+```
+
+Lumen will check the current user `login` against all user logins
+listed here. For a more generic Auth mechanism many Auth providers,
+such as Okta, make it possible to configure a list of groups a user
+belongs to in which case you could list the allowed groups in the auth
+field.
+
 ## Special Syntax
 
 To avoid repeating yourself the yaml specification supports some special syntax.
