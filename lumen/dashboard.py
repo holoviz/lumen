@@ -99,6 +99,23 @@ class Dashboard(param.Parameterized):
             self._edit_button
         ))
 
+    @property
+    def _authorized(self):
+        authorized = True
+        for k, value in self._spec.get('auth', {}).items():
+            if k in pn.state.user_info:
+                user_value = pn.state.user_info[k]
+                if isinstance(value, list):
+                    if isinstance(user_value, list):
+                        authorized &= any(uv == v for v in value for uv in user_value)
+                    else:
+                        authorized &= any(user_value == v for v in value)
+                elif isinstance(user_value, list):
+                    authorized &= any(uv == value for v in user_value)
+                else:
+                    authorized &= (value == user_value)
+        return authorized
+
     def _edit(self, event):
         self._yaml = event.new
         self._edited = True
@@ -148,6 +165,19 @@ class Dashboard(param.Parameterized):
 
     def _reload(self, *events):
         self._load_config()
+        if not self._authorized:
+            auth_keys = list(self._spec.get('auth'))
+            if len(auth_keys) == 1:
+                auth_keys = repr(auth_keys[0])
+            else:
+                auth_keys = [repr(k) for k in auth_keys]
+            error = ('## Unauthorized User\n'
+                     f'{pn.state.user} is not authorized. Ensure '
+                     f'{pn.state.user} is permissioned correctly on '
+                     f'{auth_keys} field(s) in OAuth user data.')
+            self.targets[:] = [pn.pane.Alert(error, alert_type='danger')]
+            self._targets = []
+            return
         self._sources = {}
         for name, source_spec in self._spec.get('sources', {}).items():
             self._sources[name] = Source.from_spec(source_spec, self._sources,
