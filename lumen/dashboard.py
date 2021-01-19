@@ -62,7 +62,8 @@ class Dashboard(param.Parameterized):
             theme='monokai'
         )
         self._edit_button = pn.widgets.Button(
-            name='✎', width=50, css_classes=['reload'], margin=0
+            name='✎', width=50, css_classes=['reload'], margin=0,
+            align='center'
         )
         self._editor.param.watch(self._edit, 'value')
         self._edit_button.on_click(self._open_modal)
@@ -85,7 +86,8 @@ class Dashboard(param.Parameterized):
             self.targets = pn.GridBox(margin=10, ncols=ncols,
                                       sizing_mode='stretch_width')
         self._reload_button = pn.widgets.Button(
-            name='↻', width=50, css_classes=['reload'], margin=0
+            name='↻', width=50, css_classes=['reload'], margin=0,
+            align='center'
         )
         self._reload_button.on_click(self._reload)
         self._reload()
@@ -94,10 +96,25 @@ class Dashboard(param.Parameterized):
         if len(self.filters):
             self.template.sidebar[:] = [self.filters]
         self.template.main[:] = [self.targets]
-        self.template.header.append(pn.Row(
-            self._reload_button,
-            self._edit_button
-        ))
+        header = pn.Row(self._reload_button, self._edit_button)
+        self.template.header.append(header)
+        if 'auth' in self._spec:
+            header.extend([
+                pn.layout.HSpacer(),
+                f'<b><font size="4.5em">User: {pn.state.user}</font></b>'
+            ])
+
+    @property
+    def _authorized(self):
+        authorized = True
+        for k, value in self._spec.get('auth', {}).items():
+            if not isinstance(value, list): value = [value]
+            if k in pn.state.user_info:
+                user_value = pn.state.user_info[k]
+                if not isinstance(user_value, list):
+                    user_value = [user_value]
+                authorized &= any(uv == v for v in value for uv in user_value)
+        return authorized
 
     def _edit(self, event):
         self._yaml = event.new
@@ -148,6 +165,19 @@ class Dashboard(param.Parameterized):
 
     def _reload(self, *events):
         self._load_config()
+        if not self._authorized:
+            auth_keys = list(self._spec.get('auth'))
+            if len(auth_keys) == 1:
+                auth_keys = repr(auth_keys[0])
+            else:
+                auth_keys = [repr(k) for k in auth_keys]
+            error = ('## Unauthorized User\n'
+                     f'{pn.state.user} is not authorized. Ensure '
+                     f'{pn.state.user} is permissioned correctly on '
+                     f'the {auth_keys} field(s) in OAuth user data.')
+            self.targets[:] = [pn.pane.Alert(error, alert_type='danger')]
+            self._targets = []
+            return
         self._sources = {}
         for name, source_spec in self._spec.get('sources', {}).items():
             self._sources[name] = Source.from_spec(source_spec, self._sources,
