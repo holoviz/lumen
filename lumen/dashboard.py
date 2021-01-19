@@ -111,7 +111,7 @@ class Dashboard(param.Parameterized):
                     else:
                         authorized &= any(user_value == v for v in value)
                 elif isinstance(user_value, list):
-                    authorized &= any(uv == value for v in user_value)
+                    authorized &= any(v == value for v in user_value)
                 else:
                     authorized &= (value == user_value)
         return authorized
