@@ -62,7 +62,8 @@ class Dashboard(param.Parameterized):
             theme='monokai'
         )
         self._edit_button = pn.widgets.Button(
-            name='✎', width=50, css_classes=['reload'], margin=0
+            name='✎', width=50, css_classes=['reload'], margin=0,
+            align='center'
         )
         self._editor.param.watch(self._edit, 'value')
         self._edit_button.on_click(self._open_modal)
@@ -85,7 +86,8 @@ class Dashboard(param.Parameterized):
             self.targets = pn.GridBox(margin=10, ncols=ncols,
                                       sizing_mode='stretch_width')
         self._reload_button = pn.widgets.Button(
-            name='↻', width=50, css_classes=['reload'], margin=0
+            name='↻', width=50, css_classes=['reload'], margin=0,
+            align='center'
         )
         self._reload_button.on_click(self._reload)
         self._reload()
@@ -94,10 +96,13 @@ class Dashboard(param.Parameterized):
         if len(self.filters):
             self.template.sidebar[:] = [self.filters]
         self.template.main[:] = [self.targets]
-        self.template.header.append(pn.Row(
-            self._reload_button,
-            self._edit_button
-        ))
+        header = pn.Row(self._reload_button, self._edit_button)
+        self.template.header.append(header)
+        if 'auth' in self._spec:
+            header.extend([
+                pn.layout.HSpacer(),
+                f'<b><font size="4.5em">User: {pn.state.user}</font></b>'
+            ])
 
     @property
     def _authorized(self):
