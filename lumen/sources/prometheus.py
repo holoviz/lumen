@@ -19,6 +19,9 @@ class PrometheusSource(Source):
     about Kubernetes pods.
     """
 
+    ae5_source = param.Parameter(doc="""
+      An AE5Source instance to use for querying.""")
+
     ids = param.List(default=[], doc="""
       List of pod IDs to query.""")
 
@@ -119,7 +122,7 @@ class PrometheusSource(Source):
     def _step_value(self):
         if self.step:
             return self.step
-        return (parse_timedelta(self.period)/self.samples).total_seconds()
+        return int((parse_timedelta(self.period)/self.samples).total_seconds())
 
     def _url_query_parameters(self, pod_id, query):
         """
@@ -139,25 +142,25 @@ class PrometheusSource(Source):
         "Return the full query URL"
         query_template = self._metrics[metric]['query']
         query_params = self._url_query_parameters(pod_id, query_template)
-        return f'{self.promql_api}/query_range?{query_params}'
+        if self.ae5_source:
+            ae5 = self.ae5_source._session
+            return f'https://{ae5._k8s_endpoint}.{ae5.hostname}/promql/query_range?{query_params}'
+        else:
+            return f'{self.promql_api}/query_range?{query_params}'
 
     def _get_query_json(self, query_url):
         "Function called in parallel to fetch JSON in ThreadPoolExecutor"
-        response = requests.get(query_url, verify=False)
+        if self.ae5_source:
+            response = self.ae5_source._session.session.get(query_url, verify=False)
+        else:
+            response = requests.get(query_url, verify=False)
         data = response.json()
         if len(data) == 0:
             return None
         return data
 
-    def _json_to_df(self, metric, response_json):
+    def _json_to_df(self, metric, values):
         "Convert JSON response to pandas DataFrame"
-        assert response_json["status"]== "success"
-        if response_json["data"]["resultType"] != "matrix":
-            raise Exception('PrometheusSource can currently only handle results'
-                            'of type "matrix"')
-        results = response_json["data"]['result']
-        assert len(results) <= 1, 'Multi-column matrix results not yet handled'
-        values = results[0]['values'] if results else []
         df = pd.DataFrame(values, columns=['timestamp', metric])
         df[metric] = df[metric].astype(float)
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
