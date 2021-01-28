@@ -12,7 +12,7 @@ from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
 from .transforms import Transform # noqa
-from .util import expand_spec
+from .util import LAYOUTS, expand_spec
 from .views import View # noqa
 
 _templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}

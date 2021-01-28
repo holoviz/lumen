@@ -1,12 +1,12 @@
+import datetime as dt
 import re
 import os
 import sys
 import subprocess
 
-import datetime as dt
+import panel as pn
 
 from jinja2 import Environment, Undefined, DebugUndefined
-
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
 
