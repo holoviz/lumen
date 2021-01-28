@@ -76,15 +76,15 @@ class Dashboard(param.Parameterized):
         # Build layouts
         self.filters = pn.Accordion(margin=0, sizing_mode='stretch_width')
         layout = self.config.get('layout', 'grid')
+        layout_type = LAYOUTS[layout]
+        layout_kwargs = {'sizing_mode': 'stretch_width', 'margin': 10}
         if layout == 'tabs':
-            self.targets = pn.Tabs(sizing_mode='stretch_width', dynamic=True)
-            self.targets.param.watch(self._activate_filters, 'active')
-        elif layout == 'column':
-            self.targets = pn.Column(margin=10, sizing_mode='stretch_width')
+            layout_kwargs['dynamic'] = True
         elif layout == 'grid':
-            ncols = self.config.get('ncols', 3)
-            self.targets = pn.GridBox(margin=10, ncols=ncols,
-                                      sizing_mode='stretch_width')
+            layout_kwargs['ncols'] = self.config.get('ncols', 3)
+        self.targets = layout_type(**layout_kwargs)
+        if layout == 'tabs':
+            self.targets.param.watch(self._activate_filters, 'active')
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0,
             align='center'

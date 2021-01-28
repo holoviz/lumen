@@ -11,6 +11,15 @@ from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
 
 
+LAYOUTS = {
+    'accordion': pn.Accordion,
+    'column'   : pn.Column,
+    'grid'     : pn.GridBox,
+    'row'      : pn.Row,
+    'tabs'     : pn.Tabs
+}
+
+
 def get_dataframe_schema(df, columns=None):
     """
     Returns a JSON schema optionally filtered by a subset of the columns.

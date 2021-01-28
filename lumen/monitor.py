@@ -8,6 +8,7 @@ import panel as pn
 
 from .filters import FacetFilter
 from .sources import Source
+from .util import LAYOUTS
 from .views import View
 
 
@@ -20,6 +21,10 @@ class Monitor(param.Parameterized):
     application = param.Parameter(doc="The overall monitoring application.")
 
     filters = param.List(doc="A list of filters to be rendered.")
+
+    facet_layout = param.Selector(default=None, objects=list(LAYOUTS), doc="""
+        If a FacetFilter is specified this declares how to lay out
+        the cards.""")
 
     layout = param.ClassSelector(default='column', class_=(str, list), doc="""
         Defines the layout of the views in the monitor target. Can be
@@ -41,7 +46,7 @@ class Monitor(param.Parameterized):
         How frequently to refresh the monitor by querying the adaptor.""")
 
     source = param.ClassSelector(class_=Source, doc="""
-       The Source queries the data from some data source.""")
+        The Source queries the data from some data source.""")
 
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
 
@@ -108,18 +113,10 @@ class Monitor(param.Parameterized):
         else:
             if self.layout == 'grid' and 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
-            layout = {
-                'column': pn.Column,
-                'grid': pn.GridBox,
-                'row': pn.Row,
-                'tabs': pn.Tabs
-            }[self.layout]
+            layout = LAYOUTS[self.layout]
             item = layout(*(view.panel for view in views), **kwargs)
-
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
-        return pn.Card(
-            item, title=title, name=title, **params
-        )
+        return pn.Card(item, title=title, name=title, **params)
 
     def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True):
         view_filters = filters + list(facet_filters)
@@ -230,13 +227,12 @@ class Monitor(param.Parameterized):
     @property
     def panels(self):
         default = 'grid' if len(self._cards) > 1 else 'column'
-        layout = self._config.get('layout', default)
+        layout = self.facet_layout or self._config.get('layout', default)
+        layout_type = LAYOUTS[layout]
         kwargs = dict(name=self.title, sizing_mode='stretch_width')
         if layout == 'grid':
             kwargs['ncols'] = self._config.get('ncols', 3)
-            return pn.GridBox(*self._cards, **kwargs)
-        elif layout == 'column':
-            return pn.Column(*self._cards, **kwargs)
+        return layout_type(*self._cards, **kwargs)
 
     @pn.depends('refresh_rate', watch=True)
     def start(self, event=None):

@@ -24,7 +24,7 @@ class Filter(param.Parameterized):
       about the data to be filtered.""")
 
     table = param.String(default=None, doc="""
-      The table being filtered. If None "applies to all tables.""")
+      The table being filtered. If None applies to all tables.""")
 
     value = param.Parameter(doc="The current filter value.")
 
