@@ -1,14 +1,23 @@
+import datetime as dt
 import re
 import os
 import sys
 import subprocess
 
-import datetime as dt
+import panel as pn
 
 from jinja2 import Environment, Undefined, DebugUndefined
-
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
+
+
+LAYOUTS = {
+    'accordion': pn.Accordion,
+    'column'   : pn.Column,
+    'grid'     : pn.GridBox,
+    'row'      : pn.Row,
+    'tabs'     : pn.Tabs
+}
 
 
 def get_dataframe_schema(df, columns=None):
