@@ -22,7 +22,7 @@ class Monitor(param.Parameterized):
 
     filters = param.List(doc="A list of filters to be rendered.")
 
-    facet_layout = param.Selector(default=None, class_=(str, dict), doc="""
+    facet_layout = param.ClassSelector(default=None, class_=(str, dict), doc="""
         If a FacetFilter is specified this declares how to lay out
         the cards.""")
 
@@ -67,7 +67,6 @@ class Monitor(param.Parameterized):
         self._cb = None
         self._stale = False
         self._updates = {}
-        self._update_views()
         
         # Build UI components
         self._sort_widget = pn.widgets.MultiSelect(
@@ -76,9 +75,11 @@ class Monitor(param.Parameterized):
             size=len(sort_fields),
             value=sort_fields,
         )
+        self._sort_widget.param.watch(self._resort, 'value')
         self._reverse_widget = pn.widgets.Checkbox(
             value=sort_reverse, name='Reverse', margin=(5, 0, 0, 10)
         )
+        self._reverse_widget.param.watch(self._resort, 'value')
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -91,8 +92,8 @@ class Monitor(param.Parameterized):
             if isinstance(filt, FacetFilter):
                 continue
             filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
+        self._update_views()
 
-    @pn.depends('_sort_widget.value', '_reverse_widget.value', watch=True)
     def _resort(self, *events):
         self.sort_fields = self._sort_widget.value
         self.sort_reverse = self._reverse_widget.value
