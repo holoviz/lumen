@@ -161,6 +161,8 @@ class Dashboard(param.Parameterized):
                 obj_type.param.set_param(**defaults)
 
     def _reload(self, *events):
+        from . import config
+
         self._load_config()
         if not self._authorized:
             auth_keys = list(self._spec.get('auth'))
@@ -179,17 +181,22 @@ class Dashboard(param.Parameterized):
         self._filters = {}
         self._sources = {}
         for name, source_spec in self._spec.get('sources', {}).items():
+            source_spec = dict(source_spec)
             filter_specs = source_spec.pop('filters', None)
-            self._sources[name] = source = Source.from_spec(
-                source_spec, self._sources, root=self._root
-            )
+            if name in config.sources:
+                source = config.sources[name]
+            else:
+                source = Source.from_spec(
+                    source_spec, self._sources, root=self._root
+                )
+            self._sources[name] = source
             if not filter_specs:
                 continue
+            self._filters[name] = filters = dict(config.filters.get(name, {}))
             schema = source.get_schema()
-            self._filters[name] = {
-                fname: Filter.from_spec(filter_spec, schema)
-                for fname, filter_spec in filter_specs.items()
-            }
+            for fname, filter_spec in filter_specs.items():
+                if fname not in filters:
+                    filters[fname] = Filter.from_spec(filter_spec, schema)
         self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
         filters = []
