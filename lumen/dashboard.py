@@ -189,7 +189,7 @@ class Dashboard(param.Parameterized):
             self._filters[name] = {
                 fname: Filter.from_spec(filter_spec, schema)
                 for fname, filter_spec in filter_specs.items()
-            ]
+            }
         self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
         filters = []
