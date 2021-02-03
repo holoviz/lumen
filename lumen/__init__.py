@@ -8,6 +8,9 @@ class _config(_param.Parameterized):
     Stores shared configuration for the entire Lumen application.
     """
 
+    filters = _param.Dict(default={}, doc="""
+      A global dictionary of shared Filter objects.""")
+
     sources = _param.Dict(default={}, doc="""
       A global dictionary of shared Source objects.""")
 

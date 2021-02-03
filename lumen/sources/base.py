@@ -13,7 +13,7 @@ import panel as pn
 import param
 import requests
 
-from ..util import get_dataframe_schema
+from ..util import get_dataframe_schema, merge_schemas
 
 
 def cached(with_query=True):
@@ -577,25 +577,7 @@ class JoinedSource(Source):
                     schema.update(table_schema)
                 else:
                     for column, col_schema in table_schema.items():
-                        prev_schema = schema.get(column)
-                        if prev_schema is None:
-                            schema[column] = col_schema
-                        elif col_schema['type'] != prev_schema['type']:
-                            continue
-                        elif 'enum' in col_schema and 'enum' in prev_schema:
-                            prev_enum = schema[column]['enum']
-                            for enum in col_schema['enum']:
-                                if enum not in prev_enum:
-                                    prev_enum.append(enum)
-                        elif 'inclusiveMinimum' in col_schema and 'inclusiveMinimum' in prev_schema:
-                            prev_schema['inclusiveMinimum'] = min(
-                                col_schema['inclusiveMinimum'],
-                                prev_schema['inclusiveMinimum']
-                            )
-                            prev_schema['inclusiveMaximum'] = max(
-                                col_schema['inclusiveMaximum'],
-                                prev_schema['inclusiveMaximum']
-                            )
+                        schema[column] = merge_schemas(col_schema, schema.get(column))
         return schemas if table is None else schemas[table]
 
     @cached()

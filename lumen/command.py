@@ -12,6 +12,7 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
+from .filters import Filter
 from .sources import Source
 from .util import expand_spec
 
@@ -43,10 +44,18 @@ class YamlHandler(CodeHandler):
         spec = yaml.load(expanded, Loader=yaml.Loader)
         for name, source_spec in spec.get('sources', {}).items():
             if source_spec.get('shared'):
+                source_spec = dict(source_spec)
+                filter_specs = source_spec.pop('filters', None)
                 config.sources[name] = source = Source.from_spec(
                     source_spec, config.sources, root=root)
-                if source.cache_dir:
+                if source.cache_dir and '--dev' not in sys.argv:
                     source.clear_cache()
+                schema = source.get_schema()
+                config.filters[name] = {
+                    fname: Filter.from_spec(filter_spec, schema)
+                    for fname, filter_spec in filter_specs.items()
+                }
+
 
 
 def build_single_handler_application(path, argv):

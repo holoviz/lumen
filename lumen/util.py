@@ -170,3 +170,23 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
     else:
         # no expansion
         return pars
+
+
+def merge_schemas(schema, old_schema):
+    """
+    Merges two JSON schemas on a column.
+    """
+    if old_schema is None:
+        return schema
+    elif schema['type'] != old_schema['type']:
+        return old_schema
+    elif 'enum' in schema and 'enum' in old_schema:
+        merged_enum = list(old_schema['enum'])
+        for enum in schema['enum']:
+            if enum not in merged_enum:
+                merged_enum.append(enum)
+        return dict(old_schema, enum=merged_enum)
+    elif 'inclusiveMinimum' in schema and 'inclusiveMinimum' in old_schema:
+        merged_min = min(schema['inclusiveMinimum'], old_schema['inclusiveMinimum'])
+        merged_max = min(schema['inclusiveMaximum'], old_schema['inclusiveMaximum'])
+        return dict(old_schema, inclusiveMinimum=merged_min, inclusiveMaximum=merged_max)
