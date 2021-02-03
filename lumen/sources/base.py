@@ -577,7 +577,7 @@ class JoinedSource(Source):
                     schema.update(table_schema)
                 else:
                     for column, col_schema in table_schema.items():
-                        schema[column] = merge_schema(col_schema, schema.get(column))
+                        schema[column] = merge_schemas(col_schema, schema.get(column))
         return schemas if table is None else schemas[table]
 
     @cached()
