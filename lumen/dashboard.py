@@ -124,9 +124,6 @@ class Dashboard(param.Parameterized):
         self.filters.active = [event.new]
 
     def _open_modal(self, event):
-        # Workaround until Panel https://github.com/holoviz/panel/pull/1719
-        # is released
-        self.template.close_modal()
         self.template.open_modal()
 
     def _load_config(self, from_file=False):
@@ -178,10 +175,21 @@ class Dashboard(param.Parameterized):
             self.targets[:] = [pn.pane.Alert(error, alert_type='danger')]
             self._targets = []
             return
+
+        self._filters = {}
         self._sources = {}
         for name, source_spec in self._spec.get('sources', {}).items():
-            self._sources[name] = Source.from_spec(source_spec, self._sources,
-                                                   root=self._root)
+            filter_specs = source_spec.pop('filters', None)
+            self._sources[name] = source = Source.from_spec(
+                source_spec, self._sources, root=self._root
+            )
+            if not filter_specs:
+                continue
+            schema = source.get_schema()
+            self._filters[name] = {
+                fname: Filter.from_spec(filter_spec, schema)
+                for fname, filter_spec in filter_specs.items()
+            ]
         self._targets = self._resolve_targets(self._spec['targets'])
         self._rerender()
         filters = []
@@ -229,8 +237,12 @@ class Dashboard(param.Parameterized):
 
             # Resolve filters
             filter_specs = target_spec.pop('filters', [])
+            if isinstance(source_spec, str):
+                source_filters = self._filters.get(source_spec)
+            else:
+                source_filters = None
             filters = [
-                Filter.from_spec(filter_spec, schema)
+                Filter.from_spec(filter_spec, schema, source_filters)
                 for filter_spec in filter_specs
             ]
 
