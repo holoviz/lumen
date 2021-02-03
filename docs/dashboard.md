@@ -96,6 +96,23 @@ sources:
 
 This will declare a `Source` called `population` which publishes a table called `population`.
 
+It is also possible to declare filters associated with a global `Source`.
+
+```yaml
+sources:
+  population:
+    type: file
+    files: [population.csv]
+	filters:
+	  year:
+	    field: country
+		type: widget
+```
+
+Any target that uses the population `Source` can now refer to `year`
+filter by name. This allows multiple targets that are fed by the same
+`Source` to reuse a filter.
+
 ### `targets`
 
 The targets section defines the actual monitoring targets and
@@ -116,7 +133,8 @@ targets: This is the list of targets to monitor
         table: If set filters only on a specific table.
 	    type: The type of the Filter to use, e.g. 'constant', 'widget' or 'facet'
         ...: Additional parameters for the Filter
-    layout: The layout of the card(s), e.g. 'row', 'column' or 'grid'
+    layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
+    facet_layout: The layout of the cards if a FacetFilter is declared generating multiple cards.
     refresh_rate: How frequently to poll for updates in milliseconds
     ...: Additional parameters passed to the Card layout(s), e.g. width or height
 ```
