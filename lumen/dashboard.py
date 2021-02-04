@@ -34,6 +34,12 @@ pn.config.raw_css.append("""
 """)
 
 
+def load_yaml(yaml, **kwargs):
+    from . import config
+    expanded = expand_spec(yaml, config.template_vars, **kwargs)
+    return yaml.load(expanded, Loader=yaml.Loader)
+
+
 def apply_global_defaults(defaults):
     """
     Applies a set of global defaults.
@@ -171,8 +177,7 @@ class Dashboard(param.Parameterized):
                 self._yaml = f.read()
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        spec = expand_spec(self._yaml, config.template_vars, **kwargs)
-        self._spec = yaml.load(spec, Loader=yaml.Loader)
+        self._spec = load_yaml(self._yaml, **kwargs)
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})

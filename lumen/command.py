@@ -13,8 +13,6 @@ from panel.command import main as _pn_main
 
 from . import __version__
 from .dashboard import apply_global_defaults, load_global_sources
-from .filters import Filter
-from .sources import Source
 from .util import expand_spec
 
 
@@ -37,12 +35,10 @@ class YamlHandler(CodeHandler):
         super().__init__(*args, **kwargs)
 
         # Initialize cached and shared sources
-        from . import config
-        root = os.path.abspath(os.path.dirname(filename))
         with open(filename) as f:
             yaml_spec = f.read()
-        expanded = expand_spec(yaml_spec, config.template_vars)
-        spec = yaml.load(expanded, Loader=yaml.Loader)
+        spec = load_spec(yaml_spec)
+        root = os.path.abspath(os.path.dirname(filename))
         clear_cache = '--dev' not in sys.argv
         apply_global_defaults(spec.get('defaults', {}))
         load_global_sources(spec.get('sources', {}), root, clear_cache=clear_cache)
