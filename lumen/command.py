@@ -2,7 +2,6 @@ import argparse
 import ast
 import os
 import sys
-import yaml
 
 import bokeh.command.util
 
@@ -12,8 +11,7 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
-from .dashboard import apply_global_defaults, load_global_sources
-from .util import expand_spec
+from .dashboard import apply_global_defaults, load_global_sources, load_yaml
 
 
 class YamlHandler(CodeHandler):
@@ -37,7 +35,7 @@ class YamlHandler(CodeHandler):
         # Initialize cached and shared sources
         with open(filename) as f:
             yaml_spec = f.read()
-        spec = load_spec(yaml_spec)
+        spec = load_yaml(yaml_spec)
         root = os.path.abspath(os.path.dirname(filename))
         clear_cache = '--dev' not in sys.argv
         apply_global_defaults(spec.get('defaults', {}))

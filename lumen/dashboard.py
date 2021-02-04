@@ -34,9 +34,9 @@ pn.config.raw_css.append("""
 """)
 
 
-def load_yaml(yaml, **kwargs):
+def load_yaml(yaml_spec, **kwargs):
     from . import config
-    expanded = expand_spec(yaml, config.template_vars, **kwargs)
+    expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
     return yaml.load(expanded, Loader=yaml.Loader)
 
 
@@ -170,7 +170,6 @@ class Dashboard(param.Parameterized):
 
     def _load_config(self, from_file=False, reload=False):
         # Load config
-        from . import config
         kwargs = {}
         if from_file or self._yaml is None:
             with open(self.specification) as f:
