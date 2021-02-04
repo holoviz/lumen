@@ -33,7 +33,49 @@ pn.config.raw_css.append("""
 }
 """)
 
+
+def load_yaml(yaml_spec, **kwargs):
+    from . import config
+    expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
+    return yaml.load(expanded, Loader=yaml.Loader)
+
+
+def apply_global_defaults(defaults):
+    """
+    Applies a set of global defaults.
+    """
+    for key, obj in (('filters', Filter), ('sources', Source),
+                     ('transforms', Transform), ('views', View)):
+        for default in defaults.get(key, []):
+            defaults = dict(default)
+            obj_type = obj._get_type(defaults.pop('type', None))
+            obj_type.param.set_param(**defaults)
+
+
+def load_global_sources(sources, root, clear_cache=True):
+    """
+    Loads global sources shared across all targets.
+    """
+    from . import config
+    for name, source_spec in sources.items():
+        if source_spec.get('shared'):
+            source_spec = dict(source_spec)
+            filter_specs = source_spec.pop('filters', {})
+            config.sources[name] = source = Source.from_spec(
+                source_spec, config.sources, root=root)
+            if source.cache_dir and clear_cache:
+                source.clear_cache()
+            schema = source.get_schema()
+            config.filters[name] = {
+                fname: Filter.from_spec(filter_spec, schema)
+                for fname, filter_spec in filter_specs.items()
+            }
+
+
 class Dashboard(param.Parameterized):
+
+    load_global = param.Boolean(default=True, doc="""
+        Whether to initialize the global sources.""")
 
     specification = param.Filename()
 
@@ -126,22 +168,22 @@ class Dashboard(param.Parameterized):
     def _open_modal(self, event):
         self.template.open_modal()
 
-    def _load_config(self, from_file=False):
+    def _load_config(self, from_file=False, reload=False):
         # Load config
-        from . import config
         kwargs = {}
         if from_file or self._yaml is None:
             with open(self.specification) as f:
                 self._yaml = f.read()
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        spec = expand_spec(self._yaml, config.template_vars, **kwargs)
-        self._spec = yaml.load(spec, Loader=yaml.Loader)
+        self._spec = load_yaml(self._yaml, **kwargs)
         if not 'targets' in self._spec:
             raise ValueError('Yaml specification did not declare any targets.')
         self.config = self._spec.get('config', {})
-        self._apply_defaults(self._spec.get('defaults', {}))
         self._root = os.path.abspath(os.path.dirname(self.specification))
+        apply_global_defaults(self._spec.get('defaults', {}))
+        if reload or self.load_global:
+            load_global_sources(self._spec.get('sources', {}), self._root)
 
     def _load_local_modules(self):
         for imp in ('filters', 'sources', 'transforms', 'views'):
@@ -152,18 +194,10 @@ class Dashboard(param.Parameterized):
             self._modules[imp] = module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
-    def _apply_defaults(self, defaults):
-        for key, obj in (('filters', Filter), ('sources', Source),
-                         ('transforms', Transform), ('views', View)):
-            for default in defaults.get(key, []):
-                defaults = dict(default)
-                obj_type = obj._get_type(defaults.pop('type', None))
-                obj_type.param.set_param(**defaults)
-
     def _reload(self, *events):
         from . import config
 
-        self._load_config()
+        self._load_config(reload=True)
         if not self._authorized:
             auth_keys = list(self._spec.get('auth'))
             if len(auth_keys) == 1:

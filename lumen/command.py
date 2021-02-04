@@ -2,7 +2,6 @@ import argparse
 import ast
 import os
 import sys
-import yaml
 
 import bokeh.command.util
 
@@ -12,9 +11,7 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
-from .filters import Filter
-from .sources import Source
-from .util import expand_spec
+from .dashboard import apply_global_defaults, load_global_sources, load_yaml
 
 
 class YamlHandler(CodeHandler):
@@ -32,30 +29,17 @@ class YamlHandler(CodeHandler):
         if 'filename' not in kwargs:
             raise ValueError('Must pass a filename to YamlHandler')
         filename = kwargs['filename']
-        kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}').servable();"
+        kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}', load_global=False).servable();"
         super().__init__(*args, **kwargs)
 
         # Initialize cached and shared sources
-        from . import config
-        root = os.path.abspath(os.path.dirname(filename))
         with open(filename) as f:
             yaml_spec = f.read()
-        expanded = expand_spec(yaml_spec, config.template_vars)
-        spec = yaml.load(expanded, Loader=yaml.Loader)
-        for name, source_spec in spec.get('sources', {}).items():
-            if source_spec.get('shared'):
-                source_spec = dict(source_spec)
-                filter_specs = source_spec.pop('filters', None)
-                config.sources[name] = source = Source.from_spec(
-                    source_spec, config.sources, root=root)
-                if source.cache_dir and '--dev' not in sys.argv:
-                    source.clear_cache()
-                schema = source.get_schema()
-                config.filters[name] = {
-                    fname: Filter.from_spec(filter_spec, schema)
-                    for fname, filter_spec in filter_specs.items()
-                }
-
+        spec = load_yaml(yaml_spec)
+        root = os.path.abspath(os.path.dirname(filename))
+        clear_cache = '--dev' not in sys.argv
+        apply_global_defaults(spec.get('defaults', {}))
+        load_global_sources(spec.get('sources', {}), root, clear_cache=clear_cache)
 
 
 def build_single_handler_application(path, argv):
