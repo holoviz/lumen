@@ -182,7 +182,7 @@ class Dashboard(param.Parameterized):
         self.config = self._spec.get('config', {})
         self._root = os.path.abspath(os.path.dirname(self.specification))
         apply_global_defaults(self._spec.get('defaults', {}))
-        if reload or self.load_global:
+        if reload and self.load_global:
             load_global_sources(self._spec.get('sources', {}), self._root)
 
     def _load_local_modules(self):
