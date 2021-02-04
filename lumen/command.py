@@ -12,7 +12,7 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
-from .dashboard import Filter, Source, apply_defaults, load_global_sources
+from .dashboard import apply_global_defaults, load_global_sources
 from .filters import Filter
 from .sources import Source
 from .util import expand_spec
