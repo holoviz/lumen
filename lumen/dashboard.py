@@ -8,6 +8,7 @@ import panel as pn
 from panel.template.base import BasicTemplate
 from panel.template import DefaultTheme, DarkTheme
 
+from .config import config
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
@@ -25,7 +26,7 @@ pn.config.raw_css.append("""
   border: none;
   font-size: 18pt;
 }
-#header .reload .bk-btn {
+#header .bk.reload .bk.bk-btn {
   color: white;
 }
 .reload .bk-btn:hover {
@@ -35,7 +36,6 @@ pn.config.raw_css.append("""
 
 
 def load_yaml(yaml_spec, **kwargs):
-    from . import config
     expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
     return yaml.load(expanded, Loader=yaml.Loader)
 
@@ -56,7 +56,6 @@ def load_global_sources(sources, root, clear_cache=True):
     """
     Loads global sources shared across all targets.
     """
-    from . import config
     for name, source_spec in sources.items():
         if source_spec.get('shared'):
             source_spec = dict(source_spec)
@@ -85,6 +84,7 @@ class Dashboard(param.Parameterized):
         )
         self._load_config(from_file=True)
         self._modules = {}
+        self._edited = False
         self._load_local_modules()
 
         # Construct template
@@ -97,7 +97,6 @@ class Dashboard(param.Parameterized):
         self.template = _templates[tmpl](**kwargs)
 
         # Add editor modal
-        self._edited = False
         self._editor = pn.widgets.Ace(
             value=self._yaml, filename=self.specification,
             sizing_mode='stretch_both', min_height=600,
@@ -132,19 +131,29 @@ class Dashboard(param.Parameterized):
             align='center'
         )
         self._reload_button.on_click(self._reload)
+        menu_items = [os.path.basename(yml).split('.')[0] for yml in config.yamls]
+        self._menu_button = pn.widgets.MenuButton(
+            name='Select dashboard', items=menu_items, width=200,
+            align='center', margin=0
+        )
+        self._menu_button.on_click(self._navigate)
+
         self._reload()
 
         # Populate template
         if len(self.filters):
             self.template.sidebar[:] = [self.filters]
         self.template.main[:] = [self.targets]
-        header = pn.Row(self._reload_button, self._edit_button)
-        self.template.header.append(header)
+        header = pn.Row()
+        if len(config.yamls) > 1:
+            header.append(self._menu_button)
+        header.extend([self._reload_button, self._edit_button])
         if 'auth' in self._spec:
             header.extend([
                 pn.layout.HSpacer(),
                 f'<b><font size="4.5em">User: {pn.state.user}</font></b>'
             ])
+        self.template.header.append(header)
 
     @property
     def _authorized(self):
@@ -162,6 +171,10 @@ class Dashboard(param.Parameterized):
         self._yaml = event.new
         self._edited = True
 
+    def _navigate(self, event):
+        pn.state.location.pathname = f'/{event.new}'
+        pn.state.location.reload = True
+        
     def _activate_filters(self, event):
         self.filters.active = [event.new]
 
