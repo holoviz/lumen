@@ -11,6 +11,7 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
+from .config import config
 from .dashboard import apply_global_defaults, load_global_sources, load_yaml
 
 
@@ -31,6 +32,8 @@ class YamlHandler(CodeHandler):
         filename = kwargs['filename']
         kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}', load_global=False).servable();"
         super().__init__(*args, **kwargs)
+
+        config.yamls.append(filename)
 
         # Initialize cached and shared sources
         with open(filename) as f:
@@ -73,7 +76,6 @@ def main(args=None):
             break
 
     if start is not None:
-        from . import config
         sys.argv = sys.argv[:start] + sys.argv[end+1:]
         config.template_vars = ast.literal_eval(template_vars)
 
