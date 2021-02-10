@@ -1,7 +1,11 @@
+import hashlib
 import os
+import shutil
+import sys
 
 from concurrent import futures
 from functools import wraps
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -9,7 +13,7 @@ import panel as pn
 import param
 import requests
 
-from ..util import get_dataframe_schema
+from ..util import get_dataframe_schema, merge_schemas
 
 
 def cached(with_query=True):
@@ -34,9 +38,15 @@ def cached(with_query=True):
             cache_query = query if with_query else {}
             df = self._get_cache(table, **cache_query)
             if df is None:
+                if not with_query and hasattr(self, 'dask'):
+                    cache_query['dask'] = True
                 df = method(self, table, **cache_query)
+                cache_query.pop('dask', None)
                 self._set_cache(df, table, **cache_query)
-            return df if with_query else self._filter_dataframe(df, **query)
+            filtered = df if with_query else self._filter_dataframe(df, **query)
+            if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
+                return filtered
+            return filtered.compute()
         return wrapped
     return _inner_cached
 
@@ -48,6 +58,17 @@ class Source(param.Parameterized):
     the types of the variables and indexes in each table and allow
     querying the data.
     """
+
+    cache_dir = param.String(default=None, doc="""
+        Whether to enable local cache and write file to disk.""")
+
+    root = param.String(default=None, doc="""
+        Root directory where the dashboard specification was loaded from.""")
+
+    shared = param.Boolean(default=False, doc="""
+        Whether the Source can be shared across all instances of the
+        dashboard. If set to `True` the Source will be loaded on
+        initial server load.""")
 
     source_type = None
 
@@ -136,7 +157,7 @@ class Source(param.Parameterized):
         return field_schema['enum']
 
     @classmethod
-    def from_spec(cls, spec, sources={}):
+    def from_spec(cls, spec, sources={}, root=None):
         """
         Creates a Source object from a specification. If a Source
         specification references other sources these may be supplied
@@ -149,16 +170,22 @@ class Source(param.Parameterized):
             or a string referencing a source in the sources dictionary.
         sources: dict
             Dictionary of other Source objects
+        root: str
+            Root directory where dashboard specification was loaded
+            from.
 
         Returns
         -------
         Resolved and instantiated Source object
         """
+        from .. import config
         if spec is None:
             raise ValueError('Source specification empty.')
         elif isinstance(spec, str):
             if spec in sources:
                 source = sources[spec]
+            elif spec.get('shared') and spec in config.sources:
+                source = config.sources[spec]
             else:
                 raise ValueError(f'Source with name {spec} was not found.')
             return source
@@ -176,6 +203,7 @@ class Source(param.Parameterized):
             if isinstance(v, str) and v.startswith('@'):
                 v = cls._resolve_reference(v, sources)
             resolved_spec[k] = v
+        resolved_spec['root'] = root
         return source_type(**resolved_spec)
 
     def __init__(self, **params):
@@ -194,10 +222,41 @@ class Source(param.Parameterized):
         key = self._get_key(table, **query)
         if key in self._cache:
             return self._cache[key]
+        elif self.cache_dir:
+            if query:
+                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                filename = f'{sha}_{table}.parq'
+            else:
+                filename = f'{table}.parq'
+            path = os.path.join(self.root, self.cache_dir, filename)
+            if os.path.isfile(path):
+                if 'dask.dataframe' in sys.modules:
+                    import dask.dataframe as dd
+                    return dd.read_parquet(path)
+                return pd.read_parquet(path)
 
     def _set_cache(self, data, table, **query):
         key = self._get_key(table, **query)
         self._cache[key] = data
+        if self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir)
+            Path(path).mkdir(parents=True, exist_ok=True)
+            if query:
+                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                filename = f'{sha}_{table}.parq'
+            else:
+                filename = f'{table}.parq'
+            data.to_parquet(os.path.join(path, filename))
+
+    def clear_cache(self):
+        """
+        Clears any cached data.
+        """
+        self._cache = {}
+        if self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
 
     @property
     def panel(self):
@@ -240,12 +299,6 @@ class Source(param.Parameterized):
         DataFrame
            A DataFrame containing the queried table.
         """
-
-    def clear_cache(self):
-        """
-        Clears any cached data.
-        """
-        self._cache = {}
 
 
 class RESTSource(Source):
@@ -313,7 +366,7 @@ class FileSource(Source):
     def get_schema(self, table=None):
         schemas = {}
         for file in self.files:
-            name = '.'.join(file.split('.')[:-1])
+            name = '.'.join(os.path.basename(file).split('.')[:-1])
             if table is not None and name != table:
                 continue
             df = self.get(name)
@@ -328,7 +381,7 @@ class FileSource(Source):
             if name != table:
                 continue
             load_fn, kwargs = self._load_fn(split_filename[-1])
-            df = load_fn(file, **kwargs)
+            df = load_fn(os.path.join(self.root, file), **kwargs)
         if df is None:
             tables = ['.'.join(f.split('.')[:-1]) for f in self.files]
             raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
@@ -524,25 +577,7 @@ class JoinedSource(Source):
                     schema.update(table_schema)
                 else:
                     for column, col_schema in table_schema.items():
-                        prev_schema = schema.get(column)
-                        if prev_schema is None:
-                            schema[column] = col_schema
-                        elif col_schema['type'] != prev_schema['type']:
-                            continue
-                        elif 'enum' in col_schema and 'enum' in prev_schema:
-                            prev_enum = schema[column]['enum']
-                            for enum in col_schema['enum']:
-                                if enum not in prev_enum:
-                                    prev_enum.append(enum)
-                        elif 'inclusiveMinimum' in col_schema and 'inclusiveMinimum' in prev_schema:
-                            prev_schema['inclusiveMinimum'] = min(
-                                col_schema['inclusiveMinimum'],
-                                prev_schema['inclusiveMinimum']
-                            )
-                            prev_schema['inclusiveMaximum'] = max(
-                                col_schema['inclusiveMaximum'],
-                                prev_schema['inclusiveMaximum']
-                            )
+                        schema[column] = merge_schemas(col_schema, schema.get(column))
         return schemas if table is None else schemas[table]
 
     @cached()

@@ -20,8 +20,11 @@ class Filter(param.Parameterized):
     label = param.String(doc="A label for the Filter.")
 
     schema = param.Dict(doc="""
-        The JSON schema provided by the Source declaring information
-        about the data to be filtered.""" )
+      The JSON schema provided by the Source declaring information
+      about the data to be filtered.""")
+
+    table = param.String(default=None, doc="""
+      The table being filtered. If None applies to all tables.""")
 
     value = param.Parameter(doc="The current filter value.")
 
@@ -41,29 +44,42 @@ class Filter(param.Parameterized):
         raise ValueError(f"No Filter for filter_type '{filter_type}' could be found.")
 
     @classmethod
-    def from_spec(cls, spec, source_schema):
+    def from_spec(cls, spec, source_schema, source_filters=None):
         """
         Resolves a Filter specification given the schema of the Source
-        it will be filtering on.
+        (and optionally the table) it will be filtering on.
 
         Parameters
         ----------
-        spec: dict
+        spec: dict or str
             Specification declared as a dictionary of parameter values.
         source_schema: dict
             A dictionary containing the JSON schema of the Source to
             be filtered on.
+        source_filters: dict
+            A dictionary of filters associated with the Source
 
         Returns
         -------
         The resolved Filter object.
         """
+        if isinstance(spec, str):
+            if source_filters is None:
+                raise ValueError(f"Filter spec {repr(spec)} could not be resolved "
+                                 "because source has declared not filters.")
+            elif spec not in source_filters:
+                raise ValueError(f"Filter spec {repr(spec)} could not be resolved, "
+                                 f"available filters on the source include {list(source_filters)}.")
+            return source_filters[spec]
         spec = dict(spec)
         if not 'field' in spec:
             raise ValueError('Filter specification must declare field to filter on.')
         field = spec['field']
+        table = spec.get('table')
         schema = None
-        for table_schema in source_schema.values():
+        for key, table_schema in source_schema.items():
+            if table is not None and key != table:
+                continue
             schema = table_schema.get(field)
             if schema is not None:
                 break

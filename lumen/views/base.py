@@ -3,6 +3,8 @@ The View classes render the data returned by a Source as a Panel
 object.
 """
 
+from io import StringIO
+
 import numpy as np
 import param
 import panel as pn
@@ -134,8 +136,11 @@ class View(param.Parameterized):
         """
         if self._cache is not None:
             return self._cache
-        query = {filt.field: filt.query for filt in self.filters
-                 if filt.query is not None}
+        query = {
+            filt.field: filt.query for filt in self.filters
+            if filt.query is not None and
+            (filt.table is None or filt.table == self.table)
+        }
         data = self.source.get(self.table, **query)
         for transform in self.transforms:
             data = transform.apply(data)
@@ -286,10 +291,14 @@ class hvPlotView(View):
 
     opts = param.Dict(default={}, doc="HoloViews option to apply on the plot.")
 
+    streaming = param.Boolean(default=False, doc="""
+      Whether to stream new data to the plot or rerender the plot.""")
+
     view_type = 'hvplot'
 
     def __init__(self, **params):
         import hvplot.pandas # noqa
+        self._stream = None
         super().__init__(**params)
 
     def get_plot(self, df):
@@ -298,6 +307,8 @@ class hvPlotView(View):
             if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
                 v = NumeralTickFormatter(format=v)
             processed[k] = v
+        if self.streaming:
+            processed['stream'] = self._stream
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, **processed
         )
@@ -308,4 +319,82 @@ class hvPlotView(View):
 
     def _get_params(self):
         df = self.get_data()
+        if self.streaming:
+            from holoviews.streams import Pipe
+            self._stream = Pipe(data=df)
         return dict(object=self.get_plot(df))
+
+    def update(self, invalidate_cache=True):
+        """
+        Triggers an update in the View.
+
+        Parameters
+        ----------
+        invalidate_cache : bool
+            Whether to force a rerender of the containing Monitor.
+
+        Returns
+        -------
+        stale : bool
+            Whether the panel on the View is stale and needs to be
+            rerendered.
+        """
+        if invalidate_cache:
+            self._cache = None
+        if not self.streaming or self._stream is None:
+            return self._update_panel()
+        self._stream.send(self.get_data())
+        return False
+
+
+class Table(View):
+    """
+    Renders a Source table using a Panel Table widget.
+    """
+
+    view_type = 'table'
+
+    def get_panel(self):
+        return pn.widgets.tables.Tabulator(**self._get_params())
+
+    def _get_params(self):
+        return dict(value=self.get_data(), disabled=True, **self.kwargs)
+
+
+class Download(View):
+    """
+    The Download View allows downloading the current table as a csv or
+    xlsx file.
+    """
+
+    filename = param.String(default='data', doc="""
+      Filename of the downloaded file.""")
+
+    filetype = param.Selector(default='csv', objects=['csv', 'xlsx'], doc="""
+      File type of the downloaded file.""")
+
+    save_kwargs = param.Dict(default={}, doc="""
+      Options for the to_csv or to_excel methods.""")
+
+    view_type = 'download'
+
+    def __bool__(self):
+        return True
+
+    def _get_file_data(self):
+        df = self.get_data()
+        sio = StringIO()
+        if self.filetype == 'csv':
+            savefn = df.to_csv
+        elif self.filetype == 'xlsx':
+            savefn = df.to_excel
+        savefn(sio, **self.save_kwargs)
+        sio.seek(0)
+        return sio
+
+    def get_panel(self):
+        return pn.widgets.FileDownload(**self._get_params())
+
+    def _get_params(self):
+        filename = f'{self.filename}.{self.filetype}'
+        return dict(filename=filename, callback=self._get_file_data, **self.kwargs)

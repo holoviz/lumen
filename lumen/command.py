@@ -1,4 +1,5 @@
 import argparse
+import ast
 import os
 import sys
 
@@ -10,6 +11,8 @@ from bokeh.command.util import build_single_handler_application as _build_applic
 from panel.command import main as _pn_main
 
 from . import __version__
+from .config import config
+from .dashboard import apply_global_defaults, load_global_sources, load_yaml
 
 
 class YamlHandler(CodeHandler):
@@ -27,9 +30,19 @@ class YamlHandler(CodeHandler):
         if 'filename' not in kwargs:
             raise ValueError('Must pass a filename to YamlHandler')
         filename = kwargs['filename']
-
-        kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}').servable();"
+        kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}', load_global=False).servable();"
         super().__init__(*args, **kwargs)
+
+        config.yamls.append(filename)
+
+        # Initialize cached and shared sources
+        with open(filename) as f:
+            yaml_spec = f.read()
+        spec = load_yaml(yaml_spec)
+        root = os.path.abspath(os.path.dirname(filename))
+        clear_cache = '--dev' not in sys.argv
+        apply_global_defaults(spec.get('defaults', {}))
+        load_global_sources(spec.get('sources', {}), root, clear_cache=clear_cache)
 
 
 def build_single_handler_application(path, argv):
@@ -50,6 +63,22 @@ bokeh.command.util.build_single_handler_application = build_single_handler_appli
 
 def main(args=None):
     """Merges commands offered by pyct and bokeh and provides help for both"""
+    start, template_vars = None, None
+    for i, arg in enumerate(sys.argv):
+        if '--template-vars' in arg:
+            start = i
+            if '=' in arg:
+                end = i
+                template_vars = arg.split('=')[1]
+            else:
+                end = i+1
+                template_vars = sys.argv[end]
+            break
+
+    if start is not None:
+        sys.argv = sys.argv[:start] + sys.argv[end+1:]
+        config.template_vars = ast.literal_eval(template_vars)
+
     if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version'):
         _pn_main()
         return
@@ -58,9 +87,12 @@ def main(args=None):
         prog="lumen", epilog="See '<command> --help' to read about a specific subcommand."
     )
 
-    parser.add_argument('-v', '--version', action='version', version=__version__)
+    parser.add_argument(
+        '-v', '--version', action='version', version=__version__
+    )
 
     args = parser.parse_args(sys.argv[1:])
+
     try:
         ret = args.invoke(args)
     except Exception as e:
