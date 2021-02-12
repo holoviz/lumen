@@ -5,20 +5,14 @@ import importlib.util
 import param
 import panel as pn
 
-from panel.template.base import BasicTemplate
-from panel.template import DefaultTheme, DarkTheme
-
 from .config import config
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
-from .monitor import Monitor # noqa
 from .sources import Source, RESTSource # noqa
+from .target import Target
 from .transforms import Transform # noqa
-from .util import LAYOUTS, expand_spec
+from .util import _LAYOUTS, _TEMPLATES, _THEMES, expand_spec
 from .views import View # noqa
 
-_templates = {k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()}
-
-_THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
 
 pn.config.raw_css.append("""
 .reload .bk-btn {
@@ -40,92 +34,190 @@ def load_yaml(yaml_spec, **kwargs):
     return yaml.load(expanded, Loader=yaml.Loader)
 
 
-def apply_global_defaults(defaults):
+class Config(param.Parameterized):
     """
-    Applies a set of global defaults.
+    High-level configuration options for the Dashboard.
     """
-    for key, obj in (('filters', Filter), ('sources', Source),
-                     ('transforms', Transform), ('views', View)):
-        for default in defaults.get(key, []):
-            defaults = dict(default)
-            obj_type = obj._get_type(defaults.pop('type', None))
-            obj_type.param.set_param(**defaults)
+
+    layout = param.Selector(default=_LAYOUTS['grid'], objects=_LAYOUTS, doc="""
+        Overall layout of the dashboard.""")
+
+    logo = param.String(default=None, doc="""
+        A logo to add to the theme.""")
+
+    ncols = param.Integer(default=3, bounds=(1, None), doc="""
+        Number of columns to lay out targets in.""") 
+
+    title = param.String(default="Lumen Dashboard", doc="""
+        The title of the dashboard.""")
+
+    template = param.Selector(default=_TEMPLATES['material'], objects=_TEMPLATES, doc="""
+        The Panel template to render the dashboard into.""")
+
+    theme = param.Selector(default=_THEMES['default'], objects=_THEMES, doc="""
+        The Panel template theme to style the dashboard with.""")
+
+    @classmethod
+    def from_spec(cls, spec):
+        params = dict(spec)
+        if 'theme' in params:
+            params['theme'] = cls.param.theme.objects[spec['theme']]
+        if 'template' in params:
+            params['template'] = cls.param.template.objects[spec['template']]
+        if 'layout' in params:
+            params['layout'] = cls.param.layout.objects[spec['layout']]
+        return cls(**params)
+
+    def construct_template(self):
+        params = {'title': self.title, 'theme': self.theme}
+        if self.logo:
+            params['logo'] = self.config.logo
+        return self.template(**params)
 
 
-def load_global_sources(sources, root, clear_cache=True):
+class Defaults(param.Parameterized):
     """
-    Loads global sources shared across all targets.
+    Defaults to apply to the component classes.
     """
-    for name, source_spec in sources.items():
-        if source_spec.get('shared'):
-            source_spec = dict(source_spec)
-            filter_specs = source_spec.pop('filters', {})
-            config.sources[name] = source = Source.from_spec(
-                source_spec, config.sources, root=root)
-            if source.cache_dir and clear_cache:
-                source.clear_cache()
-            schema = source.get_schema()
-            config.filters[name] = {
-                fname: Filter.from_spec(filter_spec, schema)
-                for fname, filter_spec in filter_specs.items()
-            }
+
+    filters = param.List(doc="Defaults for Filter objects.", class_=dict)
+
+    sources = param.List(doc="Defaults for Source objects.", class_=dict)
+
+    transforms = param.List(doc="Defaults for Transform objects.", class_=dict)
+
+    views = param.List(doc="Defaults for View objects.", class_=dict)
+
+    @classmethod
+    def from_spec(cls, spec):
+        return cls(**spec)
+
+    def apply(self):
+        for obj, defaults in ((Filter, self.filters), (Source, self.sources),
+                              (Transform, self.transforms), (View, self.views)):
+            for default in defaults:
+                params = dict(default)
+                obj_type = obj._get_type(params.pop('type', None))
+                obj_type.param.set_param(**params)
+
 
 
 class Dashboard(param.Parameterized):
 
-    load_global = param.Boolean(default=True, doc="""
-        Whether to initialize the global sources.""")
+    auth = param.Dict(default={}, doc="""
+        Dictionary of keys and values to match the pn.state.user_info
+        against.""")
 
-    specification = param.Filename()
+    config = param.ClassSelector(default=Config(), class_=Config, doc="""
+        High-level configuration options for the dashboard.""")
 
-    def __init__(self, specification, **params):
-        super(Dashboard, self).__init__(
-            specification=specification, **params
-        )
-        self._load_config(from_file=True)
+    defaults = param.ClassSelector(default=Defaults(), class_=Defaults, doc="""
+        Defaults to apply to component classes.""")
+
+    sources = param.Dict(default={}, doc="""
+        A dictionary of Source indexed by name.""")
+
+    targets = param.List(default=[], class_=Target, doc="""
+        List of targets monitoring some source.""")
+
+    def __init__(self, specification=None, **params):
+        self._load_global = params.pop('load_global', True)
+        self._yaml_file = specification
+        self._root = os.path.abspath(os.path.dirname(self._yaml_file))
         self._modules = {}
+        self._filters = {}
         self._edited = False
+        super(Dashboard, self).__init__(**params)
+
+        # Initialize from spec
         self._load_local_modules()
+        self._load_specification(from_file=True)
+        self._materialize_specification()
 
-        # Construct template
-        tmpl = self.config.get('template', 'material')
-        theme = self.config.get('theme', 'default').lower()
-        kwargs = {'title': self.config.get('title', 'Lumen Dashboard'),
-                  'theme': _THEMES[theme]}
-        if 'logo' in self.config:
-            kwargs['logo'] = self.config['logo']
-        self.template = _templates[tmpl](**kwargs)
+        # Load and populate template
+        self._template = self.config.construct_template()
+        self._create_modal()
+        self._create_main()
+        self._create_sidebar()
+        self._create_header()
+        self._rerender()
+        self._populate_template()
 
-        # Add editor modal
-        self._editor = pn.widgets.Ace(
-            value=self._yaml, filename=self.specification,
-            sizing_mode='stretch_both', min_height=600,
-            theme='monokai'
-        )
-        self._edit_button = pn.widgets.Button(
-            name='✎', width=50, css_classes=['reload'], margin=0,
-            align='center'
-        )
-        self._editor.param.watch(self._edit, 'value')
-        self._edit_button.on_click(self._open_modal)
-        self._editor_layout = pn.Column(
-            f'## Edit {os.path.basename(self.specification)}',
-            self._editor, sizing_mode='stretch_both'
-        )
-        self.template.modal.append(self._editor_layout)
+    ##################################################################
+    # Load specification
+    ##################################################################
 
-        # Build layouts
-        self.filters = pn.Accordion(margin=0, sizing_mode='stretch_width')
-        layout = self.config.get('layout', 'grid')
-        layout_type = LAYOUTS[layout]
-        layout_kwargs = {'sizing_mode': 'stretch_width', 'margin': 10}
-        if layout == 'tabs':
-            layout_kwargs['dynamic'] = True
-        elif layout == 'grid':
-            layout_kwargs['ncols'] = self.config.get('ncols', 3)
-        self.targets = layout_type(**layout_kwargs)
-        if layout == 'tabs':
-            self.targets.param.watch(self._activate_filters, 'active')
+    def _load_local_modules(self):
+        for imp in ('filters', 'sources', 'transforms', 'views'):
+            path = os.path.join(self._root, imp+'.py')
+            if not os.path.isfile(path):
+                continue
+            spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
+            self._modules[imp] = module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+    def _load_specification(self, from_file=False):
+        kwargs = {}
+        if from_file or self._yaml is None:
+            with open(self._yaml_file) as f:
+                self._yaml = f.read()
+        elif self._edited:
+            kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
+        self._spec = load_yaml(self._yaml, **kwargs)
+
+    @property
+    def _authorized(self):
+        authorized = True
+        for k, value in self.auth.items():
+            if not isinstance(value, list): value = [value]
+            if k in pn.state.user_info:
+                user_value = pn.state.user_info[k]
+                if not isinstance(user_value, list):
+                    user_value = [user_value]
+                authorized &= any(uv == v for v in value for uv in user_value)
+        return authorized
+
+    def _materialize_specification(self, force=False):
+        self.auth = self._spec.get('auth', {})
+        self.config = Config.from_spec(self._spec.get('config', {}))
+        self.defaults = Defaults.from_spec(self._spec.get('defaults', {}))
+        self.defaults.apply()
+        if force or self._load_global:
+            config.load_global_sources(self._spec.get('sources', {}), self._root)
+        if not self._authorized:
+            self.targets = []
+            return
+        for name, source_spec in self._spec.get('sources', {}).items():
+            source_spec = dict(source_spec)
+            filter_specs = source_spec.pop('filters', None)
+            if name in config.sources:
+                source = config.sources[name]
+            else:
+                source = Source.from_spec(
+                    source_spec, self._sources, root=self._root
+                )
+            self.sources[name] = source
+            if not filter_specs:
+                continue
+            self._filters[name] = filters = dict(config.filters.get(name, {}))
+            schema = source.get_schema()
+            for fname, filter_spec in filter_specs.items():
+                if fname not in filters:
+                    filters[fname] = Filter.from_spec(filter_spec, schema)
+        self.targets[:] = [
+            Target.from_spec(
+                dict(target_spec), self.sources, self._filters,
+                self._root, application=self
+            )
+            for target_spec in self._spec.get('targets', [])
+        ]
+
+    ##################################################################
+    # Create UI
+    ##################################################################
+
+    def _create_header(self):
+        self._header = pn.Row()
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0,
             align='center'
@@ -137,35 +229,58 @@ class Dashboard(param.Parameterized):
             align='center', margin=0
         )
         self._menu_button.on_click(self._navigate)
-
-        self._reload()
-
-        # Populate template
-        if len(self.filters):
-            self.template.sidebar[:] = [self.filters]
-        self.template.main[:] = [self.targets]
-        header = pn.Row()
         if len(config.yamls) > 1:
-            header.append(self._menu_button)
-        header.extend([self._reload_button, self._edit_button])
+            self._header.append(self._menu_button)
+        self._header.extend([self._reload_button, self._edit_button])
         if 'auth' in self._spec:
-            header.extend([
+            self._header.extend([
                 pn.layout.HSpacer(),
                 f'<b><font size="4.5em">User: {pn.state.user}</font></b>'
             ])
-        self.template.header.append(header)
 
-    @property
-    def _authorized(self):
-        authorized = True
-        for k, value in self._spec.get('auth', {}).items():
-            if not isinstance(value, list): value = [value]
-            if k in pn.state.user_info:
-                user_value = pn.state.user_info[k]
-                if not isinstance(user_value, list):
-                    user_value = [user_value]
-                authorized &= any(uv == v for v in value for uv in user_value)
-        return authorized
+    def _create_main(self):
+        layout_kwargs = {'sizing_mode': 'stretch_width', 'margin': 10}
+        if self.config.layout is pn.Tabs:
+            layout_kwargs['dynamic'] = True
+        elif self.config.layout is pn.GridBox:
+            layout_kwargs['ncols'] = self.config.ncols
+        self._main = self.config.layout(**layout_kwargs)
+        if self.config.layout is pn.Tabs:
+            self._main.param.watch(self._activate_filters, 'active')
+
+    def _create_modal(self):
+        self._editor = pn.widgets.Ace(
+            value=self._yaml, filename=self._yaml_file,
+            sizing_mode='stretch_both', min_height=600,
+            theme='monokai'
+        )
+        self._edit_button = pn.widgets.Button(
+            name='✎', width=50, css_classes=['reload'], margin=0,
+            align='center'
+        )
+        self._editor.param.watch(self._edit, 'value')
+        self._edit_button.on_click(self._open_modal)
+        self._modal = pn.Column(
+            f'## Edit {os.path.basename(self._yaml_file)}',
+            self._editor, sizing_mode='stretch_both'
+        )
+
+    def _create_sidebar(self):
+        self._sidebar = pn.Accordion(margin=0, sizing_mode='stretch_width')
+
+    def _populate_template(self):
+        self._template.modal[:] = [self._modal]
+        self._template.main[:] = [self._main]
+        self._template.header[:] = [self._header]
+        if len(self._sidebar):
+            self._template.sidebar[:] = [self._sidebar]
+
+    ##################################################################
+    # Rendering API
+    ##################################################################
+
+    def _activate_filters(self, event):
+        self._sidebar.active = [event.new]
 
     def _edit(self, event):
         self._yaml = event.new
@@ -174,45 +289,44 @@ class Dashboard(param.Parameterized):
     def _navigate(self, event):
         pn.state.location.pathname = f'/{event.new}'
         pn.state.location.reload = True
-        
-    def _activate_filters(self, event):
-        self.filters.active = [event.new]
+
+    def _loading(self, name=''):
+        loading = pn.Column(
+            pn.indicators.LoadingSpinner(value=True, align='center'),
+            f'**Reloading {name}...**'
+        )
+        if isinstance(self._main, pn.GridBox):
+            items = [pn.pane.HTML(width=self._main[i].width)
+                     for i in range(self._main.ncols) if i < len(self._main)]
+            index = int(min(self._main.ncols, (len(self._main)-1)) / 2)
+            if items:
+                items[index] = loading
+            else:
+                items = [loading]
+        elif isinstance(self._main, pn.Tabs):
+            items = list(zip(self._main._names, list(self._main.objects)))
+            items[self._main.active] = pn.Row(
+                pn.layout.HSpacer(), loading, pn.layout.HSpacer()
+            )
+        else:
+            items = [pn.Row(pn.layout.HSpacer(), loading, pn.layout.HSpacer())]
+        self._main[:] = items
 
     def _open_modal(self, event):
-        self.template.open_modal()
+        self._template.open_modal()
 
-    def _load_config(self, from_file=False, reload=False):
-        # Load config
-        kwargs = {}
-        if from_file or self._yaml is None:
-            with open(self.specification) as f:
-                self._yaml = f.read()
-        elif self._edited:
-            kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        self._spec = load_yaml(self._yaml, **kwargs)
-        if not 'targets' in self._spec:
-            raise ValueError('Yaml specification did not declare any targets.')
-        self.config = self._spec.get('config', {})
-        self._root = os.path.abspath(os.path.dirname(self.specification))
-        apply_global_defaults(self._spec.get('defaults', {}))
-        if reload and self.load_global:
-            load_global_sources(self._spec.get('sources', {}), self._root)
-
-    def _load_local_modules(self):
-        for imp in ('filters', 'sources', 'transforms', 'views'):
-            path = os.path.join(self._root, imp+'.py')
-            if not os.path.isfile(path):
-                continue
-            spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
-            self._modules[imp] = module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-    def _reload(self, *events):
-        from . import config
-
-        self._load_config(reload=True)
-        if not self._authorized:
-            auth_keys = list(self._spec.get('auth'))
+    def _rerender(self):
+        if self._authorized:
+            filters = []
+            for target in self.targets:
+                panel = target.filter_panel
+                if panel is not None:
+                    filters.append(panel)
+            self._sidebar[:] = filters
+            self._sidebar.active = [0]
+            self._main[:] = [target.panels for target in self.targets]
+        else:
+            auth_keys = list(self.auth)
             if len(auth_keys) == 1:
                 auth_keys = repr(auth_keys[0])
             else:
@@ -221,101 +335,25 @@ class Dashboard(param.Parameterized):
                      f'{pn.state.user} is not authorized. Ensure '
                      f'{pn.state.user} is permissioned correctly on '
                      f'the {auth_keys} field(s) in OAuth user data.')
-            self.targets[:] = [pn.pane.Alert(error, alert_type='danger')]
-            self._targets = []
-            return
+            self._main[:] = [pn.pane.Alert(error, alert_type='danger')]
 
-        self._filters = {}
-        self._sources = {}
-        for name, source_spec in self._spec.get('sources', {}).items():
-            source_spec = dict(source_spec)
-            filter_specs = source_spec.pop('filters', None)
-            if name in config.sources:
-                source = config.sources[name]
-            else:
-                source = Source.from_spec(
-                    source_spec, self._sources, root=self._root
-                )
-            self._sources[name] = source
-            if not filter_specs:
-                continue
-            self._filters[name] = filters = dict(config.filters.get(name, {}))
-            schema = source.get_schema()
-            for fname, filter_spec in filter_specs.items():
-                if fname not in filters:
-                    filters[fname] = Filter.from_spec(filter_spec, schema)
-        self._targets = self._resolve_targets(self._spec['targets'])
+    def _reload(self, *events):
+        self._load_specification()
+        self._materialize_specification(force=True)
         self._rerender()
-        filters = []
-        for target in self._targets:
-            panel = target.filter_panel
-            if panel is not None:
-                filters.append(panel)
-        self.filters[:] = filters
-        self.filters.active = [0]
 
-    def _loading(self, name=''):
-        loading = pn.Column(
-            pn.indicators.LoadingSpinner(value=True, align='center'),
-            f'**Reloading {name}...**'
-        )
-        if isinstance(self.targets, pn.GridBox):
-            items = [pn.pane.HTML(width=self.targets[i].width)
-                     for i in range(self.targets.ncols) if i < len(self.targets)]
-            index = int(min(self.targets.ncols, (len(self.targets)-1)) / 2)
-            if items:
-                items[index] = loading
-            else:
-                items = [loading]
-        elif isinstance(self.targets, pn.Tabs):
-            items = list(zip(self.targets._names, list(self.targets.objects)))
-            items[self.targets.active] = pn.Row(
-                pn.layout.HSpacer(), loading, pn.layout.HSpacer()
-            )
-        else:
-            items = [pn.Row(pn.layout.HSpacer(), loading, pn.layout.HSpacer())]
-        self.targets[:] = items
-
-    def _rerender(self):
-        self.targets[:] = [target.panels for target in self._targets]
-
-    def _resolve_targets(self, target_specs, metadata={}):
-        targets = []
-        for target_spec in target_specs:
-            target_spec = dict(target_spec)
-
-            # Resolve source
-            source_spec = target_spec.pop('source', None)
-            source = Source.from_spec(source_spec, self._sources, root=self._root)
-            schema = source.get_schema()
-
-            # Resolve filters
-            filter_specs = target_spec.pop('filters', [])
-            if isinstance(source_spec, str):
-                source_filters = self._filters.get(source_spec)
-            else:
-                source_filters = None
-            filters = [
-                Filter.from_spec(filter_spec, schema, source_filters)
-                for filter_spec in filter_specs
-            ]
-
-            # Create target
-            target = Monitor(
-                application=self, filters=filters, source=source,
-                schema=schema, **target_spec)
-            targets.append(target)
-        return targets
+    ##################################################################
+    # Public API
+    ##################################################################
 
     def layout(self):
         """
-        Returns a layout rendering the dashboard contents.
+        Returns a layout of the dashboard contents.
         """
         spinner = pn.indicators.LoadingSpinner(width=40, height=40)
         pn.state.sync_busy(spinner)
 
-        title = self.config.get('title', 'Lumen Dashboard')
-        title_html = '<font color="white"><h1>'+title+'</h1></font>'
+        title_html = f'<font color="white"><h1>{self.config.title}</h1></font>'
         return pn.Column(
             pn.Row(
                 pn.pane.HTML(title_html),
@@ -324,8 +362,8 @@ class Dashboard(param.Parameterized):
                 background='#00aa41'
             ),
             pn.Row(
-                pn.Column(self.filters, width=300),
-                self.targets
+                pn.Column(self._sidebar, width=300),
+                self._main
             )
         )
 
@@ -333,16 +371,14 @@ class Dashboard(param.Parameterized):
         """
         Opens the dashboard in a new window.
         """
-        title = self.config.get('title', 'Lumen Dashboard')
-        self.template.show(title=title)
-        for target in self._targets:
+        self._template.show(title=self.config.title)
+        for target in self.targets:
             target.start()
 
     def servable(self):
         """
         Marks the dashboard for serving with `panel serve`.
         """
-        title = self.config.get('title', 'Lumen Dashboard')
-        self.template.servable(title=title)
-        for target in self._targets:
+        self._template.servable(title=self.config.title)
+        for target in self.targets:
             target.start()

@@ -6,15 +6,15 @@ from itertools import product
 import param
 import panel as pn
 
-from .filters import FacetFilter
+from .filters import Filter, FacetFilter
 from .sources import Source
-from .util import LAYOUTS
+from .util import _LAYOUTS
 from .views import View
 
 
-class Monitor(param.Parameterized):
+class Target(param.Parameterized):
     """
-    A Monitor renders the results of a Source query using the defined
+    A Target renders the results of a Source query using the defined
     set of filters and views.
     """
 
@@ -38,9 +38,9 @@ class Monitor(param.Parameterized):
     sort_reverse = param.Boolean(default=False, doc="""
         Whether to reverse the sort order.""")
 
-    schema = param.Dict(doc="Schema for this Monitor target.")
+    schema = param.Dict(doc="Schema for this Target.")
 
-    title = param.String(doc="A title for this monitor.")
+    title = param.String(doc="A title for this Target.")
 
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
@@ -67,7 +67,7 @@ class Monitor(param.Parameterized):
         self._cb = None
         self._stale = False
         self._updates = {}
-        
+
         # Build UI components
         self._sort_widget = pn.widgets.MultiSelect(
             options=sort_fields,
@@ -124,7 +124,7 @@ class Monitor(param.Parameterized):
                 kwargs.update(layout_kwargs)
             if layout == 'grid' and 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
-            layout_type = LAYOUTS[layout]
+            layout_type = _LAYOUTS[layout]
             item = layout_type(*(view.panel for view in views), **kwargs)
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
         return pn.Card(item, title=title, name=title, **params)
@@ -211,10 +211,57 @@ class Monitor(param.Parameterized):
             self.application._rerender()
             self._stale = False
 
+    ##################################################################
     # Public API
+    ##################################################################
+
+    @classmethod
+    def from_spec(cls, spec, sources={}, filters={}, root=None, **kwargs):
+        """
+        Creates a Target object from a specification. If a Target
+        specification references an existing Source or Filter by name
+        these may be supplied in the sources and filters dictionaries.
+
+        Parameters
+        ----------
+        spec : dict
+            Specification declared as a dictionary of parameter values.
+        sources: dict
+            Dictionary of Source objects
+        filters: dict
+            Dictionary of Filter objects
+        root: str
+            Root directory where dashboard specification was loaded from.
+        kwargs: dict
+            Additional kwargs to pass to the Target
+
+        Returns
+        -------
+        Resolved and instantiated Target object
+        """
+        # Resolve source
+        source_spec = spec.pop('source', None)
+        source = Source.from_spec(source_spec, sources, root=root)
+        schema = source.get_schema()
+
+        # Resolve filters
+        filter_specs = spec.pop('filters', [])
+        if isinstance(source_spec, str):
+            source_filters = filters.get(source_spec)
+        else:
+            source_filters = None
+        filters = [
+            Filter.from_spec(filter_spec, schema, source_filters)
+            for filter_spec in filter_specs
+        ]
+        params = dict(kwargs, **spec)
+        return cls(filters=filters, source=source, schema=schema, **params)
 
     @property
     def filter_panel(self):
+        """
+        Returns a layout of the rendered Filter objects on this Target.
+        """
         views = []
         source_panel = self.source.panel
         if source_panel:
@@ -237,6 +284,9 @@ class Monitor(param.Parameterized):
 
     @property
     def panels(self):
+        """
+        Returns a layout of the rendered View objects on this target.
+        """
         default = 'grid' if len(self._cards) > 1 else 'column'
         layout = self.facet_layout or self._config.get('layout', default)
         kwargs = dict(name=self.title, sizing_mode='stretch_width')
@@ -244,13 +294,16 @@ class Monitor(param.Parameterized):
             layout_kwargs = dict(layout)
             layout = layout_kwargs.pop('type')
             kwargs.update(layout_kwargs)
-        layout_type = LAYOUTS[layout]
+        layout_type = _LAYOUTS[layout]
         if layout == 'grid':
             kwargs['ncols'] = self._config.get('ncols', 3)
         return layout_type(*self._cards, **kwargs)
 
     @pn.depends('refresh_rate', watch=True)
     def start(self, event=None):
+        """
+        Starts any periodic callback instantiated on this object.
+        """
         refresh_rate = self.refresh_rate if event is None else event.new
         if refresh_rate is None:
             return
@@ -262,6 +315,10 @@ class Monitor(param.Parameterized):
             )
 
     def update(self, *events):
+        """
+        Updates the views on this target by clearing any caches and
+        rerendering the views on this Target.
+        """
         self.source.clear_cache()
         self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
         self._rerender(invalidate_cache=True)
