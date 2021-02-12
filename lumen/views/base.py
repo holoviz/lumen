@@ -26,15 +26,9 @@ class View(param.Parameterized):
     a Viewable Panel object in the `get_panel` method.
     """
 
-    application = param.Parameter(constant=True, doc="""
-        The containing application.""")
-
     filters = param.List(constant=True, doc="""
         A list of Filter object providing the query parameters for the
         Source.""")
-
-    monitor = param.Parameter(constant=True, doc="""
-        The Monitor class which owns this view.""")
 
     source = param.ClassSelector(class_=Source, constant=True, doc="""
         The Source to query for the data.""")
@@ -50,13 +44,13 @@ class View(param.Parameterized):
     view_type = None
 
     def __init__(self, **params):
-        self.kwargs = {k: v for k, v in params.items() if k not in self.param}
-        super().__init__(**{k: v for k, v in params.items() if k in self.param})
         self._panel = None
-        for filt in self.filters:
-            filt.param.watch(self.update, 'value')
         self._cache = None
         self._updates = None
+        self.kwargs = {k: v for k, v in params.items() if k not in self.param}
+        super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        for filt in self.filters:
+            filt.param.watch(self.update, 'value')
         self.update()
 
     @classmethod
@@ -76,7 +70,7 @@ class View(param.Parameterized):
         return View
 
     @classmethod
-    def from_spec(cls, spec, monitor, source, filters):
+    def from_spec(cls, spec, source, filters):
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -85,8 +79,6 @@ class View(param.Parameterized):
         ----------
         spec: dict
             Specification declared as a dictionary of parameter values.
-        monitor: lumen.monitor.Monitor
-            The Monitor object that holds this View.
         source: lumen.sources.Source
             The Source object containing the tables the View renders.
         filters: list(lumen.filters.Filter)
@@ -101,18 +93,15 @@ class View(param.Parameterized):
         transform_specs = spec.pop('transforms', [])
         transforms = [Transform.from_spec(tspec) for tspec in transform_specs]
         view_type = View._get_type(spec.pop('type', None))
-        return view_type(
-            filters=filters, monitor=monitor, source=source,
-            transforms=transforms, **spec
-        )
+        return view_type(filters=filters, source=source, transforms=transforms, **spec)
 
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
 
     def _update_panel(self, *events):
         """
-        Updates the cached Panel object and notifies the containing
-        Monitor object if it is stale and has to rerender.
+        Updates the cached Panel object and returns a boolean value
+        indicating whether a rerender is required.
         """
         if self._panel is not None:
             self._updates = self._get_params()
@@ -195,7 +184,7 @@ class View(param.Parameterized):
         Parameters
         ----------
         invalidate_cache : bool
-            Whether to force a rerender of the containing Monitor.
+            Whether to clear the View's cache.
 
         Returns
         -------
@@ -331,7 +320,7 @@ class hvPlotView(View):
         Parameters
         ----------
         invalidate_cache : bool
-            Whether to force a rerender of the containing Monitor.
+            Whether to clear the View's cache.
 
         Returns
         -------
