@@ -194,7 +194,7 @@ class Dashboard(param.Parameterized):
                 source = config.sources[name]
             else:
                 source = Source.from_spec(
-                    source_spec, self._sources, root=self._root
+                    source_spec, self.sources, root=self._root
                 )
             self.sources[name] = source
             if not filter_specs:
