@@ -61,11 +61,11 @@ class Config(param.Parameterized):
     def from_spec(cls, spec):
         params = dict(spec)
         if 'theme' in params:
-            params['theme'] = cls.param.theme.objects[spec['theme']]
+            params['theme'] = _THEMES[spec['theme']]
         if 'template' in params:
-            params['template'] = cls.param.template.objects[spec['template']]
+            params['template'] = _TEMPLATES[spec['template']]
         if 'layout' in params:
-            params['layout'] = cls.param.layout.objects[spec['layout']]
+            params['layout'] = _LAYOUTS[spec['layout']]
         return cls(**params)
 
     def construct_template(self):
