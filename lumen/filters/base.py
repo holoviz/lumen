@@ -190,4 +190,6 @@ class WidgetFilter(Filter):
 
     @property
     def panel(self):
-        return self.widget
+        widget = self.widget.clone()
+        self.widget.link(widget, value='value', bidirectional=True)
+        return widget
