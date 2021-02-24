@@ -72,7 +72,7 @@ class Config(param.Parameterized):
         params = {'title': self.title, 'theme': self.theme}
         if self.logo:
             params['logo'] = self.config.logo
-        return self.template(**params)
+        return self._template(**params)
 
 
 class Defaults(param.Parameterized):
