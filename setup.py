@@ -18,7 +18,9 @@ extras_require = {
     'tests': [
         'pytest',
         'flake8',
-        'intake'
+        'intake',
+        'msgpack-python',
+        'toolz'
     ],
     'doc': [
         'sphinx',
