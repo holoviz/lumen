@@ -280,7 +280,8 @@ class Dashboard(param.Parameterized):
     ##################################################################
 
     def _activate_filters(self, event):
-        self._sidebar.active = [event.new]
+        active = [0] if self._global_filters else []
+        self._sidebar.active = active + [event.new]
 
     def _edit(self, event):
         self._yaml = event.new
@@ -315,11 +316,25 @@ class Dashboard(param.Parameterized):
     def _open_modal(self, event):
         self._template.open_modal()
 
+    def _get_global_filters(self):
+        views = []
+        filters = []
+        for target in self.targets:
+            for filt in target.filters:
+                if (all(filt in target.filters for target in self.targets) and
+                    filt.panel is not None) and filt not in filters:
+                    views.append(filt.panel)
+                    filters.append(filt)
+        if not views or len(self.targets) == 1:
+            return None, None
+        return filters, pn.Column(*views, name='Global Filters', sizing_mode='stretch_width')
+
     def _rerender(self):
         if self._authorized:
-            filters = []
+            self._global_filters, global_panel = self._get_global_filters()
+            filters = [] if global_panel is None else [global_panel]
             for target in self.targets:
-                panel = target.filter_panel
+                panel = target.get_filter_panel(skip=self._global_filters)
                 if panel is not None:
                     filters.append(panel)
             self._sidebar[:] = filters

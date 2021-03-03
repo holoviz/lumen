@@ -66,7 +66,7 @@ class Filter(param.Parameterized):
         if isinstance(spec, str):
             if source_filters is None:
                 raise ValueError(f"Filter spec {repr(spec)} could not be resolved "
-                                 "because source has declared not filters.")
+                                 "because source has not declared filters.")
             elif spec not in source_filters:
                 raise ValueError(f"Filter spec {repr(spec)} could not be resolved, "
                                  f"available filters on the source include {list(source_filters)}.")
