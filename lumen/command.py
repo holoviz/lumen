@@ -33,14 +33,15 @@ class YamlHandler(CodeHandler):
         kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}', load_global=False).servable();"
         super().__init__(*args, **kwargs)
 
-        config.yamls.append(filename)
+        if filename not in config.yamls:
+            config.yamls.append(filename)
 
         # Initialize cached and shared sources
         with open(filename) as f:
             yaml_spec = f.read()
         spec = load_yaml(yaml_spec)
         root = os.path.abspath(os.path.dirname(filename))
-        clear_cache = '--dev' not in sys.argv
+        clear_cache = '--dev' not in sys.argv and '--autoreload' not in sys.argv
         Defaults.from_spec(spec.get('defaults', {})).apply()
         config.load_global_sources(spec.get('sources', {}), root, clear_cache=clear_cache)
 
