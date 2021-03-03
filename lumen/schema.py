@@ -89,12 +89,26 @@ class JSONSchema(pn.pane.PaneBase):
         return self._boolean_widget, {}
 
     def _string_type(self, schema):
-        if schema.get('format') in ('date', 'date-time'):
+        if schema.get('format') in ('date', 'date-time', 'datetime'):
             if 'formatMaximum' in schema and 'formatMinimum' in schema:
                 dt_min = pd.to_datetime(schema['formatMinimum'])
                 if dt_min.tz:
                     dt_min = dt_min.astimezone('UTC').tz_localize(None)
                 dt_max = pd.to_datetime(schema['formatMaximum'])
+                if dt_max.tz:
+                    dt_max = dt_max.astimezone('UTC').tz_localize(None)
+                dt_range = {'start': dt_min.to_pydatetime(),
+                            'end': dt_max.to_pydatetime()}
+                if schema.get('format') == 'date':
+                    wtype = self._date_range_widget
+                else:
+                    wtype = self._datetime_range_widget
+                return wtype, dt_range
+            if 'inclusiveMaximum' in schema and 'inclusiveMinimum' in schema:
+                dt_min = pd.to_datetime(schema['inclusiveMinimum'])
+                if dt_min.tz:
+                    dt_min = dt_min.astimezone('UTC').tz_localize(None)
+                dt_max = pd.to_datetime(schema['inclusiveMaximum'])
                 if dt_max.tz:
                     dt_max = dt_max.astimezone('UTC').tz_localize(None)
                 dt_range = {'start': dt_min.to_pydatetime(),
