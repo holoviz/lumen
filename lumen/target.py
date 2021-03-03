@@ -105,7 +105,6 @@ class Target(param.Parameterized):
             if isinstance(filt, FacetFilter):
                 continue
             filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
-        self.filter_panel = self._create_filter_panel()
         self._update_views()
 
     def _resort(self, *events):
@@ -147,7 +146,7 @@ class Target(param.Parameterized):
             card, views = self._cache[key]
             if update_views:
                 for view in views:
-                    view_stale = view.update(invalidate_cache)
+                    view_stale = view.update(invalidate_cache=invalidate_cache)
                     update_card = update_card or view_stale
         else:
             card = None
@@ -174,13 +173,14 @@ class Target(param.Parameterized):
                 self._updates[card] = views
         return sort_key, card
 
-    def _create_filter_panel(self):
+    def get_filter_panel(self, skip=[]):
         views = []
         source_panel = self.source.panel
         if source_panel:
             source_header = pn.pane.Markdown('### Source', margin=(0, 5))
             views.extend([source_header, source_panel, pn.layout.Divider()])
-        filters = [filt.panel for filt in self.filters if filt.panel is not None]
+        filters = [filt.panel for filt in self.filters
+                   if filt not in skip and filt.panel is not None]
         if filters:
             views.append(pn.pane.Markdown('### Filters', margin=(0, 5)))
             views.extend(filters)
