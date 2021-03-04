@@ -99,6 +99,7 @@ class Config(param.Parameterized):
         return self.template(**params)
 
 
+
 class Defaults(param.Parameterized):
     """
     Defaults to apply to the component classes.
@@ -151,7 +152,7 @@ class Dashboard(param.Parameterized):
         self._modules = {}
         self._filters = {}
         self._edited = False
-        super(Dashboard, self).__init__(**params)
+        super().__init__(**params)
 
         # Initialize from spec
         self._load_local_modules()
@@ -283,7 +284,10 @@ class Dashboard(param.Parameterized):
             align='center'
         )
         self._editor.param.watch(self._edit, 'value')
-        self._edit_button.on_click(self._open_modal)
+        self._edit_button.js_on_click(code="""
+        var modal = document.getElementById("pn-Modal")
+        modal.style.display = "block"
+        """)
         self._modal = pn.Column(
             f'## Edit {os.path.basename(self._yaml_file)}',
             self._editor, sizing_mode='stretch_both'

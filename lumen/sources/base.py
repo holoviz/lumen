@@ -14,6 +14,7 @@ import param
 import requests
 
 from ..util import get_dataframe_schema, merge_schemas
+from ..filters import Filter
 
 
 def cached(with_query=True):
@@ -61,9 +62,6 @@ class Source(param.Parameterized):
 
     cache_dir = param.String(default=None, doc="""
         Whether to enable local cache and write file to disk.""")
-
-    root = param.String(default=None, doc="""
-        Root directory where the dashboard specification was loaded from.""")
 
     shared = param.Boolean(default=False, doc="""
         Whether the Source can be shared across all instances of the
@@ -207,6 +205,7 @@ class Source(param.Parameterized):
         return source_type(**resolved_spec)
 
     def __init__(self, **params):
+        self.root = params.pop('root', None)
         super().__init__(**params)
         self._cache = {}
 
@@ -406,13 +405,13 @@ class WebsiteSource(Source):
     def get_schema(self, table=None):
         schema = {
             "status": {
-                "url": {"type": "string"},
+                "url": {"type": "string", 'enum': self.urls},
                 "live": {"type": "boolean"}
             }
         }
         return schema if table is None else schema[table]
 
-    @cached()
+    @cached(with_query=False)
     def get(self, table, **query):
         data = []
         for url in self.urls:
@@ -421,7 +420,7 @@ class WebsiteSource(Source):
                 live = r.status_code == 200
             except Exception:
                 live = False
-            data.append({"live": live, "url": self.url})
+            data.append({"live": live, "url": url})
         df = pd.DataFrame(data)
         return df
 

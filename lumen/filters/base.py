@@ -167,7 +167,7 @@ class WidgetFilter(Filter):
     filter_type = 'widget'
 
     def __init__(self, **params):
-        super(WidgetFilter, self).__init__(**params)
+        super().__init__(**params)
         self.widget = JSONSchema(
             schema=self.schema, sizing_mode='stretch_width',
             multi=self.multi
