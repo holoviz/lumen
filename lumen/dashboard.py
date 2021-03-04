@@ -1,9 +1,12 @@
 import os
 import yaml
+import importlib
 import importlib.util
 
 import param
 import panel as pn
+
+from panel.template.base import BasicTemplate
 
 from .config import config
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
@@ -51,7 +54,8 @@ class Config(param.Parameterized):
     title = param.String(default="Lumen Dashboard", doc="""
         The title of the dashboard.""")
 
-    template = param.Selector(default=_TEMPLATES['material'], objects=_TEMPLATES, doc="""
+    template = param.Selector(default=_TEMPLATES['material'], objects=_TEMPLATES,
+                              check_on_set=False, doc="""
         The Panel template to render the dashboard into.""")
 
     theme = param.Selector(default=_THEMES['default'], objects=_THEMES, doc="""
@@ -61,11 +65,31 @@ class Config(param.Parameterized):
     def from_spec(cls, spec):
         params = dict(spec)
         if 'theme' in params:
-            params['theme'] = _THEMES[spec['theme']]
+            params['theme'] = _THEMES[params['theme']]
         if 'template' in params:
-            params['template'] = _TEMPLATES[spec['template']]
+            template = params['template']
+            if template in _TEMPLATES:
+                params['template'] = _TEMPLATES[template]
+            elif '.' not in template:
+                raise ValueError(f'Template must be one of {list(_TEMPLATES)} '
+                                 'or an absolute import path.')
+            else:
+                *paths, name = template.split('.')
+                path = '.'.join(paths)
+                try:
+                    module = importlib.import_module(path)
+                except Exception as e:
+                    raise ImportError(f'Template {path} module could not '
+                                      f'be imported and errored with: {e}.')
+                if not hasattr(module, name):
+                    raise ImportError(f'Template {name} was not found in '
+                                      f'module {path}.')
+                params['template'] = template = getattr(module, name)
+                if not issubclass(template, BasicTemplate):
+                    raise ValueError(f'Imported template {path}.{name} '
+                                     'is not a valid Panel template.')
         if 'layout' in params:
-            params['layout'] = _LAYOUTS[spec['layout']]
+            params['layout'] = _LAYOUTS[params['layout']]
         return cls(**params)
 
     def construct_template(self):
