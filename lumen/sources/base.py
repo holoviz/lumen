@@ -201,6 +201,10 @@ class Source(param.Parameterized):
             if isinstance(v, str) and v.startswith('@'):
                 v = cls._resolve_reference(v, sources)
             resolved_spec[k] = v
+        if 'filters' in spec and 'source' in resolved_spec:
+            source_schema = resolved_spec['source'].get_schema()
+            resolved_spec['filters'] = [Filter.from_spec(fspec, source_schema)
+                                        for fspec in spec['filters']]
         resolved_spec['root'] = root
         return source_type(**resolved_spec)
 
@@ -298,6 +302,31 @@ class Source(param.Parameterized):
         DataFrame
            A DataFrame containing the queried table.
         """
+
+
+class DerivedSource(Source):
+    """
+    A DerivedSource applies a list of Filters to an existing source.
+    """
+
+    filters = param.List(default=[], doc="""
+        A list of filters applied to the data returned by the wrapped source.""")
+
+    source = param.ClassSelector(class_=(Source, str), doc="""
+        A Source to wrap.""")
+
+    source_type = 'derived'
+
+    def get_schema(self, table):
+        return self.source.get_schema(table)
+
+    get_schema.__doc__ = Source.get_schema.__doc__
+
+    def get(self, table, **query):
+        query = dict({filt.field: filt.value for filt in self.filters}, **query)
+        return self.source.get(table, **query)
+
+    get.__doc__ = Source.get.__doc__
 
 
 class RESTSource(Source):
