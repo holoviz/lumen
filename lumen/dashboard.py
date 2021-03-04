@@ -308,8 +308,11 @@ class Dashboard(param.Parameterized):
     ##################################################################
 
     def _activate_filters(self, event):
-        active = [0] if self._global_filters else []
-        self._sidebar.active = active + [event.new]
+        if self._global_filters:
+            active = [0, event.new+1]
+        else:
+            active = [event.new]
+        self._sidebar.active = active
 
     def _edit(self, event):
         self._yaml = event.new
@@ -366,7 +369,7 @@ class Dashboard(param.Parameterized):
                 if panel is not None:
                     filters.append(panel)
             self._sidebar[:] = filters
-            self._sidebar.active = [0]
+            self._sidebar.active = [0, 1] if self._global_filters else [0]
             self._main[:] = [target.panels for target in self.targets]
         else:
             auth_keys = list(self.auth)
