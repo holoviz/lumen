@@ -10,7 +10,9 @@ import param
 import panel as pn
 
 from bokeh.models import NumeralTickFormatter
-
+from panel.pane.perspective import (
+    THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
+)
 from ..sources import Source
 from ..transforms import Transform
 from ..util import _INDICATORS
@@ -43,6 +45,8 @@ class View(param.Parameterized):
     field = param.String(doc="The field being visualized.")
 
     view_type = None
+
+    __abstract = True
 
     def __init__(self, **params):
         self._panel = None
@@ -395,3 +399,49 @@ class Download(View):
     def _get_params(self):
         filename = f'{self.filename}.{self.filetype}'
         return dict(filename=filename, callback=self._get_file_data, **self.kwargs)
+
+
+
+class PerspectiveView(View):
+
+    aggregates = param.Dict(None, doc="""
+      How to aggregate. For example {x: "distinct count"}""")
+
+    columns = param.List(default=None, doc="""
+        A list of source columns to show as columns. For example ["x", "y"]""")
+
+    computed_columns = param.List(default=None, doc="""
+      A list of computed columns. For example [""x"+"index""]""")
+
+    column_pivots = param.List(None, doc="""
+      A list of source columns to pivot by. For example ["x", "y"]""")
+
+    filters = param.List(default=None, doc="""
+      How to filter. For example [["x", "<", 3],["y", "contains", "abc"]]""")
+
+    row_pivots = param.List(default=None, doc="""
+      A list of source columns to group by. For example ["x", "y"]""")
+
+    selectable = param.Boolean(default=True, allow_None=True, doc="""
+      Whether items are selectable.""")
+
+    sort = param.List(default=None, doc="""
+      How to sort. For example[["x","desc"]]""")
+
+    plugin = param.ObjectSelector(default=_PerspectivePlugin.GRID.value, objects=_PerspectivePlugin.options(), doc="""
+      The name of a plugin to display the data. For example hypergrid or d3_xy_scatter.""")
+
+    theme = param.ObjectSelector(default='material', objects=_PERSPECTIVE_THEMES, doc="""
+      The style of the PerspectiveViewer. For example material-dark""")
+
+    view_type = 'perspective'
+
+    def _get_params(self):
+        df = self.get_data()
+        param_values = dict(self.param.get_param_values())
+        params = set(View.param) ^ set(PerspectiveView.param)
+        kwargs = dict({p: param_values[p] for p in params}, **self.kwargs)
+        return dict(object=df, toggle_config=False, **kwargs)
+
+    def get_panel(self):
+        return pn.pane.Perspective(**self._get_params())
