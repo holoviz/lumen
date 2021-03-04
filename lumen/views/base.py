@@ -13,6 +13,7 @@ from bokeh.models import NumeralTickFormatter
 
 from ..sources import Source
 from ..transforms import Transform
+from ..util import _INDICATORS
 
 
 class View(param.Parameterized):
@@ -93,7 +94,20 @@ class View(param.Parameterized):
         transform_specs = spec.pop('transforms', [])
         transforms = [Transform.from_spec(tspec) for tspec in transform_specs]
         view_type = View._get_type(spec.pop('type', None))
-        return view_type(filters=filters, source=source, transforms=transforms, **spec)
+        resolved_spec = {}
+        for p, value in spec.items():
+            if p not in view_type.param:
+                resolved_spec[p] = value
+                continue
+            parameter = view_type.param[p]
+            if isinstance(parameter, param.ObjectSelector) and parameter.names:
+                try:
+                    value = parameter.names.get(value, value)
+                except Exception:
+                    pass
+            resolved_spec[p] = value
+        return view_type(filters=filters, source=source, transforms=transforms,
+                         **resolved_spec)
 
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
@@ -228,13 +242,15 @@ class StringView(View):
         return params
 
 
+
 class IndicatorView(View):
     """
     The IndicatorView renders the latest field value as a Panel
     Indicator.
     """
 
-    indicator = param.String(doc="The name of the panel Indicator type")
+    indicator = param.Selector(objects=_INDICATORS, doc="""
+        The name of the panel Indicator type.""")
 
     label = param.String(doc="""
         A custom label to use for the Indicator.""")
@@ -248,15 +264,7 @@ class IndicatorView(View):
         self._panel.name = name
 
     def get_panel(self):
-        indicators = param.concrete_descendents(pn.widgets.indicators.ValueIndicator)
-        indicator_name = self.indicator.title()
-        indicator = indicators.get(indicator_name)
-        if indicator is None:
-            raise ValueError(f'No such indicator as {self.indicator}, '
-                             'ensure the indicator option in the spec '
-                             'specifies a Panel ValueIndicator that '
-                             'exists and has been imported')
-        return indicator(**self._get_params())
+        return self.indicator(**self._get_params())
 
     def _get_params(self):
         value = self.get_value()

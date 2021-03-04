@@ -10,6 +10,7 @@ import param
 from jinja2 import Environment, Undefined, DebugUndefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
+from panel.widgets.indicators import ValueIndicator
 from panel.template.base import BasicTemplate
 from panel.template import DefaultTheme, DarkTheme
 
@@ -26,6 +27,8 @@ _TEMPLATES = {
 }
 
 _THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
+
+_INDICATORS = param.concrete_descendents(ValueIndicator)
 
 
 def get_dataframe_schema(df, columns=None):
