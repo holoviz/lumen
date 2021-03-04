@@ -232,7 +232,7 @@ class Source(param.Parameterized):
             else:
                 filename = f'{table}.parq'
             path = os.path.join(self.root, self.cache_dir, filename)
-            if os.path.isfile(path):
+            if os.path.isfile(path) or os.path.isdir(path):
                 if 'dask.dataframe' in sys.modules:
                     import dask.dataframe as dd
                     return dd.read_parquet(path)
