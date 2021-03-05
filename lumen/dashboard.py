@@ -183,7 +183,7 @@ class Dashboard(param.Parameterized):
         templates = param.concrete_descendents(BasicTemplate)
         _TEMPLATES.update({
             k[:-8].lower(): v for k, v in templates.items()
-        }
+        })
 
     def _load_specification(self, from_file=False):
         kwargs = {}
@@ -362,7 +362,7 @@ class Dashboard(param.Parameterized):
                     filters.append(filt)
         if not views or len(self.targets) == 1:
             return None, None
-        return filters, pn.Column(*views, name='Global Filters', sizing_mode='stretch_width')
+        return filters, pn.Column(*views, name=' ', sizing_mode='stretch_width')
 
     def _rerender(self):
         if self._authorized:
