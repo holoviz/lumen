@@ -173,13 +173,17 @@ class Dashboard(param.Parameterized):
     ##################################################################
 
     def _load_local_modules(self):
-        for imp in ('filters', 'sources', 'transforms', 'views'):
+        for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
             path = os.path.join(self._root, imp+'.py')
             if not os.path.isfile(path):
                 continue
             spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
             self._modules[imp] = module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
+        templates = param.concrete_descendents(BasicTemplate)
+        _TEMPLATES.update({
+            k[:-8].lower(): v for k, v in templates.items()
+        }
 
     def _load_specification(self, from_file=False):
         kwargs = {}
