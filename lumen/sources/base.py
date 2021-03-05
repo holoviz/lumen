@@ -317,7 +317,7 @@ class DerivedSource(Source):
 
     source_type = 'derived'
 
-    def get_schema(self, table):
+    def get_schema(self, table=None):
         return self.source.get_schema(table)
 
     get_schema.__doc__ = Source.get_schema.__doc__
