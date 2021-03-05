@@ -28,7 +28,7 @@ _TEMPLATES = {
 
 _THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
 
-_INDICATORS = param.concrete_descendents(ValueIndicator)
+_INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(ValueIndicator).items()}
 
 
 def get_dataframe_schema(df, columns=None):
