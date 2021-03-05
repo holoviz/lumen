@@ -341,6 +341,9 @@ class Dashboard(param.Parameterized):
                 items = [loading]
         elif isinstance(self._main, pn.Tabs):
             items = list(zip(self._main._names, list(self._main.objects)))
+            tab_name = items[self._main.active][0]
+            if name and tab_name != name:
+                return
             items[self._main.active] = pn.Row(
                 pn.layout.HSpacer(), loading, pn.layout.HSpacer()
             )
