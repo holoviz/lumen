@@ -362,7 +362,7 @@ class Dashboard(param.Parameterized):
                     filters.append(filt)
         if not views or len(self.targets) == 1:
             return None, None
-        return filters, pn.Column(*views, name=' ', sizing_mode='stretch_width')
+        return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
 
     def _rerender(self):
         if self._authorized:

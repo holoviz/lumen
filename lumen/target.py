@@ -173,7 +173,8 @@ class Target(param.Parameterized):
                 self._updates[card] = views
         return sort_key, card
 
-    def get_filter_panel(self, skip=[]):
+    def get_filter_panel(self, skip=None):
+        skip = skip or []
         views = []
         source_panel = self.source.panel
         if source_panel:
