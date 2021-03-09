@@ -23,10 +23,16 @@ pn.config.raw_css.append("""
   border: none;
   font-size: 18pt;
 }
+.logout .bk-btn {
+  background: transparent;
+  font-size: 16pt;
+  border: none;
+  color: white;
+}
 #header .bk.reload .bk.bk-btn {
   color: white;
 }
-.reload .bk-btn:hover {
+.reload .bk-btn:hover, .logout .bk-btn:hover {
   background: transparent;
 }
 """)
@@ -262,9 +268,17 @@ class Dashboard(param.Parameterized):
             self._header.append(self._menu_button)
         self._header.extend([self._reload_button, self._edit_button])
         if 'auth' in self._spec:
+            logout = pn.widgets.Button(
+                name='✖', width=40, css_classes=['logout'], margin=0,
+                align='center'
+            )
+            logout.js_on_click(code="""
+            window.location.href = '/logout'
+            """)
             self._header.extend([
                 pn.layout.HSpacer(),
-                f'<b><font size="4.5em">User: {pn.state.user}</font></b>'
+                f'<b><font size="4.5em">User: {pn.state.user}</font></b>',
+                logout
             ])
 
     def _create_main(self):
@@ -388,7 +402,10 @@ class Dashboard(param.Parameterized):
                      f'{pn.state.user} is not authorized. Ensure '
                      f'{pn.state.user} is permissioned correctly on '
                      f'the {auth_keys} field(s) in OAuth user data.')
-            self._main[:] = [pn.pane.Alert(error, alert_type='danger')]
+            alert = pn.pane.Alert(error, alert_type='danger')
+            if isinstance(self._main, pn.Tabs):
+                alert = ('Authorization Denied', alert)
+            self._main[:] = [alert]
 
     def _reload(self, *events):
         self._load_specification()
