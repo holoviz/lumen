@@ -134,10 +134,14 @@ targets: This is the list of targets to monitor
 	    type: The type of the Filter to use, e.g. 'constant', 'widget' or 'facet'
         ...: Additional parameters for the Filter
     layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
-    facet_layout: The layout of the cards if a FacetFilter is declared generating multiple cards.
-    refresh_rate: How frequently to poll for updates in milliseconds
+    facet:
+	  by: List of fields to facet by
+	  sort: List of fields to sort by
+	  reverse: Whether to reverse the sort order
+	refresh_rate: How frequently to poll for updates in milliseconds
     ...: Additional parameters passed to the Card layout(s), e.g. width or height
 ```
+
 
 ### `auth`
 
