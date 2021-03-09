@@ -17,6 +17,9 @@ class Facet(param.Parameterized):
     by = param.List(default=[], class_=FacetFilter, doc="""
         Fields to facet by.""")
 
+    layout = param.ClassSelector(default=None, class_=(str, dict), doc="""
+        How to lay out the facets.""")
+
     sort = param.ListSelector(default=[], objects=[], doc="""
         List of fields to sort by.""")
 
@@ -82,10 +85,6 @@ class Target(param.Parameterized):
 
     filters = param.List(class_=Filter, doc="A list of filters to be rendered.")
 
-    facet_layout = param.ClassSelector(default=None, class_=(str, dict), doc="""
-        If a FacetFilter is specified this declares how to lay out
-        the cards.""")
-
     layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
         Defines the layout of the views in the monitor target. Can be
         'column', 'row', 'grid', 'row' or a nested list of indexes
@@ -111,10 +110,6 @@ class Target(param.Parameterized):
 
     def __init__(self, **params):
         self._application = params.pop('application', None)
-        self._config = params.pop('config', {})
-        if self._config:
-            self.param.warning("Passing config to targets is deprecated, "
-                               "use facet_layout key to control the layout.")
         self._cards = []
         self._cache = {}
         self._cb = None
@@ -302,6 +297,7 @@ class Target(param.Parameterized):
         Resolved and instantiated Target object
         """
         # Resolve source
+        spec = dict(spec)
         source_spec = spec.pop('source', None)
         source = Source.from_spec(source_spec, sources, root=root)
         schema = source.get_schema()
@@ -316,19 +312,48 @@ class Target(param.Parameterized):
             Filter.from_spec(filter_spec, schema, source_filters)
             for filter_spec in filter_specs
         ]
+
+        # Resolve faceting
+        facet_spec = spec.pop('facet', {})
         facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
-        if 'sort' in spec:
-            param.main.warning(
-                'Specifying sort key for target is deprecated. Use the '
+        # Backward compatibility
+        if facet_spec:
+            if facet_filters:
+                param.main.warning(
+                    "Cannot declare FacetFilters and provide a facet spec. "
+                    "Declare the facet.by key of the target instead."
+                )
+            elif 'sort' in spec:
+                param.main.warning(
+                    "Cannot declare sort spec and provide a facet spec. "
+                    "Declare the sort fields on the facet.sort key of "
+                    "the target instead."
+                )
+        elif 'sort' in spec:
+            param.main.param.warning(
+                'Specifying a sort key for a target is deprecated. Use '
                 'facet key instead and declare facet filters under the '
-                '"by" keyword.')
+                '"by" keyword.'
+            )
             sort_spec = spec['sort']
             spec['facet'] = dict(
                 sort=sort_spec['fields'],
                 reverse=sort_spec.get('reverse', False),
                 by=facet_filters
             )
-        spec['facet'] = Facet.from_spec(spec.pop('facet', {}), schema)
+        if 'config' in spec:
+            param.main.param.warning(
+                "Passing config to a target is deprecated use the "
+                "facet.layout key on the target instead."
+            )
+            facet_spec.update(spec.pop('config'))
+        if 'facet_layout' in spec:
+            param.main.param.warning(
+                "Passing facet_layout to a target is deprecated use "
+                "the facet.layout key on the target instead."
+            )
+            facet_spec['layout'] = spec.pop('facet_layout')
+        spec['facet'] = Facet.from_spec(facet_spec, schema)
         params = dict(kwargs, **spec)
         return cls(filters=filters, source=source, **params)
 
@@ -338,15 +363,15 @@ class Target(param.Parameterized):
         Returns a layout of the rendered View objects on this target.
         """
         default = 'grid' if len(self._cards) > 1 else 'column'
-        layout = self.facet_layout or self._config.get('layout', default)
+        layout = self.facet.layout or default
         kwargs = dict(name=self.title, sizing_mode='stretch_width')
         if isinstance(layout, dict):
             layout_kwargs = dict(layout)
             layout = layout_kwargs.pop('type')
             kwargs.update(layout_kwargs)
         layout_type = _LAYOUTS[layout]
-        if layout == 'grid':
-            kwargs['ncols'] = self._config.get('ncols', 3)
+        if layout == 'grid' and 'ncols' not in kwargs:
+            kwargs['ncols'] = 3
         return layout_type(*self._cards, **kwargs)
 
     @pn.depends('refresh_rate', watch=True)
