@@ -264,7 +264,6 @@ class IndicatorView(View):
         super().__init__(**params)
         name = params.get('label', params.get('field', ''))
         self.kwargs['name'] = name
-        self._panel.name = name
 
     def get_panel(self):
         return self.indicator(**self._get_params())

@@ -428,5 +428,5 @@ class Target(param.Parameterized):
         rerendering the views on this Target.
         """
         self.source.clear_cache()
-        self.timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
+        self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
         self._rerender(invalidate_cache=True)
