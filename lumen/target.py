@@ -63,7 +63,7 @@ class Facet(param.Parameterized):
         sorter.param.sort.objects = sort
         return sorter
 
-    def get_key(self, views):
+    def get_sort_key(self, views):
         sort_key = []
         for field in self.sort:
             values = [v.get_value(field) for v in views]
@@ -83,7 +83,12 @@ class Target(param.Parameterized):
     set of filters and views.
     """
 
-    filters = param.List(class_=Filter, doc="A list of filters to be rendered.")
+    facet = param.ClassSelector(class_=Facet, doc="""
+        The facet object determines whether and how to facet the cards
+        on the target.""")
+
+    filters = param.List(class_=Filter, doc="""
+        A list of filters to be rendered.""")
 
     layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
         Defines the layout of the views in the monitor target. Can be
@@ -97,16 +102,13 @@ class Target(param.Parameterized):
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
 
-    facet = param.ClassSelector(class_=Facet, doc="""
-        The facet object determines whether and how to facet the cards
-        on the target.""")
-
     source = param.ClassSelector(class_=Source, doc="""
         The Source queries the data from some data source.""")
 
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
 
-    views = param.List(doc="A list of views to be displayed.")
+    views = param.ClassSelector(class_=(list, dict), doc="""
+        A list or dictionary of views to be displayed.""")
 
     def __init__(self, **params):
         self._application = params.pop('application', None)
@@ -139,9 +141,18 @@ class Target(param.Parameterized):
         if isinstance(layout, list):
             item = pn.Column(sizing_mode='stretch_both')
             for row_spec in layout:
-                row = pn.Row(sizing_mode='stretch_both')
+                row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
-                    row.append(views[index].panel)
+                    if isinstance(index, int):
+                        view = views[index].panel
+                    else:
+                        matches = [view for view in views if view.name == index]
+                        if matches:
+                            view = matches[0].panel
+                        else:
+                            raise KeyError("Target could not find named "
+                                           f"view '{index}'.")
+                    row.append(view)
                 item.append(row)
         else:
             if isinstance(layout, dict):
@@ -155,28 +166,44 @@ class Target(param.Parameterized):
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
         return pn.Card(item, title=title, name=title, **params)
 
-    def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True):
-        view_filters = filters + list(facet_filters)
-        key = (tuple(str(f.value) for f in facet_filters) +
-               tuple(id(view) for view in self.views))
+    def _materialize_views(self, filters):
+        views = []
+        for view in self.views:
+            if isinstance(self.views, dict):
+                view_spec = dict(self.views[view], name=view)
+            else:
+                view_spec = view
+            view = View.from_spec(view_spec, self.source, filters)
+            views.append(view)
+        return views
 
+    def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True, events=[]):
+        # Get cache key
+        if isinstance(self.views, list):
+            view_specs = self.views
+        else:
+            view_specs = list(self.views.values())
+        key = (tuple(str(f.value) for f in facet_filters) +
+               tuple(id(view) for view in view_specs))
+
+        # Get views
         update_card = False
         if key in self._cache:
             card, views = self._cache[key]
-            if update_views:
-                for view in views:
-                    view_stale = view.update(invalidate_cache=invalidate_cache)
-                    update_card = update_card or view_stale
         else:
-            card = None
-            views = [
-                View.from_spec(view_spec, self.source, view_filters)
-                for view_spec in self.views
-            ]
+            view_filters = filters + list(facet_filters)
+            card, views = None, self._materialize_views(view_filters)
+
+        # Update views
+        if update_views:
+            for view in views:
+                view_stale = view.update(*events, invalidate_cache=invalidate_cache)
+                update_card = update_card or view_stale
+
         if not any(view for view in views):
             return None, None
 
-        sort_key = self.facet.get_key(views)
+        sort_key = self.facet.get_sort_key(views)
 
         if facet_filters:
             title = ' '.join([f'{f.label}: {f.value}' for f in facet_filters])
@@ -222,17 +249,18 @@ class Target(param.Parameterized):
         )
         reload_panel = pn.Row(self._reload_button, self._timestamp, sizing_mode='stretch_width')
         views.append(reload_panel)
-        return pn.Column(*views, name=self.title, sizing_mode='stretch_width')        
+        return pn.Column(*views, name=self.title, sizing_mode='stretch_width')
 
     ##################################################################
     # Rendering API
     ##################################################################
 
-    def _update_views(self, invalidate_cache=True, update_views=True):
+    def _update_views(self, invalidate_cache=True, update_views=True, events=[]):
         cards = []
         for facet_filters in self.facet.filters:
             key, card = self._get_card(
-                self.filters, facet_filters, invalidate_cache, update_views
+                self.filters, facet_filters, invalidate_cache, update_views,
+                events=events
             )
             if card is None:
                 continue
@@ -247,24 +275,27 @@ class Target(param.Parameterized):
         if cards != self._cards:
             self._cards[:] = cards
             self._stale = True
+        else:
+            self._stale = False
 
     def _rerender(self, *events, invalidate_cache=False, update_views=True):
-        self._update_views(invalidate_cache, update_views)
+        self._update_views(invalidate_cache, update_views, events=events)
+        rerender = bool(self._updates)
         has_updates = (
-            any(view._updates for _, (_, views) in self._cache.items() for view in views) or
-            bool(self._updates)
+            any(view._updates for _, (_, views) in self._cache.items() for view in views)
         )
-        if update_views and has_updates:
-            self._application._loading(self.title)
-            for card, views in self._updates.items():
-                card[0][:] = [view.panel for view in views]
-            self._updates = {}
+        if update_views and (has_updates or rerender):
+            if self._updates:
+                self._application._loading(self.title)
+                for card, views in self._updates.items():
+                    card[0][:] = [view.panel for view in views]
+                self._updates = {}
             for _, (_, views) in self._cache.items():
                 for view in views:
                     if view._updates:
                         view._panel.param.set_param(**view._updates)
                         view._updates = None
-        if self._stale or (update_views and has_updates):
+        if self._stale or (update_views and rerender):
             self._application._rerender()
             self._stale = False
 
@@ -316,6 +347,7 @@ class Target(param.Parameterized):
         # Resolve faceting
         facet_spec = spec.pop('facet', {})
         facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
+
         # Backward compatibility
         if facet_spec:
             if facet_filters:
@@ -353,6 +385,7 @@ class Target(param.Parameterized):
                 "the facet.layout key on the target instead."
             )
             facet_spec['layout'] = spec.pop('facet_layout')
+
         spec['facet'] = Facet.from_spec(facet_spec, schema)
         params = dict(kwargs, **spec)
         return cls(filters=filters, source=source, **params)
