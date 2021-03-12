@@ -55,7 +55,7 @@ class Config(param.Parameterized):
         A logo to add to the theme.""")
 
     ncols = param.Integer(default=3, bounds=(1, None), doc="""
-        Number of columns to lay out targets in.""") 
+        Number of columns to lay out targets in.""")
 
     title = param.String(default="Lumen Dashboard", doc="""
         The title of the dashboard.""")
@@ -202,6 +202,8 @@ class Dashboard(param.Parameterized):
 
     @property
     def _authorized(self):
+        if pn.state.user_info is None and self.auth:
+            return False
         authorized = True
         for k, value in self.auth.items():
             if not isinstance(value, list): value = [value]
@@ -398,10 +400,20 @@ class Dashboard(param.Parameterized):
                 auth_keys = repr(auth_keys[0])
             else:
                 auth_keys = [repr(k) for k in auth_keys]
-            error = ('## Unauthorized User\n'
-                     f'{pn.state.user} is not authorized. Ensure '
-                     f'{pn.state.user} is permissioned correctly on '
-                     f'the {auth_keys} field(s) in OAuth user data.')
+            if pn.state.user_info is None:
+                error = """
+                ## Authorization Error
+
+                Cannot verify permissioning since OAuth is not enabled.
+                """
+            else:
+                error = f"""
+                ## Unauthorized User
+
+                {pn.state.user} is not authorized. Ensure {pn.state.user}
+                is permissioned correctly on the {auth_keys} field(s) in
+                OAuth user data.
+                """
             alert = pn.pane.Alert(error, alert_type='danger')
             if isinstance(self._main, pn.Tabs):
                 alert = ('Authorization Denied', alert)
