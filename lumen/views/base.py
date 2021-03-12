@@ -54,9 +54,6 @@ class View(param.Parameterized):
         self._updates = None
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
-        for filt in self.filters:
-            filt.param.watch(self.update, 'value')
-        self.update()
 
     @classmethod
     def _get_type(cls, view_type):
@@ -195,12 +192,14 @@ class View(param.Parameterized):
         """
         return pn.panel(self.get_data())
 
-    def update(self, invalidate_cache=True):
+    def update(self, *events, invalidate_cache=True):
         """
         Triggers an update in the View.
 
         Parameters
         ----------
+        events: tuple
+            param events that may trigger an update.
         invalidate_cache : bool
             Whether to clear the View's cache.
 
@@ -265,7 +264,6 @@ class IndicatorView(View):
         super().__init__(**params)
         name = params.get('label', params.get('field', ''))
         self.kwargs['name'] = name
-        self._panel.name = name
 
     def get_panel(self):
         return self.indicator(**self._get_params())
@@ -325,12 +323,14 @@ class hvPlotView(View):
             self._stream = Pipe(data=df)
         return dict(object=self.get_plot(df))
 
-    def update(self, invalidate_cache=True):
+    def update(self, *events, invalidate_cache=True):
         """
         Triggers an update in the View.
 
         Parameters
         ----------
+        events: tuple
+            param events that may trigger an update.
         invalidate_cache : bool
             Whether to clear the View's cache.
 
