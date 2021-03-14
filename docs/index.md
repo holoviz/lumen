@@ -1,4 +1,4 @@
-# Welcome to Lumen's documentation!
+# Welcome to Lumen!
 
 ```{toctree}
 ---
@@ -10,6 +10,8 @@ Architecture <architecture/index>
 Dashboard Specification <dashboard>
 REST Specification <rest>
 ```
+
+<img src="./_static/diagram.svg" width="100%">
 
 The Lumen project provides a framework to build dashboards from a
 simple yaml specification. It is designed to query data from any
