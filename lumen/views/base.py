@@ -5,6 +5,8 @@ object.
 
 from io import StringIO
 
+from weakref import WeakKeyDictionary
+
 import numpy as np
 import param
 import panel as pn
@@ -13,6 +15,7 @@ from bokeh.models import NumeralTickFormatter
 from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
 )
+from ..filters import ParamFilter
 from ..sources import Source
 from ..transforms import Transform
 from ..util import _INDICATORS
@@ -36,6 +39,10 @@ class View(param.Parameterized):
     source = param.ClassSelector(class_=Source, constant=True, doc="""
         The Source to query for the data.""")
 
+    selection_group = param.String(default=None, doc="""
+        Declares a selection group the plot is part of. Requires
+        HoloViews to work.""")
+
     transforms = param.List(constant=True, doc="""
         A list of transforms to apply to the data returned by the
         Source before visualizing it.""")
@@ -46,14 +53,39 @@ class View(param.Parameterized):
 
     view_type = None
 
+    _selections = WeakKeyDictionary()
+
+    _supports_selections = False
+
     __abstract = True
 
     def __init__(self, **params):
-        self._panel = None
         self._cache = None
+        self._ls = None
+        self._panel = None
         self._updates = None
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        if self.selection_group:
+            self._init_link_selections()
+
+    def _init_link_selections(self):
+        if self._ls is not None:
+            return
+        doc = pn.state.curdoc
+        if doc not in View._selections and self.selection_group:
+            View._selections[doc] = {}
+        self._ls = View._selections.get(doc, {}).get(self.selection_group)
+        if self._ls is None:
+            from holoviews.selection import link_selections
+            self._ls = link_selections.instance()
+            if self.selection_group:
+                View._selections[doc][self.selection_group] = self._ls
+        if 'selection_expr' in self.param:
+            self._ls.param.watch(self._update_selection_expr, 'selection_expr')
+
+    def _update_selection_expr(self, event):
+        self.selection_expr = event.new
 
     @classmethod
     def _get_type(cls, view_type):
@@ -107,8 +139,20 @@ class View(param.Parameterized):
                 except Exception:
                     pass
             resolved_spec[p] = value
-        return view_type(filters=filters, source=source, transforms=transforms,
-                         **resolved_spec)
+        view = view_type(
+            filters=filters, source=source, transforms=transforms,
+            **resolved_spec
+        )
+
+        # Resolve ParamFilter parameters
+        for filt in filters:
+            if isinstance(filt, ParamFilter):
+                if not isinstance(filt.parameter, str):
+                    continue
+                name, parameter = filt.parameter.split('.')
+                if name == view.name and parameter in view.param:
+                    filt.parameter = view.param[parameter]
+        return view
 
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
@@ -119,11 +163,17 @@ class View(param.Parameterized):
         indicating whether a rerender is required.
         """
         if self._panel is not None:
+            self._cleanup()
             self._updates = self._get_params()
             if self._updates is not None:
                 return False
         self._panel = self.get_panel()
         return True
+
+    def _cleanup(self):
+        """
+        Method that is called on update.
+        """
 
     def get_data(self):
         """
@@ -150,6 +200,13 @@ class View(param.Parameterized):
             data = transform.apply(data)
         if len(data):
             data = self.source._filter_dataframe(data, **query)
+        for filt in self.filters:
+            if not isinstance(filt, ParamFilter):
+                continue
+            from holoviews import Dataset
+            if filt.value is not None:
+                ds = Dataset(data)
+                data = ds.select(filt.value).data
         self._cache = data
         return data
 
@@ -291,13 +348,18 @@ class hvPlotView(View):
     opts = param.Dict(default={}, doc="HoloViews option to apply on the plot.")
 
     streaming = param.Boolean(default=False, doc="""
-      Whether to stream new data to the plot or rerender the plot.""")
+        Whether to stream new data to the plot or rerender the plot.""")
+
+    selection_expr = param.Parameter()
 
     view_type = 'hvplot'
+
+    _supports_selections = True
 
     def __init__(self, **params):
         import hvplot.pandas # noqa
         self._stream = None
+        self._linked_objs = []
         super().__init__(**params)
 
     def get_plot(self, df):
@@ -311,7 +373,32 @@ class hvPlotView(View):
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, **processed
         )
-        return plot.opts(**self.opts) if self.opts else plot
+        plot = plot.opts(**self.opts) if self.opts else plot
+        if self.selection_group or 'selection_expr' in self._param_watchers:
+            plot = self._link_plot(plot)
+        return plot
+
+    def _link_plot(self, plot):
+        self._init_link_selections()
+        linked_objs = list(self._ls._plot_reset_streams)
+        plot = self._ls(plot)
+        self._linked_objs += [
+            o for o in self._ls._plot_reset_streams if o not in linked_objs
+        ]
+        return plot
+
+    def _cleanup(self):
+        if self._ls is None:
+            return
+        for obj in self._linked_objs:
+            reset = self._ls._plot_reset_streams.pop(obj)
+            sel_expr = self._ls._selection_expr_streams.pop(obj)
+            self._ls._cross_filter_stream.input_streams.remove(sel_expr)
+            sel_expr.clear()
+            sel_expr.source = None
+            reset.clear()
+            reset.source = None
+        self._linked_objs = []
 
     def get_panel(self):
         return pn.pane.HoloViews(**self._get_params())
@@ -340,6 +427,16 @@ class hvPlotView(View):
             Whether the panel on the View is stale and needs to be
             rerendered.
         """
+        # Skip events triggered by a parameter change on this View
+        own_parameters = [self.param[p] for p in self.param]
+        own_events = events and all(
+            isinstance(e.obj, ParamFilter) and
+            (e.obj.parameter in own_parameters or
+            e.new is self._ls.selection_expr)
+            for e in events
+        )
+        if own_events:
+            return False
         if invalidate_cache:
             self._cache = None
         if not self.streaming or self._stream is None:

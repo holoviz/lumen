@@ -30,6 +30,8 @@ class Filter(param.Parameterized):
 
     filter_type = None
 
+    _requires_field = True
+
     __abstract = True
 
     @classmethod
@@ -72,7 +74,10 @@ class Filter(param.Parameterized):
                                  f"available filters on the source include {list(source_filters)}.")
             return source_filters[spec]
         spec = dict(spec)
-        if not 'field' in spec:
+        filter_type = Filter._get_type(spec.pop('type'))
+        if not filter_type._requires_field:
+            return filter_type(**spec)
+        elif not 'field' in spec:
             raise ValueError('Filter specification must declare field to filter on.')
         field = spec['field']
         table = spec.get('table')
@@ -86,7 +91,6 @@ class Filter(param.Parameterized):
         if not schema:
             raise ValueError("Source did not declare a schema for "
                              f"'{field}' filter.")
-        filter_type = Filter._get_type(spec.pop('type'))
         return filter_type(schema={field: schema}, **spec)
 
     @property
@@ -169,8 +173,7 @@ class WidgetFilter(Filter):
     def __init__(self, **params):
         super().__init__(**params)
         self.widget = JSONSchema(
-            schema=self.schema, sizing_mode='stretch_width',
-            multi=self.multi
+            schema=self.schema, sizing_mode='stretch_width', multi=self.multi
         )._widgets[self.field]
         if isinstance(self.widget, pn.widgets.Select) and self.empty_select:
             self.widget.options.insert(0, ' ')
@@ -193,3 +196,25 @@ class WidgetFilter(Filter):
         widget = self.widget.clone()
         self.widget.link(widget, value='value', bidirectional=True)
         return widget
+
+
+class ParamFilter(Filter):
+
+    parameter = param.ClassSelector(default=None, class_=(param.Parameter, str), doc="""
+        Reference to a parameter on an existing View.""")
+
+    _requires_field = False
+
+    filter_type = 'param'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.param.watch(self._attach_watcher, 'parameter')
+        self._attach_watcher()
+
+    def _update_value(self, event):
+        self.value = event.new
+
+    def _attach_watcher(self, *args):
+        if isinstance(self.parameter, param.Parameter):
+            self.parameter.owner.param.watch(self._update_value, self.parameter.name)
