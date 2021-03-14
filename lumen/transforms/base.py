@@ -222,3 +222,53 @@ class Unstack(Transform):
 
     def apply(self, table):
         return table.unstack(self.level)
+
+
+class Iloc(Transform):
+    """
+    Applies integer slicing to the data, see `pandas.DataFrame.iloc`.
+
+    df.iloc[<start>:<end>]
+    """
+
+    start = param.Integer(default=None)
+
+    end = param.Integer(default=None)
+
+    transform_type = 'iloc'
+
+    def apply(self, table):
+        return table.iloc[self.start:self.end]
+
+
+class Sample(Transform):
+    """
+    Random sample of items.
+
+    df.sample(n=<n>, frac=<frac>, replace=<replace>)
+    """
+
+    n = param.Integer(default=None, doc="""
+        Number of items to return.""")
+
+    frac = param.Number(default=None, bounds=(0, 1), doc="""
+        Fraction of axis items to return.""")
+
+    replace = param.Boolean(default=False, doc="""
+        Sample with or without replacement.""")
+
+    transform_type = 'sample'
+
+    def apply(self, table):
+        return table.sample(n=self.n, frac=self.frac, replace=self.replace)
+
+
+class Compute(Transform):
+    """
+    Turns a Dask DataFrame into a pandas DataFrame.
+    """
+
+    transform_type = 'compute'
+
+    def apply(self, table):
+        return table.compute()
