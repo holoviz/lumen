@@ -1,0 +1,78 @@
+config:
+  title: Example
+  theme: dark
+  template: fastlist
+  layout: tabs
+sources:
+  penguins:
+    type: file
+    cache_dir: ./cache
+    tables:
+      penguins: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+    filters:
+      species:
+        type: widget
+        field: species
+      island:
+        type: widget
+        field: island
+      sex:
+        type: widget
+        field: sex
+      expr:
+        type: param
+        parameter: scatter.selection_expr
+targets:
+  - title: Palmer penguin
+    source: penguins
+    filters:
+      - species
+      - island
+      - sex
+      - expr
+    views:
+      scatter:
+        type: hvplot
+        table: penguins
+        kind: scatter
+        x: bill_length_mm
+        y: bill_depth_mm
+        color: species
+        responsive: true
+        height: 350
+        selection_group: penguin
+      depth_hist:
+        type: hvplot
+        table: penguins
+        kind: hist
+        y: bill_length_mm
+        alpha: 0.7
+        responsive: true
+        height: 300
+        selection_group: penguin
+      length_hist:
+        type: hvplot
+        table: penguins
+        kind: hist
+        y: bill_depth_mm
+        alpha: 0.7
+        responsive: true
+        height: 300
+        selection_group: penguin
+    layout: [[scatter], [depth_hist, length_hist]]
+    sizing_mode: stretch_both
+  - title: Table
+    source: penguins
+    filters:
+      - species
+      - island
+      - sex
+      - expr
+    views:
+      table:
+        type: table
+        table: penguins
+        sizing_mode: stretch_both
+        show_index: false
+        theme: midnight
+    sizing_mode: stretch_both
