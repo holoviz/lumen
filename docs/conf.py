@@ -17,13 +17,14 @@
 
 # -- Project information -----------------------------------------------------
 
+import lumen
+
 project = 'Lumen'
-copyright = '2020, HoloViz Developers'
+copyright = '2020-2021, HoloViz Developers'
 author = 'HoloViz Developers'
 
 # The full version, including alpha/beta/rc tags
-release = '0.0.1'
-
+release = lumen.__version__
 
 # -- General configuration ---------------------------------------------------
 

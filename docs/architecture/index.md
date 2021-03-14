@@ -1,14 +1,6 @@
 # Architecture
 
-```{toctree}
-Architecture <self>
-Source <source>
-View <view>
-Filter <filter>
-Transform <transform>
-```
-
-The library is organized into a small number of simply object types including:
+The library is organized into a small number of simple object types including:
 
 * `Source`: A `Source` provides any number of tables along with a JSON schema describing the contents of those tables.
 * `Filter`: A `Filter` object is given the schema of a field in one of the tables and generates queries which filter the data supplied by a `Source`. 
@@ -16,3 +8,11 @@ The library is organized into a small number of simply object types including:
 * `Transform`: A `Transform` can apply arbitrary transformation to the tables.
 
 All of these base types can be easily subclassed to provide custom data sources, filters, transforms and views.
+
+```{toctree}
+Architecture <self>
+Source <source>
+View <view>
+Filter <filter>
+Transform <transform>
+```
