@@ -1,11 +1,14 @@
 import hashlib
 import os
+import re
 import shutil
 import sys
 
 from concurrent import futures
 from functools import wraps
+from itertools import product
 from pathlib import Path
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
@@ -39,10 +42,10 @@ def cached(with_query=True):
             cache_query = query if with_query else {}
             df = self._get_cache(table, **cache_query)
             if df is None:
-                if not with_query and hasattr(self, 'dask'):
-                    cache_query['dask'] = True
+                if not with_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
+                    cache_query['__dask'] = True
                 df = method(self, table, **cache_query)
-                cache_query.pop('dask', None)
+                cache_query.pop('__dask', None)
                 self._set_cache(df, table, **cache_query)
             filtered = df if with_query else self._filter_dataframe(df, **query)
             if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
@@ -147,7 +150,7 @@ class Source(param.Parameterized):
         table_schema = source.get_schema(table)
         if field not in table_schema:
             raise ValueError(f"Field '{field}' was not found in "
-                             "'{sourceref}' table '{table}'.")
+                             f"'{sourceref}' table '{table}'.")
         field_schema = table_schema[field]
         if 'enum' not in field_schema:
             raise ValueError(f"Field '{field}' schema does not "
@@ -182,10 +185,10 @@ class Source(param.Parameterized):
         elif isinstance(spec, str):
             if spec in sources:
                 source = sources[spec]
-            elif spec.get('shared') and spec in config.sources:
+            elif spec in config.sources and config.sources[spec].shared:
                 source = config.sources[spec]
             else:
-                raise ValueError(f'Source with name {spec} was not found.')
+                raise ValueError(f"Source with name '{spec}' was not found.")
             return source
 
         spec = dict(spec)
@@ -355,13 +358,28 @@ class RESTSource(Source):
 
 class FileSource(Source):
     """
-    Loads CSV, Excel and Parquet using pandas.read_* or dask.read_*
-    functions.
+    Loads CSV, Excel, JSON and Parquet files using pandas.read_* or
+    dask.read_* functions.
     """
 
-    files = param.List(doc="""
-        List of files to load. The filenames will become the table
-        names.""")
+    kwargs = param.Dict(doc="""
+        Keyword arguments to the pandas/dask loading function.""")
+
+    tables = param.ClassSelector(class_=(list, dict), doc="""
+        List or dictionary of tables to load. If a list is supplied the
+        names are computed from the filenames, otherwise the keys are
+        the names. The values must filepaths or URLs to the data:
+
+            {
+              'local' : '/home/user/local_file.csv',
+              'remote': 'https://test.com/test.csv'
+            }
+
+        if the filepath does not have a declared extension an extension
+        may be provided in a list or tuple, e.g.:
+
+            {'table': ['http://test.com/api', 'json']}
+        """)
 
     use_dask = param.Boolean(default=True, doc="""
         Whether to use dask to load files.""")
@@ -370,7 +388,9 @@ class FileSource(Source):
         'csv': pd.read_csv,
         'xlsx': pd.read_excel,
         'xls': pd.read_excel,
-        'parq': pd.read_parquet
+        'parq': pd.read_parquet,
+        'parquet': pd.read_parquet,
+        'json': pd.read_json
     }
 
     _load_kwargs = {
@@ -379,47 +399,160 @@ class FileSource(Source):
 
     source_type = 'file'
 
+    def __init__(self, **params):
+        if 'files' in params:
+            params['tables'] = params.pop('files')
+        super().__init__(**params)
+        self._template_re = re.compile('(@\{.*\})')
+
     def _load_fn(self, ext):
-        kwargs = self._load_kwargs.get(ext, {})
+        kwargs = dict(self._load_kwargs.get(ext, {}))
+        if self.kwargs:
+            kwargs.update(self.kwargs)
         if self.use_dask:
             import dask.dataframe as dd
             if ext == 'csv':
                 return dd.read_csv, kwargs
-            elif ext == 'parq':
+            elif ext in ('parq', 'parquet'):
                 return dd.read_parquet, kwargs
+            elif ext == 'json':
+                if 'orient' not in kwargs:
+                    kwargs['orient'] = None
+                return dd.read_json, kwargs
         if ext not in self._pd_load_fns:
             raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
         return self._pd_load_fns[ext], kwargs
 
+    @property
+    def _named_files(self):
+        if isinstance(self.tables, list):
+            tables = {}
+            for f in self.tables:
+                if f.startswith('http'):
+                    name = f
+                else:
+                    name = '.'.join(os.path.basename(f).split('.')[:-1])
+                tables[name] = f
+        else:
+            tables = self.tables
+        files = {}
+        for name, table in tables.items():
+            ext = None
+            if isinstance(table, (list, tuple)):
+                table, ext = table
+            else:
+                basename = os.path.basename(table)
+                if '.' in basename:
+                    ext = basename.split('.')[-1]
+            files[name] = (table, ext)
+        return files
+
+    def _resolve_template_vars(self, table):
+        for m in self._template_re.findall(table):
+            ref = f'@{m[2:-1]}'
+            values = self._resolve_reference(ref, {})
+            values = ','.join([v for v in values])
+            table = table.replace(m, quote(values))
+        return [table]
+
     def get_schema(self, table=None):
         schemas = {}
-        for file in self.files:
-            name = '.'.join(os.path.basename(file).split('.')[:-1])
+        for name in self._named_files:
             if table is not None and name != table:
                 continue
-            df = self.get(name)
+            df = self.get(name, __dask=True)
             schemas[name] = get_dataframe_schema(df)['items']['properties']
         return schemas if table is None else schemas[table]
 
     def _load_table(self, table):
         df = None
-        for file in self.files:
-            split_filename = os.path.basename(file).split('.')
-            name = '.'.join(split_filename[:-1])
+        for name, filepath in self._named_files.items():
+            filepath, ext = filepath
+            if '://' not in filepath:
+                filepath = os.path.join(self.root, filepath)
             if name != table:
                 continue
-            load_fn, kwargs = self._load_fn(split_filename[-1])
-            df = load_fn(os.path.join(self.root, file), **kwargs)
+
+            load_fn, kwargs = self._load_fn(ext)
+            paths = self._resolve_template_vars(filepath)
+            if self.use_dask and ext in ('csv', 'json', 'parquet', 'parq'):
+                df = load_fn(paths, **kwargs)
+            else:
+                dfs = [load_fn(path, **kwargs) for path in paths]
+                if len(dfs) <= 1:
+                    df = dfs[0] if dfs else None
+                elif self.use_dask and hasattr(dfs[0], 'compute'):
+                    import dask.dataframe as dd
+                    df = dd.concat(dfs)
+                else:
+                    df = pd.concat(dfs)
         if df is None:
-            tables = ['.'.join(f.split('.')[:-1]) for f in self.files]
+            tables = list(self._named_files)
             raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
         return df
 
     @cached()
     def get(self, table, **query):
+        dask = query.pop('__dask', False)
         df = self._load_table(table)
         df = self._filter_dataframe(df, **query)
-        return df.compute() if hasattr(df, 'compute') else df
+        return df if dask or not hasattr(df, 'compute') else df.compute()
+
+
+class JSONSource(FileSource):
+
+    chunk_size = param.Integer(default=0, doc="""
+        Number of items to load per chunk if a template variable
+        is provided.""")
+
+    tables = param.ClassSelector(class_=(list, dict), doc="""
+        List or dictionary of tables to load. If a list is supplied the
+        names are computed from the filenames, otherwise the keys are
+        the names. The values must filepaths or URLs to the data:
+
+            {
+              'local' : '/home/user/local_file.csv',
+              'remote': 'https://test.com/test.csv'
+            }
+    """)
+
+    source_type = 'json'
+
+    def _resolve_template_vars(self, template):
+        template_vars = self._template_re.findall(template)
+        template_values = []
+        for m in template_vars:
+            ref = f'@{m[2:-1]}'
+            values = self._resolve_reference(ref, {})
+            template_values.append(values)
+        tables = []
+        cross_product = list(product(*template_values))
+        if self.chunk_size and len(cross_product) > self.chunk_size:
+            for i in range(len(cross_product)//self.chunk_size):
+                start = i*self.chunk_size
+                chunk = cross_product[start: start+self.chunk_size]
+                tvalues = zip(*chunk)
+                table = template
+                for m, tvals in zip(template_vars, tvalues):
+                    tvals = ','.join([v for v in set(tvals)])
+                    table = table.replace(m, quote(tvals))
+                tables.append(table)
+        else:
+            tvalues = list(zip(*cross_product))
+            table = template
+            for m, tvals in zip(template_vars, tvalues):
+                values = ','.join([v for v in set(tvals)])
+                table = table.replace(m, quote(values))
+            tables.append(table)
+        return tables
+
+    def _load_fn(self, ext):
+        return super()._load_fn('json')
+
+    @cached(with_query=False)
+    def get(self, table, **query):
+        return super().get(table, **query)
+
 
 
 class WebsiteSource(Source):

@@ -60,12 +60,12 @@ class IntakeSource(Source):
         for entry in list(self.cat):
             if table is not None and entry != table:
                 continue
-            data = self.get(entry, dask=True)
+            data = self.get(entry, __dask=True)
             schemas[entry] = get_dataframe_schema(data)['items']['properties']
         return schemas if table is None else schemas[table]
 
     @cached(with_query=False)
     def get(self, table, **query):
-        dask = query.pop('dask', self.dask)
+        dask = query.pop('__dask', self.dask)
         df = self._read(table)
         return df if dask or not hasattr(df, 'compute') else df.compute()
