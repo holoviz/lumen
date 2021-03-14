@@ -417,7 +417,7 @@ class FileSource(Source):
                 return dd.read_parquet, kwargs
             elif ext == 'json':
                 if 'orient' not in kwargs:
-                   kwargs['orient'] = None
+                    kwargs['orient'] = None
                 return dd.read_json, kwargs
         if ext not in self._pd_load_fns:
             raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
@@ -428,10 +428,10 @@ class FileSource(Source):
         if isinstance(self.tables, list):
             tables = {}
             for f in self.tables:
-                if filepath.startswith('http'):
-                    name = filepath
+                if f.startswith('http'):
+                    name = f
                 else:
-                    name = '.'.join(os.path.basename(filepath).split('.')[:-1])
+                    name = '.'.join(os.path.basename(f).split('.')[:-1])
                 tables[name] = f
         else:
             tables = self.tables
