@@ -40,8 +40,8 @@ class View(param.Parameterized):
         The Source to query for the data.""")
 
     selection_group = param.String(default=None, doc="""
-        Declares a selection group the plot is part of. Requires
-        HoloViews to work.""")
+        Declares a selection group the plot is part of. This feature
+        requires the separate HoloViews library.""")
 
     transforms = param.List(constant=True, doc="""
         A list of transforms to apply to the data returned by the

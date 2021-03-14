@@ -201,7 +201,7 @@ class WidgetFilter(Filter):
 class ParamFilter(Filter):
 
     parameter = param.ClassSelector(default=None, class_=(param.Parameter, str), doc="""
-        Reference to a parameter on an existing View.""")
+        Reference to a Parameter on an existing View.""")
 
     _requires_field = False
 
