@@ -5,13 +5,13 @@
 The Lumen project provides a framework to build data-driven dashboards
 from a simple yaml specification. It is designed to query data from
 any source, filter it in various ways and then provide views of that
-information, which can be anything from a simply indicator to a table
+information, which can be anything from a simple indicator to a table
 or a plot.
 
 Since Lumen is built on [Panel](https://panel.holoviz.org) it supports
 a wide range of plotting libraries and other components to explore and
 visualize data. Thanks to integration with
-[Intake](https://intake.readthedocs.io/en/latest/), lightweight
+[Intake](https://intake.readthedocs.io/en/latest/), a lightweight
 package for finding, investigating, loading and disseminating data,
 Lumen can query data from a wide range of sources including many file
 formats such as CSV or Parquet but also SQL and many others.
