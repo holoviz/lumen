@@ -32,7 +32,7 @@ class IntakeSource(Source):
             if result.errors:
                 raise intake.catalog.exceptions.ValidationError(
                     "Catalog '{}' has validation errors:\n\n{}"
-                    "".format(self.path, "\n".join(result.errors)), result.errors)
+                    "".format(self.catalog, "\n".join(result.errors)), result.errors)
             cfg = result.data
             del cfg['plugin_sources']
             entries = {entry.name: entry for entry in cfg.pop('data_sources')}
