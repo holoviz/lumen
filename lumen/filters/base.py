@@ -80,6 +80,8 @@ class Filter(param.Parameterized):
         elif not 'field' in spec:
             raise ValueError('Filter specification must declare field to filter on.')
         field = spec['field']
+        if 'label' not in spec:
+            spec['label'] = field.title()
         table = spec.get('table')
         schema = None
         for key, table_schema in source_schema.items():
