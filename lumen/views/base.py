@@ -327,10 +327,15 @@ class IndicatorView(View):
         return self.indicator(**self._get_params())
 
     def _get_params(self):
-        value = self.get_value()
-        if (not isinstance(value, (type(None), str)) and np.isnan(value)):
-            value = None
-        return dict(self.kwargs, value=value)
+        params = dict(self.kwargs)
+        if 'data' in self.indicator.param:
+            params['data'] = self.get_data()
+        else:
+            value = self.get_value()
+            if (not isinstance(value, (type(None), str)) and np.isnan(value)):
+                value = None
+            params['value'] = value
+        return params
 
 
 class hvPlotView(View):
