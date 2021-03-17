@@ -366,7 +366,7 @@ class hvPlotView(View):
         import hvplot.pandas # noqa
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask
+                import hvplot.dask # noqa
             except Exception:
                 pass
         self._stream = None
