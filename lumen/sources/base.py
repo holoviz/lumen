@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -40,19 +41,35 @@ def cached(with_query=True):
         @wraps(method)
         def wrapped(self, table, **query):
             cache_query = query if with_query else {}
-            df = self._get_cache(table, **cache_query)
+            df, no_query = self._get_cache(table, **cache_query)
             if df is None:
                 if not with_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
                     cache_query['__dask'] = True
                 df = method(self, table, **cache_query)
                 cache_query.pop('__dask', None)
                 self._set_cache(df, table, **cache_query)
-            filtered = df if with_query else self._filter_dataframe(df, **query)
+            filtered = df
+            if (not with_query or no_query) and query:
+                filtered = self._filter_dataframe(df, **query)
             if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
                 return filtered
             return filtered.compute()
         return wrapped
     return _inner_cached
+
+
+def cached_schema(method):
+    @wraps(method)
+    def wrapped(self, table=None):
+        schema = self._get_schema_cache()
+        if schema is None:
+            schema = method(self)
+            self._set_schema_cache(schema)
+        if table is None:
+            return schema
+        return schema[table]
+    return wrapped
+
 
 
 class Source(param.Parameterized):
@@ -215,6 +232,7 @@ class Source(param.Parameterized):
         self.root = params.pop('root', None)
         super().__init__(**params)
         self._cache = {}
+        self._schema_cache = {}
 
     def _get_key(self, table, **query):
         key = (table,)
@@ -224,10 +242,30 @@ class Source(param.Parameterized):
             key += (k, v)
         return key
 
+    def _get_schema_cache(self):
+        if self._schema_cache:
+            return self._schema_cache
+        elif self.cache_dir:
+            path = os.path.join(self.root, self.cache_dir, f'{self.name}.json')
+            if os.path.isfile(path):
+                with open(path) as f:
+                    return json.load(f)
+        return None
+
+    def _set_schema_cache(self, schema):
+        self._schema_cache = schema
+        if self.cache_dir:
+            path = Path(os.path.join(self.root, self.cache_dir))
+            path.mkdir(parents=True, exist_ok=True)
+            with open(path / f'{self.name}.json', 'w') as f:
+                json.dump(schema, f)
+
     def _get_cache(self, table, **query):
         key = self._get_key(table, **query)
         if key in self._cache:
-            return self._cache[key]
+            return self._cache[key], not bool(query)
+        elif key[:1] in self._cache:
+            return self._cache[key[:1]], True
         elif self.cache_dir:
             if query:
                 sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
@@ -238,13 +276,14 @@ class Source(param.Parameterized):
             if os.path.isfile(path) or os.path.isdir(path):
                 if 'dask.dataframe' in sys.modules:
                     import dask.dataframe as dd
-                    return dd.read_parquet(path)
-                return pd.read_parquet(path)
+                    return dd.read_parquet(path), not bool(query)
+                return pd.read_parquet(path), not bool(query)
+        return None, not bool(query)
 
-    def _set_cache(self, data, table, **query):
+    def _set_cache(self, data, table, write_to_file=True, **query):
         key = self._get_key(table, **query)
         self._cache[key] = data
-        if self.cache_dir:
+        if self.cache_dir and write_to_file:
             path = os.path.join(self.root, self.cache_dir)
             Path(path).mkdir(parents=True, exist_ok=True)
             if query:
@@ -259,6 +298,7 @@ class Source(param.Parameterized):
         Clears any cached data.
         """
         self._cache = {}
+        self._schema_cache = {}
         if self.cache_dir:
             path = os.path.join(self.root, self.cache_dir)
             if os.path.isdir(path):
@@ -362,6 +402,9 @@ class FileSource(Source):
     dask.read_* functions.
     """
 
+    dask = param.Boolean(default=False, doc="""
+        Whether to return a Dask dataframe.""")
+
     kwargs = param.Dict(doc="""
         Keyword arguments to the pandas/dask loading function.""")
 
@@ -423,6 +466,12 @@ class FileSource(Source):
             raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
         return self._pd_load_fns[ext], kwargs
 
+    def _set_cache(self, data, table, **query):
+        _, ext = self._named_files[table]
+        if ext in ('parq', 'parquet'):
+            query['write_to_file'] = False
+        super()._set_cache(data, table, **query)
+
     @property
     def _named_files(self):
         if isinstance(self.tables, list):
@@ -455,6 +504,7 @@ class FileSource(Source):
             table = table.replace(m, quote(values))
         return [table]
 
+    @cached_schema
     def get_schema(self, table=None):
         schemas = {}
         for name in self._named_files:
@@ -472,7 +522,6 @@ class FileSource(Source):
                 filepath = os.path.join(self.root, filepath)
             if name != table:
                 continue
-
             load_fn, kwargs = self._load_fn(ext)
             paths = self._resolve_template_vars(filepath)
             if self.use_dask and ext in ('csv', 'json', 'parquet', 'parq'):
@@ -486,6 +535,8 @@ class FileSource(Source):
                     df = dd.concat(dfs)
                 else:
                     df = pd.concat(dfs)
+            if hasattr(df, 'persist'):
+                df = df.persist()
         if df is None:
             tables = list(self._named_files)
             raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
@@ -493,7 +544,7 @@ class FileSource(Source):
 
     @cached()
     def get(self, table, **query):
-        dask = query.pop('__dask', False)
+        dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
         df = self._filter_dataframe(df, **query)
         return df if dask or not hasattr(df, 'compute') else df.compute()

@@ -27,19 +27,37 @@ class _config(param.Parameterized):
         Loads global sources shared across all targets.
         """
         for name, source_spec in sources.items():
-            if source_spec.get('shared'):
-                source_spec = dict(source_spec)
-                filter_specs = source_spec.pop('filters', {})
+            if not source_spec.get('shared'):
+                continue
+            source_spec = dict(source_spec)
+            filter_specs = source_spec.pop('filters', {})
+            source = self.sources.get(name)
+            source_type = Source._get_type(source_spec['type'])
+            if source is not None:
+                # Check if old source is the same as the new source
+                params = {
+                    k: v for k, v in source.param.get_param_values()
+                    if k != 'name'
+                }
+                new_spec = dict(source_spec, **{
+                    k: v for k, v in source_type.param.get_param_values()
+                    if k != 'name'
+                })
+                reinitialize = params == new_spec
+            else:
+                reinitialize = True
+            if reinitialize:
+                source_spec['name'] = name
                 self.sources[name] = source = Source.from_spec(
                     source_spec, self.sources, root=root
                 )
-                if source.cache_dir and clear_cache:
-                    source.clear_cache()
-                schema = source.get_schema()
-                self.filters[name] = {
-                    fname: Filter.from_spec(filter_spec, schema)
-                    for fname, filter_spec in filter_specs.items()
-                }
+            if source.cache_dir and clear_cache:
+                source.clear_cache()
+            schema = source.get_schema()
+            self.filters[name] = {
+                fname: Filter.from_spec(filter_spec, schema)
+                for fname, filter_spec in filter_specs.items()
+            }
 
 
 
