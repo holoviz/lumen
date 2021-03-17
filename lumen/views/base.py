@@ -3,8 +3,9 @@ The View classes render the data returned by a Source as a Panel
 object.
 """
 
-from io import StringIO
+import sys
 
+from io import StringIO
 from weakref import WeakKeyDictionary
 
 import numpy as np
@@ -358,6 +359,11 @@ class hvPlotView(View):
 
     def __init__(self, **params):
         import hvplot.pandas # noqa
+        if 'dask' in sys.modules:
+            try:
+                import hvplot.dask
+            except Exception:
+                pass
         self._stream = None
         self._linked_objs = []
         super().__init__(**params)
