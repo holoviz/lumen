@@ -230,6 +230,7 @@ class Dashboard(param.Parameterized):
             if name in config.sources:
                 source = config.sources[name]
             else:
+                source_spec['name'] = name
                 source = Source.from_spec(
                     source_spec, self.sources, root=self._root
                 )
