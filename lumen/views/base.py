@@ -3,8 +3,9 @@ The View classes render the data returned by a Source as a Panel
 object.
 """
 
-from io import StringIO
+import sys
 
+from io import StringIO
 from weakref import WeakKeyDictionary
 
 import numpy as np
@@ -326,10 +327,15 @@ class IndicatorView(View):
         return self.indicator(**self._get_params())
 
     def _get_params(self):
-        value = self.get_value()
-        if (not isinstance(value, (type(None), str)) and np.isnan(value)):
-            value = None
-        return dict(self.kwargs, value=value)
+        params = dict(self.kwargs)
+        if 'data' in self.indicator.param:
+            params['data'] = self.get_data()
+        else:
+            value = self.get_value()
+            if (not isinstance(value, (type(None), str)) and np.isnan(value)):
+                value = None
+            params['value'] = value
+        return params
 
 
 class hvPlotView(View):
@@ -358,6 +364,11 @@ class hvPlotView(View):
 
     def __init__(self, **params):
         import hvplot.pandas # noqa
+        if 'dask' in sys.modules:
+            try:
+                import hvplot.dask # noqa
+            except Exception:
+                pass
         self._stream = None
         self._linked_objs = []
         super().__init__(**params)

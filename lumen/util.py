@@ -87,9 +87,12 @@ def get_dataframe_schema(df, columns=None):
             if isinstance(dtype, CategoricalDtype) and len(dtype.categories):
                 cats = list(dtype.categories)
             else:
-                cats = column.unique()
-                if is_dask:
-                    cats = cats.compute()
+                try:
+                    cats = column.unique()
+                    if is_dask:
+                        cats = cats.compute()
+                except Exception:
+                    cats = []
                 cats = list(cats)
             properties[name] = {'type': 'string', 'enum': cats}
     return schema
