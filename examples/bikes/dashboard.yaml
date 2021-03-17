@@ -37,7 +37,7 @@ targets:
         hover_cols: [commonName]
         tiles: Wikipedia
         geo: true
-        width: 950
+        responsive: true
         height: 500
         color: bikesCount
         line_color: black
@@ -78,3 +78,4 @@ targets:
         parameter: locations.selection_expr
     layout: [[locations, table], [count_hist, total_hist]]
     sizing_mode: stretch_width
+    height: 900

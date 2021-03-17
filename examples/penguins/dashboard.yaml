@@ -21,7 +21,7 @@ sources:
       expr:
         type: param
         parameter: scatter.selection_expr
-view:
+targets:
   - title: Plots
     source: penguins
     filters:
