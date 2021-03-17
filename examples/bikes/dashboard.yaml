@@ -1,0 +1,81 @@
+config:
+  title: "Transport for London: Bike Station Occupancy"
+  layout: column
+sources:
+  stations:
+    type: json
+    shared: true
+    tables:
+      stations: "https://api.tfl.gov.uk/BikePoint/"
+  occupancy:
+    type: json
+    chunk_size: 15
+    cache_dir: cache
+    tables:
+      occupancy: "https://api.tfl.gov.uk/Occupancy/BikePoints/@{stations.stations.id}?app_key=a1c692de000b4944af55f59d8e849915"
+  station_occupancy:
+    type: join
+    sources: [stations, occupancy]
+    tables:
+      station_occupancy:
+        - source: stations
+          table: stations
+          index: id
+        - source: occupancy
+          table: occupancy
+          index: id
+targets:
+  - title: "Occupancy"
+    source: station_occupancy
+    views:
+      locations:
+        type: hvplot
+        kind: points
+        table: station_occupancy
+        x: lon
+        y: lat
+        hover_cols: [commonName]
+        tiles: Wikipedia
+        geo: true
+        responsive: true
+        height: 500
+        color: bikesCount
+        line_color: black
+        xaxis: null
+        yaxis: null
+        selection_group: bikes
+      table:
+        type: table
+        table: station_occupancy
+        width: 400
+        height: 500
+        margin: [0, 100]
+        hidden_columns: [lat, lon]
+        show_index: false
+        transforms:
+          - type: columns
+            columns: [commonName, bikesCount, totalDocks, lat, lon]
+      count_hist:
+        type: hvplot
+        table: station_occupancy
+        kind: hist
+        y: bikesCount
+        responsive: true
+        height: 300
+        streaming: true
+        selection_group: bikes
+      total_hist:
+        type: hvplot
+        table: station_occupancy
+        kind: hist
+        y: totalDocks
+        responsive: true
+        height: 300
+        streaming: true
+        selection_group: bikes
+    filters:
+      - type: param
+        parameter: locations.selection_expr
+    layout: [[locations, table], [count_hist, total_hist]]
+    sizing_mode: stretch_width
+    height: 900

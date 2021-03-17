@@ -24,6 +24,22 @@ can be easily subclassed and extended:
 * `View`: A `View` can query a table from a `Source` and generates a viewable representation.
 * `Transform`: A `Transform` can apply arbitrary transformation to the tables.
 
+
+## Examples
+
+   <table>
+     <tr>
+       <td><a href="./gallery/bikes.html"><b>London Bike Points</b><br><img src="./_static/bikes.png" /></a></td>
+       <td><a href="./gallery/nyc_taxi.html"><b>NYC Taxi</b><br><img src="./_static/nyc_taxi.png" /></a></td>
+     </tr>
+     <tr>
+	   <td><a href="./gallery/penguins.html"><b>Palmer Penguins</b><br><img src="./_static/penguins.png" /></a></td>
+       <td><a href="./gallery/precip.html"><b>Precipitation</b><br><img src="./_static/precip.png" /></a></td>
+     <tr>
+   </table>
+
+
+
 ```{toctree}
 ---
 maxdepth: 2

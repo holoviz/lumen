@@ -1,7 +1,6 @@
 config:
-  title: Example
+  title: Palmer Penguins
   theme: dark
-  template: fastlist
   layout: tabs
 sources:
   penguins:
@@ -23,7 +22,7 @@ sources:
         type: param
         parameter: scatter.selection_expr
 targets:
-  - title: Palmer penguin
+  - title: Plots
     source: penguins
     filters:
       - species
@@ -46,21 +45,28 @@ targets:
         table: penguins
         kind: hist
         y: bill_length_mm
-        alpha: 0.7
         responsive: true
-        height: 300
+        height: 350
         selection_group: penguin
       length_hist:
         type: hvplot
         table: penguins
         kind: hist
         y: bill_depth_mm
-        alpha: 0.7
         responsive: true
-        height: 300
+        height: 350
         selection_group: penguin
-    layout: [[scatter], [depth_hist, length_hist]]
-    sizing_mode: stretch_both
+      mass_hist:
+        type: hvplot
+        table: penguins
+        kind: hist
+        y: body_mass_g
+        responsive: true
+        height: 350
+        selection_group: penguin
+    layout: [[scatter], [depth_hist, length_hist, mass_hist]]
+    sizing_mode: stretch_width
+    height: 800
   - title: Table
     source: penguins
     filters:
@@ -72,7 +78,8 @@ targets:
       table:
         type: table
         table: penguins
-        sizing_mode: stretch_both
+        layout: fit_data_fill
         show_index: false
         theme: midnight
-    sizing_mode: stretch_both
+        sizing_mode: stretch_both
+    sizing_mode: stretch_width

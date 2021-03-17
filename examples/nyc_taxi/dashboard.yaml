@@ -1,0 +1,75 @@
+config:
+  title: "NYC Taxi Trips"
+sources:
+  nyc_taxi:
+    type: intake
+    shared: true
+    catalog:
+      sources:
+        nyc_taxi:
+          description: NYC Taxi Trip data
+          driver: parquet
+          args:
+            urlpath: 'https://s3.amazonaws.com/datashader-data/nyc_taxi_wide.parq'
+          cache:
+            - type: file
+              regex: '{{ CATALOG_DIR }}/data'
+              argkey: urlpath
+targets:
+  - title: Trip Data
+    source: nyc_taxi
+    views:
+      - table: nyc_taxi
+        type: hvplot
+        kind: points
+        x: pickup_x
+        y: pickup_y
+        tiles: Wikipedia
+        rasterize: true
+        cnorm: eq_hist
+        responsive: true
+        height: 500
+        colorbar: false
+        selection_group: taxi
+        xaxis: null
+        yaxis: null
+      - table: nyc_taxi
+        type: hvplot
+        kind: points
+        x: dropoff_x
+        y: dropoff_y
+        tiles: Wikipedia
+        rasterize: true
+        cnorm: eq_hist
+        responsive: true
+        height: 500
+        colorbar: false
+        selection_group: taxi
+        xaxis: null
+        yaxis: null
+      - table: nyc_taxi
+        type: hvplot
+        kind: hist
+        y: trip_distance
+        bin_range: [0, 20]
+        height: 300
+        responsive: true
+        selection_group: taxi
+      - table: nyc_taxi
+        type: hvplot
+        kind: hist
+        y: tip_amount
+        bin_range: [0, 20]
+        height: 300
+        responsive: true
+        selection_group: taxi
+      - table: nyc_taxi
+        type: hvplot
+        kind: hist
+        y: fare_amount
+        bin_range: [0, 50]
+        height: 300
+        responsive: true
+        selection_group: taxi
+    sizing_mode: stretch_both
+    layout: [[0, 1], [2, 3, 4]]

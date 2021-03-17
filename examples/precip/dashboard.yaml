@@ -25,8 +25,11 @@ sources:
 targets:
   - title: Southern Rockies
     source: rockies
+    facet:
+      by: [model]
+      layout: column
     filters:
-      - field: model
+      - field: emissions
         type: widget
     views:
       - table: southern_rockies
@@ -34,6 +37,6 @@ targets:
         kind: line
         x: time
         y: precip
-        by: model
+        by: [model, emissions]
         responsive: true
     sizing_mode: stretch_width
