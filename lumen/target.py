@@ -1,12 +1,13 @@
 import datetime as dt
 
 from functools import partial
+from io import StringIO, BytesIO
 from itertools import product
 
 import param
 import panel as pn
 
-from .filters import Filter, FacetFilter
+from .filters import Filter, FacetFilter, ParamFilter
 from .sources import Source
 from .util import _LAYOUTS
 from .views import View
@@ -77,11 +78,117 @@ class Facet(param.Parameterized):
 
 
 
+class Download(pn.viewable.Viewer):
+    """
+    The Download object controls options to download the Source tables
+    in a variety of formats via the Dashboard UI.
+    """
+
+    filters = param.List(class_=Filter, doc="""
+        A list of filters to be rendered.""")
+
+    format = param.Selector(default=None, objects=['csv', 'xlsx', 'json', 'parquet'], doc="""
+        The format to download the data in.""")
+
+    kwargs = param.Dict(default={}, doc="""
+        Keyword arguments passed to the serialization function, e.g. 
+        data.to_csv(file_obj, **kwargs).""")
+
+    source = param.ClassSelector(class_=Source, doc="""
+        The Source queries the data from some data source.""")
+
+    tables = param.List(default=[], doc="""
+        The list of tables to allow downloading.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        default_table = self.tables[0] if self.tables else None
+        self._select_download = pn.widgets.Select(
+            name='Select table to download', options=self.tables, value=default_table,
+            sizing_mode='stretch_width'
+        )
+        self._select_download.param.watch(self._update_filename, 'value')
+        self._download_button = pn.widgets.FileDownload(
+            callback=self._table_data, align='end',
+            filename=f'{default_table}.{self.format}',
+            sizing_mode='stretch_width'
+        )
+        self._layout = pn.Column(
+            pn.pane.Markdown('### Download tables', margin=(0, 5, -10, 5)),
+            self._download_button,
+            pn.layout.Divider(),
+            sizing_mode='stretch_width'
+        )
+        if len(self.tables) > 1:
+            self._layout.insert(self._select_download, 1)
+
+    def __panel__(self):
+        return self._layout
+
+    def _update_filename(self, event):
+        self._download_button.filename = f'{event.new}.{self.format}'
+
+    def __bool__(self):
+        return self.format is not None
+
+    def _table_data(self):
+        if self.format in ('json', 'csv'):
+            io = StringIO()
+        else:
+            io = BytesIO()
+        table = self._select_download.value
+        query = {
+            filt.field: filt.query for filt in self.filters
+            if filt.query is not None and
+            (filt.table is None or filt.table == table)
+        }
+        data = self.source.get(table, **query)
+        for filt in self.filters:
+            if not isinstance(filt, ParamFilter):
+                continue
+            from holoviews import Dataset
+            if filt.value is not None:
+                ds = Dataset(data)
+                data = ds.select(filt.value).data
+        if self.format == 'csv':
+            data.to_csv(io, **self.kwargs)
+        elif self.format == 'json':
+            data.to_json(io, **self.kwargs)
+        elif self.format == 'xlsx':
+            data.to_excel(io, **self.kwargs)
+        elif self.format == 'parquet':
+            data.to_parquet(io, **self.kwargs)
+        io.seek(0)
+        return io
+
+    @classmethod
+    def from_spec(cls, spec, source, filters):
+        """
+        Creates a Download object from a specification.
+
+        Parameters
+        ----------
+        spec : dict
+            Specification declared as a dictionary of parameter values.
+        source: Source
+            The Source to monitor
+        filters: list
+            List of Filter objects
+
+        """
+        return cls(source=source, filters=filters, **spec)
+
+
+
 class Target(param.Parameterized):
     """
     A Target renders the results of a Source query using the defined
     set of filters and views.
     """
+
+    download = param.ClassSelector(class_=Download, default=Download(), doc="""
+        The download objects determines whether and how the source tables
+        can be downloaded.""")
 
     facet = param.ClassSelector(class_=Facet, doc="""
         The facet object determines whether and how to facet the cards
@@ -224,17 +331,19 @@ class Target(param.Parameterized):
         views = []
         source_panel = self.source.panel
         if source_panel:
-            source_header = pn.pane.Markdown('### Source', margin=(0, 5))
+            source_header = pn.pane.Markdown('### Source', margin=(0, 5, -10, 5))
             views.extend([source_header, source_panel, pn.layout.Divider()])
+        if self.download:
+            views.append(self.download)
         filters = [filt.panel for filt in self.filters
                    if filt not in skip and filt.panel is not None]
         if filters:
-            views.append(pn.pane.Markdown('### Filters', margin=(0, 5)))
+            views.append(pn.pane.Markdown('### Filters', margin=(0, 5, -10, 5)))
             views.extend(filters)
             views.append(pn.layout.Divider())
         if self.facet.param.sort.objects:
             views.extend([
-                pn.pane.Markdown('### Sort', margin=(0, 5)),
+                pn.pane.Markdown('### Sort', margin=(0, 5, -10, 5)),
                 self.facet._sort_widget,
                 self.facet._reverse_widget
             ])
@@ -347,6 +456,14 @@ class Target(param.Parameterized):
         # Resolve faceting
         facet_spec = spec.pop('facet', {})
         facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
+
+        # Resolve download options
+        download_spec = spec.pop('download', {})
+        if isinstance(download_spec, str):
+            download_spec = {'format': download_spec}
+        if 'tables' not in download_spec:
+            download_spec['tables'] = list(schema)
+        spec['download'] = Download.from_spec(download_spec, source, filters) 
 
         # Backward compatibility
         if facet_spec:
