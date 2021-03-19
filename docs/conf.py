@@ -17,6 +17,11 @@
 
 # -- Project information -----------------------------------------------------
 
+import param
+
+param.parameterized.docstring_signature = False
+param.parameterized.docstring_describe_params = False
+
 import lumen
 
 project = 'Lumen'
