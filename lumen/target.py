@@ -204,9 +204,6 @@ class Target(param.Parameterized):
         a Column of one row containing views 0 and 1 and a second Row
         containing view 2.""" )
 
-    schema = param.Dict(default=None, doc="""
-        The JSON schema of the source.""")
-
     title = param.String(doc="A title for this Target.")
 
     refresh_rate = param.Integer(default=None, doc="""
@@ -506,7 +503,7 @@ class Target(param.Parameterized):
 
         spec['facet'] = Facet.from_spec(facet_spec, schema)
         params = dict(kwargs, **spec)
-        return cls(filters=filters, source=source, schema=schema, **params)
+        return cls(filters=filters, source=source, **params)
 
     @property
     def panels(self):
