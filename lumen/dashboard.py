@@ -48,6 +48,10 @@ class Config(param.Parameterized):
     High-level configuration options for the Dashboard.
     """
 
+    editable = param.Boolean(default=False, doc="""
+        Whether the dashboard specification is editable from within
+        the deployed dashboard.""")
+
     layout = param.Selector(default=_LAYOUTS['grid'], objects=_LAYOUTS, doc="""
         Overall layout of the dashboard.""")
 
@@ -269,7 +273,9 @@ class Dashboard(param.Parameterized):
         self._menu_button.on_click(self._navigate)
         if len(config.yamls) > 1:
             self._header.append(self._menu_button)
-        self._header.extend([self._reload_button, self._edit_button])
+        self._header.append(self._reload_button)
+        if self.config.editable:
+            self._header.append(self._edit_button)
         if 'auth' in self._spec:
             logout = pn.widgets.Button(
                 name='✖', width=40, css_classes=['logout'], margin=0,
