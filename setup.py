@@ -14,6 +14,13 @@ def get_setup_version(reponame):
 
 ########## dependencies ##########
 
+dependencies = [
+    "panel >=0.11",
+    "pandas",
+    "hvplot",
+    "holoviews >=1.14"
+]
+
 extras_require = {
     'tests': [
         'pytest',
@@ -38,7 +45,7 @@ setup_args = dict(
     name='lumen',
     version=get_setup_version("lumen"),
     description='A monitoring solution built on Panel.',
-    long_description=open('README.rst').read() if os.path.isfile('README.rst') else 'Consult README.rst',
+    long_description=open('README.md').read() if os.path.isfile('README.md') else 'Consult README.md',
     author="HoloViz",
     author_email="developers@holoviz.org",
     maintainer="HoloViz",
@@ -50,15 +57,13 @@ setup_args = dict(
     provides=["lumen"],
     include_package_data = True,
     python_requires=">=3.6",
-    install_requires=["panel", "pandas"],
+    install_requires=dependencies,
     extras_require=extras_require,
     tests_require=extras_require['tests'],
     classifiers=[
         "License :: OSI Approved :: BSD License",
         "Development Status :: 5 - Production/Stable",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.4",
-        "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
