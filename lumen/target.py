@@ -87,7 +87,7 @@ class Download(pn.viewable.Viewer):
     filters = param.List(class_=Filter, doc="""
         A list of filters to be rendered.""")
 
-    format = param.Selector(default='csv', objects=['csv', 'xlsx', 'json', 'parquet'], doc="""
+    format = param.Selector(default=None, objects=['csv', 'xlsx', 'json', 'parquet'], doc="""
         The format to download the data in.""")
 
     kwargs = param.Dict(default={}, doc="""
