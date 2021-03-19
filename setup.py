@@ -46,6 +46,7 @@ setup_args = dict(
     version=get_setup_version("lumen"),
     description='A monitoring solution built on Panel.',
     long_description=open('README.md').read() if os.path.isfile('README.md') else 'Consult README.md',
+    long_description_content_type="text/markdown",
     author="HoloViz",
     author_email="developers@holoviz.org",
     maintainer="HoloViz",
