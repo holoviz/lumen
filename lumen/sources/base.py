@@ -456,8 +456,11 @@ class FileSource(Source):
         kwargs = dict(self._load_kwargs.get(ext, {}))
         if self.kwargs:
             kwargs.update(self.kwargs)
-        if self.use_dask and 'dask.dataframe' in sys.modules and dask:
-            import dask.dataframe as dd
+        if self.use_dask and dask:
+            try:
+                import dask.dataframe as dd
+            except Exception:
+                return self._load_fn(ext, dask=False)
             if ext == 'csv':
                 return dd.read_csv, kwargs
             elif ext in ('parq', 'parquet'):
@@ -518,7 +521,7 @@ class FileSource(Source):
             schemas[name] = get_dataframe_schema(df)['items']['properties']
         return schemas if table is None else schemas[table]
 
-    def _load_table(self, table):
+    def _load_table(self, table, dask=True):
         df = None
         for name, filepath in self._named_files.items():
             filepath, ext = filepath
@@ -526,20 +529,22 @@ class FileSource(Source):
                 filepath = os.path.join(self.root, filepath)
             if name != table:
                 continue
-            load_fn, kwargs = self._load_fn(ext)
+            load_fn, kwargs = self._load_fn(ext, dask=dask)
             paths = self._resolve_template_vars(filepath)
-            if self.use_dask and ext in ('csv', 'json', 'parquet', 'parq'):
+            if self.use_dask and ext in ('csv', 'json', 'parquet', 'parq') and dask:
                 try:
                     df = load_fn(paths, **kwargs)
-                except Exception:
-                    load_fn, kwargs = self._load_fn(ext, dask=False)
-                    df = load_fn(paths, **kwargs)
+                except Exception as e:
+                    if dask:
+                        return self._load_table(table, dask=False)
+                    raise e
             else:
                 try:
                     dfs = [load_fn(path, **kwargs) for path in paths]
-                except Exception:
-                    load_fn, kwargs = self._load_fn(ext, dask=False)
-                    dfs = [load_fn(path, **kwargs) for path in paths]
+                except Exception as e:
+                    if dask:
+                        return self._load_table(table, dask=False)
+                    raise e
                 if len(dfs) <= 1:
                     df = dfs[0] if dfs else None
                 elif self.use_dask and hasattr(dfs[0], 'compute'):
