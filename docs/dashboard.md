@@ -122,9 +122,9 @@ therefore makes up the meat of the declaration.
 targets: This is the list of targets to monitor
   - title: The title of the monitoring endpoint
     download:
-	  format: When specified adds a section to the sidebar allowing users to download the filtered dataset
-	  kwargs: Additional keyword arguments to pass to the pandas/dask to_<format> method
-	  tables: Allows declaring a subset of tables to download
+      format: When specified adds a section to the sidebar allowing users to download the filtered dataset
+      kwargs: Additional keyword arguments to pass to the pandas/dask to_<format> method
+      tables: Allows declaring a subset of tables to download
     source: The Source used to monitor an endpoint (may also reference a Source in the sources section
       type: The type of Source to use, e.g. 'rest' or 'live'
       ...: Additional parameters for the Source
