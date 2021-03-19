@@ -459,6 +459,8 @@ class Target(param.Parameterized):
 
         # Resolve download options
         download_spec = spec.pop('download', {})
+        if isinstance(download_spec, str):
+            download_spec = {'format': download_spec}
         if 'tables' not in download_spec:
             download_spec['tables'] = list(schema)
         spec['download'] = Download.from_spec(download_spec, source, filters) 
