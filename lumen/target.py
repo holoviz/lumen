@@ -145,7 +145,7 @@ class Download(pn.viewable.Viewer):
         data = self.source.get(table, **query)
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
-               continue
+                continue
             from holoviews import Dataset
             if filt.value is not None:
                 ds = Dataset(data)
