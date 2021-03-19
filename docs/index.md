@@ -59,8 +59,7 @@ Try it out! Click on one of the examples below, copy the yaml specification and 
 
 ```{toctree}
 ---
-maxdepth: 2
-caption: Contents
+hidden: true
 ---
 Home <self>
 Dashboard Specification <dashboard>
