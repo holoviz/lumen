@@ -291,7 +291,11 @@ class Source(param.Parameterized):
                 filename = f'{sha}_{table}.parq'
             else:
                 filename = f'{table}.parq'
-            data.to_parquet(os.path.join(path, filename))
+            try:
+                data.to_parquet(os.path.join(path, filename))
+            except Exception as e:
+                self.param.warning(f"Could not cache '{table}' to parquet"
+                                   f"file. Error during saving process: {e}")
 
     def clear_cache(self):
         """
@@ -448,11 +452,11 @@ class FileSource(Source):
         super().__init__(**params)
         self._template_re = re.compile('(@\{.*\})')
 
-    def _load_fn(self, ext):
+    def _load_fn(self, ext, dask=True):
         kwargs = dict(self._load_kwargs.get(ext, {}))
         if self.kwargs:
             kwargs.update(self.kwargs)
-        if self.use_dask:
+        if self.use_dask and 'dask.dataframe' in sys.modules and dask:
             import dask.dataframe as dd
             if ext == 'csv':
                 return dd.read_csv, kwargs
@@ -525,9 +529,17 @@ class FileSource(Source):
             load_fn, kwargs = self._load_fn(ext)
             paths = self._resolve_template_vars(filepath)
             if self.use_dask and ext in ('csv', 'json', 'parquet', 'parq'):
-                df = load_fn(paths, **kwargs)
+                try:
+                    df = load_fn(paths, **kwargs)
+                except Exception:
+                    load_fn, kwargs = self._load_fn(ext, dask=False)
+                    df = load_fn(paths, **kwargs)
             else:
-                dfs = [load_fn(path, **kwargs) for path in paths]
+                try:
+                    dfs = [load_fn(path, **kwargs) for path in paths]
+                except Exception:
+                    load_fn, kwargs = self._load_fn(ext, dask=False)
+                    dfs = [load_fn(path, **kwargs) for path in paths]
                 if len(dfs) <= 1:
                     df = dfs[0] if dfs else None
                 elif self.use_dask and hasattr(dfs[0], 'compute'):
