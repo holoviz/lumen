@@ -23,6 +23,9 @@ class Filter(param.Parameterized):
       The JSON schema provided by the Source declaring information
       about the data to be filtered.""")
 
+    shared = param.Boolean(default=False, doc="""
+      Whether the filter is shared across all targets.""")
+
     table = param.String(default=None, doc="""
       The table being filtered. If None applies to all tables.""")
 
