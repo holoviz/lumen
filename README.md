@@ -2,7 +2,7 @@
 
 *Illuminate your data*
 
-<img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/diagram.svg" width="100%">
+<img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/diagram.png" width="100%">
 
 |    |    |
 | --- | --- |

@@ -1,6 +1,6 @@
 # Welcome to Lumen!
 
-<img src="./_static/diagram.svg" width="100%">
+<img src="./_static/diagram.png" width="100%">
 
 The Lumen project provides a framework for visual analytics, which allows users to build data-driven dashboards from a simple yaml specification. The power of Lumen comes from the ability to leverage the powerful data intake, data processing and data visualization libraries available in the PyData ecosystem.
 
