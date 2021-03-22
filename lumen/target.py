@@ -120,7 +120,7 @@ class Download(pn.viewable.Viewer):
             sizing_mode='stretch_width'
         )
         if len(self.tables) > 1:
-            self._layout.insert(self._select_download, 1)
+            self._layout.insert(1, self._select_download)
 
     def __panel__(self):
         return self._layout
