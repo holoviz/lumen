@@ -2,7 +2,7 @@
 
 *Illuminate your data*
 
-<img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/diagram.svg" width="100%">
+<img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/diagram.png" width="100%">
 
 |    |    |
 | --- | --- |
@@ -13,20 +13,33 @@
 | Docs | [![gh-pages](https://img.shields.io/github/last-commit/holoviz/lumen/gh-pages.svg)](https://github.com/holoviz/lumen/tree/gh-pages) [![site](https://img.shields.io/website-up-down-green-red/https/lumen.holoviz.org.svg)](https://lumen.holoviz.org) |
 | Support | [![Discourse](https://img.shields.io/discourse/status?server=https%3A%2F%2Fdiscourse.holoviz.org)](https://discourse.holoviz.org/) |
 
-## Purpose
+## Why Lumen?
 
-The Lumen project provides a framework to build data-driven dashboards from a simple yaml specification. It is designed to query data from any source, filter it in various ways and then provide views of that information, which can be anything from a simply indicator to a table or a plot.
+The Lumen project provides a framework for visual analytics, which allows users to build data-driven dashboards from a simple yaml specification. The power of Lumen comes from the ability to leverage the powerful data intake, data processing and data visualization libraries available in the PyData ecosystem.
 
-Since Lumen is built on [Panel](https://panel.holoviz.org) it supports a wide range of plotting libraries and other components to explore and visualize data. Thanks to integration with [Intake](https://intake.readthedocs.io/en/latest/), lightweight package for finding, investigating, loading and disseminating data, Lumen can query data from a wide range of sources including many file formats such as CSV or Parquet but also SQL and many others.
+- **Data Intake**: A flexible system for declaring data sources with strong integration with [Intake](https://intake.readthedocs.io/en/latest/), allows Lumen to query data from a wide range of sources including many file formats such as CSV or Parquet but also SQL and many others.
+- **Data Proccessing**: Internally Lumen stores data as DataFrame objects, allowing users to leverage familiar APIs for filtering and transforming data using [Pandas](https://pandas.pydata.org/) while also providing the ability to scale these transformations out to a cluster thanks to [Dask](https://dask.org/).
+- **Data Visualization**: Since Lumen is built on [Panel](https://panel.holoviz.org) all the most popular plotting libraries and many other components such as powerful datagrids and BI indicators are supported.
 
-The library is organized into a small number of simply object types including:
+The core strengths of Lumen include:
 
-* `Source`: A `Source` provides any number of tables along with a JSON schema describing the contents of those tables.
-* `Filter`: A `Filter` object is given the schema of a field in one of the tables and generates queries which filter the data supplied by a `Source`. 
-* `View`: A `View` can query a table from a `Source` and generates a viewable representation.
-* `Transform`: A `Transform` can apply arbitrary transformation to the tables.
+- **Flexibility**: The design of Lumen allows flexibly combining data intake, data processing and data visualization into a simple declarative pipeline.
+- **Extensibility**: Every part of Lumen is designed to be extended letting you define custom Source, Filter, Transform and View components.
+- **Scalability**: Lumen is designed with performance in mind and supports scalable Dask DataFrames out of the box, letting you scale to datasets larger than memory or even scale out to a cluster.
+- **Security**: Lumen ships with a wide range of OAuth providers out of the box, making it a breeze to add authentication to your applications.
 
-All of these base types can be easily subclassed to provide custom data sources, filters, transforms and views.
+## Examples
+
+   <table>
+     <tr>
+       <td><a href="https://lumen.holoviz.org/gallery/bikes.html"><b>London Bike Points</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/bikes.png" /></a></td>
+       <td><a href="https://lumen.holoviz.org/gallery/nyc_taxi.html"><b>NYC Taxi</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/nyc_taxi.png" /></a></td>
+     </tr>
+     <tr>
+	   <td><a href="https://lumen.holoviz.org/gallery/penguins.html"><b>Palmer Penguins</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/penguins.png" /></a></td>
+       <td><a href="https://lumen.holoviz.org/gallery/precip.html"><b>Precipitation</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/precip.png" /></a></td>
+     <tr>
+   </table>
 
 ## Getting started
 
@@ -45,16 +58,3 @@ Once installed you will be able to start a Lumen server by running:
 This will open a browser serving the application or dashboard declared by your yaml file in a browser window. During development it is very helpful to use the `--autoreload` flag, which will automatically refresh and update the application in your browser window, whenever you make an edit to the dashboard yaml specification. In this way you can quickly iterate on your dashboard.
 
 Try it out! Click on one of the examples below, copy the yaml specification and launch your first Lumen application.
-
-## Examples
-
-   <table>
-     <tr>
-       <td><a href="https://lumen.holoviz.org/gallery/bikes.html"><b>London Bike Points</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/bikes.png" /></a></td>
-       <td><a href="https://lumen.holoviz.org/gallery/nyc_taxi.html"><b>NYC Taxi</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/nyc_taxi.png" /></a></td>
-     </tr>
-     <tr>
-	   <td><a href="https://lumen.holoviz.org/gallery/penguins.html"><b>Palmer Penguins</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/penguins.png" /></a></td>
-       <td><a href="https://lumen.holoviz.org/gallery/precip.html"><b>Precipitation</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/precip.png" /></a></td>
-     <tr>
-   </table>
