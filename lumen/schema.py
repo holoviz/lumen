@@ -51,10 +51,10 @@ class JSONSchema(pn.pane.PaneBase):
 
     # Not available until Panel 0.12
     try:
-        _unbounded_datetime_widget = pn.widgets.DatetimeInput
+        _unbounded_datetime_widget = pn.widgets.DatetimePicker
         _datetime_range_widget = pn.widgets.DatetimeRangePicker
     except Exception:
-        _unbounded_datetime_widget = pn.widgets.DatetimePicker
+        _unbounded_datetime_widget = pn.widgets.DatetimeInput
 
     def _array_type(self, schema):
         if 'items' in schema and not schema.get('additionalItems', True):
