@@ -191,7 +191,7 @@ class WidgetFilter(Filter):
     def query(self):
         if self.widget.value == ' ' and self.empty_select:
             return None
-        if not hasattr(self.widget.param.value, 'serialize'):
+        if not hasattr(self.widget.param.value, 'serialize') or self.widget.value is None:
             return self.widget.value
         else:
             return self.widget.param.value.serialize(self.widget.value)
