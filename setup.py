@@ -33,7 +33,8 @@ extras_require = {
         'sphinx',
         'pydata-sphinx-theme',
         'myst-parser',
-        'nbsite'
+        'nbsite',
+        'docutils <0.17'
     ]
 }
 
