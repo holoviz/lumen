@@ -182,3 +182,6 @@ class AE5Source(Source):
             if table is None or t == table:
                 schemas[t] = get_dataframe_schema(self.get(t))['items']['properties']
         return schemas if table is None else schemas[table]
+
+    def get_tables(self):
+        return self._tables
