@@ -113,7 +113,7 @@ def test_derived_tables_source_transforms():
     }
 
 
-def test_derived_tables_source_transforms():
+def test_derived_tables_source_filters():
     root = os.path.dirname(__file__)
     original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
     derived = DerivedSource.from_spec({
