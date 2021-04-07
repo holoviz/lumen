@@ -7,7 +7,7 @@
      </tr>
      <tr>
 	   <td><a href="./penguins.html"><b>Palmer Penguins</b><br><img src="../_static/penguins.png" /></a></td>
-       <td><a href="./precip.png"><b>Precipitation</b><br><img src="../_static/precip.png" /></a></td>
+       <td><a href="./precip.html"><b>Precipitation</b><br><img src="../_static/precip.png" /></a></td>
      <tr>
    </table>
 
