@@ -236,3 +236,6 @@ class PrometheusSource(Source):
             raise ValueError(f"PrometheusSource has no '{table}' table, "
                              "it currently only has a 'timeseries' table.")
         return self._make_query()
+
+    def get_tables(self):
+        return list(self._metrics)

@@ -55,6 +55,9 @@ class IntakeSource(Source):
                 pass
         return entry.read()
 
+    def get_tables(self):
+        return list(self.cat)
+
     def get_schema(self, table=None):
         schemas = {}
         for entry in list(self.cat):
