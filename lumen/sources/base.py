@@ -930,6 +930,7 @@ class DerivedSource(Source):
         query = dict({filt.field: filt.value for filt in filters})
         return source.get(table, **query)
 
+    @cached(with_query=False)
     def get(self, table, **query):
         df = self._get_source_table(table)
         if self.tables:
