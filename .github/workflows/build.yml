@@ -20,7 +20,6 @@ jobs:
       PYTHON_VERSION: "3.7"
       CHANS: "-c pyviz"
       MPLBACKEND: "Agg"
-      CONDA_UPLOAD_TOKEN: ${{ secrets.CONDA_UPLOAD_TOKEN }}
     steps:
       - uses: actions/checkout@v2
       - name: Fetch unshallow
@@ -43,10 +42,10 @@ jobs:
         run: doit package_build $CHANS_DEV $PKG_TEST_PYTHON --test-group=all
       - name: conda dev upload
         if: (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc'))
-        run: doit package_upload --token=$CONDA_UPLOAD_TOKEN --label=dev
+        run: doit package_upload --token=${{ secrets.CONDA_UPLOAD_TOKEN }} --label=dev
       - name: conda main upload
         if: (!(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
-        run: doit package_upload --token=$CONDA_UPLOAD_TOKEN --label=dev --label=main
+        run: doit package_upload --token=${{ secrets.CONDA_UPLOAD_TOKEN }} --label=dev --label=main
   pip_build:
     name: Build PyPI Packages
     runs-on: 'ubuntu-latest'
