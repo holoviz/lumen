@@ -945,3 +945,11 @@ class DerivedSource(Source):
 
     def get_tables(self):
         return list(self.tables) if self.tables else self.source.get_tables()
+
+    def clear_cache(self):
+        super().clear_cache()
+        if self.tables:
+            for spec in self.tables.items():
+                spec['source'].clear_cache()
+        else:
+            self.source.clear_cache()
