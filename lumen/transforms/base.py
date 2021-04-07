@@ -272,3 +272,29 @@ class Compute(Transform):
 
     def apply(self, table):
         return table.compute()
+
+
+class Melt(Transform):
+    """
+    Melts a DataFrame given the id_vars and value_vars. 
+    """
+
+    id_vars = param.List(default=[], doc="""
+        Column(s) to use as identifier variables.""")
+
+    value_vars = param.List(default=None, doc="""
+        Column(s) to unpivot. If not specified, uses all columns that
+        are not set as `id_vars`.""")
+
+    var_name = param.String(default=None, doc="""
+         Name to use for the 'variable' column. If None it uses
+         ``frame.columns.name`` or 'variable'.""")
+
+    value_name = param.String(default='value', doc="""
+         Name to use for the 'value' column.""")
+
+    transform_type = 'melt'
+
+    def apply(self, table):
+        return pd.melt(table, id_vars=self.id_vars, value_vars=self.value_vars,
+                       var_name=self.var_name, value_name=self.value_name)
