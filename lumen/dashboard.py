@@ -56,6 +56,13 @@ class Config(param.Parameterized):
     layout = param.Selector(default=_LAYOUTS['grid'], objects=_LAYOUTS, doc="""
         Overall layout of the dashboard.""")
 
+    loading_spinner = param.Selector(default='dots', objects=[
+        'arc', 'arcs', 'bar', 'dots', 'petal'], doc="""
+        Loading indicator to use when component loading parameter is set.""")
+
+    loading_color = param.Color(default='#00aa41', doc="""
+        Color of the loading indicator.""")
+
     logo = param.String(default=None, doc="""
         A logo to add to the theme.""")
 
@@ -102,6 +109,11 @@ class Config(param.Parameterized):
         if 'layout' in params:
             params['layout'] = _LAYOUTS[params['layout']]
         return cls(**params)
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        pn.config.loading_spinner = self.loading_spinner
+        pn.config.loading_color = self.loading_color
 
     def construct_template(self):
         params = {'title': self.title, 'theme': self.theme}
