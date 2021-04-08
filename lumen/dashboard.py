@@ -167,7 +167,6 @@ class Dashboard(param.Parameterized):
         # Initialize from spec
         self._load_local_modules()
         self._load_specification(from_file=True)
-        self._materialize_specification()
 
         # Load and populate template
         self._template = self.config.construct_template()
@@ -175,12 +174,17 @@ class Dashboard(param.Parameterized):
         self._create_main()
         self._create_sidebar()
         self._create_header()
-        self._rerender()
         self._populate_template()
+
+        pn.state.onload(self._render_dashboard)
 
     ##################################################################
     # Load specification
     ##################################################################
+
+    def _render_dashboard(self):
+        self._materialize_specification()
+        self._rerender()
 
     def _load_local_modules(self):
         for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
@@ -291,7 +295,7 @@ class Dashboard(param.Parameterized):
             ])
 
     def _create_main(self):
-        layout_kwargs = {'sizing_mode': 'stretch_width', 'margin': 10}
+        layout_kwargs = {'sizing_mode': 'stretch_width', 'margin': 10, 'loading': True}
         if self.config.layout is pn.Tabs:
             layout_kwargs['dynamic'] = True
         elif self.config.layout is pn.GridBox:
@@ -425,6 +429,7 @@ class Dashboard(param.Parameterized):
             if isinstance(self._main, pn.Tabs):
                 alert = ('Authorization Denied', alert)
             self._main[:] = [alert]
+        self._main.loading = False
 
     def _reload(self, *events):
         self._load_specification()
