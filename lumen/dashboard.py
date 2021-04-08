@@ -1,7 +1,8 @@
-import os
-import yaml
 import importlib
 import importlib.util
+import os
+import sys
+import yaml
 
 import param
 import panel as pn
@@ -227,8 +228,12 @@ class Dashboard(param.Parameterized):
         self.config = Config.from_spec(self._spec.get('config', {}))
         self.defaults = Defaults.from_spec(self._spec.get('defaults', {}))
         self.defaults.apply()
-        if force or self._load_global:
-            config.load_global_sources(self._spec.get('sources', {}), self._root)
+        if force or self._load_global or not config.sources:
+            clear_cache = config.sources or (
+                '--dev' not in sys.argv and '--autoreload' not in sys.argv
+            )
+            config.load_global_sources(self._spec.get('sources', {}), self._root,
+                                       clear_cache=clear_cache)
         if not self._authorized:
             self.targets = []
             return
