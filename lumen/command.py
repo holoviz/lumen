@@ -41,11 +41,11 @@ class YamlHandler(CodeHandler):
             yaml_spec = f.read()
         spec = load_yaml(yaml_spec)
         root = os.path.abspath(os.path.dirname(filename))
-        clear_cache = '--dev' not in sys.argv and '--autoreload' not in sys.argv
         warm = any(flag in sys.argv for flag in ('--dev', '--autoreload', '--warm'))
         Defaults.from_spec(spec.get('defaults', {})).apply()
         if warm:
-            config.load_global_sources(spec.get('sources', {}), root, clear_cache=clear_cache)
+            sources = spec.get('sources', {})
+            config.load_global_sources(sources, root, clear_cache=not config.dev)
 
 
 def build_single_handler_application(path, argv):

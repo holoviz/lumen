@@ -1,7 +1,6 @@
 import importlib
 import importlib.util
 import os
-import sys
 import yaml
 
 import param
@@ -242,16 +241,14 @@ class Dashboard(param.Parameterized):
         return authorized
 
     def _materialize_specification(self, force=False):
+        sources = self._spec.get('sources', {})
         if force or self._load_global or not config.sources:
-            clear_cache = config.sources or (
-                '--dev' not in sys.argv and '--autoreload' not in sys.argv
-            )
-            config.load_global_sources(self._spec.get('sources', {}), self._root,
-                                       clear_cache=clear_cache)
+            clear_cache = config.sources or config.dev
+            config.load_global_sources(sources, self._root, clear_cache=clear_cache)
         if not self._authorized:
             self.targets = []
             return
-        for name, source_spec in self._spec.get('sources', {}).items():
+        for name, source_spec in sources.items():
             source_spec = dict(source_spec)
             filter_specs = source_spec.pop('filters', None)
             if name in config.sources:
