@@ -1,7 +1,7 @@
-import os
-import yaml
 import importlib
 import importlib.util
+import os
+import yaml
 
 import param
 import panel as pn
@@ -55,6 +55,13 @@ class Config(param.Parameterized):
     layout = param.Selector(default=_LAYOUTS['grid'], objects=_LAYOUTS, doc="""
         Overall layout of the dashboard.""")
 
+    loading_spinner = param.Selector(default='dots', objects=[
+        'arc', 'arcs', 'bar', 'dots', 'petal'], doc="""
+        Loading indicator to use when component loading parameter is set.""")
+
+    loading_color = param.Color(default='#00aa41', doc="""
+        Color of the loading indicator.""")
+
     logo = param.String(default=None, doc="""
         A logo to add to the theme.""")
 
@@ -101,6 +108,11 @@ class Config(param.Parameterized):
         if 'layout' in params:
             params['layout'] = _LAYOUTS[params['layout']]
         return cls(**params)
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        pn.config.loading_spinner = self.loading_spinner
+        pn.config.loading_color = self.loading_color
 
     def construct_template(self):
         params = {'title': self.title, 'theme': self.theme}
@@ -167,7 +179,12 @@ class Dashboard(param.Parameterized):
         # Initialize from spec
         self._load_local_modules()
         self._load_specification(from_file=True)
-        self._materialize_specification()
+
+        # Initialize high-level settings
+        self.auth = self._spec.get('auth', {})
+        self.config = Config.from_spec(self._spec.get('config', {}))
+        self.defaults = Defaults.from_spec(self._spec.get('defaults', {}))
+        self.defaults.apply()
 
         # Load and populate template
         self._template = self.config.construct_template()
@@ -175,12 +192,17 @@ class Dashboard(param.Parameterized):
         self._create_main()
         self._create_sidebar()
         self._create_header()
-        self._rerender()
         self._populate_template()
+
+        pn.state.onload(self._render_dashboard)
 
     ##################################################################
     # Load specification
     ##################################################################
+
+    def _render_dashboard(self):
+        self._materialize_specification()
+        self._rerender()
 
     def _load_local_modules(self):
         for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
@@ -219,16 +241,14 @@ class Dashboard(param.Parameterized):
         return authorized
 
     def _materialize_specification(self, force=False):
-        self.auth = self._spec.get('auth', {})
-        self.config = Config.from_spec(self._spec.get('config', {}))
-        self.defaults = Defaults.from_spec(self._spec.get('defaults', {}))
-        self.defaults.apply()
-        if force or self._load_global:
-            config.load_global_sources(self._spec.get('sources', {}), self._root)
+        sources = self._spec.get('sources', {})
+        if force or self._load_global or not config.sources:
+            clear_cache = config.sources or config.dev
+            config.load_global_sources(sources, self._root, clear_cache=clear_cache)
         if not self._authorized:
             self.targets = []
             return
-        for name, source_spec in self._spec.get('sources', {}).items():
+        for name, source_spec in sources.items():
             source_spec = dict(source_spec)
             filter_specs = source_spec.pop('filters', None)
             if name in config.sources:
@@ -291,14 +311,15 @@ class Dashboard(param.Parameterized):
             ])
 
     def _create_main(self):
-        layout_kwargs = {'sizing_mode': 'stretch_width', 'margin': 10}
+        layout_kwargs = {'sizing_mode': 'stretch_both', 'margin': 10}
         if self.config.layout is pn.Tabs:
             layout_kwargs['dynamic'] = True
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
-        self._main = self.config.layout(**layout_kwargs)
+        self._layout = self.config.layout(**layout_kwargs)
+        self._main = pn.Column(self._layout, loading=True, **layout_kwargs)
         if self.config.layout is pn.Tabs:
-            self._main.param.watch(self._activate_filters, 'active')
+            self._layout.param.watch(self._activate_filters, 'active')
 
     def _create_modal(self):
         self._editor = pn.widgets.Ace(
@@ -327,8 +348,7 @@ class Dashboard(param.Parameterized):
         self._template.modal[:] = [self._modal]
         self._template.main[:] = [self._main]
         self._template.header[:] = [self._header]
-        if len(self._sidebar):
-            self._template.sidebar[:] = [self._sidebar]
+        self._template.sidebar[:] = [self._sidebar]
 
     ##################################################################
     # Rendering API
@@ -354,25 +374,25 @@ class Dashboard(param.Parameterized):
             pn.indicators.LoadingSpinner(value=True, align='center'),
             f'**Reloading {name}...**'
         )
-        if isinstance(self._main, pn.GridBox):
-            items = [pn.pane.HTML(width=self._main[i].width)
-                     for i in range(self._main.ncols) if i < len(self._main)]
-            index = int(min(self._main.ncols, (len(self._main)-1)) / 2)
+        if isinstance(self._layout, pn.GridBox):
+            items = [pn.pane.HTML(width=self._layout[i].width)
+                     for i in range(self._layout.ncols) if i < len(self._layout)]
+            index = int(min(self._layout.ncols, (len(self._layout)-1)) / 2)
             if items:
                 items[index] = loading
             else:
                 items = [loading]
-        elif isinstance(self._main, pn.Tabs):
-            items = list(zip(self._main._names, list(self._main.objects)))
-            tab_name = items[self._main.active][0]
+        elif isinstance(self._layout, pn.Tabs):
+            items = list(zip(self._layout._names, list(self._layout.objects)))
+            tab_name = items[self._layout.active][0]
             if name and tab_name != name:
                 return
-            items[self._main.active] = pn.Row(
+            items[self._layout.active] = pn.Row(
                 pn.layout.HSpacer(), loading, pn.layout.HSpacer()
             )
         else:
             items = [pn.Row(pn.layout.HSpacer(), loading, pn.layout.HSpacer())]
-        self._main[:] = items
+        self._layout[:] = items
 
     def _open_modal(self, event):
         self._template.open_modal()
@@ -400,7 +420,7 @@ class Dashboard(param.Parameterized):
                     filters.append(panel)
             self._sidebar[:] = filters
             self._sidebar.active = [0, 1] if self._global_filters else [0]
-            self._main[:] = [target.panels for target in self.targets]
+            self._layout[:] = [target.panels for target in self.targets]
         else:
             auth_keys = list(self.auth)
             if len(auth_keys) == 1:
@@ -422,9 +442,10 @@ class Dashboard(param.Parameterized):
                 OAuth user data.
                 """
             alert = pn.pane.Alert(error, alert_type='danger')
-            if isinstance(self._main, pn.Tabs):
+            if isinstance(self._layout, pn.Tabs):
                 alert = ('Authorization Denied', alert)
-            self._main[:] = [alert]
+            self._layout[:] = [alert]
+        self._main.loading = False
 
     def _reload(self, *events):
         self._load_specification()
@@ -452,7 +473,7 @@ class Dashboard(param.Parameterized):
             ),
             pn.Row(
                 pn.Column(self._sidebar, width=300),
-                self._main
+                self._layout
             )
         )
 

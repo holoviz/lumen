@@ -1,3 +1,5 @@
+import sys
+
 import param as param
 
 from .filters import Filter
@@ -58,6 +60,14 @@ class _config(param.Parameterized):
                 fname: Filter.from_spec(filter_spec, schema)
                 for fname, filter_spec in filter_specs.items()
             }
+
+    @property
+    def dev(self):
+        """
+        Whether the application was launched in development mode.
+        """
+        return '--dev' in sys.argv or '--autoreload' in sys.argv
+
 
 
 
