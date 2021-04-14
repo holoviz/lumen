@@ -38,5 +38,6 @@ targets:
         x: time
         y: precip
         by: [model, emissions]
+        min_height: 200
         responsive: true
     sizing_mode: stretch_width

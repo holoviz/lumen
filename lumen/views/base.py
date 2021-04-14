@@ -13,6 +13,7 @@ import param
 import panel as pn
 
 from bokeh.models import NumeralTickFormatter
+from panel.pane.base import PaneBase
 from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
 )
@@ -276,6 +277,11 @@ class View(param.Parameterized):
 
     @property
     def panel(self):
+        if isinstance(self._panel, PaneBase):
+            pane = self._panel
+            if len(pane.layout) == 1 and pane._unpack:
+                return pane.layout[0]
+            return pane._layout
         return self._panel
 
 
