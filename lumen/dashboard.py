@@ -1,6 +1,8 @@
+import html
 import importlib
 import importlib.util
 import os
+import traceback
 import yaml
 
 import param
@@ -201,8 +203,17 @@ class Dashboard(param.Parameterized):
     ##################################################################
 
     def _render_dashboard(self):
-        self._materialize_specification()
-        self._rerender()
+        try:
+            self._materialize_specification()
+            self._rerender()
+        except Exception as e:
+            self._main.loading = False
+            tb = html.escape(traceback.format_exc())
+            alert = pn.pane.HTML(
+                f'<b>{type(e).__name__}</b>: {e}</br><pre style="overflow-y: scroll">{tb}</pre>',
+                css_classes=['alert', 'alert-danger'], sizing_mode='stretch_width'
+            )
+            self._main[:] = [alert]
 
     def _load_local_modules(self):
         for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
