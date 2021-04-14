@@ -183,6 +183,7 @@ class WidgetFilter(Filter):
         if isinstance(self.widget, pn.widgets.Select) and self.empty_select:
             self.widget.options.insert(0, ' ')
             self.widget.value = ' '
+        self.widget.name = self.label
         self.widget.link(self, value='value')
         if self.default is not None:
             self.widget.value = self.default
@@ -194,7 +195,9 @@ class WidgetFilter(Filter):
         if not hasattr(self.widget.param.value, 'serialize') or self.widget.value is None:
             return self.widget.value
         else:
-            return self.widget.param.value.serialize(self.widget.value)
+            value = self.widget.param.value.serialize(self.widget.value)
+            if isinstance(value, list) and isinstance(self.widget.value, tuple):
+                return self.widget.value
 
     @property
     def panel(self):
