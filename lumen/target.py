@@ -13,6 +13,9 @@ from .util import _LAYOUTS
 from .views import View
 
 
+DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
+
+
 class Facet(param.Parameterized):
 
     by = param.List(default=[], class_=FacetFilter, doc="""
@@ -84,10 +87,13 @@ class Download(pn.viewable.Viewer):
     in a variety of formats via the Dashboard UI.
     """
 
+    labels = param.Dict(default={}, doc="""
+        A dictionary to override the Button label for each table.""")
+
     filters = param.List(class_=Filter, doc="""
         A list of filters to be rendered.""")
 
-    format = param.Selector(default=None, objects=['csv', 'xlsx', 'json', 'parquet'], doc="""
+    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
         The format to download the data in.""")
 
     kwargs = param.Dict(default={}, doc="""
@@ -103,15 +109,17 @@ class Download(pn.viewable.Viewer):
     def __init__(self, **params):
         super().__init__(**params)
         default_table = self.tables[0] if self.tables else None
+        button_params = {'filename': f'{default_table}.{self.format}'}
+        if default_table in self.labels:
+            button_params['label'] = self.labels[default_table]
         self._select_download = pn.widgets.Select(
             name='Select table to download', options=self.tables, value=default_table,
             sizing_mode='stretch_width'
         )
-        self._select_download.param.watch(self._update_filename, 'value')
+        self._select_download.param.watch(self._update_button, 'value')
         self._download_button = pn.widgets.FileDownload(
             callback=self._table_data, align='end',
-            filename=f'{default_table}.{self.format}',
-            sizing_mode='stretch_width'
+            sizing_mode='stretch_width', **button_params
         )
         self._layout = pn.Column(
             pn.pane.Markdown('### Download tables', margin=(0, 5, -10, 5)),
@@ -125,8 +133,11 @@ class Download(pn.viewable.Viewer):
     def __panel__(self):
         return self._layout
 
-    def _update_filename(self, event):
-        self._download_button.filename = f'{event.new}.{self.format}'
+    def _update_button(self, event):
+        params = {'filename': f'{event.new}.{self.format}'}
+        if event.new in self.labels:
+            params['label'] = self.labels[event.new]
+        self._download_button.param.set_param(**params)
 
     def __bool__(self):
         return self.format is not None
