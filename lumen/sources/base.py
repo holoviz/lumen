@@ -609,8 +609,8 @@ class JSONSource(FileSource):
             tables.append(table)
         return tables
 
-    def _load_fn(self, ext):
-        return super()._load_fn('json')
+    def _load_fn(self, ext, dask=True):
+        return super()._load_fn('json', dask=dask)
 
     @cached(with_query=False)
     def get(self, table, **query):
