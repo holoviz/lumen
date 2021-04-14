@@ -198,6 +198,7 @@ class WidgetFilter(Filter):
             value = self.widget.param.value.serialize(self.widget.value)
             if isinstance(value, list) and isinstance(self.widget.value, tuple):
                 return self.widget.value
+            return value
 
     @property
     def panel(self):
