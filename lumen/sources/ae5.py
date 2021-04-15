@@ -3,7 +3,7 @@ import datetime as dt
 import param
 import requests
 
-from ae5_tools.api import AEUserSession
+from ae5_tools.api import AEAdminSession, AEUserSession
 from panel import state
 
 from .base import Source, cached
@@ -22,6 +22,10 @@ class AE5Source(Source):
     username = param.String(doc="Username to authenticate with AE5.")
 
     password = param.String(doc="Password to authenticate with AE5.")
+
+    admin_username = param.String(doc="Username to authenticate admin with AE5.")
+
+    admin_password = param.String(doc="Password to authenticate admin with AE5.")
 
     k8s_endpoint = param.String(default='k8s')
 
@@ -60,6 +64,10 @@ class AE5Source(Source):
             self.hostname, self.username, self.password, persist=False,
             k8s_endpoint=self.k8s_endpoint
         )
+        if self.admin_username:
+            self._admin_session = AEAdminSession(
+                self.hostname, self.admin_username, self.admin_password
+            )
         adapter = requests.adapters.HTTPAdapter(pool_maxsize=self.pool_size)
         self._session.session.mount('https://', adapter)
         self._session.session.mount('http://', adapter)
@@ -149,12 +157,23 @@ class AE5Source(Source):
         deployments = self._session.deployment_list(
             k8s=True, format='dataframe', collaborators=bool(user)
         ).apply(self._process_deployment, axis=1)
-        if user is None:
+        if self.admin_username:
+            self._admin_session.authorize()
+            user_id = self._admin_session(user)['id']
+            roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
+            is_admin = any(role['name'] == 'ae-admin' for role in roles)
+            groups = [g['name'] for g in self._admin_session._get(f'users/{user_id}/groups')]
+        else:
+            is_admin = False
+            groups = []
+        if user is None or is_admin:
             return deployments[self._deployment_columns]
         return deployments[
             deployments.public |
             (deployments.owner == user) |
-            deployments._collaborators.apply(lambda x: user in x)
+            deployments._collaborators.apply(
+                lambda cs: any(c['id'] in groups if c['type'] == 'group' else c['id'] == user for c in cs)
+            )
         ][self._deployment_columns]
 
     def _get_nodes(self):
