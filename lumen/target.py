@@ -320,7 +320,7 @@ class Target(param.Parameterized):
                 update_card = update_card or view_stale
 
         if not any(view for view in views):
-            return None, None
+            return None, None, views
 
         sort_key = self.facet.get_sort_key(views)
 
