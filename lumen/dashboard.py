@@ -207,6 +207,7 @@ class Dashboard(param.Parameterized):
             self._materialize_specification()
             self._rerender()
         except Exception as e:
+            self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}') 
             self._main.loading = False
             tb = html.escape(traceback.format_exc())
             alert = pn.pane.HTML(

@@ -17,6 +17,7 @@ from panel.pane.base import PaneBase
 from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
 )
+from panel.param import Param
 from ..filters import ParamFilter
 from ..sources import Source
 from ..transforms import Transform
@@ -33,6 +34,9 @@ class View(param.Parameterized):
     Subclasses should use these methods to query the data and return
     a Viewable Panel object in the `get_panel` method.
     """
+
+    controls = param.List(default=[], doc="""
+        Parameters that should be exposed as widgets in the UI.""")
 
     filters = param.List(constant=True, doc="""
         A list of Filter object providing the query parameters for the
@@ -51,9 +55,12 @@ class View(param.Parameterized):
 
     table = param.String(doc="The table being visualized.")
 
-    field = param.String(doc="The field being visualized.")
+    field = param.Selector(doc="The field being visualized.")
 
     view_type = None
+
+    # Parameters which reference fields in the table
+    _field_params = ['field']
 
     _selections = WeakKeyDictionary()
 
@@ -67,7 +74,19 @@ class View(param.Parameterized):
         self._panel = None
         self._updates = None
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
-        super().__init__(**{k: v for k, v in params.items() if k in self.param})
+
+        # Populate field selector parameters
+        params = {k: v for k, v in params.items() if k in self.param}
+        source, table = params.pop('source', None), params.pop('table', None)
+        if source is None:
+            raise ValueError("Views must declare a Source.")
+        if table is None:
+            raise ValueError("Views must reference a table on the declared Source.")
+        fields = list(source.get_schema(table))
+        for fp in self._field_params:
+            self.param[fp].objects = fields
+
+        super().__init__(source=source, table=table, **params)
         if self.selection_group:
             self._init_link_selections()
 
@@ -276,6 +295,10 @@ class View(param.Parameterized):
         return None
 
     @property
+    def control_panel(self):
+        return Param(self.param, parameters=self.controls, sizing_mode='stretch_width')
+
+    @property
     def panel(self):
         if isinstance(self._panel, PaneBase):
             pane = self._panel
@@ -353,18 +376,26 @@ class hvPlotView(View):
 
     kind = param.String(doc="The kind of plot, e.g. 'scatter' or 'line'.")
 
-    x = param.String(doc="The column to render on the x-axis.")
+    x = param.Selector(doc="The column to render on the x-axis.")
 
-    y = param.String(doc="The column to render on the y-axis.")
+    y = param.Selector(doc="The column to render on the y-axis.")
 
-    opts = param.Dict(default={}, doc="HoloViews option to apply on the plot.")
+    by = param.ListSelector(doc="The column(s) to facet the plot by.")
+
+    groupby = param.ListSelector(doc="The column(s) to group by.")
+
+    opts = param.Dict(default={}, doc="HoloViews options to apply on the plot.")
 
     streaming = param.Boolean(default=False, doc="""
         Whether to stream new data to the plot or rerender the plot.""")
 
-    selection_expr = param.Parameter()
+    selection_expr = param.Parameter(doc="""
+        A selection expression caputirng the current selection applied
+        on the plot.""")
 
     view_type = 'hvplot'
+
+    _field_params = ['x', 'y', 'by', 'groupby']
 
     _supports_selections = True
 
@@ -375,6 +406,10 @@ class hvPlotView(View):
                 import hvplot.dask # noqa
             except Exception:
                 pass
+        if 'by' in params and isinstance(params['by'], str):
+            params['by'] = [params['by']]
+        if 'groupby' in params and isinstance(params['groupby'], str):
+            params['groupby'] = [params['groupby']]
         self._stream = None
         self._linked_objs = []
         super().__init__(**params)
@@ -519,36 +554,38 @@ class Download(View):
 class PerspectiveView(View):
 
     aggregates = param.Dict(None, doc="""
-      How to aggregate. For example {x: "distinct count"}""")
+        How to aggregate. For example {x: "distinct count"}""")
 
-    columns = param.List(default=None, doc="""
+    columns = param.ListSelector(default=None, doc="""
         A list of source columns to show as columns. For example ["x", "y"]""")
 
-    computed_columns = param.List(default=None, doc="""
-      A list of computed columns. For example [""x"+"index""]""")
+    computed_columns = param.ListSelector(default=None, doc="""
+        A list of computed columns. For example [""x"+"index""]""")
 
-    column_pivots = param.List(None, doc="""
-      A list of source columns to pivot by. For example ["x", "y"]""")
+    column_pivots = param.ListSelector(None, doc="""
+        A list of source columns to pivot by. For example ["x", "y"]""")
 
     filters = param.List(default=None, doc="""
-      How to filter. For example [["x", "<", 3],["y", "contains", "abc"]]""")
+        How to filter. For example [["x", "<", 3],["y", "contains", "abc"]]""")
 
-    row_pivots = param.List(default=None, doc="""
-      A list of source columns to group by. For example ["x", "y"]""")
+    row_pivots = param.ListSelector(default=None, doc="""
+        A list of source columns to group by. For example ["x", "y"]""")
 
     selectable = param.Boolean(default=True, allow_None=True, doc="""
-      Whether items are selectable.""")
+        Whether items are selectable.""")
 
     sort = param.List(default=None, doc="""
-      How to sort. For example[["x","desc"]]""")
+        How to sort. For example[["x","desc"]]""")
 
     plugin = param.ObjectSelector(default=_PerspectivePlugin.GRID.value, objects=_PerspectivePlugin.options(), doc="""
-      The name of a plugin to display the data. For example hypergrid or d3_xy_scatter.""")
+        The name of a plugin to display the data. For example hypergrid or d3_xy_scatter.""")
 
     theme = param.ObjectSelector(default='material', objects=_PERSPECTIVE_THEMES, doc="""
-      The style of the PerspectiveViewer. For example material-dark""")
+        The style of the PerspectiveViewer. For example material-dark""")
 
     view_type = 'perspective'
+
+    _field_params = ['columns', 'computed_columns', 'column_pivots', 'row_pivots']
 
     def _get_params(self):
         df = self.get_data()
