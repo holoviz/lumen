@@ -173,6 +173,7 @@ class AE5Source(Source):
             (deployments.owner == user) |
             deployments._collaborators.apply(
                 lambda cs: any(c['id'] in groups if c['type'] == 'group' else c['id'] == user for c in cs)
+            )
         ][self._deployment_columns]
 
     def _get_nodes(self):
