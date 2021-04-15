@@ -5,7 +5,7 @@ import holoviews as hv
 from panel.param import Param
 
 from lumen.sources import FileSource
-from lumen.target import Facet, Target
+from lumen.target import Target
 
 
 def test_view_controls():
