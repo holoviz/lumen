@@ -235,6 +235,7 @@ class Target(param.Parameterized):
         self._cb = None
         self._stale = False
         self._updates = {}
+        self._view_controls = pn.Column(sizing_mode='stretch_width')
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
@@ -335,7 +336,7 @@ class Target(param.Parameterized):
             card.title = title
             if update_card:
                 self._updates[card] = views
-        return sort_key, card
+        return sort_key, card, views
 
     def get_filter_panel(self, skip=None):
         skip = skip or []
@@ -359,6 +360,7 @@ class Target(param.Parameterized):
                 self.facet._reverse_widget
             ])
             views.append(pn.layout.Divider())
+        views.append(self._view_controls)
         self._reload_button = pn.widgets.Button(
             name='↻', width=50, css_classes=['reload'], margin=0
         )
@@ -375,16 +377,34 @@ class Target(param.Parameterized):
     # Rendering API
     ##################################################################
 
+    def _sync_view(self, view, *events):
+        view.param.set_param(**{event.name: event.new for event in events})
+
     def _update_views(self, invalidate_cache=True, update_views=True, events=[]):
         cards = []
+        view_controls = []
+        prev_views = None
         for facet_filters in self.facet.filters:
-            key, card = self._get_card(
+            key, card, views = self._get_card(
                 self.filters, facet_filters, invalidate_cache, update_views,
                 events=events
             )
+            if prev_views:
+                for v1, v2 in zip(views, prev_views):
+                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
+            else:
+                for view in views:
+                    if not view.controls:
+                        continue
+                    view_controls.append(view.control_panel)
+                    cb = partial(self._rerender, invalidate_cache=False)
+                    view.param.watch(cb, view.controls)
+            prev_views = views
             if card is None:
                 continue
             cards.append((key, card))
+
+        self._view_controls[:] = view_controls
 
         if self.facet.sort:
             cards = sorted(cards, key=lambda x: x[0])
