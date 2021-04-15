@@ -229,6 +229,8 @@ class Target(param.Parameterized):
         A list or dictionary of views to be displayed.""")
 
     def __init__(self, **params):
+        if 'facet' not in params:
+            params['facet'] = Facet()
         self._application = params.pop('application', None)
         self._cards = []
         self._cache = {}
@@ -390,7 +392,7 @@ class Target(param.Parameterized):
                 events=events
             )
             if prev_views:
-                for v1, v2 in zip(views, prev_views):
+                for v1, v2 in zip(prev_views, views):
                     v1.param.watch(partial(self._sync_view, v2), v1.controls)
             else:
                 for view in views:
