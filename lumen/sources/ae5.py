@@ -162,14 +162,17 @@ class AE5Source(Source):
             user_id = self._admin_session(user)['id']
             roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
             is_admin = any(role['name'] == 'ae-admin' for role in roles)
+            groups = [g['name'] for g in self._admin_session._get(f'users/{user_id}/groups')]
         else:
             is_admin = False
+            groups = []
         if user is None or is_admin:
             return deployments[self._deployment_columns]
         return deployments[
             deployments.public |
             (deployments.owner == user) |
-            deployments._collaborators.apply(lambda x: user in x)
+            deployments._collaborators.apply(
+                lambda cs: any(c['id'] in groups if c['type'] == 'group' else c['id'] == user for c in cs)
         ][self._deployment_columns]
 
     def _get_nodes(self):
