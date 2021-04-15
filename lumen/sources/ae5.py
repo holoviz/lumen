@@ -3,7 +3,7 @@ import datetime as dt
 import param
 import requests
 
-from ae5_tools.api import AEUserSession
+from ae5_tools.api import AEAdminSession, AEUserSession
 from panel import state
 
 from .base import Source, cached
