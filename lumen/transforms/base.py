@@ -4,6 +4,7 @@ The Transform components allow transforming tables in arbitrary ways.
 
 import datetime as dt
 
+import numpy as np
 import pandas as pd
 import param
 
@@ -298,3 +299,25 @@ class Melt(Transform):
     def apply(self, table):
         return pd.melt(table, id_vars=self.id_vars, value_vars=self.value_vars,
                        var_name=self.var_name, value_name=self.value_name)
+
+
+class project_lnglat(Transform):
+    """
+    Projects the given (longitude, latitude) values into Web Mercator
+    coordinates (meters East of Greenwich and meters North of the Equator).
+    """
+
+    longitude = param.String(default='longitude', doc="Longitude column")
+    latitude = param.String(default='longitude', doc="Latitude column")
+
+    transform_type = 'project_lnglat'
+
+    def apply(self, table):
+        table = table.copy()
+        longitude = table[self.longitude]
+        latitude = table[self.latitude]
+
+        origin_shift = np.pi * 6378137
+        table[self.longitude] = longitude * origin_shift / 180.0
+        table[self.latitude] = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
+        return table
