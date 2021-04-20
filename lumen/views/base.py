@@ -59,6 +59,9 @@ class View(param.Parameterized):
 
     view_type = None
 
+    # Panel extension to load to render this View
+    _extension = None
+
     # Parameters which reference fields in the table
     _field_params = ['field']
 
@@ -584,6 +587,8 @@ class PerspectiveView(View):
         The style of the PerspectiveViewer. For example material-dark""")
 
     view_type = 'perspective'
+
+    _extension = 'perspective'
 
     _field_params = ['columns', 'computed_columns', 'column_pivots', 'row_pivots']
 

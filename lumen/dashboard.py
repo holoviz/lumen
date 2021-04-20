@@ -237,6 +237,20 @@ class Dashboard(param.Parameterized):
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
         self._spec = load_yaml(self._yaml, **kwargs)
+        self._resolve_views()
+
+    def _resolve_views(self):
+        exts = []
+        for target in self._spec.get('targets', []):
+            views = target.get('views', [])
+            if isinstance(views, dict):
+                views = list(views.values())
+            for view in views:
+                view_type = View._get_type(view.get('type'))
+                if view_type and view_type._extension:
+                    exts.append(view_type._extension)
+        for ext in exts:
+            __import__(pn.extension._imports[ext])
 
     @property
     def _authorized(self):
