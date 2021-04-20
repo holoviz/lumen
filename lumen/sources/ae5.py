@@ -159,7 +159,7 @@ class AE5Source(Source):
         ).apply(self._process_deployment, axis=1)
         if self.admin_username:
             self._admin_session.authorize()
-            user_id = self._admin_session(user)['id']
+            user_id = self._admin_session.user_info(user)['id']
             roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
             is_admin = any(role['name'] == 'ae-admin' for role in roles)
             groups = [g['name'] for g in self._admin_session._get(f'users/{user_id}/groups')]
