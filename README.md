@@ -38,7 +38,10 @@ The core strengths of Lumen include:
      <tr>
 	   <td><a href="https://lumen.holoviz.org/gallery/penguins.html"><b>Palmer Penguins</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/penguins.png" /></a></td>
        <td><a href="https://lumen.holoviz.org/gallery/precip.html"><b>Precipitation</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/precip.png" /></a></td>
-     <tr>
+     </tr>
+	 <tr>
+	   <td><a href="https://lumen.holoviz.org/gallery/seattle.html"><b>Seattle Weather</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/master/docs/_static/seattle.png" /></a></td>
+	</tr>
    </table>
 
 ## Getting started

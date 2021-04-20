@@ -25,7 +25,10 @@ The core strengths of Lumen include:
      <tr>
 	   <td><a href="./gallery/penguins.html"><b>Palmer Penguins</b><br><img src="./_static/penguins.png" /></a></td>
        <td><a href="./gallery/precip.html"><b>Precipitation</b><br><img src="./_static/precip.png" /></a></td>
-     <tr>
+     </tr>
+	 <tr>
+	   <td><a href="./gallery/seattle.html"><b>Seattle Weather</b><br><img src="./_static/seattle.png" /></a></td>
+     </tr>
    </table>
 
 
