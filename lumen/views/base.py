@@ -59,6 +59,9 @@ class View(param.Parameterized):
 
     view_type = None
 
+    # Panel extension to load to render this View
+    _extension = None
+
     # Parameters which reference fields in the table
     _field_params = ['field']
 
@@ -585,6 +588,8 @@ class PerspectiveView(View):
 
     view_type = 'perspective'
 
+    _extension = 'perspective'
+
     _field_params = ['columns', 'computed_columns', 'column_pivots', 'row_pivots']
 
     def _get_params(self):
@@ -596,3 +601,70 @@ class PerspectiveView(View):
 
     def get_panel(self):
         return pn.pane.Perspective(**self._get_params())
+
+
+class AltairView(View):
+
+    chart = param.Dict(default={}, doc="Keyword argument for Chart.")
+
+    x = param.Selector(doc="The column to render on the x-axis.")
+
+    y = param.Selector(doc="The column to render on the y-axis.")
+
+    marker = param.Selector(default='line', objects=[
+        'area', 'bar', 'boxplot', 'circle', 'errorband', 'errorbar',
+        'geoshape', 'image', 'line', 'point', 'rect', 'rule', 'square',
+        'text', 'tick', 'trail'])
+
+    encode = param.Dict(default={}, doc="Keyword arguments for encode.")
+
+    mark = param.Dict(default={}, doc="Keyword arguments for mark.")
+
+    transform = param.Dict(doc="""
+        Keyword arguments for transforms, nested by the type of
+        transform, e.g. {'bin': {'as_': 'binned', 'field': 'x'}}.""")
+
+    project = param.Dict(doc="Keyword arguments for project.")
+
+    properties = param.Dict(doc="Keyword arguments for properties.")
+
+    view_type = 'altair'
+
+    _extension = 'vega'
+
+    def _transform_encoding(self, encoding, value):
+        import altair as alt
+        if isinstance(value, dict):
+            value = dict(value)
+            for kw, val in value.items():
+                if kw == 'scale':
+                    if isinstance(val, list):
+                        val = alt.Scale(range=val)
+                    else:
+                        val = alt.Scale(**val)
+                if kw == 'tooltip':
+                    val = [alt.Tooltip(**v) for v in val]
+                value[kw] = val
+            value = getattr(alt, encoding.capitalize())(**value)
+        return value
+
+    def _get_params(self):
+        import altair as alt
+        df = self.get_data()
+        chart = alt.Chart(df, **self.chart)
+        mark = getattr(chart, f'mark_{self.marker}')(**self.mark)
+        x = self._transform_encoding('x', self.x)
+        y = self._transform_encoding('y', self.y)
+        encode = {k: self._transform_encoding(k, v) for k, v in self.encode.items()}
+        encoded = mark.encode(x=x, y=y, **encode)
+        if self.transform:
+            for key, kwargs in self.transform.items():
+                encoded = getattr(encoded, f'transform_{key}')(**kwargs)
+        if self.project:
+            encoded = encoded.project(**self.project)
+        if self.properties:
+            encoded = encoded.properties(**self.properties)
+        return dict(object=encoded, **self.kwargs)
+
+    def get_panel(self):
+        return pn.pane.Vega(**self._get_params())

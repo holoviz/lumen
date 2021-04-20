@@ -1,0 +1,67 @@
+config:
+  title: Altair Seattle Weather
+sources:
+  seattle:
+    type: file
+    tables:
+      weather: https://raw.githubusercontent.com/vega/vega/master/docs/data/seattle-weather.csv
+    kwargs:
+      parse_dates: [date]
+targets:
+  - title: Seattle Weather
+    source: seattle
+    filters:
+      - type: widget
+        field: date
+      - type: widget
+        field: weather
+    views:
+      - type: altair
+        table: weather
+        marker: rect
+        chart:
+          title: 2010 Daily High Temperature (F) in Seattle, WA
+        x:
+          shorthand: date(date):O
+          title: Day
+        y:
+          shorthand: month(date):O
+          title: Month
+        encode:
+          color:
+            shorthand: max(temp_max):Q
+            scale:
+              scheme: inferno
+        properties:
+          width: container
+        height: 300
+        margin: [20, 20, 0, 0]
+      - type: altair
+        table: weather
+        x:
+          shorthand: monthdate(date):T
+          title: Date
+        y:
+          shorthand: temp_max:Q
+          title: 'Maximum Daily Temperature (C)'
+        marker: point
+        encode:
+          color: weather:N
+          size:
+            shorthand: precipitation:Q
+            scale: [5, 200]
+        properties:
+          width: container
+        margin: [130, 20, 0, 0]
+      - type: altair
+        table: weather
+        x: count()
+        y: weather:N
+        encode:
+          color: weather:N
+        marker: bar
+        properties:
+          width: container
+        margin: [160, 20, 0, 0]
+    sizing_mode: stretch_width
+    height: 850
