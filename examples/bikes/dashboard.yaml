@@ -36,7 +36,6 @@ targets:
         y: lat
         hover_cols: [commonName]
         tiles: Wikipedia
-        geo: true
         responsive: true
         height: 500
         color: bikesCount
@@ -44,6 +43,10 @@ targets:
         xaxis: null
         yaxis: null
         selection_group: bikes
+        transforms:
+          - type: project_lnglat
+            latitude: lat
+            longitude: lon
       table:
         type: table
         table: station_occupancy
