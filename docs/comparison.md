@@ -37,3 +37,14 @@ In contrast, Lumen does not require that the data being processed be inserted in
 ## [Perspective](https://perspective.finos.org)
 
 Like the other tools listed above, Perspective provides a GUI interface for selecting dimensions and columns for plots and tables, making it simple to explore columnar data. Like the non-Lumen HoloViz tools, Perspective is usable in Jupyter, which helps integrate configurable analytics into an otherwise custom workflow. Perspective is thus an alternative to Lumen in some cases, but we suggest using both in combination: Use Perspective to design plots, then Lumen for the full workflow consisting of data sources, arbitrary transforms, and laying out the results.
+
+
+## [Panel](https://panel.holoviz.org) and [Bokeh](https://bokeh.org)
+
+Like Lumen, Panel and the Bokeh library on which Panel is built let users build dashboards that expose the power of the Python data-science ecosystem. Panel and Bokeh do so using a Python programming interface, with users writing Python code to configure each dashboard. Panel's programming model is declarative in nature, but it also allows specification of arbitrary Python code as part of the configuration of each component. Lumen is a purely declarative approach that provides a text-based language for building the components of a Panel app, keeping all Python code separate from the configuration of a particular dashboard. Lumen is thus a good choice for users who want the power of Panel and Bokeh but are not Python programmers, and is a particularly good choice for people working on a team with Panel users who can extend Lumen's capabilities and make the custom additions available to non-Python users.
+
+
+## [Dash](https://plotly.com/dash), [Streamlit](https://streamlit.io), [Voila](https://github.com/voila-dashboards/voila)+[IPyWidgets](https://ipywidgets.readthedocs.io)
+
+Lumen's underlying Panel library is one of a number of dashboarding technologies available in Python. Just as Lumen is built on Panel, declarative text-based user interfaces could be developed for the other availble dashboarding tools, such as Dash, Streamlit, or Voila+IPyWidgets. For data-science teams built around one of these other dashboarding tools, such a declarative interface could play a similar role to Lumen but for that commnunity. In the meantime, because Panel supports nearly every common visualization tool available for Python, Lumen can already be useful as a declarative interface providing the power of the same underlying Python data-science libraries that will be used in those dashboarding tools, such as Plotly, Matplotlib, bqplot, and ipywidgets (all of which can be used in Panel apps and thus potentially with Lumen).
+
