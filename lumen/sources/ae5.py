@@ -157,7 +157,7 @@ class AE5Source(Source):
         deployments = self._session.deployment_list(
             k8s=True, format='dataframe', collaborators=bool(user)
         ).apply(self._process_deployment, axis=1)
-        if self.admin_username:
+        if self.admin_username and user is not None:
             self._admin_session.authorize()
             user_id = self._admin_session.user_info(user)['id']
             roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
