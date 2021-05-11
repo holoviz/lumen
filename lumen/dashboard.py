@@ -204,6 +204,7 @@ class Dashboard(param.Parameterized):
     def _render_dashboard(self):
         try:
             self._materialize_specification()
+            self._main[:] = [self._layout]
             self._rerender()
         except Exception as e:
             self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}') 
@@ -263,6 +264,7 @@ class Dashboard(param.Parameterized):
         for name, source_spec in sources.items():
             source_spec = dict(source_spec)
             filter_specs = source_spec.pop('filters', None)
+            self._loading[0].object = f'Loading {name} source...'
             if name in config.sources:
                 source = config.sources[name]
             else:
@@ -278,13 +280,15 @@ class Dashboard(param.Parameterized):
             for fname, filter_spec in filter_specs.items():
                 if fname not in filters:
                     filters[fname] = Filter.from_spec(filter_spec, schema)
-        self.targets[:] = [
-            Target.from_spec(
+        targets = []
+        target_specs = self._spec.get('targets', [])
+        for i, target_spec in enumerate(target_specs):
+            self._loading[0].object = f'Loading target {i+1}/{len(target_specs)}...'
+            targets.append(Target.from_spec(
                 dict(target_spec), self.sources, self._filters,
                 self._root, application=self
-            )
-            for target_spec in self._spec.get('targets', [])
-        ]
+            ))
+        self.targets[:] = targets
 
     ##################################################################
     # Create UI
@@ -329,7 +333,16 @@ class Dashboard(param.Parameterized):
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
-        self._main = pn.Column(self._layout, loading=True, sizing_mode='stretch_both')
+        self._loading = pn.Column(
+            pn.pane.HTML(
+                'Loading...', align='center',
+                width=400, style={'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
+            ),
+            sizing_mode='stretch_both'
+        )
+        self._main = pn.Column(
+            self._loading, loading=True, sizing_mode='stretch_both'
+        )
         if self.config.layout is pn.Tabs:
             self._layout.param.watch(self._activate_filters, 'active')
 
