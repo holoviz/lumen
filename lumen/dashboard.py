@@ -329,7 +329,7 @@ class Dashboard(param.Parameterized):
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
-        self._main = pn.Column(self._layout, loading=True, **layout_kwargs)
+        self._main = pn.Column(self._layout, loading=True, sizing_mode='stretch_both')
         if self.config.layout is pn.Tabs:
             self._layout.param.watch(self._activate_filters, 'active')
 
