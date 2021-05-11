@@ -4,33 +4,9 @@ import os
 import sys
 import subprocess
 
-import panel as pn
-import param
-
 from jinja2 import Environment, Undefined, DebugUndefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
-from panel.widgets.indicators import Indicator
-from panel.template.base import BasicTemplate
-from panel.template import DefaultTheme, DarkTheme
-
-_LAYOUTS = {
-    'accordion': pn.Accordion,
-    'column'   : pn.Column,
-    'grid'     : pn.GridBox,
-    'row'      : pn.Row,
-    'tabs'     : pn.Tabs
-}
-
-_TEMPLATES = {
-    k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()
-}
-
-_THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
-
-_INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
-
-
 
 
 def get_dataframe_schema(df, columns=None):
