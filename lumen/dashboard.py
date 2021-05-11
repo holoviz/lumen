@@ -10,7 +10,7 @@ import panel as pn
 
 from panel.template.base import BasicTemplate
 
-from .config import config, _INDICATORS, _LAYOUTS, _TEMPLATES, _THEMES
+from .config import config, _LAYOUTS, _TEMPLATES, _THEMES
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .sources import Source, RESTSource # noqa
 from .target import Target
