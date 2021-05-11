@@ -242,7 +242,7 @@ class Dashboard(param.Parameterized):
     @property
     def _authorized(self):
         if pn.state.user_info is None and self.auth:
-            return False
+            return config.dev
         authorized = True
         for k, value in self.auth.items():
             if not isinstance(value, list): value = [value]
