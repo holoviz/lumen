@@ -949,7 +949,7 @@ class DerivedSource(Source):
     def clear_cache(self):
         super().clear_cache()
         if self.tables:
-            for spec in self.tables.items():
+            for spec in self.tables.values():
                 spec['source'].clear_cache()
         else:
             self.source.clear_cache()
