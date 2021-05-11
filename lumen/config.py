@@ -1,9 +1,34 @@
+import importlib
+import os
 import sys
 
 import param as param
+import panel as pn
+
+from panel.widgets.indicators import Indicator
+from panel.template.base import BasicTemplate
+from panel.template import DefaultTheme, DarkTheme
 
 from .filters import Filter
 from .sources import Source
+
+
+_INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
+
+_LAYOUTS = {
+    'accordion': pn.Accordion,
+    'column'   : pn.Column,
+    'grid'     : pn.GridBox,
+    'row'      : pn.Row,
+    'tabs'     : pn.Tabs
+}
+
+_TEMPLATES = {
+    k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()
+}
+
+_THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
+
 
 
 class _config(param.Parameterized):
@@ -60,6 +85,29 @@ class _config(param.Parameterized):
                 fname: Filter.from_spec(filter_spec, schema)
                 for fname, filter_spec in filter_specs.items()
             }
+
+    def load_local_modules(self, root):
+        """
+        Loads local modules containing custom components and templates.
+
+        Arguments
+        ---------
+        root: str
+            The root directory the dashboard is being served from.
+        """
+        modules = {}
+        for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
+            path = os.path.join(root, imp+'.py')
+            if not os.path.isfile(path):
+                continue
+            spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
+            modules[imp] = module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        templates = param.concrete_descendents(BasicTemplate)
+        _TEMPLATES.update({
+            k[:-8].lower(): v for k, v in templates.items()
+        })
+        return modules
 
     @property
     def dev(self):
