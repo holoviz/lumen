@@ -7,9 +7,9 @@ from itertools import product
 import param
 import panel as pn
 
+from .config import _LAYOUTS
 from .filters import Filter, FacetFilter, ParamFilter
 from .sources import Source
-from .util import _LAYOUTS
 from .views import View
 
 

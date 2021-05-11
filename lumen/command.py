@@ -44,6 +44,7 @@ class YamlHandler(CodeHandler):
         warm = any(flag in sys.argv for flag in ('--dev', '--autoreload', '--warm'))
         Defaults.from_spec(spec.get('defaults', {})).apply()
         if warm:
+            config.load_local_modules(root)
             sources = spec.get('sources', {})
             config.load_global_sources(sources, root, clear_cache=not config.dev)
 

@@ -18,10 +18,11 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
 )
 from panel.param import Param
+
+from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..sources import Source
 from ..transforms import Transform
-from ..util import _INDICATORS
 
 
 class View(param.Parameterized):

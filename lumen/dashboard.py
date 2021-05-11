@@ -10,12 +10,12 @@ import panel as pn
 
 from panel.template.base import BasicTemplate
 
-from .config import config
+from .config import config, _LAYOUTS, _TEMPLATES, _THEMES
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .sources import Source, RESTSource # noqa
 from .target import Target
 from .transforms import Transform # noqa
-from .util import _LAYOUTS, _TEMPLATES, _THEMES, expand_spec
+from .util import expand_spec
 from .views import View # noqa
 
 
@@ -173,13 +173,12 @@ class Dashboard(param.Parameterized):
         self._load_global = params.pop('load_global', True)
         self._yaml_file = specification
         self._root = os.path.abspath(os.path.dirname(self._yaml_file))
-        self._modules = {}
         self._filters = {}
         self._edited = False
         super().__init__(**params)
 
         # Initialize from spec
-        self._load_local_modules()
+        self._modules = config.load_local_modules(self._root)
         self._load_specification(from_file=True)
 
         # Initialize high-level settings
@@ -215,19 +214,6 @@ class Dashboard(param.Parameterized):
                 css_classes=['alert', 'alert-danger'], sizing_mode='stretch_width'
             )
             self._main[:] = [alert]
-
-    def _load_local_modules(self):
-        for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
-            path = os.path.join(self._root, imp+'.py')
-            if not os.path.isfile(path):
-                continue
-            spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
-            self._modules[imp] = module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        templates = param.concrete_descendents(BasicTemplate)
-        _TEMPLATES.update({
-            k[:-8].lower(): v for k, v in templates.items()
-        })
 
     def _load_specification(self, from_file=False):
         kwargs = {}
@@ -503,11 +489,11 @@ class Dashboard(param.Parameterized):
             )
         )
 
-    def show(self):
+    def show(self, **kwargs):
         """
         Opens the dashboard in a new window.
         """
-        self._template.show(title=self.config.title)
+        self._template.show(title=self.config.title, **kwargs)
         for target in self.targets:
             target.start()
 
