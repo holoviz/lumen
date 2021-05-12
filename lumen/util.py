@@ -1,4 +1,5 @@
 import datetime as dt
+import importlib
 import re
 import os
 import sys
@@ -182,3 +183,24 @@ def merge_schemas(schema, old_schema):
         merged_min = min(schema['inclusiveMinimum'], old_schema['inclusiveMinimum'])
         merged_max = min(schema['inclusiveMaximum'], old_schema['inclusiveMaximum'])
         return dict(old_schema, inclusiveMinimum=merged_min, inclusiveMaximum=merged_max)
+
+
+def resolve_module_reference(reference, component_type):
+    cls_name = component_type.__name__
+    *modules, ctype = reference.split('.')
+    module = '.'.join(modules)
+    try:
+        module = importlib.import_module(module)
+    except Exception:
+        raise ValueError(f"{cls_name} type '{reference}' module could "
+                         f"not be resolved. Ensure explicit {cls_name} "
+                         "type references a valid module.")
+    if not hasattr(module, ctype):
+        raise ValueError(f"Source type '{reference}' could not be "
+                         f"resolved. Module '{module}' has no member "
+                         f"{ctype}.")
+    component = getattr(module, ctype)
+    if not issubclass(component, component_type):
+        raise ValueError(f"{cls_name} type '{reference}' did not resolve "
+                         "to a {cls_name} subclass.")
+    return component
