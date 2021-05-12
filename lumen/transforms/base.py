@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import param
 
+from ..util import resolve_module_reference
+
 
 class Transform(param.Parameterized):
     """
@@ -21,6 +23,8 @@ class Transform(param.Parameterized):
 
     @classmethod
     def _get_type(cls, transform_type):
+        if '.' in transform_type:
+            return resolve_module_reference(transform_type, Transform)
         try:
             __import__(f'lumen.transforms.{transform_type}')
         except Exception:
