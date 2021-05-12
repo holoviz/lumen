@@ -7,6 +7,7 @@ import param
 import panel as pn
 
 from ..schema import JSONSchema
+from ..util import resolve_module_reference
 
 
 class Filter(param.Parameterized):
@@ -39,6 +40,8 @@ class Filter(param.Parameterized):
 
     @classmethod
     def _get_type(cls, filter_type):
+        if '.' in filter_type:
+            return resolve_module_reference(filter_type, Filter)
         try:
             __import__(f'lumen.filters.{filter_type}')
         except Exception:

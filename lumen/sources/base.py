@@ -17,9 +17,11 @@ import panel as pn
 import param
 import requests
 
-from ..util import get_dataframe_schema, merge_schemas
 from ..filters import Filter
 from ..transforms import Transform
+from ..util import (
+    get_dataframe_schema, merge_schemas, resolve_module_reference
+)
 
 
 def cached(with_query=True):
@@ -95,6 +97,8 @@ class Source(param.Parameterized):
 
     @classmethod
     def _get_type(cls, source_type):
+        if '.' in source_type:
+            return resolve_module_reference(source_type, Source)
         try:
             __import__(f'lumen.sources.{source_type}')
         except Exception:

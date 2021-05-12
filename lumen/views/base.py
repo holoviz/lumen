@@ -23,6 +23,7 @@ from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..sources import Source
 from ..transforms import Transform
+from ..util import resolve_module_reference
 
 
 class View(param.Parameterized):
@@ -118,6 +119,8 @@ class View(param.Parameterized):
         """
         Returns the matching View type.
         """
+        if '.' in view_type:
+            return resolve_module_reference(view_type, View)
         try:
             __import__(f'lumen.views.{view_type}')
         except Exception:
