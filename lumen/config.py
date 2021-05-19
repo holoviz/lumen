@@ -49,7 +49,8 @@ class _config(param.Parameterized):
     yamls = param.List(default=[], doc="""
       List of yaml files currently being served.""")
 
-    def load_global_sources(self, sources, root, clear_cache=True):
+    def load_global_sources(self, sources, root, clear_cache=True,
+                            loading_panel=None):
         """
         Loads global sources shared across all targets.
         """
@@ -73,6 +74,8 @@ class _config(param.Parameterized):
                 reinitialize = params == new_spec
             else:
                 reinitialize = True
+            if loading_panel is not None:
+                loading_panel.object = f'Loading {name} source...'
             if reinitialize:
                 source_spec['name'] = name
                 self.sources[name] = source = Source.from_spec(
