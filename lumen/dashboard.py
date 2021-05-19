@@ -256,9 +256,8 @@ class Dashboard(param.Parameterized):
     def _materialize_specification(self, force=False):
         sources = self._spec.get('sources', {})
         if force or self._load_global or not config.sources:
-            clear_cache = config.sources or config.dev
             config.load_global_sources(
-                sources, self._root, clear_cache=clear_cache,
+                sources, self._root, clear_cache=force,
                 loading_panel=self._loading[0]
             )
         if not self._authorized:
