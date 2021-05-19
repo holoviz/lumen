@@ -257,7 +257,10 @@ class Dashboard(param.Parameterized):
         sources = self._spec.get('sources', {})
         if force or self._load_global or not config.sources:
             clear_cache = config.sources or config.dev
-            config.load_global_sources(sources, self._root, clear_cache=clear_cache)
+            config.load_global_sources(
+                sources, self._root, clear_cache=clear_cache,
+                loading_panel=self._loading[0]
+            )
         if not self._authorized:
             self.targets = []
             return
