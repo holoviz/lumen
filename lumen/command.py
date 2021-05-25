@@ -40,14 +40,13 @@ class YamlHandler(CodeHandler):
         # Initialize cached and shared sources
         with open(filename) as f:
             yaml_spec = f.read()
-        spec = load_yaml(yaml_spec)
+        state.spec = load_yaml(yaml_spec)
         config._root = os.path.abspath(os.path.dirname(filename))
         warm = any(flag in sys.argv for flag in ('--dev', '--autoreload', '--warm'))
         Defaults.from_spec(spec.get('defaults', {})).apply()
         if warm:
             config.load_local_modules()
-            sources = spec.get('sources', {})
-            state.load_global_sources(sources, clear_cache=not config.dev)
+            state.load_global_sources(clear_cache=not config.dev)
 
 
 def build_single_handler_application(path, argv):
