@@ -124,7 +124,6 @@ class Config(param.Parameterized):
         return self.template(**params)
 
 
-
 class Defaults(param.Parameterized):
     """
     Defaults to apply to the component classes.
@@ -149,7 +148,6 @@ class Defaults(param.Parameterized):
                 params = dict(default)
                 obj_type = obj._get_type(params.pop('type', None))
                 obj_type.param.set_param(**params)
-
 
 
 class Dashboard(param.Parameterized):
@@ -340,7 +338,9 @@ class Dashboard(param.Parameterized):
     def _activate_filters(self, event):
         target = self.targets[event.new]
         if target is None:
-            target = self._load_target(state.spec['targets'][event.new])
+            spec = state.spec['targets'][event.new]
+            self._set_loading(spec['title'])
+            target = self._load_target(spec)
             self.targets[event.new] = target
             self._render_filters()
             self._layout[event.new] = target.panels
