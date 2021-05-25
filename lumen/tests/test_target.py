@@ -8,8 +8,9 @@ from lumen.sources import FileSource
 from lumen.target import Target
 
 
-def test_view_controls():
-    source = FileSource(tables={'test': 'sources/test.csv'}, root=str(Path(__file__).parent))
+def test_view_controls(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
     views = {
         'test': {
             'type': 'hvplot', 'table': 'test', 'controls': ['x', 'y'],
