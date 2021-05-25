@@ -13,6 +13,7 @@ from panel.io.server import Application
 from . import __version__
 from .config import config
 from .dashboard import Defaults, load_yaml
+from .state import state
 
 
 class YamlHandler(CodeHandler):
@@ -40,13 +41,13 @@ class YamlHandler(CodeHandler):
         with open(filename) as f:
             yaml_spec = f.read()
         spec = load_yaml(yaml_spec)
-        root = os.path.abspath(os.path.dirname(filename))
+        config._root = os.path.abspath(os.path.dirname(filename))
         warm = any(flag in sys.argv for flag in ('--dev', '--autoreload', '--warm'))
         Defaults.from_spec(spec.get('defaults', {})).apply()
         if warm:
-            config.load_local_modules(root)
+            config.load_local_modules()
             sources = spec.get('sources', {})
-            config.load_global_sources(sources, root, clear_cache=not config.dev)
+            state.load_global_sources(sources, clear_cache=not config.dev)
 
 
 def build_single_handler_application(path, argv):

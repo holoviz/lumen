@@ -13,6 +13,7 @@ from panel.template.base import BasicTemplate
 from .config import config, _LAYOUTS, _TEMPLATES, _THEMES
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .sources import Source, RESTSource # noqa
+from .state import state
 from .target import Target
 from .transforms import Transform # noqa
 from .util import expand_spec
@@ -163,9 +164,6 @@ class Dashboard(param.Parameterized):
     defaults = param.ClassSelector(default=Defaults(), class_=Defaults, doc="""
         Defaults to apply to component classes.""")
 
-    sources = param.Dict(default={}, doc="""
-        A dictionary of Source indexed by name.""")
-
     targets = param.List(default=[], class_=Target, doc="""
         List of targets monitoring some source.""")
 
@@ -173,18 +171,16 @@ class Dashboard(param.Parameterized):
         self._load_global = params.pop('load_global', True)
         self._yaml_file = specification
         self._root = os.path.abspath(os.path.dirname(self._yaml_file))
-        self._filters = {}
         self._edited = False
         super().__init__(**params)
 
         # Initialize from spec
-        self._modules = config.load_local_modules(self._root)
+        self._modules = config.load_local_modules()
         self._load_specification(from_file=True)
 
         # Initialize high-level settings
-        self.auth = self._spec.get('auth', {})
-        self.config = Config.from_spec(self._spec.get('config', {}))
-        self.defaults = Defaults.from_spec(self._spec.get('defaults', {}))
+        self.config = Config.from_spec(state.spec.get('config', {}))
+        self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
         self.defaults.apply()
 
         # Load and populate template
@@ -204,8 +200,8 @@ class Dashboard(param.Parameterized):
     def _render_dashboard(self):
         try:
             self._materialize_specification()
+            self._render()
             self._main[:] = [self._layout]
-            self._rerender()
         except Exception as e:
             self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}') 
             self._main.loading = False
@@ -223,73 +219,35 @@ class Dashboard(param.Parameterized):
                 self._yaml = f.read()
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        self._spec = load_yaml(self._yaml, **kwargs)
-        self._resolve_views()
+        state.spec = load_yaml(self._yaml, **kwargs)
+        state.resolve_views()
 
-    def _resolve_views(self):
-        exts = []
-        for target in self._spec.get('targets', []):
-            views = target.get('views', [])
-            if isinstance(views, dict):
-                views = list(views.values())
-            for view in views:
-                view_type = View._get_type(view.get('type'))
-                if view_type and view_type._extension:
-                    exts.append(view_type._extension)
-        for ext in exts:
-            __import__(pn.extension._imports[ext])
-
-    @property
-    def _authorized(self):
-        if pn.state.user_info is None and self.auth:
-            return config.dev
-        authorized = True
-        for k, value in self.auth.items():
-            if not isinstance(value, list): value = [value]
-            if k in pn.state.user_info:
-                user_value = pn.state.user_info[k]
-                if not isinstance(user_value, list):
-                    user_value = [user_value]
-                authorized &= any(uv == v for v in value for uv in user_value)
-        return authorized
+    def _load_target(self, target_spec):
+        target = Target.from_spec(
+            dict(target_spec), application=self
+        )
+        target.start()
+        return target
 
     def _materialize_specification(self, force=False):
-        sources = self._spec.get('sources', {})
-        if force or self._load_global or not config.sources:
-            config.load_global_sources(
-                sources, self._root, clear_cache=force,
-                loading_panel=self._loading[0]
-            )
-        if not self._authorized:
+        if force or self._load_global or not state.global_sources:
+            state.load_global_sources(clear_cache=force)
+        if not state.authorized:
             self.targets = []
             return
-        for name, source_spec in sources.items():
-            source_spec = dict(source_spec)
-            filter_specs = source_spec.pop('filters', None)
-            self._loading[0].object = f'Loading {name} source...'
-            if name in config.sources:
-                source = config.sources[name]
-            else:
-                source_spec['name'] = name
-                source = Source.from_spec(
-                    source_spec, self.sources, root=self._root
-                )
-            self.sources[name] = source
-            if not filter_specs:
-                continue
-            self._filters[name] = filters = dict(config.filters.get(name, {}))
-            schema = source.get_schema()
-            for fname, filter_spec in filter_specs.items():
-                if fname not in filters:
-                    filters[fname] = Filter.from_spec(filter_spec, schema)
         targets = []
-        target_specs = self._spec.get('targets', [])
+        target_specs = state.spec.get('targets', [])
+        ntargets = len(target_specs)
         for i, target_spec in enumerate(target_specs):
-            self._loading[0].object = f'Loading target {i+1}/{len(target_specs)}...'
-            targets.append(Target.from_spec(
-                dict(target_spec), self.sources, self._filters,
-                self._root, application=self
-            ))
+            if state.loading_msg:
+                state.loading_msg.object = (
+                    f"Loading target {target_spec['title']!r} ({i}/{ntargets})..."
+            )
+            if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
+                item = None
+            else:
+                item = self._load_target(target_spec)
+            targets.append(item)
         self.targets[:] = targets
 
     ##################################################################
@@ -314,7 +272,7 @@ class Dashboard(param.Parameterized):
         self._header.append(self._reload_button)
         if self.config.editable:
             self._header.append(self._edit_button)
-        if 'auth' in self._spec:
+        if 'auth' in state.spec:
             logout = pn.widgets.Button(
                 name='✖', width=40, css_classes=['logout'], margin=0,
                 align='center'
@@ -335,17 +293,15 @@ class Dashboard(param.Parameterized):
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
-        self._loading = pn.Column(
-            pn.pane.HTML(
-                'Loading...', align='center',
-                width=400, style={'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
-            ),
-            sizing_mode='stretch_both'
+        state.loading_msg = pn.pane.HTML(
+            'Loading...', align='center',
+            width=400, style={'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
         )
+        self._loading = pn.Column(state.loading_msg, sizing_mode='stretch_both')
         self._main = pn.Column(
             self._loading, loading=True, sizing_mode='stretch_both'
         )
-        if self.config.layout is pn.Tabs:
+        if isinstance(self._layout, pn.Tabs):
             self._layout.param.watch(self._activate_filters, 'active')
 
     def _create_modal(self):
@@ -382,6 +338,12 @@ class Dashboard(param.Parameterized):
     ##################################################################
 
     def _activate_filters(self, event):
+        target = self.targets[event.new]
+        if target is None:
+            target = self._load_target(state.spec['targets'][event.new])
+            self.targets[event.new] = target
+            self._render_filters()
+            self._layout[event.new] = target.panels
         if self._global_filters:
             active = [0, event.new+1]
         else:
@@ -396,7 +358,7 @@ class Dashboard(param.Parameterized):
         pn.state.location.pathname = f'/{event.new}'
         pn.state.location.reload = True
 
-    def _loading(self, name=''):
+    def _set_loading(self, name=''):
         loading = pn.Column(
             pn.indicators.LoadingSpinner(value=True, align='center'),
             f'**Reloading {name}...**'
@@ -428,8 +390,11 @@ class Dashboard(param.Parameterized):
         views = []
         filters = []
         for target in self.targets:
+            if target is None:
+                continue
             for filt in target.filters:
-                if ((all(filt in target.filters for target in self.targets) and
+                if ((all(target is None or filt in target.filters
+                         for target in self.targets) and
                     filt.panel is not None) or filt.shared) and filt not in filters:
                     views.append(filt.panel)
                     filters.append(filt)
@@ -437,47 +402,67 @@ class Dashboard(param.Parameterized):
             return None, None
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
 
-    def _rerender(self):
-        if self._authorized:
-            self._global_filters, global_panel = self._get_global_filters()
-            filters = [] if global_panel is None else [global_panel]
-            for target in self.targets:
+    def _render_filters(self):
+        self._global_filters, global_panel = self._get_global_filters()
+        filters = [] if global_panel is None else [global_panel]
+        for i, target in enumerate(self.targets):
+            if target is None:
+                spec = state.spec['targets'][i]
+                panel = pn.Column(name=spec['title'])
+            else:
                 panel = target.get_filter_panel(skip=self._global_filters)
-                if panel is not None:
-                    filters.append(panel)
-            self._sidebar[:] = filters
-            self._sidebar.active = [0, 1] if self._global_filters else [0]
-            self._layout[:] = [target.panels for target in self.targets]
+            if panel is not None:
+                filters.append(panel)
+        self._sidebar[:] = filters
+        self._sidebar.active = [0, 1] if self._global_filters else [0]
+
+    def _render_targets(self):
+        items = []
+        for target, spec in zip(self.targets, state.spec['targets']):
+            if target is None:
+                panel = pn.Column(name=spec['title'])
+            else:
+                panel = target.panels
+            items.append(panel)
+        self._layout[:] = items
+
+    def _render_unauthorized(self):
+        auth_keys = list(state.spec.get('auth'))
+        if len(auth_keys) == 1:
+            auth_keys = repr(auth_keys[0])
         else:
-            auth_keys = list(self.auth)
-            if len(auth_keys) == 1:
-                auth_keys = repr(auth_keys[0])
-            else:
-                auth_keys = [repr(k) for k in auth_keys]
-            if pn.state.user_info is None:
-                error = """
-                ## Authorization Error
+            auth_keys = [repr(k) for k in auth_keys]
+        if pn.state.user_info is None:
+            error = """
+            ## Authorization Error
 
-                Cannot verify permissioning since OAuth is not enabled.
-                """
-            else:
-                error = f"""
-                ## Unauthorized User
+            Cannot verify permissioning since OAuth is not enabled.
+            """
+        else:
+            error = f"""
+            ## Unauthorized User
 
-                {pn.state.user} is not authorized. Ensure {pn.state.user}
-                is permissioned correctly on the {auth_keys} field(s) in
-                OAuth user data.
-                """
-            alert = pn.pane.Alert(error, alert_type='danger')
-            if isinstance(self._layout, pn.Tabs):
-                alert = ('Authorization Denied', alert)
-            self._layout[:] = [alert]
+            {pn.state.user} is not authorized. Ensure {pn.state.user}
+            is permissioned correctly on the {auth_keys} field(s) in
+            OAuth user data.
+            """
+        alert = pn.pane.Alert(error, alert_type='danger')
+        if isinstance(self._layout, pn.Tabs):
+            alert = ('Authorization Denied', alert)
+        self._layout[:] = [alert]
+
+    def _render(self):
+        if state.authorized:
+            self._render_filters()
+            self._render_targets()
+        else:
+            self._render_unauthorized()
         self._main.loading = False
 
     def _reload(self, *events):
         self._load_specification()
         self._materialize_specification(force=True)
-        self._rerender()
+        self._render()
 
     ##################################################################
     # Public API
@@ -509,13 +494,9 @@ class Dashboard(param.Parameterized):
         Opens the dashboard in a new window.
         """
         self._template.show(title=self.config.title, **kwargs)
-        for target in self.targets:
-            target.start()
 
     def servable(self):
         """
         Marks the dashboard for serving with `panel serve`.
         """
         self._template.servable(title=self.config.title)
-        for target in self.targets:
-            target.start()
