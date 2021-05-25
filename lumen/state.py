@@ -16,11 +16,13 @@ class _session_state:
 
     global_filters = {}
 
-    _loading = WeakKeyDictionary()
+    spec = {}
 
-    _sources = WeakKeyDictionary()
+    _loading = WeakKeyDictionary() if pn.state.curdoc else {}
 
-    _filters = WeakKeyDictionary()
+    _sources = WeakKeyDictionary() if pn.state.curdoc else {}
+
+    _filters = WeakKeyDictionary() if pn.state.curdoc else {}
 
     @property
     def filters(self):

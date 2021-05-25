@@ -3,15 +3,16 @@ import os
 import pandas as pd
 
 from lumen.sources.base import FileSource, DerivedSource
+from lumen.state import state
 
 
-def test_derived_mirror_source():
+def test_derived_mirror_source(make_filesource):
     root = os.path.dirname(__file__)
-    original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
+    original = make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'source': 'original',
-    }, sources={'original': original})
+    })
 
     assert derived.get_tables() == ['test']
     df = pd._testing.makeMixedDataFrame()
@@ -19,14 +20,14 @@ def test_derived_mirror_source():
     assert original.get_schema() == derived.get_schema()
 
 
-def test_derived_mirror_source_transforms():
+def test_derived_mirror_source_transforms(make_filesource):
     root = os.path.dirname(__file__)
-    original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
+    original = make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'source': 'original',
         'transforms': [{'type': 'iloc', 'end': 3}]
-    }, sources={'original': original})
+    })
 
     assert derived.get_tables() == ['test']
     df = pd._testing.makeMixedDataFrame().iloc[:3]
@@ -44,14 +45,14 @@ def test_derived_mirror_source_transforms():
     }
 
 
-def test_derived_mirror_source_filters():
+def test_derived_mirror_source_filters(make_filesource):
     root = os.path.dirname(__file__)
-    original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
+    original = make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'source': 'original',
         'filters': [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]
-    }, sources={'original': original})
+    })
 
     assert derived.get_tables() == ['test']
     df = pd._testing.makeMixedDataFrame().iloc[:3]
@@ -69,13 +70,13 @@ def test_derived_mirror_source_filters():
     }
 
 
-def test_derived_tables_source():
+def test_derived_tables_source(make_filesource):
     root = os.path.dirname(__file__)
-    original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
+    original = make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'tables': {'derived': {'source': 'original', 'table': 'test'}}
-    }, sources={'original': original})
+    })
 
     assert derived.get_tables() == ['derived']
     df = pd._testing.makeMixedDataFrame()
@@ -83,9 +84,9 @@ def test_derived_tables_source():
     assert original.get_schema('test') == derived.get_schema('derived')
 
 
-def test_derived_tables_source_transforms():
+def test_derived_tables_source_transforms(make_filesource):
     root = os.path.dirname(__file__)
-    original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
+    original = make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'tables': {
@@ -95,7 +96,7 @@ def test_derived_tables_source_transforms():
                 'transforms': [{'type': 'iloc', 'end': 3}]
             }
         }
-    }, sources={'original': original})
+    })
 
     assert derived.get_tables() == ['derived']
     df = pd._testing.makeMixedDataFrame().iloc[:3]
@@ -113,9 +114,9 @@ def test_derived_tables_source_transforms():
     }
 
 
-def test_derived_tables_source_filters():
+def test_derived_tables_source_filters(make_filesource):
     root = os.path.dirname(__file__)
-    original = FileSource(tables={'test': 'test.csv'}, root=root, kwargs={'parse_dates': ['D']})
+    original = make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'tables': {
@@ -125,7 +126,7 @@ def test_derived_tables_source_filters():
                 'filters': [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]
             }
         }
-    }, sources={'original': original})
+    })
 
     assert derived.get_tables() == ['derived']
     df = pd._testing.makeMixedDataFrame().iloc[:3]
