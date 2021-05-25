@@ -40,7 +40,7 @@ class YamlHandler(CodeHandler):
         # Initialize cached and shared sources
         with open(filename) as f:
             yaml_spec = f.read()
-        state.spec = load_yaml(yaml_spec)
+        state.spec = spec = load_yaml(yaml_spec)
         config._root = os.path.abspath(os.path.dirname(filename))
         warm = any(flag in sys.argv for flag in ('--dev', '--autoreload', '--warm'))
         Defaults.from_spec(spec.get('defaults', {})).apply()
