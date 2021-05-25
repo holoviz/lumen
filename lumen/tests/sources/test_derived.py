@@ -2,8 +2,7 @@ import os
 
 import pandas as pd
 
-from lumen.sources.base import FileSource, DerivedSource
-from lumen.state import state
+from lumen.sources.base import DerivedSource
 
 
 def test_derived_mirror_source(make_filesource):
@@ -22,7 +21,7 @@ def test_derived_mirror_source(make_filesource):
 
 def test_derived_mirror_source_transforms(make_filesource):
     root = os.path.dirname(__file__)
-    original = make_filesource(root)
+    make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'source': 'original',
@@ -47,7 +46,7 @@ def test_derived_mirror_source_transforms(make_filesource):
 
 def test_derived_mirror_source_filters(make_filesource):
     root = os.path.dirname(__file__)
-    original = make_filesource(root)
+    make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'source': 'original',
@@ -86,7 +85,7 @@ def test_derived_tables_source(make_filesource):
 
 def test_derived_tables_source_transforms(make_filesource):
     root = os.path.dirname(__file__)
-    original = make_filesource(root)
+    make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'tables': {
@@ -116,7 +115,7 @@ def test_derived_tables_source_transforms(make_filesource):
 
 def test_derived_tables_source_filters(make_filesource):
     root = os.path.dirname(__file__)
-    original = make_filesource(root)
+    make_filesource(root)
     derived = DerivedSource.from_spec({
         'type': 'derived',
         'tables': {

@@ -1,7 +1,6 @@
 import pathlib
 
 from lumen.dashboard import Dashboard
-from lumen.state import state
 from lumen.views import View
 
 def test_dashboard_with_local_view(set_root):
