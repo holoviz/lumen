@@ -189,7 +189,7 @@ class Source(param.Parameterized):
                 for source in spec.pop('sources')
             }
         if 'source' in source_type.param and 'source' in spec:
-            resolved_spec['source'] = cls.from_spec(spec.pop('source'), sources)
+            resolved_spec['source'] = cls.from_spec(spec.pop('source'))
         for k, v in spec.items():
             if isinstance(v, str) and v.startswith('@'):
                 v = cls._resolve_reference(v)

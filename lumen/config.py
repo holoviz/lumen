@@ -9,9 +9,6 @@ from panel.widgets.indicators import Indicator
 from panel.template.base import BasicTemplate
 from panel.template import DefaultTheme, DarkTheme
 
-from .filters import Filter
-from .sources import Source
-
 
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
 
