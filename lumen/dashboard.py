@@ -377,7 +377,8 @@ class Dashboard(param.Parameterized):
             if name and tab_name != name:
                 return
             items[self._layout.active] = pn.Row(
-                pn.layout.HSpacer(), loading, pn.layout.HSpacer()
+                pn.layout.HSpacer(), loading, pn.layout.HSpacer(),
+                name=tab_name
             )
         else:
             items = [pn.Row(pn.layout.HSpacer(), loading, pn.layout.HSpacer())]

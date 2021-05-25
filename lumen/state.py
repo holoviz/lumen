@@ -2,6 +2,8 @@ from weakref import WeakKeyDictionary
 
 import panel as pn
 
+from .config import config
+
 
 class _session_state:
     """
