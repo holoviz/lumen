@@ -18,6 +18,7 @@ import param
 import requests
 
 from ..filters import Filter
+from ..state import state
 from ..transforms import Transform
 from ..util import (
     get_dataframe_schema, merge_schemas, resolve_module_reference
@@ -155,7 +156,7 @@ class Source(param.Parameterized):
         return df
 
     @classmethod
-    def _resolve_reference(cls, reference, sources={}):
+    def _resolve_reference(cls, reference):
         refs = reference[1:].split('.')
         if len(refs) == 3:
             sourceref, table, field = refs
@@ -164,7 +165,7 @@ class Source(param.Parameterized):
         elif len(refs) == 1:
             (sourceref,) = refs
 
-        source = cls.from_spec(sourceref, sources)
+        source = cls.from_spec(sourceref)
         if len(refs) == 1:
             return source
         if len(refs) == 2:
@@ -180,20 +181,20 @@ class Source(param.Parameterized):
         return field_schema['enum']
 
     @classmethod
-    def _recursive_resolve(cls, spec, sources, source_type):
+    def _recursive_resolve(cls, spec, source_type):
         resolved_spec = {}
         if 'sources' in source_type.param and 'sources' in spec:
             resolved_spec['sources'] = {
-                source: cls.from_spec(source, sources)
+                source: cls.from_spec(source)
                 for source in spec.pop('sources')
             }
         if 'source' in source_type.param and 'source' in spec:
-            resolved_spec['source'] = cls.from_spec(spec.pop('source'), sources)
+            resolved_spec['source'] = cls.from_spec(spec.pop('source'))
         for k, v in spec.items():
             if isinstance(v, str) and v.startswith('@'):
-                v = cls._resolve_reference(v, sources)
+                v = cls._resolve_reference(v)
             elif isinstance(v, dict):
-                v = cls._recursive_resolve(v, sources, source_type)
+                v = cls._recursive_resolve(v, source_type)
             if k == 'filters' and 'source' in resolved_spec:
                 source_schema = resolved_spec['source'].get_schema()
                 v = [Filter.from_spec(fspec, source_schema) for fspec in v]
@@ -203,7 +204,7 @@ class Source(param.Parameterized):
         return resolved_spec
 
     @classmethod
-    def from_spec(cls, spec, sources={}, root=None):
+    def from_spec(cls, spec):
         """
         Creates a Source object from a specification. If a Source
         specification references other sources these may be supplied
@@ -214,36 +215,30 @@ class Source(param.Parameterized):
         spec : dict or str
             Specification declared as a dictionary of parameter values
             or a string referencing a source in the sources dictionary.
-        sources: dict
-            Dictionary of other Source objects
-        root: str
-            Root directory where dashboard specification was loaded
-            from.
 
         Returns
         -------
         Resolved and instantiated Source object
         """
-        from .. import config
         if spec is None:
             raise ValueError('Source specification empty.')
         elif isinstance(spec, str):
-            if spec in sources:
-                source = sources[spec]
-            elif spec in config.sources and config.sources[spec].shared:
-                source = config.sources[spec]
+            if spec in state.sources:
+                source = state.sources[spec]
+            elif spec in state.spec.get('sources', {}):
+                source = state.load_source(spec, state.spec['sources'][spec])
             else:
                 raise ValueError(f"Source with name '{spec}' was not found.")
             return source
 
         spec = dict(spec)
         source_type = Source._get_type(spec.pop('type'))
-        resolved_spec = cls._recursive_resolve(dict(spec), sources, source_type)
-        resolved_spec['root'] = root
+        resolved_spec = cls._recursive_resolve(dict(spec), source_type)
         return source_type(**resolved_spec)
 
     def __init__(self, **params):
-        self.root = params.pop('root', None)
+        from ..config import config
+        self.root = params.pop('root', config.root)
         super().__init__(**params)
         self._cache = {}
         self._schema_cache = {}

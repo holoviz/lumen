@@ -10,6 +10,7 @@ import panel as pn
 from .config import _LAYOUTS
 from .filters import Filter, FacetFilter, ParamFilter
 from .sources import Source
+from .state import state
 from .views import View
 
 
@@ -428,7 +429,7 @@ class Target(param.Parameterized):
         )
         if update_views and (has_updates or rerender):
             if self._updates:
-                self._application._loading(self.title)
+                self._application._set_loading(self.title)
                 for card, views in self._updates.items():
                     card[0][:] = [view.panel for view in views]
                 self._updates = {}
@@ -446,22 +447,15 @@ class Target(param.Parameterized):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec, sources={}, filters={}, root=None, **kwargs):
+    def from_spec(cls, spec, **kwargs):
         """
         Creates a Target object from a specification. If a Target
-        specification references an existing Source or Filter by name
-        these may be supplied in the sources and filters dictionaries.
+        specification references an existing Source or Filter by name.
 
         Parameters
         ----------
         spec : dict
             Specification declared as a dictionary of parameter values.
-        sources: dict
-            Dictionary of Source objects
-        filters: dict
-            Dictionary of Filter objects
-        root: str
-            Root directory where dashboard specification was loaded from.
         kwargs: dict
             Additional kwargs to pass to the Target
 
@@ -472,13 +466,13 @@ class Target(param.Parameterized):
         # Resolve source
         spec = dict(spec)
         source_spec = spec.pop('source', None)
-        source = Source.from_spec(source_spec, sources, root=root)
+        source = Source.from_spec(source_spec)
         schema = source.get_schema()
 
         # Resolve filters
         filter_specs = spec.pop('filters', [])
         if isinstance(source_spec, str):
-            source_filters = filters.get(source_spec)
+            source_filters = state.filters.get(source_spec)
         else:
             source_filters = None
         filters = [
