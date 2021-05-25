@@ -27,7 +27,10 @@ extras_require = {
         'flake8',
         'intake',
         'msgpack-python',
-        'toolz'
+        'toolz',
+        'twine',
+        'rfc3986',
+        'keyring'
     ],
     'doc': [
         'sphinx',
