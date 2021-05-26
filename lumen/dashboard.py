@@ -71,6 +71,9 @@ class Config(param.Parameterized):
     ncols = param.Integer(default=3, bounds=(1, None), doc="""
         Number of columns to lay out targets in.""")
 
+    reloadable = param.Boolean(default=True, doc="""
+        Whether to allow reloading data from source(s) using a button.""")
+
     title = param.String(default="Lumen Dashboard", doc="""
         The title of the dashboard.""")
 
@@ -221,9 +224,10 @@ class Dashboard(param.Parameterized):
         state.resolve_views()
 
     def _load_target(self, target_spec):
-        target = Target.from_spec(
-            dict(target_spec), application=self
-        )
+        target_spec = dict(target_spec)
+        if 'reloadable' not in target_spec:
+            target_spec['reloadable'] = self.config.reloadable
+        target = Target.from_spec(target_spec, application=self)
         target.start()
         return target
 
@@ -267,7 +271,8 @@ class Dashboard(param.Parameterized):
         self._menu_button.on_click(self._navigate)
         if len(config.yamls) > 1:
             self._header.append(self._menu_button)
-        self._header.append(self._reload_button)
+        if self.config.reloadable:
+            self._header.append(self._reload_button)
         if self.config.editable:
             self._header.append(self._edit_button)
         if 'auth' in state.spec:

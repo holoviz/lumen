@@ -1,5 +1,6 @@
 config:
   title: Altair Seattle Weather
+  reloadable: false
 sources:
   seattle:
     type: file

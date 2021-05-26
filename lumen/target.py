@@ -216,6 +216,9 @@ class Target(param.Parameterized):
         a Column of one row containing views 0 and 1 and a second Row
         containing view 2.""" )
 
+    reloadable = param.Boolean(default=True, doc="""
+        Whether to allow reloading data target's source using a button.""")
+
     title = param.String(doc="A title for this Target.")
 
     refresh_rate = param.Integer(default=None, doc="""
@@ -355,25 +358,28 @@ class Target(param.Parameterized):
         if filters:
             views.append(pn.pane.Markdown('### Filters', margin=(0, 5, -10, 5)))
             views.extend(filters)
-            views.append(pn.layout.Divider())
         if self.facet.param.sort.objects:
+            views.append(pn.layout.Divider())
             views.extend([
                 pn.pane.Markdown('### Sort', margin=(0, 5, -10, 5)),
                 self.facet._sort_widget,
                 self.facet._reverse_widget
             ])
-            views.append(pn.layout.Divider())
         views.append(self._view_controls)
-        self._reload_button = pn.widgets.Button(
-            name='↻', width=50, css_classes=['reload'], margin=0
-        )
-        self._reload_button.on_click(self.update)
-        self._timestamp = pn.pane.HTML(
-            f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
-            align='end', margin=10, sizing_mode='stretch_width'
-        )
-        reload_panel = pn.Row(self._reload_button, self._timestamp, sizing_mode='stretch_width')
-        views.append(reload_panel)
+        if self.reloadable:
+            views.append(pn.layout.Divider())
+            self._reload_button = pn.widgets.Button(
+                name='↻', width=50, css_classes=['reload'], margin=0
+            )
+            self._reload_button.on_click(self.update)
+            self._timestamp = pn.pane.HTML(
+                f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
+                align='end', margin=10, sizing_mode='stretch_width'
+            )
+            reload_panel = pn.Row(
+                self._reload_button, self._timestamp, sizing_mode='stretch_width'
+            )
+            views.append(reload_panel)
         return pn.Column(*views, name=self.title, sizing_mode='stretch_width')
 
     ##################################################################
