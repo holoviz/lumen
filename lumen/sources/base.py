@@ -110,6 +110,18 @@ class Source(param.Parameterized):
         raise ValueError(f"No Source for source_type '{source_type}' could be found.")
 
     @classmethod
+    def _range_filter(cls, column, start, end):
+        if start is None and end is None:
+            return None
+        elif start is None:
+            mask = column<=end
+        elif end is None:
+            mask = column>=start
+        else:
+            mask = (column>=start) & (column<=end)
+        return mask
+
+    @classmethod
     def _filter_dataframe(cls, df, **query):
         """
         Filter the DataFrame.
@@ -133,21 +145,20 @@ class Source(param.Parameterized):
             column = df[k]
             if np.isscalar(val):
                 mask = column == val
+            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
+                for v in val:
+                    mask = cls._range_filter(column, *v)
+                    if mask is not None:
+                        filters.append(mask)
+                continue
             elif isinstance(val, list):
                 if not val:
                     continue
                 mask = column.isin(val)
             elif isinstance(val, tuple):
-                start, end = val
-                if start is None and end is None:
-                    continue
-                elif start is None:
-                    mask = column<=end
-                elif end is None:
-                    mask = column>=start
-                else:
-                    mask = (column>=start) & (column<=end)
-            filters.append(mask)
+                mask = cls._range_filter(column, *val)
+            if mask is not None:
+                filters.append(mask)
         if filters:
             mask = filters[0]
             for f in filters:
