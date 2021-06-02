@@ -20,6 +20,11 @@ _LAYOUTS = {
     'tabs'     : pn.Tabs
 }
 
+try:
+    _DEFAULT_LAYOUT = _LAYOUTS['flex'] = pn.FlexBox
+except Exception:
+    _DEFAULT_LAYOUT = pn.GridBox
+
 _TEMPLATES = {
     k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()
 }

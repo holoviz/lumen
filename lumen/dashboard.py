@@ -10,7 +10,7 @@ import panel as pn
 
 from panel.template.base import BasicTemplate
 
-from .config import config, _LAYOUTS, _TEMPLATES, _THEMES
+from .config import config, _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .sources import Source, RESTSource # noqa
 from .state import state
@@ -55,7 +55,7 @@ class Config(param.Parameterized):
         Whether the dashboard specification is editable from within
         the deployed dashboard.""")
 
-    layout = param.Selector(default=_LAYOUTS['grid'], objects=_LAYOUTS, doc="""
+    layout = param.Selector(default=_DEFAULT_LAYOUT, objects=_LAYOUTS, doc="""
         Overall layout of the dashboard.""")
 
     loading_spinner = param.Selector(default='dots', objects=[
