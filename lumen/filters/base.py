@@ -210,14 +210,66 @@ class WidgetFilter(Filter):
         return widget
 
 
+class BinFilter(Filter):
+    """
+    The BinFilter allows declaring a set of bins as a list of tuples
+    and an optional set of labels of the same length.
+    """
+
+    bins = param.List(default=[], constant=True, doc="""
+        A list of bins expressed as length two tuples.""")
+
+    default = param.Parameter(doc="""
+        The default value to use on the widget.""")
+
+    empty_select = param.Boolean(default=True, doc="""
+        Add an option to Select widgets to indicate no filtering.""")
+
+    labels = param.List(default=None, constant=True, doc="""
+        A list of labels for each bin (optional).""")
+
+    multi = param.Boolean(default=True, doc="""
+        Whether to use a single-value or multi-value selection widget.""")
+
+    filter_type = 'bins'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.multi:
+            widget = pn.widgets.MultiSelect
+        else:
+            widget = pn.widgets.Select
+        if self.labels:
+            options = dict(zip(self.labels, self.bins))
+        else:
+            options = {f'{l}-{u}': (l, u) for l, u in self.bins}
+        options[' '] = None
+        if self.default is None:
+            value = [] if self.multi else None
+        else:
+            value = tuple(self.default)
+        self.widget = widget(name=self.label, options=options, value=value)
+        self.widget.link(self, value='value')
+
+    @property
+    def query(self):
+        return self.widget.value
+
+    @property
+    def panel(self):
+        widget = self.widget.clone()
+        self.widget.link(widget, value='value', bidirectional=True)
+        return widget
+
+
 class ParamFilter(Filter):
 
     parameter = param.ClassSelector(default=None, class_=(param.Parameter, str), doc="""
         Reference to a Parameter on an existing View.""")
 
-    _requires_field = False
-
     filter_type = 'param'
+
+    _requires_field = False
 
     def __init__(self, **params):
         super().__init__(**params)
