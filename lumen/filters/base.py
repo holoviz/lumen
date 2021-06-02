@@ -277,7 +277,6 @@ class DateFilter(BaseWidgetFilter):
         start = pd.to_datetime(field_schema.get('inclusiveMinimum', None))
         end = pd.to_datetime(field_schema.get('inclusiveMaximum', None))
         kwargs = {'name': self.label, 'start': start, 'end': end}
-        print(kwargs, self.schema)
         if self.default is not None:
             kwargs['value'] = pd.to_datetime(self.default)
         self.widget = widget(**kwargs)
