@@ -359,22 +359,25 @@ class Target(param.Parameterized):
             views.append(pn.pane.Markdown('### Filters', margin=(0, 5, -10, 5)))
             views.extend(filters)
         if self.facet.param.sort.objects:
-            views.append(pn.layout.Divider())
+            views.append(pn.layout.Divider(margin=0, height=5))
             views.extend([
                 pn.pane.Markdown('### Sort', margin=(0, 5, -10, 5)),
                 self.facet._sort_widget,
                 self.facet._reverse_widget
             ])
-        views.append(self._view_controls)
+        if self._view_controls:
+            views.append(self._view_controls)
         if self.reloadable:
-            views.append(pn.layout.Divider())
+            if views:
+                views.append(pn.layout.Divider(margin=0, height=5))
             self._reload_button = pn.widgets.Button(
-                name='↻', width=50, css_classes=['reload'], margin=0
+                name='\u21bb', width=50, height=40, css_classes=['reload', 'tab'],
+                margin=0
             )
             self._reload_button.on_click(self.update)
             self._timestamp = pn.pane.HTML(
                 f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
-                align='end', margin=10, sizing_mode='stretch_width'
+                align='center', margin=(10, 0), sizing_mode='stretch_width'
             )
             reload_panel = pn.Row(
                 self._reload_button, self._timestamp, sizing_mode='stretch_width'
