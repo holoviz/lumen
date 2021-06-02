@@ -545,7 +545,10 @@ class Target(param.Parameterized):
         """
         Returns a layout of the rendered View objects on this target.
         """
-        default = 'grid' if len(self._cards) > 1 else 'column'
+        if len(self._cards) > 1:
+            default = 'flex' if 'flex' in _LAYOUTS else 'grid'
+        else:
+            default = 'column'
         layout = self.facet.layout or default
         kwargs = dict(name=self.title, sizing_mode='stretch_width')
         if isinstance(layout, dict):
