@@ -445,7 +445,7 @@ class Target(param.Parameterized):
                         view._panel.param.set_param(**view._updates)
                         view._updates = None
         if self._stale or (update_views and rerender):
-            self._application._rerender()
+            self._application._render()
             self._stale = False
 
     ##################################################################
