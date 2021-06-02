@@ -555,7 +555,17 @@ class Target(param.Parameterized):
         layout_type = _LAYOUTS[layout]
         if layout == 'grid' and 'ncols' not in kwargs:
             kwargs['ncols'] = 3
-        return layout_type(*self._cards, **kwargs)
+        if self._cards:
+            content = self._cards
+        else:
+            content = (
+                pn.pane.Alert(
+                    '**All views are empty since no data is available. '
+                    'Try relaxing the filter constraints.**',
+                    sizing_mode='stretch_width'
+                ),
+            )
+        return layout_type(*content, **kwargs)
 
     @pn.depends('refresh_rate', watch=True)
     def start(self, event=None):
