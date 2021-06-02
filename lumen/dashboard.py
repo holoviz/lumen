@@ -38,6 +38,9 @@ pn.config.raw_css.append("""
 .reload .bk-btn:hover, .logout .bk-btn:hover {
   background: transparent;
 }
+.bk-root .bk.reload.tab .bk-btn-group > .bk-btn {
+  padding-bottom: 45px;
+}
 """)
 
 
@@ -259,7 +262,7 @@ class Dashboard(param.Parameterized):
     def _create_header(self):
         self._header = pn.Row()
         self._reload_button = pn.widgets.Button(
-            name='↻', width=50, css_classes=['reload'], margin=0,
+            name='\u21bb', width=50, css_classes=['reload'], margin=0,
             align='center'
         )
         self._reload_button.on_click(self._reload)
