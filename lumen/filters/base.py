@@ -3,8 +3,9 @@ The Filter components supply query parameters used to filter the
 tables returned by a Source.
 """
 
-import param
+import pandas as pd
 import panel as pn
+import param
 
 from ..schema import JSONSchema
 from ..util import resolve_module_reference
@@ -156,15 +157,27 @@ class FacetFilter(Filter):
         ]
 
 
-class WidgetFilter(Filter):
+class BaseWidgetFilter(Filter):
+
+    default = param.Parameter(doc="""
+        The default value to use on the widget.""")
+
+    __abstract__ = True
+
+    @property
+    def panel(self):
+        widget = self.widget.clone()
+        self.widget.link(widget, value='value', bidirectional=True)
+        return widget
+
+
+
+class WidgetFilter(BaseWidgetFilter):
     """
     The WidgetFilter generates a Widget from the table schema provided
     by a Source and returns the current widget value to query the data
     returned by the Source.
     """
-
-    default = param.Parameter(doc="""
-        The default value to use on the widget.""")
 
     empty_select = param.Boolean(default=True, doc="""
         Add an option to Select widgets to indicate no filtering.""")
@@ -203,14 +216,8 @@ class WidgetFilter(Filter):
                 return self.widget.value
             return value
 
-    @property
-    def panel(self):
-        widget = self.widget.clone()
-        self.widget.link(widget, value='value', bidirectional=True)
-        return widget
 
-
-class BinFilter(Filter):
+class BinFilter(BaseWidgetFilter):
     """
     The BinFilter allows declaring a set of bins as a list of tuples
     and an optional set of labels of the same length.
@@ -218,9 +225,6 @@ class BinFilter(Filter):
 
     bins = param.List(default=[], constant=True, doc="""
         A list of bins expressed as length two tuples.""")
-
-    default = param.Parameter(doc="""
-        The default value to use on the widget.""")
 
     empty_select = param.Boolean(default=True, doc="""
         Add an option to Select widgets to indicate no filtering.""")
@@ -255,11 +259,33 @@ class BinFilter(Filter):
     def query(self):
         return self.widget.value
 
+
+class DateFilter(BaseWidgetFilter):
+
+    mode = param.Selector(default='slider', objects=['slider', 'picker'], doc="""
+        Whether to use a slider or a picker.""")
+
+    filter_type = 'date'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.mode == 'slider':
+            widget = pn.widgets.DateRangeSlider
+        else:
+            widget = pn.widget.DatePicker
+        field_schema = self.schema.get(self.field, {})
+        start = pd.to_datetime(field_schema.get('inclusiveMinimum', None))
+        end = pd.to_datetime(field_schema.get('inclusiveMaximum', None))
+        kwargs = {'name': self.label, 'start': start, 'end': end}
+        print(kwargs, self.schema)
+        if self.default is not None:
+            kwargs['value'] = pd.to_datetime(self.default)
+        self.widget = widget(**kwargs)
+        self.widget.link(self, value='value')
+    
     @property
-    def panel(self):
-        widget = self.widget.clone()
-        self.widget.link(widget, value='value', bidirectional=True)
-        return widget
+    def query(self):
+        return self.widget.value
 
 
 class ParamFilter(Filter):
