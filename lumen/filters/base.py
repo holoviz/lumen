@@ -246,7 +246,7 @@ class BinFilter(BaseWidgetFilter):
         if self.labels:
             options = dict(zip(self.labels, self.bins))
         else:
-            options = {f'{l}-{u}': (l, u) for l, u in self.bins}
+            options = {f'{l} - {u}': (l, u) for l, u in self.bins}
         options[' '] = None
         if self.default is None:
             value = [] if self.multi else None
@@ -265,6 +265,9 @@ class DateFilter(BaseWidgetFilter):
     mode = param.Selector(default='slider', objects=['slider', 'picker'], doc="""
         Whether to use a slider or a picker.""")
 
+    throttled = param.Boolean(default=True, doc="""
+        Whether to throttle slider value changes.""")
+
     filter_type = 'date'
 
     def __init__(self, **params):
@@ -281,7 +284,17 @@ class DateFilter(BaseWidgetFilter):
             kwargs['value'] = pd.to_datetime(self.default)
         self.widget = widget(**kwargs)
         self.widget.link(self, value='value')
-    
+
+    @property
+    def panel(self):
+        widget = self.widget.clone()
+        if self.throttled and self.mode == 'slider':
+            self.widget.link(widget, value='value')
+            widget.link(self.widget, value_throttled='value')
+        else:
+            self.widget.link(widget, value='value', bidirectional=True)
+        return widget
+
     @property
     def query(self):
         return self.widget.value
