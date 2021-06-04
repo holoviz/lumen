@@ -147,6 +147,8 @@ class Source(param.Parameterized):
                 mask = column == val
             elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
                 val = [v for v in val if v is not None]
+                if not val:
+                    continue
                 mask = cls._range_filter(column, *val[0])
                 for v in val[1:]:
                     mask |= cls._range_filter(column, *val[0])
