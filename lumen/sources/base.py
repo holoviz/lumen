@@ -146,10 +146,14 @@ class Source(param.Parameterized):
             if np.isscalar(val):
                 mask = column == val
             elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                for v in val:
-                    mask = cls._range_filter(column, *v)
-                    if mask is not None:
-                        filters.append(mask)
+                val = [v for v in val if v is not None]
+                if not val:
+                    continue
+                mask = cls._range_filter(column, *val[0])
+                for v in val[1:]:
+                    mask |= cls._range_filter(column, *val[0])
+                if mask is not None:
+                    filters.append(mask)
                 continue
             elif isinstance(val, list):
                 if not val:
