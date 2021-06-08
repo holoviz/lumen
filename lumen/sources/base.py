@@ -116,9 +116,9 @@ class Source(param.Parameterized):
         elif start is None:
             mask = column<=end
         elif end is None:
-            mask = column>=start
+            mask = column>start
         else:
-            mask = (column>=start) & (column<=end)
+            mask = (column>start) & (column<=end)
         return mask
 
     @classmethod
@@ -151,7 +151,7 @@ class Source(param.Parameterized):
                     continue
                 mask = cls._range_filter(column, *val[0])
                 for v in val[1:]:
-                    mask |= cls._range_filter(column, *val[0])
+                    mask |= cls._range_filter(column, *v)
                 if mask is not None:
                     filters.append(mask)
                 continue
@@ -165,7 +165,7 @@ class Source(param.Parameterized):
                 filters.append(mask)
         if filters:
             mask = filters[0]
-            for f in filters:
+            for f in filters[1:]:
                 mask &= f
             df = df[mask]
         return df
