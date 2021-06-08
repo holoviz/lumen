@@ -116,9 +116,9 @@ class Source(param.Parameterized):
         elif start is None:
             mask = column<=end
         elif end is None:
-            mask = column>start
+            mask = column>=start
         else:
-            mask = (column>start) & (column<=end)
+            mask = (column>=start) & (column<=end)
         return mask
 
     @classmethod
