@@ -244,7 +244,7 @@ class BinFilter(BaseWidgetFilter):
         else:
             widget = pn.widgets.Select
         if self.labels:
-            options = dict(zip(self.labels, self.bins))
+            options = dict(zip(self.labels, [tuple(b) for b in self.bins]))
         else:
             options = {f'{l} - {u}': (l, u) for l, u in self.bins}
         options[' '] = None
