@@ -181,6 +181,7 @@ class Dashboard(param.Parameterized):
         # Initialize from spec
         self._modules = config.load_local_modules()
         self._load_specification(from_file=True)
+        self._apps = {}
 
         # Initialize high-level settings
         self.config = Config.from_spec(state.spec.get('config', {}))
@@ -266,7 +267,18 @@ class Dashboard(param.Parameterized):
             align='center'
         )
         self._reload_button.on_click(self._reload)
-        menu_items = [os.path.basename(yml).split('.')[0] for yml in config.yamls]
+        menu_items = []
+        for yml in config.yamls:
+            with open(yml) as f:
+                spec = yaml.load(f.read(), Loader=yaml.Loader)
+            endpoint = os.path.basename(yml).split('.')[0]
+            title = spec.get('config', {}).get('title', endpoint)
+            i = 1
+            while title in self._apps:
+                i += 1
+                title = f'{title} {i}'
+            menu_items.append(title)
+            self._apps[title] = endpoint
         self._menu_button = pn.widgets.MenuButton(
             name='Select dashboard', items=menu_items, width=200,
             align='center', margin=0
@@ -363,7 +375,8 @@ class Dashboard(param.Parameterized):
         self._edited = True
 
     def _navigate(self, event):
-        pn.state.location.pathname = f'/{event.new}'
+        app = self._apps[event.new]
+        pn.state.location.pathname = f'/{app}'
         pn.state.location.reload = True
 
     def _set_loading(self, name=''):
