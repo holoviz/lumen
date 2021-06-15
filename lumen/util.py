@@ -62,6 +62,8 @@ def get_dataframe_schema(df, columns=None):
             }
             if dtype.kind == 'M':
                 properties[name]['format'] = 'datetime'
+        elif dtype.kind == 'b':
+            properties[name] = {'type': 'boolean'}
         elif dtype.kind == 'O':
             if isinstance(dtype, CategoricalDtype) and len(dtype.categories):
                 cats = list(dtype.categories)
