@@ -26,8 +26,15 @@ class _session_state:
 
     @property
     def filters(self):
+        from .filters import Filter
         if pn.state.curdoc not in self._filters:
-            self._filters[pn.state.curdoc] = dict(self.global_filters)
+            self._filters[pn.state.curdoc] = {
+                source: {
+                    name: Filter.from_spec(spec, schema)
+                    for name, (spec, schema) in filters.items()
+                }
+                for source, filters in self.global_filters.items()
+            }
         return self._filters[pn.state.curdoc]
 
     @property
@@ -62,7 +69,6 @@ class _session_state:
         """
         Loads global sources shared across all targets.
         """
-        from .filters import Filter
         from .sources import Source
         for name, source_spec in self.spec.get('sources', {}).items():
             if not source_spec.get('shared'):
@@ -93,7 +99,7 @@ class _session_state:
                 source.clear_cache()
             schema = source.get_schema()
             self.global_filters[name] = {
-                fname: Filter.from_spec(filter_spec, schema)
+                fname: (filter_spec, schema)
                 for fname, filter_spec in filter_specs.items()
             }
 
