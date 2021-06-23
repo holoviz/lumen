@@ -522,7 +522,7 @@ class FileSource(Source):
     def _resolve_template_vars(self, table):
         for m in self._template_re.findall(table):
             ref = f'@{m[2:-1]}'
-            values = self._resolve_reference(ref, {})
+            values = self._resolve_reference(ref)
             values = ','.join([v for v in values])
             table = table.replace(m, quote(values))
         return [table]
@@ -600,7 +600,7 @@ class JSONSource(FileSource):
         template_values = []
         for m in template_vars:
             ref = f'@{m[2:-1]}'
-            values = self._resolve_reference(ref, {})
+            values = self._resolve_reference(ref)
             template_values.append(values)
         tables = []
         cross_product = list(product(*template_values))
