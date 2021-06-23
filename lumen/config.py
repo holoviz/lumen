@@ -41,12 +41,17 @@ class _config(param.Parameterized):
     _root = param.String(default=None, doc="""
       Root directory relative to which data and modules are loaded.""")
 
+    _dev = param.Boolean(default=None, doc="""
+      Whether Lumen should run in development mode.""")
+
     template_vars = param.Dict(default={}, doc="""
       Template variables which may be referenced in a dashboard yaml
       specification.""")
 
     yamls = param.List(default=[], doc="""
       List of yaml files currently being served.""")
+
+    _modules = {}
 
     @property
     def root(self):
@@ -58,26 +63,32 @@ class _config(param.Parameterized):
         """
         Loads local modules containing custom components and templates.
         """
-        modules = {}
         for imp in ('filters', 'sources', 'transforms', 'template', 'views'):
             path = os.path.join(self.root, imp+'.py')
             if not os.path.isfile(path):
                 continue
             spec = importlib.util.spec_from_file_location(f"local_lumen.{imp}", path)
-            modules[imp] = module = importlib.util.module_from_spec(spec)
+            if path in self._modules:
+                continue
+            self._modules[path] = module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         templates = param.concrete_descendents(BasicTemplate)
         _TEMPLATES.update({
             k[:-8].lower(): v for k, v in templates.items()
         })
-        return modules
 
     @property
     def dev(self):
         """
         Whether the application was launched in development mode.
         """
+        if self._dev is not None:
+            return self._dev
         return '--dev' in sys.argv or '--autoreload' in sys.argv
+
+    @dev.setter
+    def dev(self, dev):
+        self._dev = dev
 
 
 
