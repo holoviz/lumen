@@ -179,7 +179,7 @@ class Dashboard(param.Parameterized):
         super().__init__(**params)
 
         # Initialize from spec
-        self._modules = config.load_local_modules()
+        config.load_local_modules()
         self._load_specification(from_file=True)
         self._apps = {}
 

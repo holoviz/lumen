@@ -30,7 +30,7 @@ class YamlHandler(CodeHandler):
         '''
         if 'filename' not in kwargs:
             raise ValueError('Must pass a filename to YamlHandler')
-        filename = kwargs['filename']
+        filename = os.path.abspath(kwargs['filename'])
         kwargs['source'] = f"from lumen import Dashboard; Dashboard('{filename}', load_global=False).servable();"
         super().__init__(*args, **kwargs)
 
