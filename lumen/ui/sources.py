@@ -250,7 +250,7 @@ class IntakeSourceEditor(SourceEditor):
     _dom_events = {'cache_dir': ['keyup'], 'uri': ['keyup']}
 
     def __init__(self, **params):
-        import lumen.sources.intake
+        import lumen.sources.intake # noqa
         params.pop('source_type', None)
         self.editor = pn.widgets.Ace(language='yaml', theme='dracula', margin=0, sizing_mode='stretch_width')
         self.upload = pn.widgets.FileInput(sizing_mode='stretch_width', margin=0)
@@ -331,7 +331,7 @@ class IntakeDremioSourceEditor(SourceEditor):
     """
 
     def __init__(self, **params):
-        import lumen.sources.intake
+        import lumen.sources.intake # noqa
         super().__init__(**params)
 
     @property
@@ -500,7 +500,7 @@ class SourcesEditor(WizardItem):
         sources = param.concrete_descendents(Source)
         self.param.source_type.objects = types = [
             source.source_type for source in sources.values()
-        ]+['intake']
+        ]+['intake', 'intake_dremio']
         if self.source_type is None and types:
             self.source_type = types[0]
 
