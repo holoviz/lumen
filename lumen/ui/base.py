@@ -1,0 +1,101 @@
+import panel as pn
+import param
+
+from panel.reactive import ReactiveHTML
+from panel.template.fast.components import FastDivider
+
+from .state import state
+
+
+class Wizard(ReactiveHTML):
+
+    items = param.List(precedence=-1)
+
+    current = param.Parameter()
+
+    previous_disable = param.Boolean(True)
+
+    next_disable = param.Boolean(True)
+
+    spec = param.Dict(precedence=-1)
+
+    _template = """
+    <div id="wizard" style="width: 100%; height: 100%;">${current}</div>
+    <fast-divider style="margin: 1em 0;"></fast-divider>
+    <fast-flipper id="previous" onclick="${_previous}" style="float: left" direction="previous" disabled=${previous_disable}>
+    </fast-flipper>
+    <fast-flipper id="next" onclick="${_next}" style="float: right" disabled=${next_disable}>
+    </fast-flipper>
+    """
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        for item in self.items:
+            item.param.watch(self._ready, 'ready')
+        self._current = 0
+        self.current = self.items[0]
+        self.preview = pn.pane.JSON(self.spec, depth=-1, sizing_mode='stretch_both')
+        self._modal_content = [
+            '# Dashboard specification preview',
+            FastDivider(),
+            self.preview
+        ]
+
+    def _ready(self, event):
+        self.next_disable = False
+        if event.obj.auto_advance:
+            self._next()
+
+    def open_modal(self):
+        self.preview.object = dict(state.spec)
+        if state.modal.objects == [self.preview]:
+            state.template.open_modal()
+            return
+        state.modal.loading = True
+        state.template.open_modal()
+        state.modal[:] = self._modal_content
+        state.modal.loading = False
+
+    def _previous(self, event=None):
+        if self.previous_disable:
+            return
+        self._current -= 1
+        self.current = self.items[self._current]
+        self.next_disable = False
+        if self._current == 0:
+            self.previous_disable = True
+
+    def _next(self, event=None):
+        if self.next_disable:
+            return
+        self.loading = True
+        self._current += 1
+        self.current = self.items[self._current]
+        self.previous_disable = False
+        if self._current == (len(self.items)-1):
+            self.next_disable = True
+        self.loading = False
+
+
+
+class WizardItem(ReactiveHTML):
+
+    auto_advance = param.Boolean(default=False)
+    
+    sizing_mode = param.String(default='stretch_width', readonly=True)
+
+    ready = param.Boolean(default=False)
+
+    spec = param.Dict(precedence=-1)
+
+    __abstract = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        spec_params = [p for p in self.param if self.param[p].precedence == 1]
+        if spec_params:
+            self.param.watch(self._update_spec, spec_params)
+
+    def _update_spec(self, *events):
+        pass
+        
