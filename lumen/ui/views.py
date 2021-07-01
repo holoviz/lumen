@@ -2,13 +2,12 @@ import panel as pn
 import param
 
 from panel.reactive import ReactiveHTML
-from panel.models.tabulator import TABULATOR_THEMES
 
 from lumen.sources import Source
 from lumen.views import View
 from .base import WizardItem
 from .gallery import GalleryItem, Gallery
-from .sources import SourcesEditor, SourceGallery, ASSETS_DIR
+from .sources import SourceGallery, ASSETS_DIR
 from .state import state
 
 
@@ -191,12 +190,11 @@ class ViewGalleryItem(GalleryItem):
 
     @param.depends('selected', watch=True)
     def _add_spec(self):
-        sources = state.spec['views']
+        views = state.spec['views']
         if self.selected:
-            sources[self.name] = self.spec
-        elif self.name in sources:
+            views[self.name] = self.spec
+        elif self.name in views:
             del views[self.name]
-
 
 
 class ViewGallery(WizardItem, Gallery):
@@ -263,14 +261,13 @@ class ViewGallery(WizardItem, Gallery):
     @param.depends('spec', watch=True)
     def _update_params(self):
         for name, spec in self.spec.items():
-            self.views = editor = ViewEditor(name=name, spec=source, **spec)
+            self.views = editor = ViewEditor(name=name, spec=spec)
             self.items[name] = ViewGalleryItem(
                 name=name, spec=spec, selected=True, editor=editor,
                 thumbnail=editor.thumbnail
             )
         self.param.trigger('views')
         self.param.trigger('items')
-
 
 
 class TableViewEditor(ViewEditor):
@@ -299,7 +296,6 @@ class TableViewEditor(ViewEditor):
         return ASSETS_DIR / 'tabulator.png'
 
 
-
 class PerspectiveViewEditor(ViewEditor):
 
     view_type = param.String(default='perspective')
@@ -326,7 +322,7 @@ class hvPlotViewEditor(ViewEditor):
     view_type = param.String(default='hvplot')
 
     def __init__(self, **params):
-        import hvplot.pandas
+        import hvplot.pandas # noqa
         from hvplot.ui import hvPlotExplorer
         super().__init__(**params)
         kwargs = dict(self.spec)

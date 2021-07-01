@@ -1,4 +1,3 @@
-import glob
 import pathlib
 import uuid
 import tempfile
@@ -8,7 +7,6 @@ import panel as pn
 import param
 
 from panel.layout.base import ListLike
-from panel.reactive import ReactiveHTML
 from panel.template.base import BasicTemplate
 from panel.template import FastListTemplate
 
@@ -19,10 +17,10 @@ from lumen.state import state as lm_state
 from .base import Wizard, WizardItem
 from .config import ConfigEditor
 from .gallery import Gallery, GalleryItem
-from .sources import SourcesEditor, SourceGallery
+from .sources import SourceGallery
 from .state import state
-from .targets import TargetsEditor, TargetGallery, TargetEditor, TargetGalleryItem
-from .views import ViewsEditor, ViewEditor, ViewGallery, ViewGalleryItem
+from .targets import TargetGallery, TargetEditor, TargetGalleryItem
+from .views import ViewEditor, ViewGallery, ViewGalleryItem
 
 CSS = [
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css'
@@ -196,7 +194,6 @@ class Launcher(WizardItem):
     """
 
     def _launch(self, event):
-        import subprocess
         from lumen import Dashboard
         with tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False) as f:
             f.file.write(yaml.dump(state.spec))
@@ -300,7 +297,8 @@ class Builder(param.Parameterized):
                 item = ViewGalleryItem(
                     editor=editor, name=name, selected=True
                 )
-                editors[name] = item
+                while name in editors:
+                    editors[name] = item
                 views.append(editor)
 
             editor = TargetEditor(spec=target, views=list(editors))

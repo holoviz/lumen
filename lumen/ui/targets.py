@@ -5,15 +5,12 @@ from panel.reactive import ReactiveHTML
 from panel.layout import GridSpec
 
 from lumen.config import _LAYOUTS
-from lumen.sources import Source
 from lumen.state import state as lumen_state
 from lumen.views import View
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
-from .sources import SourcesEditor, SourceGallery
 from .state import state
-from .views import ViewsEditor, ViewGalleryItem
 
 
 class ReactiveGrid(ReactiveHTML, GridSpec):

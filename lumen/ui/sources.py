@@ -178,8 +178,8 @@ class SourceGallery(WizardItem, Gallery):
     def _save_sources(self, event):
         for name, source in self._editor.sources.items():
             path = pathlib.Path(self.path) / f'{name}.yaml'
-            #with open(path, 'w', encoding='utf-8') as f:
-            #    f.write(yaml.dump(source.spec))
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(yaml.dump(source.spec))
             self.spec[name] = source.spec
             item = SourceGalleryItem(
                 name=name, spec=source.spec, margin=0, selected=True,
