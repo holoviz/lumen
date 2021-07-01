@@ -1,3 +1,4 @@
+import os
 import pathlib
 import uuid
 import tempfile
@@ -38,7 +39,6 @@ i.fa.fa-plus:hover {
 .gallery-item {
   cursor: pointer;
 }
-
 """
 
 pn.extension('ace', 'perspective', 'tabulator', css_files=CSS, raw_css=[CSS_RAW])
@@ -67,7 +67,7 @@ class DashboardGalleryItem(GalleryItem):
 
     def _launch(self, event):
         self.selected = True
-        
+
 
 
 class DashboardGallery(WizardItem, Gallery):
@@ -75,7 +75,7 @@ class DashboardGallery(WizardItem, Gallery):
 
     auto_advance = param.Boolean(default=True)
 
-    path = param.Foldername(default='./lumen/ui/components/dashboards')
+    path = param.Foldername()
 
     spec = param.Dict(default={}, precedence=-1)
 
@@ -201,7 +201,7 @@ class Launcher(WizardItem):
         dashboard._render_dashboard()
         dashboard.show()
 
-    
+
 
 class Builder(param.Parameterized):
 
@@ -214,13 +214,19 @@ class Builder(param.Parameterized):
     modal = param.ClassSelector(class_=ListLike)
 
     def __init__(self, **params):
-        self.welcome = DashboardGallery()
+        path = params['component_dir']
+        dash_params, source_params, target_params, view_params = {}, {}, {}, {}
+        dash_params['path'] = os.path.join(path, 'dashboards')
+        source_params['path'] = os.path.join(path, 'sources')
+        target_params['path'] = os.path.join(path, 'targets')
+        view_params['path'] = os.path.join(path, 'views')
+        self.welcome = DashboardGallery(**dash_params)
         super().__init__(**params)
 
         self.config = ConfigEditor(spec=self.spec['config'])
-        state.sources = self.sources = SourceGallery(spec=self.spec['sources'])
-        state.views = self.views = ViewGallery()
-        state.targets = self.targets = TargetGallery(spec=self.spec['targets'])
+        state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
+        state.views = self.views = ViewGallery(**view_params)
+        state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
         launcher = Launcher(spec=self.spec)
         self.wizard = Wizard(items=[
             self.welcome, self.config, self.sources, self.views, self.targets, launcher
@@ -247,7 +253,6 @@ class Builder(param.Parameterized):
         self.template.modal.append(self.modal)
 
     def _open_dialog(self, event):
-        print(self.spec)
         self.wizard.preview.object = dict(self.spec)
         self.wizard.open_modal()
 
@@ -316,14 +321,19 @@ class Builder(param.Parameterized):
 
 
 def main():
+    path = pathlib.Path('./components').absolute()
+    path.mkdir(exist_ok=True)
+    params = {'component_dir': str(path)}
+    (path / 'dashboards').mkdir(parents=True, exist_ok=True)
+    (path / 'sources').mkdir(parents=True, exist_ok=True)
+    (path / 'targets').mkdir(parents=True, exist_ok=True)
+    (path / 'views').mkdir(parents=True, exist_ok=True)
     state.modal = pn.Column(sizing_mode='stretch_both')
     state.spec = {'config': {}, 'sources': {}, 'targets': []}
     state.template = FastListTemplate(theme='dark', title='Lumen Builder')
-    builder = Builder(template=state.template, spec=state.spec, modal=state.modal)
+    builder = Builder(template=state.template, spec=state.spec, modal=state.modal, **params)
     builder.servable()
 
 
 if __name__.startswith('bokeh'):
     main()
-else:
-    pn.serve(main)

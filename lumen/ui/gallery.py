@@ -47,7 +47,7 @@ class GalleryItem(ReactiveHTML):
 
 class Gallery(ReactiveHTML):
 
-    path = param.Foldername(default='./lumen/ui/components')
+    path = param.Foldername()
 
     items = param.Dict(default={})
 
