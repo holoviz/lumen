@@ -1,11 +1,8 @@
-from collections import defaultdict
-
 import param
 
 from panel.io.server import init_doc, state
 from panel.layout.base import ListLike, NamedListLike
 from panel.reactive import ReactiveHTML
-from panel.util import as_unicode
 from panel.widgets.select import SelectBase
 
 
@@ -52,7 +49,7 @@ class FastNumberInput(FastComponent):
     
     _child_config = {'name': 'template'}
 
-    _template= '<fast-number-field id="fast-number" autofocus="${autofocus}" placeholder="${placeholder}" step="${step}" value="${value}" min="${start}" max="${end}" appearance="${appearance}"></fast-number-field>'
+    _template= '<fast-number-field id="fast-number" autofocus="${autofocus}" placeholder="${placeholder}" step="${step}" value="${value}" min="${start}" max="${end}" appearance="${appearance}"></fast-number-field>' # noqa
     
     _dom_events = {'fast-number': ['change']}
 
@@ -71,7 +68,7 @@ class FastSlider(FastComponent):
     
     _child_config = {'name': 'template'}
     
-    _template = '<fast-slider id="fast-slider" value="${value}" min="${start}" max="${end}" step="${step}"></fast-slider>'
+    _template = '<fast-slider id="fast-slider" value="${value}" min="${start}" max="${end}" # noqa step="${step}"></fast-slider>'
     
 class FastSelect(FastComponent, SelectBase):
     
@@ -249,7 +246,7 @@ class FastAccordion(FastComponent, NamedListLike):
       </fast-accordion-item>
       {% endfor %}
     </fast-accordion>
-    """
+    """ # noqa
     
     def __init__(self, *objects, **params):
         NamedListLike.__init__(self, *objects, **params)
