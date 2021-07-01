@@ -2,8 +2,8 @@ import panel as pn
 import param
 
 from panel.reactive import ReactiveHTML
-from panel.template.fast.components import FastDivider
 
+from .fast import FastDivider
 from .state import state
 
 
