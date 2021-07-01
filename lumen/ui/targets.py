@@ -30,7 +30,7 @@ class ReactiveGrid(ReactiveHTML, GridSpec):
       </div>
     {% endfor %}
     </div>
-    """
+    """ # noqa
 
     _scripts = {
         'render': ["""
