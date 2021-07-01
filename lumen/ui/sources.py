@@ -7,10 +7,10 @@ import param
 import requests
 
 from panel.reactive import ReactiveHTML
-from panel.template.fast.components import FastComponent, FastTabs
 
 from lumen.sources import Source
 from .base import WizardItem
+from .fast import FastComponent, FastTabs
 from .gallery import Gallery, GalleryItem
 from .state import state
 
