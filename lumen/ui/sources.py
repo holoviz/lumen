@@ -287,6 +287,8 @@ class IntakeDremioSourceEditor(SourceEditor):
 
     cert = param.String(default=None)
 
+    load_schema = param.Boolean(default=False)
+
     tls = param.Boolean(doc="Enable TLS")
 
     uri = param.String(doc="Enter a URI")
@@ -305,6 +307,7 @@ class IntakeDremioSourceEditor(SourceEditor):
             <fast-text-field id="uri" placeholder="Enter a URI" value="${uri}">
             </fast-text-field>
           </div>
+          <fast-checkbox id="load_schema" checked="${load_schema}">Enable TLS</fast-checkbox>
           <fast-checkbox id="tls" checked="${tls}">Enable TLS</fast-checkbox>
           <div style="display: grid;">
             <label for="cert"><b>Certificate</b></label>
@@ -335,6 +338,11 @@ class IntakeDremioSourceEditor(SourceEditor):
     def __init__(self, **params):
         import lumen.sources.intake # noqa
         super().__init__(**params)
+
+    @param.depends('cert', 'load_schema', 'tls', 'uri', watch=True)
+    def _update_spec(self, *events):
+        for event in events:
+            self.spec[event.name] = event.new
 
     @property
     def thumbnail(self):

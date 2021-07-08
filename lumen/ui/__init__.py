@@ -202,6 +202,33 @@ class Launcher(WizardItem):
         dashboard.show()
 
 
+class YAML(WizardItem):
+    """
+    Download or copy the dashboard yaml specification.
+    """
+
+    editor = param.ClassSelector(class_=pn.widgets.Ace)
+
+    _template = """
+    <span style="font-size: 1.5em">Launcher</span>
+    <p>{{ __doc__ }}</p>
+    <fast-divider></fast-divider>
+    <div id="yaml">${editor}</div>
+    """
+
+    def __init__(self, spec, **params):
+        yaml_text = yaml.dump(spec)
+        params['editor'] = pn.widgets.Ace(value=yaml_text,
+            language='yaml', sizing_mode='stretch_both', theme='dracula',
+            margin=0
+        )
+        super().__init__(spec=spec, **params)
+
+    @param.depends('active', watch=True)
+    def _update_spec(self):
+        self.spec = state.spec
+        self.editor.value = yaml.dump(state.spec)
+
 
 class Builder(param.Parameterized):
 
@@ -224,12 +251,13 @@ class Builder(param.Parameterized):
         super().__init__(**params)
 
         self.config = ConfigEditor(spec=self.spec['config'])
+        state.spec = self.spec
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.views = self.views = ViewGallery(**view_params)
         state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
-        launcher = Launcher(spec=self.spec)
+        self.launcher = YAML(spec=self.spec)
         self.wizard = Wizard(items=[
-            self.welcome, self.config, self.sources, self.views, self.targets, launcher
+            self.welcome, self.config, self.sources, self.views, self.targets, self.launcher
         ], sizing_mode='stretch_both')
 
         preview = pn.widgets.Button(name='Preview', width=100)
@@ -315,6 +343,7 @@ class Builder(param.Parameterized):
         self.views.param.set_param(views=views, items=editors)
         self.welcome.ready = True
         self.wizard.loading = False
+        self.launcher.value = yaml.dump(self.spec)
 
     def servable(self, title='Lumen Builder'):
         self.template.servable(title=title)

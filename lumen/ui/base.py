@@ -32,6 +32,7 @@ class Wizard(ReactiveHTML):
         super().__init__(**params)
         for item in self.items:
             item.param.watch(self._ready, 'ready')
+        self.items[0].active = True
         self._current = 0
         self.current = self.items[0]
         self.preview = pn.pane.JSON(self.spec, depth=-1, sizing_mode='stretch_both')
@@ -60,7 +61,10 @@ class Wizard(ReactiveHTML):
         if self.previous_disable:
             return
         self._current -= 1
-        self.current = self.items[self._current]
+        self.current.active = False
+        item = self.items[self._current]
+        item.active = True
+        self.current = item
         self.next_disable = False
         if self._current == 0:
             self.previous_disable = True
@@ -70,7 +74,10 @@ class Wizard(ReactiveHTML):
             return
         self.loading = True
         self._current += 1
-        self.current = self.items[self._current]
+        item = self.items[self._current]
+        self.current.active = False
+        item.active = True
+        self.current = item
         self.previous_disable = False
         if self._current == (len(self.items)-1):
             self.next_disable = True
@@ -79,6 +86,8 @@ class Wizard(ReactiveHTML):
 
 
 class WizardItem(ReactiveHTML):
+
+    active = param.Boolean(default=False)
 
     auto_advance = param.Boolean(default=False)
     
