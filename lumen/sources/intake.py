@@ -7,6 +7,9 @@ from .base import Source, cached
 
 class IntakeBaseSource(Source):
 
+    load_schema = param.Boolean(default=True, doc="""
+        Whether to load the schema""")
+
     __abstract = True
 
     def _read(self, table, dask=True):
@@ -34,7 +37,10 @@ class IntakeBaseSource(Source):
             if table is not None and entry != table:
                 continue
             data = self.get(entry, __dask=True)
-            schemas[entry] = get_dataframe_schema(data)['items']['properties']
+            if self.load_schema:
+                schemas[entry] = {}
+            else:
+                schemas[entry] = get_dataframe_schema(data)['items']['properties']
         return schemas if table is None else schemas[table]
 
     @cached(with_query=False)
