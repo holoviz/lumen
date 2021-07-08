@@ -202,7 +202,7 @@ class ViewGallery(WizardItem, Gallery):
     Select the views to add to your dashboard specification.
     """
 
-    path = param.Foldername(default='./lumen/ui/components/views')
+    path = param.Foldername()
 
     spec = param.List()
 

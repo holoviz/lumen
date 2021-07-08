@@ -71,9 +71,8 @@ class SourceEditor(FastComponent):
 
     def _preview(self, event):
         source = Source.from_spec(self.spec)
-        schema = source.get_schema()
         tabs = []
-        for table in schema:
+        for table in source.get_tables():
             tabs.append((table, pn.widgets.Tabulator(
                 source.get(table), sizing_mode='stretch_width',
                 pagination='remote', page_size=8, theme='midnight'
@@ -83,7 +82,6 @@ class SourceEditor(FastComponent):
 
     def _save(self):
         pass
-
 
 
 class SourceGalleryItem(GalleryItem):
@@ -123,10 +121,9 @@ class SourceGallery(WizardItem, Gallery):
     Select the data sources to add to your dashboard specification.
     """
 
-    path = param.Foldername(default='./lumen/ui/components/sources')
+    path = param.Foldername()
 
     sources = param.Dict(default={}, doc="The list of sources added to the dashboard.", precedence=-1)
-
 
     _template = """
     <span style="font-size: 1.5em">Sources</span>
