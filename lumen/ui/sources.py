@@ -247,6 +247,7 @@ class IntakeSourceEditor(SourceEditor):
     _dom_events = {'cache_dir': ['keyup'], 'uri': ['keyup']}
 
     def __init__(self, **params):
+        import lumen.sources.intake # noqa
         params.pop('source_type', None)
         self.editor = pn.widgets.Ace(language='yaml', theme='dracula', margin=0, sizing_mode='stretch_width')
         self.upload = pn.widgets.FileInput(sizing_mode='stretch_width', margin=0)
@@ -272,6 +273,67 @@ class IntakeSourceEditor(SourceEditor):
                 self.editor.value = f.read()
         else:
             self.editor.value = requests.get(self.uri).content
+
+
+class IntakeDremioSourceEditor(SourceEditor):
+    """
+    Provide a Dremio URI.
+    """
+
+    cert = param.String(default=None)
+
+    tls = param.Boolean(doc="Enable TLS")
+
+    uri = param.String(doc="Enter a URI")
+
+    source_type = param.String(default='intake_dremio', readonly=True)
+
+    _template = """
+    <span style="font-size: 1.5em">{{ name }} - Intake Dremio Source</span>
+    <p>{{ __doc__ }}</p>
+    <fast-divider></fast-divider>
+    <form>
+      <div style="display: flex; flex-wrap: wrap;">
+        <div style="flex: 25%; min-width: 200px; margin-right: 1em;">
+          <div style="display: grid;">
+            <label for="URI"><b>URI</b></label>
+            <fast-text-field id="uri" placeholder="Enter a URI" value="${uri}">
+            </fast-text-field>
+          </div>
+          <fast-checkbox id="tls" checked="${tls}">Enable TLS</fast-checkbox>
+          <div style="display: grid;">
+            <label for="cert"><b>Certificate</b></label>
+            <fast-text-field id="cert" disabled=${tls} placeholder="Enter path to a certificate" value="${cert}">
+            </fast-text-field>
+          </div>
+        </div>
+      </div>
+      <div style="display: flex; margin-top: 1em;">
+        <div style="display: grid; margin-right: 1em;">
+          <label for="cache_dir"><b>{{ param.cache_dir.label }}</b></label>
+          <fast-text-field id="cache_dir" placeholder="{{ param.cache_dir.doc }}" value="${cache_dir}" style="min-width: 300px;">
+          </fast-text-field>
+        </div>
+        <div style="display: grid;">
+          <label for="shared"><b>{{ param.shared.label }}</b></label>
+          <fast-checkbox value="${shared}"></fast-checkbox>
+        </div>
+      </div>
+    </form>
+    <fast-button id="preview-button" onclick="${_preview}" style="position: absolute; right: 5px; margin-top: 1.5em; z-index: 100;">
+      Preview
+    </fast-button>
+    <fast-divider></fast-divider>
+    <div id="preview">${preview}</div>
+    """
+
+    def __init__(self, **params):
+        import lumen.sources.intake # noqa
+        super().__init__(**params)
+
+    @property
+    def thumbnail(self):
+        return pathlib.Path(__file__).parent / 'assets' / 'intake.png'
 
 
 class FileSourceTable(ReactiveHTML):
@@ -435,7 +497,7 @@ class SourcesEditor(WizardItem):
         sources = param.concrete_descendents(Source)
         self.param.source_type.objects = types = [
             source.source_type for source in sources.values()
-        ]+['intake']
+        ]+['intake', 'intake_dremio']
         if self.source_type is None and types:
             self.source_type = types[0]
 

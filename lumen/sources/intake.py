@@ -81,20 +81,18 @@ class IntakeSource(IntakeBaseSource):
 
 class IntakeDremioSource(IntakeBaseSource):
 
+    cert = param.String(default="Path to certificate file")
+
     dask = param.Boolean(default=False, doc="""
         Whether to return a dask DataFrame.""")
 
     uri = param.String(doc="URI of the catalog file.")
-    
-    tls = param.Boolean(default=False, doc="""
-        Enable encrypted connection""")
-    
-    cert = param.String(default=None, doc="""
-        Path to trusted certificates for encrypted connection""")
-    
+
+    tls = param.Boolean(default=False, doc="Enable encryption")
+
     source_type = 'intake_dremio'
 
     def __init__(self, **params):
         from intake_dremio.dremio_cat import DremioCatalog
         super().__init__(**params)
-        self.cat = DremioCatalog(self.uri, tls=self.tls, cert=self.cert)
+        self.cat = DremioCatalog(self.uri, cert=self.cert, tls=self.tls)
