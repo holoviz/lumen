@@ -16,6 +16,7 @@ from .state import state
 class ReactiveGrid(ReactiveHTML, GridSpec):
     
     allow_resize = param.Boolean(default=True)
+
     allow_drag = param.Boolean(default=True)
     
     ncols = param.Integer(default=12)
