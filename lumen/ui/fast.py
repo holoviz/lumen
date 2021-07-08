@@ -7,7 +7,7 @@ from panel.widgets.select import SelectBase
 
 
 class FastDesignProvider(ListLike, ReactiveHTML):
-        
+
     _template = '<fast-design-system-provider id="fdsp" use-defaults>${objects}</fast-design-system-provider>'
 
 
@@ -18,7 +18,7 @@ class FastComponent(ReactiveHTML):
         'scale_width', 'scale_height', 'scale_both', None])
 
     __abstract = True
-    
+
     def get_root(self, doc=None, comm=None, preprocess=True):
         doc = init_doc(doc)
         root_obj = FastDesignProvider()
@@ -34,48 +34,48 @@ class FastComponent(ReactiveHTML):
 class FastNumberInput(FastComponent):
 
     appearance = param.Selector(default='outline', objects=['outline', 'filled'])
-    
+
     autofocus = param.Boolean(default=False)
-    
+
     placeholder = param.String(default='Type here')
-    
+
     step = param.Number(default=0)
-    
+
     start = param.Number(default=0)
-    
+
     end = param.Number(default=1)
-    
+
     value = param.Number(default=0)
-    
+
     _child_config = {'name': 'template'}
 
     _template= '<fast-number-field id="fast-number" autofocus="${autofocus}" placeholder="${placeholder}" step="${step}" value="${value}" min="${start}" max="${end}" appearance="${appearance}"></fast-number-field>' # noqa
-    
+
     _dom_events = {'fast-number': ['change']}
 
 
 class FastSlider(FastComponent):
-    
+
     height = param.Integer(default=50)
-    
+
     step = param.Number(default=0.1)
-    
+
     start = param.Number(default=0)
-    
+
     end = param.Number(default=1)
-    
+
     value = param.Number(default=0)
-    
+
     _child_config = {'name': 'template'}
-    
+
     _template = '<fast-slider id="fast-slider" value="${value}" min="${start}" max="${end}" # noqa step="${step}"></fast-slider>'
-    
+
 class FastSelect(FastComponent, SelectBase):
-    
+
     options = param.ClassSelector(default=[], class_=(dict, list))
 
     value = param.Parameter()
-    
+
     _template = """
     <fast-select value="${value}" id="fast-select">
     {% for option in options %}
@@ -83,7 +83,7 @@ class FastSelect(FastComponent, SelectBase):
     {% endfor %}
     </fast-select>
     """
-    
+
     def _process_property_change(self, msg):
         msg = super()._process_property_change(msg)
         if 'value' in msg:
@@ -92,35 +92,35 @@ class FastSelect(FastComponent, SelectBase):
 
 
 class FastButton(FastComponent):
-    
+
     clicks = param.Integer(default=0, bounds=(0, None))
-    
+
     value = param.Event()
-    
+
     _child_config = {'name': 'template'}
-    
+
     _template = '<fast-button onclick="${_on_click}" appearance="outline" id="fast-button">${name}</fast-button>'
-    
+
     def _on_click(self, event):
         self.clicks += 1
         self.param.trigger('value')
 
 
 class FastCheckbox(FastComponent):
-    
+
     value = param.Boolean(default=True)
-    
+
     _child_config = {'name': 'template'}
-    
+
     _template = '<fast-checkbox value="${value}">${name}</fast-checkbox>'
 
 
 class FastRadioGroup(FastComponent, SelectBase):
-    
+
     options = param.ClassSelector(default=[], class_=(dict, list))
 
     value = param.Parameter()
-    
+
     _child_config = {'options': 'literal'}
 
     _template = """
@@ -138,38 +138,38 @@ class FastRadioGroup(FastComponent, SelectBase):
     def _process_children(self, doc, root, model, comm, children):
         children['fast-options'] = self.labels
         return children
-    
-    
+
+
 class FastToggle(FastComponent):
-    
+
     value = param.Boolean(default=False)
-    
+
     _template = '<fast-switch checked="${value}">${name}</fast-switch>'
 
 
 class FastTextArea(FastComponent):
-    
+
     value = param.String()
-    
+
     _template = '<fast-text-area value="${value}"></fast-text-area>'
 
 
 class FastTextInput(FastComponent):
-    
+
     placeholder = param.String()
-    
+
     value = param.String()
-    
+
     _template = '<fast-text-field placeholder="${placeholder}" value="${value}"></fast-text-field>'
-    
-    
+
+
 class FastProgress(FastComponent):
-    
+
     _template = '<fast-progress></fast-progress>'
-    
+
 
 class FastProgressRing(FastComponent):
-    
+
     _template = '<fast-progress-ring></fast-progress-ring>'
 
 
@@ -180,35 +180,39 @@ class FastDivider(FastComponent):
 
 
 class FastCard(FastComponent, ListLike):
-    
+
     _template = '<fast-card id="fast-card">${objects}</fast-card>'
-    
+
     def __init__(self, *objects, **params):
         super().__init__(objects=list(objects), **params)
 
 
 class FastDialog(FastComponent, ListLike):
-    
+
     hidden = param.Boolean(default=False)
-    
+
     _template = """
     <fast-dialog id="fast-dialog" hidden=${hidden} style="z-index: 100; --dialog-width: 80%; --dialog-height: 80%">
       <fast-button id="close-button" onclick="${_close}" style="float: right">X</fast-button>
       ${objects}
     </fast-dialog>
     """
-    
+
     def __init__(self, *objects, **params):
         super().__init__(objects=list(objects), **params)
-        
+
     def _close(self, event):
         self.hidden = True
 
-
 class FastTabs(FastComponent, NamedListLike):
-    
+
+    active = param.Integer(default=0, bounds=(0, None), doc="""
+        Index of the currently displayed objects.""")
+
+    _activeid = param.String(default='')
+
     _template = """
-    <fast-tabs id="fast-tabs">
+    <fast-tabs id="fast-tabs" activeid="${_activeid}">
     {% for obj_name in objects_names %}
       <fast-tab slot="tab" slot="tab">{{ obj_name }}</fast-tab>
     {% endfor %}
@@ -217,7 +221,7 @@ class FastTabs(FastComponent, NamedListLike):
     {% endfor %}
     </fast-tabs>
     """
-    
+
     @property
     def _child_names(self):
         return {'objects': self._names}
@@ -225,6 +229,11 @@ class FastTabs(FastComponent, NamedListLike):
     def __init__(self, *objects, **params):
         NamedListLike.__init__(self, *objects, **params)
         FastComponent.__init__(self, objects=self.objects, **params)
+
+    @param.depends('_activeid', watch=True)
+    def _update_active(self):
+        self.active = int(self._activeid.split('-')[-1])-1
+
 
 class FastAccordion(FastComponent, NamedListLike):
 
@@ -247,7 +256,7 @@ class FastAccordion(FastComponent, NamedListLike):
       {% endfor %}
     </fast-accordion>
     """ # noqa
-    
+
     def __init__(self, *objects, **params):
         NamedListLike.__init__(self, *objects, **params)
         FastComponent.__init__(self, objects=self.objects, **params)

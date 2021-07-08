@@ -71,13 +71,18 @@ class SourceEditor(FastComponent):
 
     def _preview(self, event):
         source = Source.from_spec(self.spec)
+        tables = source.get_tables()
+        def load_table(event):
+            table = tables[event.new]
+            tabs[event.new][1].object = source.get(table)
         tabs = []
-        for table in source.get_tables():
+        for i, table in enumerate(tables):
             tabs.append((table, pn.widgets.Tabulator(
-                source.get(table), sizing_mode='stretch_width',
+                None if i > 0 else source.get(table), sizing_mode='stretch_width',
                 pagination='remote', page_size=8, theme='midnight'
             )))
         self.preview[:] = tabs
+        self.preview.param.watch(load_table, 'active')
         self.resize += 1
 
     def _save(self):
