@@ -307,7 +307,7 @@ class IntakeDremioSourceEditor(SourceEditor):
             <fast-text-field id="uri" placeholder="Enter a URI" value="${uri}">
             </fast-text-field>
           </div>
-          <fast-checkbox id="load_schema" checked="${load_schema}">Enable TLS</fast-checkbox>
+          <fast-checkbox id="load_schema" checked="${load_schema}">Load schema</fast-checkbox>
           <fast-checkbox id="tls" checked="${tls}">Enable TLS</fast-checkbox>
           <div style="display: grid;">
             <label for="cert"><b>Certificate</b></label>
