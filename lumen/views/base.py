@@ -561,22 +561,22 @@ class Download(View):
 
 class PerspectiveView(View):
 
-    aggregates = param.Dict(None, doc="""
+    aggregates = param.Dict(None, allow_None=True, doc="""
         How to aggregate. For example {x: "distinct count"}""")
 
-    columns = param.ListSelector(default=None, doc="""
+    columns = param.ListSelector(default=None, allow_None=True, doc="""
         A list of source columns to show as columns. For example ["x", "y"]""")
 
-    computed_columns = param.ListSelector(default=None, doc="""
+    computed_columns = param.ListSelector(default=None, allow_None=True, doc="""
         A list of computed columns. For example [""x"+"index""]""")
 
-    column_pivots = param.ListSelector(None, doc="""
+    column_pivots = param.ListSelector(None, allow_None=True, doc="""
         A list of source columns to pivot by. For example ["x", "y"]""")
 
-    filters = param.List(default=None, doc="""
+    filters = param.List(default=None, allow_None=True, doc="""
         How to filter. For example [["x", "<", 3],["y", "contains", "abc"]]""")
 
-    row_pivots = param.ListSelector(default=None, doc="""
+    row_pivots = param.ListSelector(default=None, allow_None=True, doc="""
         A list of source columns to group by. For example ["x", "y"]""")
 
     selectable = param.Boolean(default=True, allow_None=True, doc="""
