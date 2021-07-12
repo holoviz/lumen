@@ -97,11 +97,12 @@ class _session_state:
                 self.global_sources[name] = source = Source.from_spec(source_spec)
             if source.cache_dir and clear_cache:
                 source.clear_cache()
-            schema = source.get_schema()
-            self.global_filters[name] = {
-                fname: (filter_spec, schema)
-                for fname, filter_spec in filter_specs.items()
-            }
+            if filter_specs:
+                schema = source.get_schema()
+                self.global_filters[name] = {
+                    fname: (filter_spec, schema)
+                    for fname, filter_spec in filter_specs.items()
+                }
 
     def load_source(self, name, source_spec):
         from .filters import Filter
@@ -119,10 +120,11 @@ class _session_state:
         if not filter_specs:
             return source
         self.filters[name] = filters = dict(self.filters.get(name, {}))
-        schema = source.get_schema()
-        for fname, filter_spec in filter_specs.items():
-            if fname not in filters:
-                filters[fname] = Filter.from_spec(filter_spec, schema)
+        if filter_specs:
+            schema = source.get_schema()
+            for fname, filter_spec in filter_specs.items():
+                if fname not in filters:
+                    filters[fname] = Filter.from_spec(filter_spec, schema)
         return source
 
     def resolve_views(self):
