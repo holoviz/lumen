@@ -512,6 +512,8 @@ class Table(View):
 
     view_type = 'table'
 
+    _extension = 'tabulator'
+
     def get_panel(self):
         return pn.widgets.tables.Tabulator(**self._get_params())
 
