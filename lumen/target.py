@@ -476,7 +476,7 @@ class Target(param.Parameterized):
         spec = dict(spec)
         source_spec = spec.pop('source', None)
         source = Source.from_spec(source_spec)
-        schema = source.get_schema()
+        tables = source.get_tables()
 
         # Resolve filters
         filter_specs = spec.pop('filters', [])
@@ -484,21 +484,28 @@ class Target(param.Parameterized):
             source_filters = state.filters.get(source_spec)
         else:
             source_filters = None
-        filters = [
-            Filter.from_spec(filter_spec, schema, source_filters)
-            for filter_spec in filter_specs
-        ]
 
-        # Resolve faceting
-        facet_spec = spec.pop('facet', {})
-        facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
+        if filter_specs or 'facet' in spec:
+            schema = source.get_schema()
+            filters = [
+                Filter.from_spec(filter_spec, schema, source_filters)
+                for filter_spec in filter_specs
+            ]
+
+            # Resolve faceting
+            facet_spec = spec.pop('facet', {})
+            facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
+        else:
+            # Avoid computing schema unless necessary
+            facet_spec, schema = {}, {}
+            filters, facet_filters = [], []
 
         # Resolve download options
         download_spec = spec.pop('download', {})
         if isinstance(download_spec, str):
             download_spec = {'format': download_spec}
         if 'tables' not in download_spec:
-            download_spec['tables'] = list(schema)
+            download_spec['tables'] = list(tables)
         spec['download'] = Download.from_spec(download_spec, source, filters) 
 
         # Backward compatibility
