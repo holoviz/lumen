@@ -311,13 +311,16 @@ class Dashboard(param.Parameterized):
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
+        style = {'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
         state.loading_msg = pn.pane.HTML(
-            'Loading...', align='center',
-            width=400, style={'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
+            'Loading...', align='center', style=style, width=400, height=400
         )
-        self._loading = pn.Column(state.loading_msg, sizing_mode='stretch_both')
+        self._loading = pn.Column(
+            pn.layout.HSpacer(), state.loading_msg, pn.layout.HSpacer(),
+            sizing_mode='stretch_both'
+        )
         self._main = pn.Column(
-            self._loading, loading=True, sizing_mode='stretch_both'
+            self._loading, loading=True, sizing_mode='stretch_both',
         )
         if isinstance(self._layout, pn.Tabs):
             self._layout.param.watch(self._activate_filters, 'active')
