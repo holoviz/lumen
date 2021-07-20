@@ -356,6 +356,8 @@ class IndicatorView(View):
     view_type = 'indicator'
 
     def __init__(self, **params):
+        if 'indicator' in params and isinstance(params['indicator'], str):
+            params['indicator'] = _INDICATORS[params['indicator']]
         super().__init__(**params)
         name = params.get('label', params.get('field', ''))
         self.kwargs['name'] = name
