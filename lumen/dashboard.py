@@ -270,7 +270,7 @@ class Dashboard(param.Parameterized):
         menu_items = []
         for yml in config.yamls:
             with open(yml) as f:
-                spec = yaml.load(f.read(), Loader=yaml.Loader)
+                spec = load_yaml(f.read())
             endpoint = os.path.basename(yml).split('.')[0]
             title = spec.get('config', {}).get('title', endpoint)
             i = 1
