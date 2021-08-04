@@ -38,9 +38,9 @@ class IntakeBaseSource(Source):
                 continue
             data = self.get(entry, __dask=True)
             if self.load_schema:
-                schemas[entry] = {}
-            else:
                 schemas[entry] = get_dataframe_schema(data)['items']['properties']
+            else:
+                schemas[entry] = {}
         return schemas if table is None else schemas[table]
 
     @cached(with_query=False)
