@@ -5,6 +5,8 @@ import os
 import traceback
 import yaml
 
+from concurrent.futures import Future, ThreadPoolExecutor
+
 import param
 import panel as pn
 
@@ -53,6 +55,9 @@ class Config(param.Parameterized):
     """
     High-level configuration options for the Dashboard.
     """
+
+    background_load = param.Boolean(default=False, doc="""
+        Whether to load any targets in the background.""")
 
     editable = param.Boolean(default=False, doc="""
         Whether the dashboard specification is editable from within
@@ -183,6 +188,10 @@ class Dashboard(param.Parameterized):
         self._load_specification(from_file=True)
         self._apps = {}
 
+        # Set up background loading
+        self._thread_pool = None
+        self._rendered = []
+
         # Initialize high-level settings
         self.config = Config.from_spec(state.spec.get('config', {}))
         self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
@@ -235,6 +244,10 @@ class Dashboard(param.Parameterized):
         target.start()
         return target
 
+    def _background_load(self, i, spec):
+        self.targets[i] = target = self._load_target(spec)
+        return target
+
     def _materialize_specification(self, force=False):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
@@ -244,17 +257,26 @@ class Dashboard(param.Parameterized):
         targets = []
         target_specs = state.spec.get('targets', [])
         ntargets = len(target_specs)
+        if isinstance(self._layout, pn.Tabs) and self.config.background_load:
+            self._thread_pool = ThreadPoolExecutor(max_workers=ntargets-1)
         for i, target_spec in enumerate(target_specs):
             if state.loading_msg:
                 state.loading_msg.object = (
                     f"Loading target {target_spec['title']!r} ({i}/{ntargets})..."
             )
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
-                item = None
+                if self.config.background_load:
+                    item = self._thread_pool.submit(self._background_load, i, target_spec)
+                else:
+                    item = None
+                self._rendered.append(False)
             else:
                 item = self._load_target(target_spec)
+                self._rendered.append(True)
             targets.append(item)
         self.targets[:] = targets
+        if self._thread_pool is not None:
+            self._thread_pool.shutdown()
 
     ##################################################################
     # Create UI
@@ -360,13 +382,18 @@ class Dashboard(param.Parameterized):
 
     def _activate_filters(self, event):
         target = self.targets[event.new]
-        if target is None:
+        rendered = self._rendered[event.new]
+        if not rendered:
             spec = state.spec['targets'][event.new]
             self._set_loading(spec['title'])
-            target = self._load_target(spec)
+            if isinstance(target, Future):
+                target = target.result()
+            else:
+                target = self._load_target(spec)
             self.targets[event.new] = target
             self._render_filters()
             self._layout[event.new] = target.panels
+            self._rendered[event.new] = True
         if self._global_filters:
             active = [0, event.new+1]
         else:
@@ -415,10 +442,10 @@ class Dashboard(param.Parameterized):
         views = []
         filters = []
         for target in self.targets:
-            if target is None:
+            if target is None or isinstance(target, Future):
                 continue
             for filt in target.filters:
-                if ((all(target is None or filt in target.filters
+                if ((all(isinstance(target, (type(None), Future)) or filt in target.filters
                          for target in self.targets) and
                     filt.panel is not None) or filt.shared) and filt not in filters:
                     views.append(filt.panel)
@@ -431,7 +458,7 @@ class Dashboard(param.Parameterized):
         self._global_filters, global_panel = self._get_global_filters()
         filters = [] if global_panel is None else [global_panel]
         for i, target in enumerate(self.targets):
-            if target is None:
+            if target is None or isinstance(target, Future):
                 spec = state.spec['targets'][i]
                 panel = pn.Column(name=spec['title'])
             else:
@@ -444,7 +471,7 @@ class Dashboard(param.Parameterized):
     def _render_targets(self):
         items = []
         for target, spec in zip(self.targets, state.spec['targets']):
-            if target is None:
+            if target is None or isinstance(target, Future):
                 panel = pn.Column(name=spec['title'])
             else:
                 panel = target.panels
