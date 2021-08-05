@@ -2,7 +2,6 @@ import html
 import importlib
 import importlib.util
 import os
-import time
 import traceback
 import yaml
 
