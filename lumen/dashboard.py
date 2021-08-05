@@ -249,13 +249,6 @@ class Dashboard(param.Parameterized):
         self.targets[i] = target = self._load_target(spec)
         return target
 
-    def _shutdown(self):
-        while any(isinstance(t, Future) for t in self.targets):
-            time.sleep(0.1)
-        thread_pool = self._thread_pool
-        self._thread_pool = None
-        self._thread_pool.shutdown()
-
     def _materialize_specification(self, force=False):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
@@ -284,7 +277,7 @@ class Dashboard(param.Parameterized):
             targets.append(item)
         self.targets[:] = targets
         if self._thread_pool is not None:
-            self._thread_pool.submit(self._shutdown)
+            self._thread_pool.shutdown()
 
     ##################################################################
     # Create UI
