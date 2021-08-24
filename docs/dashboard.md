@@ -106,7 +106,7 @@ sources:
 	filters:
 	  year:
 	    field: country
-		type: widget
+		  type: widget
 ```
 
 Any target that uses the population `Source` can now refer to `year`
