@@ -131,7 +131,7 @@ class ViewEditor(ReactiveHTML):
     table = param.String()
 
     view_type = param.String(default='None')
-    
+
     view = param.Parameter()
 
     _template = """
@@ -253,7 +253,7 @@ class ViewGallery(WizardItem, Gallery):
                 thumbnail=view.thumbnail
             )
             self.views.append(view)
-        self.param.trigger('views')    
+        self.param.trigger('views')
         self.param.trigger('items')
         self._editor.views = []
         state.template.close_modal()
@@ -272,7 +272,16 @@ class ViewGallery(WizardItem, Gallery):
 
 class TableViewEditor(ViewEditor):
 
+    page_size = param.Integer(default=15, doc="Declare the page size")
+
     view_type = param.String(default='table')
+
+    _template = """
+    <span style="font-size: 2em">{{ view_type.title() }} Editor</span>
+    <p>Configure the view.</p>
+    <fast-divider></fast-divider>
+    <div id="view">${view}</div>
+    """
 
     def __init__(self, **params):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
@@ -283,13 +292,16 @@ class TableViewEditor(ViewEditor):
         self.tabulator = pn.widgets.Tabulator(
             df, pagination='remote', page_size=15, **kwargs
         )
-        controls = ['theme', 'layout', 'page_size']
+        controls = ['theme', 'layout', 'page_size', 'pagination']
         self.view = pn.Row(
-            self.tabulator.controls(controls, width=300),
+            self.tabulator.controls(
+                controls, width=250, margin=(0, 20, 0, 0), jslink=False
+            ),
             self.tabulator,
             sizing_mode='stretch_width'
         )
         self.tabulator.param.watch(self._update_spec, controls)
+        self.tabulator.param.trigger(*controls)
 
     @property
     def thumbnail(self):
@@ -326,10 +338,16 @@ class hvPlotViewEditor(ViewEditor):
         from hvplot.ui import hvPlotExplorer
         super().__init__(**params)
         kwargs = dict(self.spec)
+        kwargs.pop('type')
         df = self.source_obj.get(kwargs.pop('table'))
         self.view = hvPlotExplorer(df, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
-        self.view.param.trigger('kind', 'x', 'y')
+        self.view.axes.param.watch(self._update_spec, list(self.view.axes.param))
+        self.view.operations.param.watch(self._update_spec, list(self.view.operations.param))
+        self.view.style.param.watch(self._update_spec, list(self.view.style.param))
+        self.spec['x'] = self.view.x
+        self.spec['y'] = self.view.y
+        self.spec['kind'] = self.view.kind
 
     @property
     def thumbnail(self):
