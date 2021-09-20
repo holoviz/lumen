@@ -13,56 +13,6 @@ from .gallery import Gallery, GalleryItem
 from .state import state
 
 
-class ReactiveGrid(ReactiveHTML, GridSpec):
-    
-    allow_resize = param.Boolean(default=True)
-
-    allow_drag = param.Boolean(default=True)
-    
-    ncols = param.Integer(default=12)
-    
-    state = param.List()
-    
-    _template = """
-    <div id="grid" class="grid-stack">
-    {% for key, obj in objects.items() %}
-      <div class="grid-stack-item" gs-h="{{ (key[2] or nrows)-(key[0] or 0) }}" gs-w="{{ (key[3] or ncols)-(key[1] or 0) }}" gs-y="{{ (key[0] or 0) }}" gs-x="{{ (key[1] or 0) }}">
-        <div id="content" class="grid-stack-item-content">${obj}</div>
-      </div>
-    {% endfor %}
-    </div>
-    """ # noqa
-
-    _scripts = {
-        'render': ["""
-        const options = {
-          column: data.ncols,
-          disableResize: !data.allow_resize,
-          disableDrag: !data.allow_drag
-        }
-        const gridstack = GridStack.init(options, grid);
-        function sync_state() {
-          const items = []
-          for (const node of gridstack.engine.nodes) {
-            items.push({x0: node.x, y0: node.y, x1: node.x+node.w, y1: node.y+node.h})
-          }
-          data.state = items
-        }
-        gridstack.on('resizestop', (event, el) => {
-          window.dispatchEvent(new Event("resize"));
-          sync_state()
-        })
-        gridstack.on('dragstop', (event, el) => {
-          sync_state()
-        })
-        sync_state()
-        state.gridstack = gridstack
-        """],
-        'allow_drag': ["state.gridstack.enableMove(data.allow_drag)"],
-        'allow_resize': ["state.gridstack.enableResize(data.allow_resize)"],
-    }
-
-
 class TargetEditor(ReactiveHTML):
     "Select the views on this target and declare a layout."
 
@@ -78,20 +28,18 @@ class TargetEditor(ReactiveHTML):
 
     views = param.List(default=[])
 
+    view_select = param.Parameter()
+
     _template = """
     <span style="font-size: 1.5em">{{ title }} Target</span>
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
     <div style="display: flex; width: 100%;">
       <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
-        <fast-listbox id="view-select" style="max-width: 250px; min-width: 150px;">
-          {% for view in views %}
-          <fast-option value="{{ view }}">{{ view.title() }}</fast-option>
-          {% endfor %}
-        </fast-listbox>
+        <div id="view-select">${view_select}</div>
         <div style="display: grid; flex: auto;">
           <label for="layout-type-${id}"><b>{{ param.layout_type.label }}</b></label>
-          <fast-select id="layout-type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
+          <fast-select id="layout-type" style="max-width: 200px; min-width: 150px; z-index: 100;" value="${layout_type}">
             {% for lt in param.layout_type.objects %}
               <fast-option value="{{ lt }}">{{ lt.title() }}</fast-option>
             {% endfor %}
@@ -111,6 +59,11 @@ class TargetEditor(ReactiveHTML):
         layout_type, layout = self._construct_layout(layout_spec)
         params['layout_type'] = layout_type
         params['layout'] = layout
+        params['view_select'] = vsel = pn.widgets.MultiSelect(
+            name='Select views', options=[], max_width=200,
+            sizing_mode='stretch_width', margin=0
+        )
+        vsel.link(self, value='views')
         super().__init__(**params)
         if 'views' not in self.spec:
             self.spec['views'] = {}
@@ -118,6 +71,8 @@ class TargetEditor(ReactiveHTML):
         for name, view in state.views.items.items():
             if self.source == view.editor.source:
                 self.views.append(name)
+                vsel.options.append(name)
+        self._views = {}
 
     def _construct_layout(self, layout_spec):
         layout_kwargs = {'sizing_mode': 'stretch_both'}
@@ -131,23 +86,24 @@ class TargetEditor(ReactiveHTML):
     def _populate_layout(self, layout):
         source = self.spec['source']
         for i, (name, view) in enumerate(self.spec['views'].items()):
-            source_spec = state.sources.sources[source].spec
-            source_obj = lumen_state.load_source(source, source_spec)
-            view = View.from_spec(view, source_obj, [])
+            if name in self._views:
+                view = self._views[name]
+            else:
+                source_spec = state.sources.sources[source].spec
+                source_obj = lumen_state.load_source(source, source_spec)
+                self._views[name] = view = View.from_spec(view, source_obj, [])
             if hasattr(layout, 'append'):
                 layout.append(view.get_panel())
             else:
                 layout[i*3:(i+1)*3, :] = view.get_panel()
 
-    @param.depends('layout_type', watch=True)
+    @param.depends('layout_type', 'views', watch=True)
     def _update_layout(self):
         self.spec['layout'] = self.layout_type
+        self.spec['views'] = {v: state.views.items[v].spec for v in self.views}
         _, layout = self._construct_layout(self.layout_type)
         self._populate_layout(layout)
         self.layout = layout
-
-    def _select(self, event):
-        self.spec['views'].append(event.obj.editor.spec)
 
 
 class TargetGalleryItem(GalleryItem):

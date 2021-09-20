@@ -24,7 +24,7 @@ class SourceEditor(FastComponent):
     cache_dir = param.String(label="Cache directory (optional)", precedence=1, doc="""
         Enter a relative cache directory.""")
 
-    preview = param.Parameter(default=FastTabs(sizing_mode='stretch_width'))
+    preview = param.Parameter(default=pn.Row(sizing_mode='stretch_width'))
 
     source_type = param.String(default="")
 
@@ -72,17 +72,19 @@ class SourceEditor(FastComponent):
     def _preview(self, event):
         source = Source.from_spec(self.spec)
         tables = source.get_tables()
+        table = pn.widgets.Select(name='Select table', options=tables, width=200, margin=0)
+        table_view = pn.widgets.Tabulator(
+            sizing_mode='stretch_width', pagination='remote', page_size=12, theme='midnight',
+            height=400
+        )
+        load = pn.widgets.Button(name='Load table', width=200, margin=(15, 0))
         def load_table(event):
-            table = tables[event.new]
-            tabs[event.new][1].object = source.get(table)
-        tabs = []
-        for i, table in enumerate(tables):
-            tabs.append((table, pn.widgets.Tabulator(
-                None if i > 0 else source.get(table), sizing_mode='stretch_width',
-                pagination='remote', page_size=8, theme='midnight'
-            )))
-        self.preview[:] = tabs
-        self.preview.param.watch(load_table, 'active')
+            table_view.value = source.get(table.value)
+        load.on_click(load_table)
+        self.preview[:] = [
+            pn.Column(table, load, margin=(0, 20, 0, 0)),
+            table_view
+        ]
         self.resize += 1
 
     def _save(self):
@@ -209,8 +211,6 @@ class IntakeSourceEditor(SourceEditor):
 
     upload = param.Parameter(precedence=-1)
 
-    display = param.String(default="block")
-    
     _template = """
     <span style="font-size: 1.5em">{{ name }} - Intake Source</span>
     <p>{{ __doc__ }}</p>
@@ -225,7 +225,7 @@ class IntakeSourceEditor(SourceEditor):
           </div>
           <div id="upload" style="display: grid; margin-top: 1em;">${upload}</div>
         </div>
-        <div style="flex: 70%; min-width: 600px; display: ${display}">
+        <div style="flex: 70%; min-width: 600px; display: block">
           <label for="catalog"><b>Catalog</b></label>
           <div id="catalog">${editor}</div>
         </div>
@@ -238,7 +238,7 @@ class IntakeSourceEditor(SourceEditor):
         </div>
         <div style="display: grid;">
           <label for="shared"><b>{{ param.shared.label }}</b></label>
-          <fast-checkbox value="${shared}"></fast-checkbox>
+          <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
         </div>
       </div>
     </form>
@@ -246,7 +246,7 @@ class IntakeSourceEditor(SourceEditor):
       Preview
     </fast-button>
     <fast-divider></fast-divider>
-    <div id="preview">${preview}</div>
+    <div id="preview" style="margin-top: 1.8em;">${preview}</div>
     """
 
     _dom_events = {'cache_dir': ['keyup'], 'uri': ['keyup']}
@@ -324,7 +324,7 @@ class IntakeDremioSourceEditor(SourceEditor):
         </div>
         <div style="display: grid;">
           <label for="shared"><b>{{ param.shared.label }}</b></label>
-          <fast-checkbox value="${shared}"></fast-checkbox>
+          <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
         </div>
       </div>
     </form>
@@ -335,14 +335,16 @@ class IntakeDremioSourceEditor(SourceEditor):
     <div id="preview">${preview}</div>
     """
 
+    _dom_events = {'uri': ['keyup']}
+
     def __init__(self, **params):
         import lumen.sources.intake # noqa
         super().__init__(**params)
 
     @param.depends('cert', 'load_schema', 'tls', 'uri', watch=True)
-    def _update_spec(self, *events):
-        for event in events:
-            self.spec[event.name] = event.new
+    def _update_spec(self):
+        for p in ('cert', 'load_schema', 'tls', 'uri'):
+            self.spec[p] = getattr(self, p)
 
     @property
     def thumbnail(self):
@@ -411,14 +413,14 @@ class FileSourceEditor(SourceEditor):
       </div>
       <div style="display: grid;">
         <label for="shared"><b>{{ param.shared.label }}</b></label>
-        <fast-checkbox value="${shared}"></fast-checkbox>
+        <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
       </div>
     </div>
     <fast-button id="preview-button" onclick="${_preview}" style="position: absolute; right: 5px; margin-top: 1.5em; z-index: 100;">
       Preview
     </fast-button>
     <fast-divider></fast-divider>
-    <div id="preview">${preview}</div>
+    <div id="preview" style="margin-top: 4em">${preview}</div>
     """
 
     _dom_events = {'cache_dir': ['keyup']}

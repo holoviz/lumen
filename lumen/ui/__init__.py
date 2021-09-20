@@ -1,3 +1,4 @@
+import io
 import os
 import pathlib
 import uuid
@@ -207,27 +208,43 @@ class YAML(WizardItem):
     Download or copy the dashboard yaml specification.
     """
 
-    editor = param.ClassSelector(class_=pn.widgets.Ace)
+    download = param.ClassSelector(class_=pn.widgets.FileDownload)
+
+    editor = param.ClassSelector(class_=pn.pane.JSON)
 
     _template = """
     <span style="font-size: 1.5em">Launcher</span>
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
+    <div id="download">${download}</div>
     <div id="yaml">${editor}</div>
     """
 
     def __init__(self, spec, **params):
-        yaml_text = yaml.dump(spec)
-        params['editor'] = pn.widgets.Ace(value=yaml_text,
-            language='yaml', sizing_mode='stretch_both', theme='dracula',
+        params['download'] = pn.widgets.FileDownload(
+            name='Download Dashboard Yaml',
+            callback=self._download_data,
+            filename='dashboard.yaml',
+            margin=(5, 0)
+        )
+        params['editor'] = pn.pane.JSON(
+            object=spec,
+            sizing_mode='stretch_both',
             margin=0
         )
         super().__init__(spec=spec, **params)
 
+    def _download_data(self):
+        sio = io.StringIO()
+        text = yaml.dump(state.spec)
+        sio.write(text)
+        sio.seek(0)
+        return sio
+
     @param.depends('active', watch=True)
     def _update_spec(self):
         self.spec = state.spec
-        self.editor.value = yaml.dump(state.spec)
+        self.editor.object = state.spec
 
 
 class Builder(param.Parameterized):
@@ -343,7 +360,6 @@ class Builder(param.Parameterized):
         self.views.param.set_param(views=views, items=editors)
         self.welcome.ready = True
         self.wizard.loading = False
-        self.launcher.value = yaml.dump(self.spec)
 
     def servable(self, title='Lumen Builder'):
         self.template.servable(title=title)
