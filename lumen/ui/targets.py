@@ -2,7 +2,6 @@ import panel as pn
 import param
 
 from panel.reactive import ReactiveHTML
-from panel.layout import GridSpec
 
 from lumen.config import _LAYOUTS
 from lumen.state import state as lumen_state

@@ -10,7 +10,7 @@ from panel.reactive import ReactiveHTML
 
 from lumen.sources import Source
 from .base import WizardItem
-from .fast import FastComponent, FastTabs
+from .fast import FastComponent
 from .gallery import Gallery, GalleryItem
 from .state import state
 
