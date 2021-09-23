@@ -12,6 +12,7 @@ import panel as pn
 
 from panel.template.base import BasicTemplate
 
+from .auth import AuthPlugin
 from .config import config, _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
 from .sources import Source, RESTSource # noqa
@@ -161,11 +162,39 @@ class Defaults(param.Parameterized):
                 obj_type.param.set_param(**params)
 
 
-class Dashboard(param.Parameterized):
+class Auth(param.Parameterized):
 
-    auth = param.Dict(default={}, doc="""
+    spec = param.Dict({}, doc="""
         Dictionary of keys and values to match the pn.state.user_info
         against.""")
+    
+    @classmethod
+    def from_spec(cls, spec):
+        plugins = spec.pop('plugins', [])
+        for plugin_spec in plugins:
+            plugin = AuthPlugin.from_spec(plugin_spec)
+            spec = plugin.transform(spec)
+        return cls(spec=spec)
+
+    @property
+    def authorized(self):
+        if pn.state.user_info is None and self.spec.get('auth'):
+            return config.dev
+        authorized = True
+        for k, value in self.spec.get('auth', {}).items():
+            if not isinstance(value, list): value = [value]
+            if k in pn.state.user_info:
+                user_value = pn.state.user_info[k]
+                if not isinstance(user_value, list):
+                    user_value = [user_value]
+                authorized &= any(uv == v for v in value for uv in user_value)
+        return authorized
+
+
+class Dashboard(param.Parameterized):
+
+    auth = param.ClassSelector(default=Auth(), class_=Auth, doc="""
+        Auth object which validates the auth spec against pn.state.user_info.""")
 
     config = param.ClassSelector(default=Config(), class_=Config, doc="""
         High-level configuration options for the dashboard.""")
@@ -193,6 +222,7 @@ class Dashboard(param.Parameterized):
         self._rendered = []
 
         # Initialize high-level settings
+        self.auth = Auth.from_spec(state.spec.get('auth', {}))
         self.config = Config.from_spec(state.spec.get('config', {}))
         self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
         self.defaults.apply()
@@ -251,7 +281,7 @@ class Dashboard(param.Parameterized):
     def _materialize_specification(self, force=False):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
-        if not state.authorized:
+        if not self.auth.authorized:
             self.targets = []
             return
         targets = []
@@ -504,7 +534,7 @@ class Dashboard(param.Parameterized):
         self._layout[:] = [alert]
 
     def _render(self):
-        if state.authorized:
+        if self.auth.authorized:
             self._render_filters()
             self._render_targets()
         else:

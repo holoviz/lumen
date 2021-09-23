@@ -51,20 +51,6 @@ class _session_state:
     def loading_msg(self, loading_msg):
         self._loading[pn.state.curdoc] = loading_msg
 
-    @property
-    def authorized(self):
-        if pn.state.user_info is None and self.spec.get('auth'):
-            return config.dev
-        authorized = True
-        for k, value in self.spec.get('auth', {}).items():
-            if not isinstance(value, list): value = [value]
-            if k in pn.state.user_info:
-                user_value = pn.state.user_info[k]
-                if not isinstance(user_value, list):
-                    user_value = [user_value]
-                authorized &= any(uv == v for v in value for uv in user_value)
-        return authorized
-
     def load_global_sources(self, clear_cache=True):
         """
         Loads global sources shared across all targets.
