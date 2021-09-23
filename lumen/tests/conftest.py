@@ -1,3 +1,5 @@
+import tempfile
+
 import pytest
 
 from lumen.config import config
@@ -25,3 +27,11 @@ def make_filesource():
     yield create
     config._root = root
     state.global_sources.clear()
+
+
+
+@pytest.fixture
+def yaml_file():
+    tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml')
+    yield tf
+    tf.close()
