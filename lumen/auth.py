@@ -4,6 +4,9 @@ from collections import defaultdict
 
 import param
 
+from .util import resolve_module_reference
+
+
 
 class AuthPlugin(param.Parameterized):
     """
@@ -34,7 +37,6 @@ class AuthPlugin(param.Parameterized):
 
     def transform(self, spec):
         return dict(spec)
-
 
 
 class YamlAuthMapperPlugin(AuthPlugin):
