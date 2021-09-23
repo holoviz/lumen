@@ -200,7 +200,7 @@ class WidgetFilter(BaseWidgetFilter):
             self.widget.options.insert(0, ' ')
             self.widget.value = ' '
         self.widget.name = self.label
-        self.widget.link(self, value='value')
+        self.widget.link(self, value='value', bidirectional=True)
         if self.default is not None:
             self.widget.value = self.default
 
