@@ -1,6 +1,5 @@
 from lumen.auth import YamlAuthMapperPlugin
 from lumen.dashboard import Auth
-from panel.util import edit_readonly
 
 auth_mapper = """
 group:
