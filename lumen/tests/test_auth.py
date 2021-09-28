@@ -1,5 +1,6 @@
 from lumen.auth import YamlAuthMapperPlugin
-
+from lumen.dashboard import Auth
+from panel.util import edit_readonly
 
 auth_mapper = """
 group:
@@ -34,3 +35,9 @@ def test_yaml_auth_mapper_plugin(yaml_file):
             'philipp@holoviz.org'
         ]
     }
+
+def test_auth(state_userinfo):
+    auth = Auth(spec={'email': 'lumen@holoviz.org'})
+    auth2 = Auth(spec={'email': 'panel@holoviz.org'})
+    assert auth.authorized
+    assert not auth2.authorized
