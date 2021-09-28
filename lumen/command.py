@@ -53,7 +53,7 @@ def build_single_handler_application(path, argv):
     if not os.path.isfile(path) or not (path.endswith(".yml") or path.endswith(".yaml")):
         return _build_application(path, argv)
 
-    handler = YamlHandler(filename=path, arg=argv)
+    handler = YamlHandler(filename=pathx)
     if handler.failed:
         raise RuntimeError("Error loading %s:\n\n%s\n%s " % (path, handler.error, handler.error_detail))
 
