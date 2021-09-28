@@ -1,3 +1,4 @@
+import os
 import tempfile
 
 import pytest
@@ -35,9 +36,10 @@ def make_filesource():
 
 @pytest.fixture
 def yaml_file():
-    tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml')
+    tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
     yield tf
     tf.close()
+    os.unlink(tf.name)
 
 
 @pytest.fixture
