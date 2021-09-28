@@ -178,10 +178,10 @@ class Auth(param.Parameterized):
 
     @property
     def authorized(self):
-        if pn.state.user_info is None and self.spec.get('auth'):
+        if pn.state.user_info is None and self.spec:
             return config.dev
         authorized = True
-        for k, value in self.spec.get('auth', {}).items():
+        for k, value in self.spec.items():
             if not isinstance(value, list): value = [value]
             if k in pn.state.user_info:
                 user_value = pn.state.user_info[k]
