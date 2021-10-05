@@ -409,8 +409,11 @@ class Target(param.Parameterized):
                     if not view.controls:
                         continue
                     view_controls.append(view.control_panel)
-                    cb = partial(self._rerender, invalidate_cache=False)
-                    view.param.watch(cb, view.controls)
+                    # Attach controls callback only when there are events, i.e. new
+                    # filter values set.
+                    if not events:
+                        cb = partial(self._rerender, invalidate_cache=False)
+                        view.param.watch(cb, view.controls)
             prev_views = views
             if card is None:
                 continue
