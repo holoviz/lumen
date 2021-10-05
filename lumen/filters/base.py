@@ -164,13 +164,16 @@ class BaseWidgetFilter(Filter):
 
     visible = param.Boolean(default=True, doc="""
         Whether the filter should be visible.""")
+    
+    disabled = param.Boolean(default=True, doc="""
+        Whether the filter should be disabled.""")
 
     __abstract__ = True
 
     @property
     def panel(self):
         widget = self.widget.clone()
-        self.widget.link(widget, value='value', visible='visible', bidirectional=True)
+        self.widget.link(widget, value='value', visible='visible', disabled='disabled', bidirectional=True)
         return widget
 
 
@@ -204,7 +207,8 @@ class WidgetFilter(BaseWidgetFilter):
             self.widget.value = ' '
         self.widget.name = self.label
         self.widget.visible = self.visible
-        self.widget.link(self, value='value', visible='visible', bidirectional=True)
+        self.widget.disabled = self.disabled
+        self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
         if self.default is not None:
             self.widget.value = self.default
 
@@ -257,7 +261,7 @@ class BinFilter(BaseWidgetFilter):
         else:
             value = tuple(self.default)
         self.widget = widget(name=self.label, options=options, value=value)
-        self.widget.link(self, value='value', visible='visible', bidirectional=True)
+        self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
 
     @property
     def query(self):
