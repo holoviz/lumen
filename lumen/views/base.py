@@ -222,7 +222,7 @@ class View(param.Parameterized):
         query = {
             filt.field: filt.query for filt in self.filters
             if filt.query is not None and
-            not filt.disabled and
+            not getattr(filt, 'disabled', None) and
             (filt.table is None or filt.table == self.table)
         }
         data = self.source.get(self.table, **query)
