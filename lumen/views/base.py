@@ -219,12 +219,13 @@ class View(param.Parameterized):
         """
         if self._cache is not None:
             return self._cache
-        query = {
-            filt.field: filt.query for filt in self.filters
-            if filt.query is not None and
+        query = {}
+        for filt in self.filters:
+            filt_query = filt.query
+            if (filt_query is not None and
             not getattr(filt, 'disabled', None) and
-            (filt.table is None or filt.table == self.table)
-        }
+            (filt.table is None or filt.table == self.table)):
+                query[filt.field] = filt_query
         data = self.source.get(self.table, **query)
         for transform in self.transforms:
             data = transform.apply(data)
