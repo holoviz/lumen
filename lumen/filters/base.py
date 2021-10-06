@@ -161,12 +161,12 @@ class BaseWidgetFilter(Filter):
 
     default = param.Parameter(doc="""
         The default value to use on the widget.""")
+    
+    disabled = param.Boolean(default=False, doc="""
+        Whether the filter should be disabled.""")
 
     visible = param.Boolean(default=True, doc="""
         Whether the filter should be visible.""")
-    
-    disabled = param.Boolean(default=True, doc="""
-        Whether the filter should be disabled.""")
 
     __abstract__ = True
 
