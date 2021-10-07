@@ -477,7 +477,7 @@ class Dashboard(param.Parameterized):
             for filt in target.filters:
                 if ((all(isinstance(target, (type(None), Future)) or filt in target.filters
                          for target in self.targets) and
-                    filt.panel is not None) or filt.shared) and filt not in filters:
+                    filt.panel is not None) and filt.shared) and filt not in filters:
                     views.append(filt.panel)
                     filters.append(filt)
         if not views or len(self.targets) == 1:
