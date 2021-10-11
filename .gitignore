@@ -121,3 +121,6 @@ builtdocs/
 discover/
 
 node_modules/
+
+# Examples temp data
+examples/*/cache
