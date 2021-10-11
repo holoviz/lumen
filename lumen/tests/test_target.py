@@ -5,7 +5,6 @@ import holoviews as hv
 from panel.param import Param
 
 from lumen.sources import FileSource
-from lumen.state import state
 from lumen.target import Target
 
 
