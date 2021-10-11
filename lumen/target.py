@@ -251,7 +251,7 @@ class Target(param.Parameterized):
             if isinstance(filt, FacetFilter):
                 continue
             filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
-        self._update_views()
+        self._update_views(init=True)
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -392,32 +392,37 @@ class Target(param.Parameterized):
     def _sync_view(self, view, *events):
         view.param.set_param(**{event.name: event.new for event in events})
 
-    def _update_views(self, invalidate_cache=True, update_views=True, events=[]):
+    def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
         cards = []
         view_controls = []
         prev_views = None
+        rerender = partial(self._rerender, invalidate_cache=False)
         for facet_filters in self.facet.filters:
+            # Get views, cards and controls
             key, card, views = self._get_card(
                 self.filters, facet_filters, invalidate_cache, update_views,
                 events=events
             )
-            if prev_views:
-                for v1, v2 in zip(prev_views, views):
-                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
-            else:
+            if card is not None:
+                cards.append((key, card))
+            if prev_views is None:
                 for view in views:
                     if not view.controls:
                         continue
                     view_controls.append(view.control_panel)
-                    # Attach controls callback only when there are events, i.e. new
-                    # filter values set.
-                    if not events:
-                        cb = partial(self._rerender, invalidate_cache=False)
-                        view.param.watch(cb, view.controls)
-            prev_views = views
-            if card is None:
+
+            # Initialize callbacks
+            if not init:
                 continue
-            cards.append((key, card))
+            elif prev_views:
+                # Only the controls for the first facet is shown so link
+                # the other facets to the controls of the first
+                for v1, v2 in zip(prev_views, views):
+                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
+            else:
+                # Re-render target when controls update
+                for view in views:
+                    view.param.watch(rerender, view.controls)
 
         self._view_controls[:] = view_controls
 
