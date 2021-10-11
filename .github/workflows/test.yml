@@ -50,6 +50,7 @@ jobs:
           conda activate test-environment
           conda list
           doit develop_install ${{ env.CHANS_DEV}} -o tests  
+          conda install ${{ env.CHANS_DEV}} "panel>=0.13.0a7"
       - name: doit env_capture
         run: |
           eval "$(conda shell.bash hook)"
