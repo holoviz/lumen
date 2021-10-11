@@ -5,6 +5,7 @@ import holoviews as hv
 from panel.param import Param
 
 from lumen.sources import FileSource
+from lumen.state import state
 from lumen.target import Target
 
 
@@ -44,6 +45,10 @@ def test_view_controls_facetted():
     views = {
         'test': {
             'type': 'hvplot', 'table': 'test', 'controls': ['x', 'y'],
+            'x': 'A', 'y': 'B', 'kind': 'scatter'
+        },
+        'test2': {
+            'type': 'hvplot', 'table': 'test',
             'x': 'A', 'y': 'B', 'kind': 'scatter'
         }
     }
