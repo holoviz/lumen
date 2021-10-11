@@ -223,6 +223,7 @@ class View(param.Parameterized):
         for filt in self.filters:
             filt_query = filt.query
             if (filt_query is not None and
+            not getattr(filt, 'disabled', None) and
             (filt.table is None or filt.table == self.table)):
                 query[filt.field] = filt_query
         data = self.source.get(self.table, **query)
