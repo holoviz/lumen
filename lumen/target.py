@@ -413,6 +413,7 @@ class Target(param.Parameterized):
 
             # Initialize callbacks
             if not init:
+                prev_views = views
                 continue
             elif prev_views:
                 # Only the controls for the first facet is shown so link
@@ -423,6 +424,7 @@ class Target(param.Parameterized):
                 # Re-render target when controls update
                 for view in views:
                     view.param.watch(rerender, view.controls)
+                prev_views = views
 
         self._view_controls[:] = view_controls
 
