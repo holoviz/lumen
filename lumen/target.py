@@ -251,7 +251,7 @@ class Target(param.Parameterized):
             if isinstance(filt, FacetFilter):
                 continue
             filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
-        self._update_views()
+        self._update_views(init=True)
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -392,31 +392,49 @@ class Target(param.Parameterized):
     def _sync_view(self, view, *events):
         view.param.set_param(**{event.name: event.new for event in events})
 
-    def _update_views(self, invalidate_cache=True, update_views=True, events=[]):
-        cards = []
-        view_controls = []
-        prev_views = None
+    def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
+        """
+        Updates all views during initialization, cache invalidation
+        or because one of the views needs to be updated.
+
+        We accumulate one card per facet but only a single set of
+        controls for all views. The set of controls are then linked
+        to the views for all other facets ensuring they stay synced.
+
+        Only after we have linked all views to we register a watcher
+        which triggers a rerender ensuring that the rerender is
+        triggered **after** all views have been updated with the new
+        control values.
+        """
+        cards, controls = [], []
+        linked_views = None
+        rerender = partial(self._rerender, invalidate_cache=False)
         for facet_filters in self.facet.filters:
             key, card, views = self._get_card(
                 self.filters, facet_filters, invalidate_cache, update_views,
                 events=events
             )
-            if prev_views:
-                for v1, v2 in zip(prev_views, views):
-                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
-            else:
+            if card is not None:
+                cards.append((key, card))
+            if linked_views is None:
                 for view in views:
                     if not view.controls:
                         continue
-                    view_controls.append(view.control_panel)
-                    cb = partial(self._rerender, invalidate_cache=False)
-                    view.param.watch(cb, view.controls)
-            prev_views = views
-            if card is None:
-                continue
-            cards.append((key, card))
+                controls.append(view.control_panel)
+                linked_views = views
+            elif init:
+                # Only the controls for the first facet is shown so link
+                # the other facets to the controls of the first
+                for v1, v2 in zip(linked_views, views):
+                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
 
-        self._view_controls[:] = view_controls
+        # Re-render target when controls update but we ensure that
+        # all other views linked to the controls are updated first
+        if init:
+            for view in linked_views:
+                view.param.watch(rerender, view.controls)
+
+        self._view_controls[:] = controls
 
         if self.facet.sort:
             cards = sorted(cards, key=lambda x: x[0])
