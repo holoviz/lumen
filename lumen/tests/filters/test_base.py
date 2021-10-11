@@ -27,3 +27,11 @@ def test_widget_filter_link():
     wfilter.value = (2, 2)
 
     assert widget.value == (2, 2)
+
+    widget.visible = False
+
+    assert wfilter.visible == False
+
+    widget.disabled = False
+
+    assert widget.disabled == False
