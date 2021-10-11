@@ -23,8 +23,8 @@ jobs:
         shell: bash -l {0} 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
-      CHANS_DEV: "-c pyviz/label/dev"
-      CHANS: "-c pyviz"
+      CHANS_DEV: "-c pyviz/label/dev -c bokeh"
+      CHANS: "-c pyviz -c bokeh"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v2
