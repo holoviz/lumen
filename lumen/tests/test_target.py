@@ -5,6 +5,7 @@ import holoviews as hv
 from panel.param import Param
 
 from lumen.sources import FileSource
+from lumen.state import state
 from lumen.target import Target
 
 
@@ -39,8 +40,10 @@ def test_view_controls(set_root):
     assert hv_pane.object.vdims == ['D']
 
 
-def test_view_controls_facetted():
-    source = FileSource(tables={'test': 'sources/test.csv'}, root=str(Path(__file__).parent))
+def test_view_controls_facetted(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    state.sources['test'] = source
     views = {
         'test': {
             'type': 'hvplot', 'table': 'test', 'controls': ['x', 'y'],
