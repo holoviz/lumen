@@ -48,6 +48,10 @@ def test_view_controls_facetted(set_root):
         'test': {
             'type': 'hvplot', 'table': 'test', 'controls': ['x', 'y'],
             'x': 'A', 'y': 'B', 'kind': 'scatter'
+        },
+        'test2': {
+            'type': 'hvplot', 'table': 'test',
+            'x': 'A', 'y': 'B', 'kind': 'scatter'
         }
     }
     spec = {
