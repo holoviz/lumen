@@ -390,7 +390,6 @@ class Target(param.Parameterized):
     ##################################################################
 
     def _sync_view(self, view, *events):
-        print('sync_view')
         view.param.set_param(**{event.name: event.new for event in events})
 
     def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
