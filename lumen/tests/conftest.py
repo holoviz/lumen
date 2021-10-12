@@ -51,3 +51,15 @@ def state_userinfo():
     pn.state = mock_state
     yield
     pn.state = state
+
+
+@pytest.fixture(autouse=True)
+def clear_state():
+    "Clear the state after the execution of each test"
+    yield
+    state.global_sources.clear()
+    state.global_filters.clear()
+    state.spec.clear()
+    state._loading.clear()
+    state._sources.clear()
+    state._filters.clear()
