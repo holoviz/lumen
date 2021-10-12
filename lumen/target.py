@@ -390,6 +390,7 @@ class Target(param.Parameterized):
     ##################################################################
 
     def _sync_view(self, view, *events):
+        print('sync_view')
         view.param.set_param(**{event.name: event.new for event in events})
 
     def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
@@ -420,7 +421,7 @@ class Target(param.Parameterized):
                 for view in views:
                     if not view.controls:
                         continue
-                controls.append(view.control_panel)
+                    controls.append(view.control_panel)
                 linked_views = views
             elif init:
                 # Only the controls for the first facet is shown so link
