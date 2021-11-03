@@ -15,7 +15,7 @@ def get_setup_version(reponame):
 ########## dependencies ##########
 
 dependencies = [
-    "param <1.12.0",
+    "param",
     "panel >=0.11",
     "pandas",
     "hvplot",
