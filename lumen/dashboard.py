@@ -167,7 +167,7 @@ class Auth(param.Parameterized):
     spec = param.Dict({}, doc="""
         Dictionary of keys and values to match the pn.state.user_info
         against.""")
-    
+
     @classmethod
     def from_spec(cls, spec):
         plugins = spec.pop('plugins', [])
@@ -424,6 +424,7 @@ class Dashboard(param.Parameterized):
             self._render_filters()
             self._layout[event.new] = target.panels
             self._rendered[event.new] = True
+        self._layout.loading = False
         if self._global_filters:
             active = [0, event.new+1]
         else:
@@ -440,30 +441,25 @@ class Dashboard(param.Parameterized):
         pn.state.location.reload = True
 
     def _set_loading(self, name=''):
-        loading = pn.Column(
-            pn.indicators.LoadingSpinner(value=True, align='center'),
-            f'**Reloading {name}...**'
-        )
+        state.loading_msg.object = f'<b>Reloading {name}...</b>'
         if isinstance(self._layout, pn.GridBox):
             items = [pn.pane.HTML(width=self._layout[i].width)
                      for i in range(self._layout.ncols) if i < len(self._layout)]
             index = int(min(self._layout.ncols, (len(self._layout)-1)) / 2)
             if items:
-                items[index] = loading
+                items[index] = self._loading
             else:
-                items = [loading]
+                items = [self._loading]
         elif isinstance(self._layout, pn.Tabs):
             items = list(zip(self._layout._names, list(self._layout.objects)))
             tab_name = items[self._layout.active][0]
             if name and tab_name != name:
                 return
-            items[self._layout.active] = pn.Row(
-                pn.layout.HSpacer(), loading, pn.layout.HSpacer(),
-                name=tab_name
-            )
+            items[self._layout.active] = (tab_name, self._loading)
         else:
-            items = [pn.Row(pn.layout.HSpacer(), loading, pn.layout.HSpacer())]
+            items = [self._loading]
         self._layout[:] = items
+        self._layout.loading = True
 
     def _open_modal(self, event):
         self._template.open_modal()
