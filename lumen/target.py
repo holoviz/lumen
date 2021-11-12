@@ -289,7 +289,7 @@ class Target(param.Parameterized):
             layout_type = _LAYOUTS[layout]
             item = layout_type(*(view.panel for view in views), **kwargs)
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
-        return pn.Card(item, title=title, name=title, **params)
+        return pn.Card(item, title=title, name=title, collapsible=False, **params)
 
     def _materialize_views(self, filters):
         views = []
@@ -588,7 +588,7 @@ class Target(param.Parameterized):
         else:
             default = 'column'
         layout = self.facet.layout or default
-        kwargs = dict(name=self.title, sizing_mode='stretch_width')
+        kwargs = dict(name=self.title, margin=0, sizing_mode='stretch_width')
         if isinstance(layout, dict):
             layout_kwargs = dict(layout)
             layout = layout_kwargs.pop('type')
