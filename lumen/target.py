@@ -406,7 +406,7 @@ class Target(param.Parameterized):
         triggered **after** all views have been updated with the new
         control values.
         """
-        cards, controls = [], []
+        cards, controls, all_views = [], [], []
         linked_views = None
         rerender = partial(self._rerender, invalidate_cache=False)
         for facet_filters in self.facet.filters:
@@ -414,6 +414,7 @@ class Target(param.Parameterized):
                 self.filters, facet_filters, invalidate_cache, update_views,
                 events=events
             )
+            all_views += views
             if card is not None:
                 cards.append((key, card))
             if linked_views is None:
@@ -427,6 +428,15 @@ class Target(param.Parameterized):
                 # the other facets to the controls of the first
                 for v1, v2 in zip(linked_views, views):
                     v1.param.watch(partial(self._sync_view, v2), v1.controls)
+
+        # Validate that all filters are applied
+        for filt in self.filters:
+            if filt.field and not any(filt.field in v.source.get_schema(v.table) for v in all_views):
+                self.param.warning(
+                    f'Target {self.title!r} specifies a {type(filt).__name__} '
+                    f'to filter on the {filt.field!r} field but no View '
+                    'found that matches such a field.'
+                )
 
         # Re-render target when controls update but we ensure that
         # all other views linked to the controls are updated first
