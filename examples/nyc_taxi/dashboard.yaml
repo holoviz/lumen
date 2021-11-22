@@ -24,7 +24,7 @@ targets:
         kind: points
         x: pickup_x
         y: pickup_y
-        tiles: Wikipedia
+        tiles: EsriStreet
         rasterize: true
         cnorm: eq_hist
         responsive: true
@@ -38,7 +38,7 @@ targets:
         kind: points
         x: dropoff_x
         y: dropoff_y
-        tiles: Wikipedia
+        tiles: EsriStreet
         rasterize: true
         cnorm: eq_hist
         responsive: true
