@@ -1,5 +1,5 @@
 config:
-  sync_query: true
+  sync_with_url: true
 sources:
   test:
     type: 'file'

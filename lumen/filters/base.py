@@ -29,7 +29,7 @@ class Filter(param.Parameterized):
     shared = param.Boolean(default=False, doc="""
         Whether the filter is shared across all targets.""")
 
-    sync_query = param.Boolean(default=True, doc="""
+    sync_with_url = param.Boolean(default=True, doc="""
         Whether to sync the filter state with the URL parameters.""")
 
     table = param.String(default=None, doc="""
@@ -45,7 +45,7 @@ class Filter(param.Parameterized):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if state.app.config.sync_query and self.sync_query:
+        if state.app.config.sync_with_url and self.sync_with_url:
             pn.state.location.sync(self, {'value': self.field})
 
     @classmethod
