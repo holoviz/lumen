@@ -16,11 +16,17 @@ class _session_state:
 
     spec = {}
 
+    _apps  = WeakKeyDictionary() if pn.state.curdoc else {}
+
     _loading = WeakKeyDictionary() if pn.state.curdoc else {}
 
     _sources = WeakKeyDictionary() if pn.state.curdoc else {}
 
     _filters = WeakKeyDictionary() if pn.state.curdoc else {}
+
+    @property
+    def app(self):
+        return self._apps[pn.state.curdoc]
 
     @property
     def filters(self):

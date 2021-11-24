@@ -8,6 +8,7 @@ import panel as pn
 import param
 
 from ..schema import JSONSchema
+from ..state import state
 from ..util import resolve_module_reference
 
 
@@ -22,14 +23,17 @@ class Filter(param.Parameterized):
     label = param.String(doc="A label for the Filter.")
 
     schema = param.Dict(doc="""
-      The JSON schema provided by the Source declaring information
-      about the data to be filtered.""")
+        The JSON schema provided by the Source declaring information
+        about the data to be filtered.""")
 
     shared = param.Boolean(default=False, doc="""
-      Whether the filter is shared across all targets.""")
+        Whether the filter is shared across all targets.""")
+
+    sync = param.Boolean(default=True, doc="""
+        Whether to sync the filter state.""")
 
     table = param.String(default=None, doc="""
-      The table being filtered. If None applies to all tables.""")
+        The table being filtered. If None applies to all tables.""")
 
     value = param.Parameter(doc="The current filter value.")
 
@@ -38,6 +42,11 @@ class Filter(param.Parameterized):
     _requires_field = True
 
     __abstract = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if state.app.config.sync_query and self.sync:
+            pn.state.location.sync(self, {'value': self.field})
 
     @classmethod
     def _get_type(cls, filter_type):
