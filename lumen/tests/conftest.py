@@ -5,6 +5,8 @@ import pytest
 
 import panel as pn
 
+from bokeh.document import Document
+
 from lumen.config import config
 from lumen.sources import FileSource
 from lumen.state import state
@@ -63,3 +65,10 @@ def clear_state():
     state._loading.clear()
     state._sources.clear()
     state._filters.clear()
+
+
+@pytest.fixture
+def document():
+    doc = Document()
+    with pn.io.server.set_curdoc(doc):
+        yield
