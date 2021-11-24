@@ -421,15 +421,10 @@ class Dashboard(param.Parameterized):
             else:
                 target = self._load_target(spec)
             self.targets[event.new] = target
-            self._render_filters()
             self._layout[event.new] = target.panels
             self._rendered[event.new] = True
+        self._render_filters()
         self._layout.loading = False
-        if self._global_filters:
-            active = [0, event.new+1]
-        else:
-            active = [event.new]
-        self._sidebar.active = active
 
     def _edit(self, event):
         self._yaml = event.new
@@ -484,7 +479,9 @@ class Dashboard(param.Parameterized):
         self._global_filters, global_panel = self._get_global_filters()
         filters = [] if global_panel is None else [global_panel]
         for i, target in enumerate(self.targets):
-            if target is None or isinstance(target, Future):
+            if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
+                continue
+            elif target is None or isinstance(target, Future):
                 spec = state.spec['targets'][i]
                 panel = pn.Column(name=spec['title'])
             else:
@@ -492,7 +489,6 @@ class Dashboard(param.Parameterized):
             if panel is not None:
                 filters.append(panel)
         self._sidebar[:] = filters
-        self._sidebar.active = [0, 1] if self._global_filters else [0]
 
     def _render_targets(self):
         items = []
@@ -532,6 +528,11 @@ class Dashboard(param.Parameterized):
     def _render(self):
         if self.auth.authorized:
             self._render_filters()
+            if isinstance(self._layout, pn.Tabs):
+                active = [0, 1] if self._global_filters else [0]
+            else:
+                active = list(range(len(self._sidebar)))
+            self._sidebar.active = active
             self._render_targets()
         else:
             self._render_unauthorized()
