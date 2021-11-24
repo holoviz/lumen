@@ -181,7 +181,9 @@ class Auth(param.Parameterized):
 
     @property
     def authorized(self):
-        if pn.state.user_info is None and self.spec:
+        if not self.spec:
+            return True
+        elif pn.state.user_info is None and self.spec:
             return config.dev
         authorized = True
         for k, value in self.spec.items():
