@@ -240,8 +240,8 @@ class Dashboard(param.Parameterized):
         self._create_header()
         self._populate_template()
 
-        pn.state.onload(self._render_dashboard)
         state._apps[pn.state.curdoc] = self
+        pn.state.onload(self._render_dashboard)
 
     ##################################################################
     # Load specification
