@@ -8,6 +8,7 @@ import panel as pn
 import param
 
 from ..schema import JSONSchema
+from ..state import state
 from ..util import resolve_module_reference
 
 
@@ -22,14 +23,17 @@ class Filter(param.Parameterized):
     label = param.String(doc="A label for the Filter.")
 
     schema = param.Dict(doc="""
-      The JSON schema provided by the Source declaring information
-      about the data to be filtered.""")
+        The JSON schema provided by the Source declaring information
+        about the data to be filtered.""")
 
     shared = param.Boolean(default=False, doc="""
-      Whether the filter is shared across all targets.""")
+        Whether the filter is shared across all targets.""")
+
+    sync_with_url = param.Boolean(default=True, doc="""
+        Whether to sync the filter state with the URL parameters.""")
 
     table = param.String(default=None, doc="""
-      The table being filtered. If None applies to all tables.""")
+        The table being filtered. If None applies to all tables.""")
 
     value = param.Parameter(doc="The current filter value.")
 
@@ -38,6 +42,16 @@ class Filter(param.Parameterized):
     _requires_field = True
 
     __abstract = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if state.app.config.sync_with_url and self.sync_with_url and pn.state.location:
+            pn.state.location.sync(self, {'value': self.field}, on_error=self._url_sync_error)
+
+    def _url_sync_error(self, values):
+        """
+        Called when URL syncing errors.
+        """
 
     @classmethod
     def _get_type(cls, filter_type):
@@ -169,6 +183,15 @@ class BaseWidgetFilter(Filter):
         Whether the filter should be visible.""")
 
     __abstract__ = True
+
+    def _url_sync_error(self, values):
+        value = values['value']
+        if value is self.widget.value:
+            return
+        elif isinstance(self.widget.param.value, param.Tuple):
+            self.widget.value = tuple(value)
+        else:
+            raise ValueError(f'URL syncing failed, value {value!r} could not be applied.')
 
     @property
     def panel(self):

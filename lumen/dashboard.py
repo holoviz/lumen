@@ -83,6 +83,9 @@ class Config(param.Parameterized):
     reloadable = param.Boolean(default=True, doc="""
         Whether to allow reloading data from source(s) using a button.""")
 
+    sync_with_url = param.Boolean(default=False, doc="""
+        Whether to sync current state of the application.""")
+
     title = param.String(default="Lumen Dashboard", doc="""
         The title of the dashboard.""")
 
@@ -178,7 +181,9 @@ class Auth(param.Parameterized):
 
     @property
     def authorized(self):
-        if pn.state.user_info is None and self.spec:
+        if not self.spec:
+            return True
+        elif pn.state.user_info is None and self.spec:
             return config.dev
         authorized = True
         for k, value in self.spec.items():
@@ -236,6 +241,7 @@ class Dashboard(param.Parameterized):
         self._populate_template()
 
         pn.state.onload(self._render_dashboard)
+        state._apps[pn.state.curdoc] = self
 
     ##################################################################
     # Load specification
@@ -255,6 +261,8 @@ class Dashboard(param.Parameterized):
                 css_classes=['alert', 'alert-danger'], sizing_mode='stretch_width'
             )
             self._main[:] = [alert]
+        if isinstance(self._layout, pn.Tabs) and self.config.sync_with_url:
+            pn.state.location.sync(self._layout, {'active': 'target'})
 
     def _load_specification(self, from_file=False):
         kwargs = {}
