@@ -24,6 +24,7 @@ config:
   title: The title of the overall application
   layout: The layout to put the targets in ('grid', 'tabs', 'column')
   logo: A URL or local path to an image file
+  sync_with_url: Whether to sync app state with URL
   template: The template to use for the monitoring application
   ncols: The number of columns to use in the grid of cards
 ```
