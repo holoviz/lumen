@@ -97,9 +97,9 @@ class View(param.Parameterized):
             self._init_link_selections()
 
     def _init_link_selections(self):
-        if self._ls is not None:
-            return
         doc = pn.state.curdoc
+        if self._ls is not None or doc is None:
+            return
         if doc not in View._selections and self.selection_group:
             View._selections[doc] = {}
         self._ls = View._selections.get(doc, {}).get(self.selection_group)
@@ -444,6 +444,8 @@ class hvPlotView(View):
 
     def _link_plot(self, plot):
         self._init_link_selections()
+        if self._ls is None:
+            return plot
         linked_objs = list(self._ls._plot_reset_streams)
         plot = self._ls(plot)
         self._linked_objs += [
