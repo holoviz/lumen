@@ -219,6 +219,9 @@ class Target(param.Parameterized):
     reloadable = param.Boolean(default=True, doc="""
         Whether to allow reloading data target's source using a button.""")
 
+    show_title = param.Boolean(default=True, doc="""
+        Whether to show the title in Card headers.""")
+
     title = param.String(doc="A title for this Target.")
 
     refresh_rate = param.Integer(default=None, doc="""
@@ -598,6 +601,8 @@ class Target(param.Parameterized):
             kwargs['ncols'] = 3
         if self._cards:
             content = self._cards
+            if len(self._cards) == 1 and not self.show_title:
+                self._cards[0].hide_header = True
         else:
             content = (
                 pn.pane.Alert(

@@ -279,6 +279,8 @@ class Dashboard(param.Parameterized):
         if 'reloadable' not in target_spec:
             target_spec['reloadable'] = self.config.reloadable
         target = Target.from_spec(target_spec, application=self)
+        if isinstance(self._layout, pn.Tabs):
+            target.show_title = False
         target.start()
         return target
 
