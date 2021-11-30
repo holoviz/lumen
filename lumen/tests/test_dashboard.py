@@ -35,7 +35,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     f1.value = (0.1, 0.7)
     assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
-    assert f1.value == [0.3, 0.8]
+    assert f1.value == (0.3, 0.8)
     f2.value = ['foo1', 'foo2']
     assert pn.state.location.search == '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%2C+%22foo3%22%5D'
