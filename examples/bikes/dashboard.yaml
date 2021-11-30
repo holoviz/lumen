@@ -24,9 +24,16 @@ sources:
         - source: occupancy
           table: occupancy
           index: id
+  station_occupancy_projected:
+    type: derived
+    source: station_occupancy
+    transforms:
+      - type: project_lnglat
+        latitude: lat
+        longitude: lon
 targets:
   - title: "Occupancy"
-    source: station_occupancy
+    source: station_occupancy_projected
     views:
       locations:
         type: hvplot
@@ -35,7 +42,7 @@ targets:
         x: lon
         y: lat
         hover_cols: [commonName]
-        tiles: Wikipedia
+        tiles: EsriStreet
         responsive: true
         height: 500
         color: bikesCount
@@ -43,10 +50,6 @@ targets:
         xaxis: null
         yaxis: null
         selection_group: bikes
-        transforms:
-          - type: project_lnglat
-            latitude: lat
-            longitude: lon
       table:
         type: table
         table: station_occupancy
