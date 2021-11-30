@@ -1,0 +1,17 @@
+config:
+  sync_with_url: true
+sources:
+  test:
+    type: 'file'
+    files: ['../sources/test.csv']
+targets:
+  - title: "Test"
+    source: test
+    filters:
+      - type: widget
+        field: A
+      - type: widget
+        field: C
+    views:
+      - table: test
+        type: test

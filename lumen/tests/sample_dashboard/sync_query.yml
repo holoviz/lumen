@@ -1,0 +1,18 @@
+config:
+  layout: tabs
+  sync_with_url: true
+sources:
+  test:
+    type: 'file'
+    files: ['../sources/test.csv']
+targets:
+  - title: "Test 1"
+    source: test
+    views:
+      - table: test
+        type: test
+  - title: "Test 2"
+    source: test
+    views:
+      - table: test
+        type: test
