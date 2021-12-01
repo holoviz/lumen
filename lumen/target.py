@@ -422,9 +422,9 @@ class Target(param.Parameterized):
                 cards.append((key, card))
             if linked_views is None:
                 for view in views:
-                    if not view.controls:
-                        continue
-                    controls.append(view.control_panel)
+                    vcp = view.control_panel
+                    if len(vcp):
+                        controls.append(vcp)
                 linked_views = views
             elif init:
                 # Only the controls for the first facet is shown so link

@@ -6,6 +6,7 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
+import panel as pn
 import param
 
 from ..util import resolve_module_reference
@@ -16,6 +17,9 @@ class Transform(param.Parameterized):
     A Transform provides the ability to transform a table supplied by
     a Source.
     """
+
+    controls = param.List(default=[], doc="""
+        Parameters that should be exposed as widgets in the UI.""")
 
     transform_type = None
 
@@ -67,6 +71,13 @@ class Transform(param.Parameterized):
             A DataFrame containing the transformed data.
         """
         return table
+
+    @property
+    def control_panel(self):
+        return pn.Param(
+            self.param, parameters=self.controls, sizing_mode='stretch_width',
+            margin=(-10, 0, 5, 0)
+        )
 
 
 class HistoryTransform(Transform):

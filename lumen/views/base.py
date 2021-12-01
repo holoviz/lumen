@@ -306,7 +306,18 @@ class View(param.Parameterized):
 
     @property
     def control_panel(self):
-        return Param(self.param, parameters=self.controls, sizing_mode='stretch_width')
+        column = pn.Column(sizing_mode='stretch_width')
+        if self.controls:
+            column.append(
+                pn.Param(self.param, parameters=self.controls, sizing_mode='stretch_width')
+            )
+        for trnsfm in self.transforms:
+            if trnsfm.controls:
+                column.append(trnsfm.control_panel)
+        index = (1 if self.controls else 0)
+        if len(column) > index:
+            column.insert(index, '### Transforms')
+        return column
 
     @property
     def panel(self):
