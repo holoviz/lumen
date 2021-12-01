@@ -309,7 +309,9 @@ class View(param.Parameterized):
         column = pn.Column(sizing_mode='stretch_width')
         if self.controls:
             column.append(
-                pn.Param(self.param, parameters=self.controls, sizing_mode='stretch_width')
+                Param(
+                    self.param, parameters=self.controls, sizing_mode='stretch_width'
+                )
             )
         for trnsfm in self.transforms:
             if trnsfm.controls:
