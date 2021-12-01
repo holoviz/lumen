@@ -411,7 +411,6 @@ class Target(param.Parameterized):
         """
         cards, controls, all_views = [], [], []
         linked_views = None
-        rerender = partial(self._rerender, invalidate_cache=False)
         for facet_filters in self.facet.filters:
             key, card, views = self._get_card(
                 self.filters, facet_filters, invalidate_cache, update_views,
@@ -444,8 +443,16 @@ class Target(param.Parameterized):
         # Re-render target when controls update but we ensure that
         # all other views linked to the controls are updated first
         if init:
+            rerender = partial(self._rerender, invalidate_cache=False)
+            rerender_cache = partial(self._rerender, invalidate_cache=True)
+            transforms = []
             for view in linked_views:
-                view.param.watch(rerender, view.controls)
+                if view.controls:
+                    view.param.watch(rerender, view.controls)
+                for transform in view.transforms:
+                    if transform.controls and not transform in transforms:
+                        transforms.append(transform)
+                        transform.param.watch(rerender_cache, transform.controls)
 
         self._view_controls[:] = controls
 

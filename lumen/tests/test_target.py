@@ -1,7 +1,10 @@
 from pathlib import Path
 
 import holoviews as hv
+import numpy as np
 
+from bokeh.document import Document
+from panel.io.server import set_curdoc
 from panel.param import Param
 
 from lumen.sources import FileSource
@@ -38,6 +41,48 @@ def test_view_controls(set_root):
     isinstance(hv_pane.object, hv.Scatter)
     assert hv_pane.object.kdims == ['C']
     assert hv_pane.object.vdims == ['D']
+
+
+def test_transform_controls(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    views = {
+        'test': {
+            'type': 'hvplot',
+            'table': 'test',
+            'x': 'A',
+            'y': 'B',
+            'kind': 'scatter',
+            'transforms': [{
+                'type': 'sort',
+                'controls': ['by']
+            }]
+        }
+    }
+
+    doc = Document()
+    with set_curdoc(doc):
+        target = Target(source=source, views=views)
+        filter_panel = target.get_filter_panel()
+        param_pane = filter_panel[0][0][1]
+
+        assert isinstance(param_pane, Param)
+        assert param_pane.parameters == ['by']
+
+        assert len(target._cards) == 1
+        card = target._cards[0]
+        hv_pane = card[0][0]
+        isinstance(hv_pane.object, hv.Scatter)
+        assert hv_pane.object.kdims == ['A']
+        assert hv_pane.object.vdims == ['B']
+
+        assert np.array_equal(hv_pane.object['A'], np.array([0, 1, 2, 3, 4]))
+        assert np.array_equal(hv_pane.object['B'], np.array([0, 1, 0, 1, 0]))
+
+        param_pane.object.by = ['B']
+
+        assert np.array_equal(hv_pane.object['A'], np.array([0., 2, 4, 1, 3]))
+        assert np.array_equal(hv_pane.object['B'], np.array([0, 0, 0, 1, 1]))
 
 
 def test_view_controls_facetted(set_root):
