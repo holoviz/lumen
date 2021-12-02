@@ -167,17 +167,22 @@ class Defaults(param.Parameterized):
 
 class Auth(param.Parameterized):
 
+    case_sensitive = param.Boolean(default=False, doc="""
+        Whether auth validation is case-sensitive or not.""")
+
     spec = param.Dict({}, doc="""
         Dictionary of keys and values to match the pn.state.user_info
         against.""")
 
     @classmethod
     def from_spec(cls, spec):
+        spec = dict(spec)
+        case_sensitive = spec.pop('case_sensitive', cls.case_sensitive)
         plugins = spec.pop('plugins', [])
         for plugin_spec in plugins:
             plugin = AuthPlugin.from_spec(plugin_spec)
             spec = plugin.transform(spec)
-        return cls(spec=spec)
+        return cls(spec=spec, case_sensitive=case_sensitive)
 
     @property
     def authorized(self):
@@ -188,10 +193,18 @@ class Auth(param.Parameterized):
         authorized = True
         for k, value in self.spec.items():
             if not isinstance(value, list): value = [value]
+            if not self.case_sensitive:
+                value = [v.lower() if isinstance(v, str) else v for v in value]
+            value = [v.strip() if isinstance(v, str) else v for v in value]
             if k in pn.state.user_info:
                 user_value = pn.state.user_info[k]
                 if not isinstance(user_value, list):
                     user_value = [user_value]
+                if not self.case_sensitive:
+                    user_value = [
+                        uv.lower() if isinstance(uv, str) else uv
+                        for uv in user_value
+                    ]
                 authorized &= any(uv == v for v in value for uv in user_value)
         return authorized
 

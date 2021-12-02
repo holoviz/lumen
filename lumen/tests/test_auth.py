@@ -40,3 +40,12 @@ def test_auth(state_userinfo):
     auth2 = Auth(spec={'email': 'panel@holoviz.org'})
     assert auth.authorized
     assert not auth2.authorized
+
+
+def test_auth_case_sensitive(state_userinfo):
+    auth = Auth(spec={'email': 'Lumen@holoviz.org'})
+    auth2 = Auth(spec={'email': ' Lumen@holoviz.org  '})
+    auth3 = Auth(spec={'email': 'Lumen@holoviz.org'}, case_sensitive=True)
+    assert auth.authorized
+    assert auth2.authorized
+    assert not auth3.authorized
