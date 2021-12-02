@@ -392,8 +392,8 @@ class Target(param.Parameterized):
     # Rendering API
     ##################################################################
 
-    def _sync_view(self, view, *events):
-        view.param.set_param(**{event.name: event.new for event in events})
+    def _sync_component(self, component, *events):
+        component.param.set_param(**{event.name: event.new for event in events})
 
     def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
         """
@@ -429,7 +429,9 @@ class Target(param.Parameterized):
                 # Only the controls for the first facet is shown so link
                 # the other facets to the controls of the first
                 for v1, v2 in zip(linked_views, views):
-                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
+                    v1.param.watch(partial(self._sync_component, v2), v1.controls)
+                    for t1, t2 in zip(v1.transforms, v2.transforms):
+                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
 
         # Validate that all filters are applied
         for filt in self.filters:

@@ -225,6 +225,20 @@ class Columns(Transform):
         return table[self.columns]
 
 
+class Astype(Transform):
+    """
+    Transforms the type of one or more columns.
+    """
+
+    dtypes = param.Dict(doc="Mapping from column name to new type.")
+
+    def apply(self, table):
+        table = table.copy()
+        for col, dtype in self.dtypes.items():
+            table[col] = table[col].astype(dtype)
+        return table
+
+
 class Stack(Transform):
     """
     Stacks the declared level, see `pandas.DataFrame.stack`.
