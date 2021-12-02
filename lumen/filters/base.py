@@ -45,7 +45,7 @@ class Filter(param.Parameterized):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if state.app.config.sync_with_url and self.sync_with_url and pn.state.location:
+        if state.app and state.app.config.sync_with_url and self.sync_with_url and pn.state.location:
             pn.state.location.sync(self, {'value': self.field}, on_error=self._url_sync_error)
 
     def _url_sync_error(self, values):
@@ -165,9 +165,19 @@ class FacetFilter(Filter):
 
     @property
     def filters(self):
+        field_schema = self.schema[self.field]
+        if 'enum' in field_schema:
+            values = field_schema['enum']
+        elif field_schema['type'] == 'integer':
+            values = list(range(field_schema['inclusiveMinimum'],
+                                field_schema['inclusiveMaximum']+1))
+        else:
+            raise ValueError(f'Could not facet on field {field_schema!r}, '
+                             'currently only enum and integer fields are '
+                             'supported.')
         return [
             ConstantFilter(field=self.field, value=value, label=self.label)
-            for value in self.schema[self.field]['enum']
+            for value in values
         ]
 
 

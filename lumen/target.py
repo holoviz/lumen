@@ -392,8 +392,8 @@ class Target(param.Parameterized):
     # Rendering API
     ##################################################################
 
-    def _sync_view(self, view, *events):
-        view.param.set_param(**{event.name: event.new for event in events})
+    def _sync_component(self, component, *events):
+        component.param.set_param(**{event.name: event.new for event in events})
 
     def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
         """
@@ -411,7 +411,6 @@ class Target(param.Parameterized):
         """
         cards, controls, all_views = [], [], []
         linked_views = None
-        rerender = partial(self._rerender, invalidate_cache=False)
         for facet_filters in self.facet.filters:
             key, card, views = self._get_card(
                 self.filters, facet_filters, invalidate_cache, update_views,
@@ -422,15 +421,17 @@ class Target(param.Parameterized):
                 cards.append((key, card))
             if linked_views is None:
                 for view in views:
-                    if not view.controls:
-                        continue
-                    controls.append(view.control_panel)
+                    vcp = view.control_panel
+                    if len(vcp):
+                        controls.append(vcp)
                 linked_views = views
             elif init:
                 # Only the controls for the first facet is shown so link
                 # the other facets to the controls of the first
                 for v1, v2 in zip(linked_views, views):
-                    v1.param.watch(partial(self._sync_view, v2), v1.controls)
+                    v1.param.watch(partial(self._sync_component, v2), v1.controls)
+                    for t1, t2 in zip(v1.transforms, v2.transforms):
+                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
 
         # Validate that all filters are applied
         for filt in self.filters:
@@ -444,8 +445,16 @@ class Target(param.Parameterized):
         # Re-render target when controls update but we ensure that
         # all other views linked to the controls are updated first
         if init:
+            rerender = partial(self._rerender, invalidate_cache=False)
+            rerender_cache = partial(self._rerender, invalidate_cache=True)
+            transforms = []
             for view in linked_views:
-                view.param.watch(rerender, view.controls)
+                if view.controls:
+                    view.param.watch(rerender, view.controls)
+                for transform in view.transforms:
+                    if transform.controls and not transform in transforms:
+                        transforms.append(transform)
+                        transform.param.watch(rerender_cache, transform.controls)
 
         self._view_controls[:] = controls
 

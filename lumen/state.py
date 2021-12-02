@@ -26,7 +26,7 @@ class _session_state:
 
     @property
     def app(self):
-        return self._apps[pn.state.curdoc]
+        return self._apps.get(pn.state.curdoc)
 
     @property
     def filters(self):
