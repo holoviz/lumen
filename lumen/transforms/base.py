@@ -6,6 +6,7 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
+import panel as pn
 import param
 
 from ..util import resolve_module_reference
@@ -17,7 +18,12 @@ class Transform(param.Parameterized):
     a Source.
     """
 
+    controls = param.List(default=[], doc="""
+        Parameters that should be exposed as widgets in the UI.""")
+
     transform_type = None
+
+    _field_params = []
 
     __abstract = True
 
@@ -50,7 +56,14 @@ class Transform(param.Parameterized):
         """
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
-        return transform_type(**spec)
+        new_spec = {}
+        for k, v in spec.items():
+            if (k in transform_type.param and
+                isinstance(transform_type.param[k], param.ListSelector) and
+                not isinstance(v, list)):
+                v = [v]
+            new_spec[k] = v
+        return transform_type(**new_spec)
 
     def apply(self, table):
         """
@@ -68,6 +81,13 @@ class Transform(param.Parameterized):
         """
         return table
 
+    @property
+    def control_panel(self):
+        return pn.Param(
+            self.param, parameters=self.controls, sizing_mode='stretch_width',
+            margin=(-10, 0, 5, 0)
+        )
+
 
 class HistoryTransform(Transform):
     """
@@ -76,13 +96,15 @@ class HistoryTransform(Transform):
     date_column to the data.
     """
 
-    date_column = param.String(doc="""
+    date_column = param.Selector(doc="""
         If defined adds a date column with the supplied name.""")
 
     length = param.Integer(default=10, bounds=(1, None), doc="""
         Accumulates a history of data.""")
 
     transform_type = 'history'
+
+    _field_params = ['date_column']
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -119,10 +141,10 @@ class Aggregate(Transform):
     df.groupby(<by>)[<columns>].<method>()[.reset_index()]
     """
 
-    by = param.ClassSelector(class_=(list, str, int), doc="""
+    by = param.ListSelector(doc="""
         Columns or indexes to group by.""")
 
-    columns = param.List(doc="""
+    columns = param.ListSelector(doc="""
         Columns to aggregate.""")
 
     with_index = param.Boolean(default=True, doc="""
@@ -135,6 +157,8 @@ class Aggregate(Transform):
         Keyword arguments to the aggregation method.""")
 
     transform_type = 'aggregate'
+
+    _field_params = ['by', 'columns']
 
     def apply(self, table):
         grouped = table.groupby(self.by)
@@ -151,7 +175,7 @@ class Sort(Transform):
     df.sort_values(<by>, ascending=<ascending>)
     """
 
-    by = param.ClassSelector(class_=(list, str, int), doc="""
+    by = param.ListSelector(default=[], doc="""
        Columns or indexes to sort by.""")
 
     ascending = param.ClassSelector(default=True, class_=(bool, list), doc="""
@@ -160,6 +184,8 @@ class Sort(Transform):
        the by.""")
 
     transform_type = 'sort'
+
+    _field_params = ['by']
 
     def apply(self, table):
         return table.sort_values(self.by, ascending=self.ascending)
@@ -188,13 +214,29 @@ class Columns(Transform):
     df[<columns>]
     """
 
-    columns = param.List(doc="""
+    columns = param.ListSelector(doc="""
         The subset of columns to select.""")
 
     transform_type = 'columns'
 
+    _field_params = ['columns']
+
     def apply(self, table):
         return table[self.columns]
+
+
+class Astype(Transform):
+    """
+    Transforms the type of one or more columns.
+    """
+
+    dtypes = param.Dict(doc="Mapping from column name to new type.")
+
+    def apply(self, table):
+        table = table.copy()
+        for col, dtype in self.dtypes.items():
+            table[col] = table[col].astype(dtype)
+        return table
 
 
 class Stack(Transform):
@@ -284,10 +326,10 @@ class Melt(Transform):
     Melts a DataFrame given the id_vars and value_vars. 
     """
 
-    id_vars = param.List(default=[], doc="""
+    id_vars = param.ListSelector(default=[], doc="""
         Column(s) to use as identifier variables.""")
 
-    value_vars = param.List(default=None, doc="""
+    value_vars = param.ListSelector(default=None, doc="""
         Column(s) to unpivot. If not specified, uses all columns that
         are not set as `id_vars`.""")
 
@@ -299,6 +341,8 @@ class Melt(Transform):
          Name to use for the 'value' column.""")
 
     transform_type = 'melt'
+
+    _field_params = ['id_vars', 'value_vars']
 
     def apply(self, table):
         return pd.melt(table, id_vars=self.id_vars, value_vars=self.value_vars,

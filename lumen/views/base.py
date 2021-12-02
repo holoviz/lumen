@@ -91,8 +91,10 @@ class View(param.Parameterized):
         for fp in self._field_params:
             if isinstance(self.param[fp], param.ObjectSelector):
                 self.param[fp].objects = fields
-
         super().__init__(source=source, table=table, **params)
+        for transform in self.transforms:
+            for fp in transform._field_params:
+                transform.param[fp].objects = fields
         if self.selection_group:
             self._init_link_selections()
 
@@ -306,7 +308,20 @@ class View(param.Parameterized):
 
     @property
     def control_panel(self):
-        return Param(self.param, parameters=self.controls, sizing_mode='stretch_width')
+        column = pn.Column(sizing_mode='stretch_width')
+        if self.controls:
+            column.append(
+                Param(
+                    self.param, parameters=self.controls, sizing_mode='stretch_width'
+                )
+            )
+        for trnsfm in self.transforms:
+            if trnsfm.controls:
+                column.append(trnsfm.control_panel)
+        index = (1 if self.controls else 0)
+        if len(column) > index:
+            column.insert(index, '### Transforms')
+        return column
 
     @property
     def panel(self):
