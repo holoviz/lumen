@@ -138,7 +138,6 @@ class TargetGalleryItem(GalleryItem):
     def __init__(self, **params):
         spec = params['spec']
         source_name = spec['source']
-        views = params.get('views', [])
         if 'description' not in params:
             params['description'] = f"Contains {len(spec['views'])} views of the {source_name!r} source."
         if 'thumbnail' not in params:

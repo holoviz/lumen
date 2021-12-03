@@ -347,7 +347,7 @@ class Builder(param.Parameterized):
                     view_type=view_type, name=name, source_obj=source,
                     spec=view
                 )
-                view_gallery[name] = view_item = ViewGalleryItem(
+                view_gallery[name] = ViewGalleryItem(
                     editor=view_editor, name=name, selected=True
                 )
                 views.append(view_editor)
