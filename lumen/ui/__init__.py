@@ -230,7 +230,8 @@ class YAML(WizardItem):
         params['editor'] = pn.pane.JSON(
             object=spec,
             sizing_mode='stretch_both',
-            margin=0
+            margin=0,
+            depth=-1
         )
         super().__init__(spec=spec, **params)
 
@@ -321,10 +322,11 @@ class Builder(param.Parameterized):
             spec = source.spec
             if isinstance(source.spec, dict):
                 spec = dict(source.spec)
+                spec['name'] = name
                 spec.pop('filters', None)
             lm_state.sources[name] = Source.from_spec(spec)
 
-        views, editors = [], {}
+        views, view_gallery = [], {}
         targets, target_items = [], {}
         for target in self.spec['targets']:
             source_spec = target['source']
@@ -337,27 +339,27 @@ class Builder(param.Parameterized):
                 view_specs = [(f"{view['type']}: {view['table']}", view) for view in view_specs]
             else:
                 view_specs = view_specs.items()
+            target_views = []
             for name, view in view_specs:
                 view = dict(view)
                 view_type = view.pop('type')
-                editor = ViewEditor(
+                view_editor = ViewEditor(
                     view_type=view_type, name=name, source_obj=source,
                     spec=view
                 )
-                item = ViewGalleryItem(
-                    editor=editor, name=name, selected=True
+                view_gallery[name] = view_item = ViewGalleryItem(
+                    editor=view_editor, name=name, selected=True
                 )
-                while name in editors:
-                    editors[name] = item
-                views.append(editor)
+                views.append(view_editor)
+                target_views.append(name)
 
-            editor = TargetEditor(spec=target, views=list(editors))
-            item = TargetGalleryItem(spec=target, editor=editor)
-            targets.append(editor)
+            target_editor = TargetEditor(spec=target, views=target_views)
+            item = TargetGalleryItem(spec=target, editor=target_editor)
+            targets.append(target_editor)
             target_items[f'target{uuid.uuid4().hex}'] = item
 
         self.targets.param.set_param(targets=targets, items=target_items)
-        self.views.param.set_param(views=views, items=editors)
+        self.views.param.set_param(views=views, items=view_gallery)
         self.welcome.ready = True
         self.wizard.loading = False
 

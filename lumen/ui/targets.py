@@ -37,13 +37,13 @@ class TargetEditor(ReactiveHTML):
       <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
         <div id="view-select">${view_select}</div>
         <div style="display: grid; flex: auto;">
-          <label for="layout-type-${id}"><b>{{ param.layout_type.label }}</b></label>
-          <fast-select id="layout-type" style="max-width: 200px; min-width: 150px; z-index: 100;" value="${layout_type}">
-            {% for lt in param.layout_type.objects %}
-              <fast-option value="{{ lt }}">{{ lt.title() }}</fast-option>
-            {% endfor %}
+          <label for="layout_type-${id}"><b>{{ param.layout_type.label }}</b></label>
+          <fast-select id="layout_type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
+          {% for lt in param.layout_type.objects %}
+            <fast-option value="{{ lt }}" {% if lt == layout_type %}selected{% endif %}>{{ lt.title() }}</fast-option>
+          {% endfor %}
           </fast-select>
-          <fast-tooltip anchor="layout-type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
+          <fast-tooltip anchor="layout_type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
         </div>
       </form>
       <div id="layout" style="flex: auto;">${layout}</div>
@@ -59,19 +59,20 @@ class TargetEditor(ReactiveHTML):
         params['layout_type'] = layout_type
         params['layout'] = layout
         params['view_select'] = vsel = pn.widgets.MultiSelect(
-            name='Select views', options=[], max_width=200,
-            sizing_mode='stretch_width', margin=0
+            name='Select views', options=params.get('views', []),
+            max_width=250, sizing_mode='stretch_width', margin=0
         )
         vsel.link(self, value='views')
         super().__init__(**params)
         if 'views' not in self.spec:
             self.spec['views'] = {}
+        self._views = {}
         self._populate_layout(self.layout)
         for name, view in state.views.items.items():
             if self.source == view.editor.source:
                 self.views.append(name)
-                vsel.options.append(name)
-        self._views = {}
+                if name not in vsel.options:
+                    vsel.options.append(name)
 
     def _construct_layout(self, layout_spec):
         layout_kwargs = {'sizing_mode': 'stretch_both'}
@@ -84,13 +85,22 @@ class TargetEditor(ReactiveHTML):
 
     def _populate_layout(self, layout):
         source = self.spec['source']
-        for i, (name, view) in enumerate(self.spec['views'].items()):
+        views = self.spec['views']
+        view_specs = views.items() if isinstance(views, dict) else views
+        for i, view_spec in enumerate(view_specs):
+            if isinstance(view_spec, tuple):
+                name, view = view_spec
+            else:
+                view = view_spec
+                name = None
             if name in self._views:
                 view = self._views[name]
             else:
                 source_spec = state.sources.sources[source].spec
                 source_obj = lumen_state.load_source(source, source_spec)
-                self._views[name] = view = View.from_spec(view, source_obj, [])
+                view = View.from_spec(view, source_obj, [])
+                name = name or view.name
+                self._views[name] = view
             if hasattr(layout, 'append'):
                 layout.append(view.get_panel())
             else:
@@ -130,7 +140,7 @@ class TargetGalleryItem(GalleryItem):
         source_name = spec['source']
         views = params.get('views', [])
         if 'description' not in params:
-            params['description'] = f'Monitors the {source_name} source with {len(views)} views.'
+            params['description'] = f"Contains {len(spec['views'])} views of the {source_name!r} source."
         if 'thumbnail' not in params:
             params['thumbnail'] = state.sources.sources[source_name].thumbnail
         super().__init__(**params)
