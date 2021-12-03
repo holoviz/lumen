@@ -293,6 +293,10 @@ class IntakeDremioSourceEditor(SourceEditor):
 
     uri = param.String(doc="Enter a URI")
 
+    username = param.String(doc="Enter a username")
+
+    password = param.String(doc="Enter a password")
+
     source_type = param.String(default='intake_dremio', readonly=True)
 
     _template = """
@@ -305,6 +309,16 @@ class IntakeDremioSourceEditor(SourceEditor):
           <div style="display: grid;">
             <label for="URI"><b>URI</b></label>
             <fast-text-field id="uri" placeholder="Enter a URI" value="${uri}">
+            </fast-text-field>
+          </div>
+          <div style="display: grid;">
+            <label for="username"><b>Username</b></label>
+            <fast-text-field id="username" placeholder="Enter your username" value="${username}">
+            </fast-text-field>
+          </div>
+          <div style="display: grid;">
+            <label for="password"><b>Password</b></label>
+            <fast-text-field id="password" type="password" placeholder="Enter password" value="${password}">
             </fast-text-field>
           </div>
           <fast-checkbox id="load_schema" checked="${load_schema}">Load schema</fast-checkbox>
@@ -335,7 +349,7 @@ class IntakeDremioSourceEditor(SourceEditor):
     <div id="preview">${preview}</div>
     """
 
-    _dom_events = {'uri': ['keyup']}
+    _dom_events = {'uri': ['keyup'], 'username': ['keyup'], 'password': ['keyup']}
 
     def __init__(self, **params):
         import lumen.sources.intake # noqa
