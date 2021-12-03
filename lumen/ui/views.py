@@ -40,7 +40,7 @@ class ViewsEditor(WizardItem):
       <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
         <div style="display: grid;">
           <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
-          <fast-select id="source" style="max-width: 250px; min-width: 150px;" value="${source}">
+          <fast-select id="sources" style="max-width: 250px; min-width: 150px;" value="${source}">
           {% for src in sources %}
             <fast-option value="{{ src }}">{{ src.title() }}</fast-option>
           {% endfor %}
@@ -48,7 +48,7 @@ class ViewsEditor(WizardItem):
           <fast-tooltip anchor="sources-${id}">{{ param.sources.doc }}</fast-tooltip>
         </div>
         <div style="display: grid;">
-          <label for="table-${id}"><b>{{ param.tables.label }}</b></label>
+          <label for="tables-${id}"><b>{{ param.tables.label }}</b></label>
           <fast-select id="tables" style="max-width: 250px; min-width: 150px;" value="${table}">
           {% for tbl in tables %}
             <fast-option value="{{ tbl }}">{{ tbl }}</fast-option>
@@ -152,7 +152,10 @@ class ViewEditor(ReactiveHTML):
 
     @property
     def description(self):
-        return f'A {self.view_type} view of the {self.table} table on the {self.source_obj.name}'
+        return (
+            f"A {self.view_type} view of the {self.spec['table']!r} "
+            f"table on the {self.source_obj.name!r} source."
+        )
 
     @property
     def thumbnail(self):
@@ -338,7 +341,6 @@ class hvPlotViewEditor(ViewEditor):
         from hvplot.ui import hvPlotExplorer
         super().__init__(**params)
         kwargs = dict(self.spec)
-        kwargs.pop('type')
         df = self.source_obj.get(kwargs.pop('table'))
         self.view = hvPlotExplorer(df, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
