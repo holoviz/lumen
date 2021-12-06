@@ -89,12 +89,13 @@ class View(param.Parameterized):
             raise ValueError("Views must reference a table on the declared Source.")
         fields = list(source.get_schema(table))
         for fp in self._field_params:
-            if isinstance(self.param[fp], param.ObjectSelector):
+            if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
         super().__init__(source=source, table=table, **params)
         for transform in self.transforms:
             for fp in transform._field_params:
-                transform.param[fp].objects = fields
+                if isinstance(self.param[fp], param.Selector):
+                    transform.param[fp].objects = fields
         if self.selection_group:
             self._init_link_selections()
 
