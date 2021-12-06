@@ -611,7 +611,9 @@ class Target(param.Parameterized):
         if self._cards:
             content = self._cards
             if len(self._cards) == 1 and not self.show_title:
-                self._cards[0].hide_header = True
+                self._cards[0].param.set_param(
+                    hide_header=True, sizing_mode='stretch_width', margin=0
+                )
         else:
             content = (
                 pn.pane.Alert(
