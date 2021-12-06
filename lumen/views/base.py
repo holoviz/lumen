@@ -94,7 +94,7 @@ class View(param.Parameterized):
         super().__init__(source=source, table=table, **params)
         for transform in self.transforms:
             for fp in transform._field_params:
-                if isinstance(self.param[fp], param.Selector):
+                if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = fields
         if self.selection_group:
             self._init_link_selections()
