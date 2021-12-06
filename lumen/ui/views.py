@@ -93,8 +93,7 @@ class ViewsEditor(WizardItem):
         spec = dict(source.spec, cache_dir=None)
         spec.pop('filters', None)
         self._source = Source.from_spec(spec)
-        schema = self._source.get_schema()
-        self.tables = list(schema)
+        self.tables = self._source.get_tables()
 
     def _add_view(self, event):
         editor = ViewEditor(

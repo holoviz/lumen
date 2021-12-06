@@ -355,9 +355,9 @@ class IntakeDremioSourceEditor(SourceEditor):
         import lumen.sources.intake # noqa
         super().__init__(**params)
 
-    @param.depends('cert', 'load_schema', 'tls', 'uri', watch=True)
+    @param.depends('cert', 'load_schema', 'tls', 'uri', 'password', 'username', watch=True)
     def _update_spec(self):
-        for p in ('cert', 'load_schema', 'tls', 'uri'):
+        for p in ('cert', 'load_schema', 'tls', 'uri', 'password', 'username'):
             self.spec[p] = getattr(self, p)
 
     @property
