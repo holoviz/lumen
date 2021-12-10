@@ -78,11 +78,7 @@ class Transform(param.Parameterized):
         -------
         A DataFrame with the results of the transformation.
         """
-        trans = cls()
-        for key, value in kwargs.items():
-            setattr(trans, key, value)
-            
-        return trans.apply(table)
+        return cls(**kwargs).apply(table)
 
     def apply(self, table):
         """
