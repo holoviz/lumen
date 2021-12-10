@@ -64,6 +64,25 @@ class Transform(param.Parameterized):
                 v = [v]
             new_spec[k] = v
         return transform_type(**new_spec)
+    
+    @classmethod
+    def apply_to(cls, table, **kwargs):
+        """
+        Calls the apply method based on keyword arguments passed to define transform.
+        
+        Parameters
+        ----------
+        table: `pandas.DataFrame`
+        
+        Returns
+        -------
+        A DataFrame with the results of the transformation.
+        """
+        trans = cls()
+        for key, value in kwargs.items():
+            setattr(trans, key, value)
+            
+        return trans.apply(table)
 
     def apply(self, table):
         """
