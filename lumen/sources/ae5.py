@@ -43,11 +43,17 @@ class AE5Source(Source):
         'cpu', 'cpu_percent', 'memory', 'memory_percent', 'uptime', 'restarts'
     ]
 
+    _job_columns = [
+        'id', 'name', 'owner', 'command', 'revision', 'resource_profile',
+        'created', 'updated', 'state', 'project_id', 'project_name',
+        'goal_state', 'status_text', 'url', 'schedule', 'source'
+    ]
+
     _session_columns = [
         'id', 'name', 'url', 'owner', 'resource_profile', 'state'
     ]
 
-    _tables = ['deployments', 'nodes', 'resources', 'sessions']
+    _tables = ['deployments', 'nodes', 'resources', 'sessions', 'jobs']
 
     _units = {
         'm': 0.001,
@@ -68,6 +74,14 @@ class AE5Source(Source):
             self._admin_session = AEAdminSession(
                 self.hostname, self.admin_username, self.admin_password
             )
+            self._admin_session.authorize()
+            user_id = self._admin_session.user_info(user)['id']
+            roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
+            self._is_admin = any(role['name'] == 'ae-admin' for role in roles)
+            self._groups = [g['name'] for g in self._admin_session._get(f'users/{user_id}/groups')]
+        else:
+            self._is_admin = False
+            self._groups = []
         adapter = requests.adapters.HTTPAdapter(pool_maxsize=self.pool_size)
         self._session.session.mount('https://', adapter)
         self._session.session.mount('http://', adapter)
@@ -157,22 +171,14 @@ class AE5Source(Source):
         deployments = self._session.deployment_list(
             k8s=True, format='dataframe', collaborators=bool(user)
         ).apply(self._process_deployment, axis=1)
-        if self.admin_username and user is not None:
-            self._admin_session.authorize()
-            user_id = self._admin_session.user_info(user)['id']
-            roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
-            is_admin = any(role['name'] == 'ae-admin' for role in roles)
-            groups = [g['name'] for g in self._admin_session._get(f'users/{user_id}/groups')]
-        else:
-            is_admin = False
-            groups = []
-        if user is None or is_admin:
+        if user is None or self._is_admin:
             return deployments[self._deployment_columns]
         return deployments[
             deployments.public |
             (deployments.owner == user) |
             deployments._collaborators.apply(
-                lambda cs: any(c['id'] in groups if c['type'] == 'group' else c['id'] == user for c in cs)
+                lambda cs: any(c['id'] in self._groups if c['type'] == 'group' else c['id'] == user
+                               for c in cs)
             )
         ][self._deployment_columns]
 
@@ -185,9 +191,15 @@ class AE5Source(Source):
 
     def _get_sessions(self):
         sessions = self._session.session_list(format='dataframe')
-        if self._user:
+        if self._user and not self._is_admin:
             sessions = sessions[sessions.owner==self._user]
         return sessions[self._session_columns]
+
+    def _get_jobs(self):
+        jobs = self._session.jobs_list(format='dataframe')
+        if self._user and not self._is_admin:
+            jobs = jobs[jobs.owner==self._user]
+        return jobs[self._job_columns]
 
     @cached(with_query=False)
     def get(self, table, **query):
