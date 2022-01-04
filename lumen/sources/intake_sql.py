@@ -1,16 +1,34 @@
 from .intake import IntakeSource
 from .base import cached
+from intake_sql import SQLSource
 
 class IntakeSQLSource(IntakeSource):
     
     source_type = 'intake_sql'
     
-    @cached(with_query=True)
+    def _update_sql(self, table, new_sql_expr):
+        self.cat.add(
+            SQLSource(
+                uri=self.cat[table]._uri,
+                sql_expr=new_sql_expr,
+                sql_kwargs=self.cat[table]._sql_kwargs,
+                metadata=self.cat[table].metadata,
+            ),
+            table
+        )
+    
+    def _apply_sql_transform(self, table, transform):
+        sql_in = self.cat[table]._sql_expr
+        sql_out = transform.apply(sql_in)
+        self._update_sql(table, sql_out)
+    
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         sql_transforms = query.pop('sql_transforms', [])
         # TODO this obj is not subscriptable
         for sql_transform in sql_transforms:
-            self.cat[table]['sql_expr'] = sql_transform.apply(self.cat[table]['sql_expr'])
+            
+            
+            self._apply_sql_transform(table, sql_transform)
         df = self._read(table)
         return df if dask or not hasattr(df, 'compute') else df.compute()
