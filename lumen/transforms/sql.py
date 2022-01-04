@@ -3,6 +3,10 @@ from .base import Transform
 import param
 
 class SQLTransform(Transform):
+    """
+    Base class for SQL transforms.
+    Mainly for informational purposes.
+    """
         
     __abstract = True
     
