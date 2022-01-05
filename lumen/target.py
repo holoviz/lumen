@@ -490,6 +490,9 @@ class Target(param.Parameterized):
         if self._stale or (update_views and rerender):
             self._application._render()
             self._stale = False
+        # Remove the loading spinner set when a target needs to be
+        # rerendered, for instance when a view has not implemented _get_params.
+        self._application._layout.loading = False
 
     ##################################################################
     # Public API
