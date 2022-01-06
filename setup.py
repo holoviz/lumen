@@ -31,7 +31,9 @@ extras_require = {
         'toolz',
         'twine',
         'rfc3986',
-        'keyring'
+        'keyring',
+        'pytest-cov',
+        'codecov',
     ],
     'doc': [
         'sphinx',

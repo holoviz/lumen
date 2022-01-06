@@ -65,3 +65,8 @@ jobs:
           eval "$(conda shell.bash hook)"
           conda activate test-environment
           doit test_unit
+      - name: codecov
+        run: |
+          eval "$(conda shell.bash hook)"
+          conda activate test-environment
+          codecov
