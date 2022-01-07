@@ -53,6 +53,6 @@ class SQLGroupBy(Transform):
         
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(
             by_cols=', '.join(self.by),
-            aggs=', '.join([f'{agg}({col})' for agg, col in self.aggregates.items()]),
+            aggs=', '.join([f'{agg}({col}) AS {col}' for agg, col in self.aggregates.items()]),
             sql_in=sql_in
         )

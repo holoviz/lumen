@@ -1,6 +1,8 @@
 from .intake import IntakeSource
 from .base import cached
 from intake_sql import SQLSource
+import os
+import intake
 
 class IntakeSQLSource(IntakeSource):
     """
@@ -13,15 +15,18 @@ class IntakeSQLSource(IntakeSource):
         """
         Updates a table's sql statement.
         """
-        self.cat.add(
+
+        self.cat = self.cat.add(
             SQLSource(
                 uri=self.cat[table]._uri,
                 sql_expr=new_sql_expr,
                 sql_kwargs=self.cat[table]._sql_kwargs,
                 metadata=self.cat[table].metadata,
             ),
-            table
+            table,
+            path='temp/temp.yaml'
         )
+
     
     def _apply_sql_transform(self, table, transform):
         """
@@ -36,10 +41,12 @@ class IntakeSQLSource(IntakeSource):
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         sql_transforms = query.pop('sql_transforms', [])
-        # TODO this obj is not subscriptable
+        
         for sql_transform in sql_transforms:
-            
-            
             self._apply_sql_transform(table, sql_transform)
+
         df = self._read(table)
+        
+        # Hack to reset the catalog obj. after the data pull
+        self.cat = intake.open_catalog(self.uri)
         return df if dask or not hasattr(df, 'compute') else df.compute()
