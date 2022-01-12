@@ -10,6 +10,12 @@ class SQLTransform(Transform):
         
     __abstract = True
     
+    def __str__(self):
+        vals = self.param.get_param_values()
+        vals_dict = {k: v for k, v in vals}
+        vals_dict.pop('name', None)
+        return str(vals_dict)
+    
     def apply(self, sql_in):
         """
         Given an SQL statement, manipulate it, and return a new SQL statement.
