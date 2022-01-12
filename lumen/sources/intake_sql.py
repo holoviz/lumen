@@ -55,7 +55,6 @@ class IntakeSQLSource(IntakeSource):
     
     # TODO: enable caching by hash of final sql_statement
     def get(self, table, **query):
-        import pdb; pdb.set_trace()
         dask = query.pop('__dask', self.dask)
         sql_transforms = query.pop('sql_transforms', [])
         
