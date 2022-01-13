@@ -11,6 +11,11 @@ class SQLTransform(Transform):
     __abstract = True
     
     def __str__(self):
+        """
+        String representation of a transforms.
+        Removes `name` inherited from `param.Parametrized`
+        as to allow for consistent hashing.
+        """
         vals = self.param.get_param_values()
         vals_dict = {k: v for k, v in vals}
         vals_dict.pop('name', None)

@@ -4,7 +4,6 @@ from intake_sql import SQLSource
 import os
 import intake
 import hashlib
-from functools import reduce
 import sys
 import pandas as pd
 
@@ -56,7 +55,8 @@ class IntakeSQLSource(IntakeSource):
     def _read(self, table, cat, dask=True):
         """
         Same as super but instead takes the catalog as
-        an argument.
+        an argument such that it can query a temporary in memory
+        catalog.
         """
         try:
             entry = cat[table]
@@ -75,7 +75,8 @@ class IntakeSQLSource(IntakeSource):
     
     def _update_sql(self, table, new_sql_expr, cat):
         """
-        Updates a table's sql statement.
+        Updates a table's sql statement by creating
+        a new catalog and returning it.
         """
 
         return cat.add(
@@ -93,13 +94,12 @@ class IntakeSQLSource(IntakeSource):
     def _apply_sql_transform(self, table, transform, cat):
         """
         Applies a transformation and subsequently updates a table's
-        sql statement.
+        sql statement, returning the resulting catalog.
         """
         sql_in = cat[table]._sql_expr
         sql_out = transform.apply(sql_in)
         return self._update_sql(table, sql_out, cat)
     
-    # TODO: enable caching by hash of final sql_statement
     @cached(with_query=True)
     def get(self, table, **query):
         '''
