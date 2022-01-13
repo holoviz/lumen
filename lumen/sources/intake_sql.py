@@ -38,6 +38,11 @@ class IntakeSQLSource(IntakeSource):
         return None, not bool(query)
     
     def _get_key(self, table, **query):
+        """
+        Returns a hashable representation of all the input parameters to 
+        the SQL Transform chain to allow for query-by-query
+        caching based on the hash value.
+        """
         key = (table,)
         for k, v in sorted(query.items()):
             if k=='sql_transforms':
@@ -49,6 +54,10 @@ class IntakeSQLSource(IntakeSource):
         return key
     
     def _read(self, table, cat, dask=True):
+        """
+        Same as super but instead takes the catalog as
+        an argument.
+        """
         try:
             entry = cat[table]
         except KeyError:
@@ -93,6 +102,10 @@ class IntakeSQLSource(IntakeSource):
     # TODO: enable caching by hash of final sql_statement
     @cached(with_query=True)
     def get(self, table, **query):
+        '''
+        Applies SQL Transforms, creating new temp catalog on the fly
+        and querying the database.
+        '''
         dask = query.pop('__dask', self.dask)
         sql_transforms = query.pop('sql_transforms', [])
         
