@@ -27,6 +27,7 @@ extras_require = {
         'pytest',
         'flake8',
         'intake',
+        'intake-sql',
         'msgpack-python',
         'toolz',
         'twine',
