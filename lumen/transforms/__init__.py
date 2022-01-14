@@ -1,2 +1,2 @@
 from .base import * # noqa
-from .sql import *
+from .sql import * # noqa

@@ -18,7 +18,9 @@ class IntakeBaseSource(Source):
                 return entry.to_dask()
             except Exception:
                 if self.dask:
-                    self.param.warning(f"Could not load {table} table with dask.")
+                    self.param.warning(
+                        f"Could not load {entry.name!r} table with dask."
+                    )
         return entry.read()
 
     def get_tables(self):

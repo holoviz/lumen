@@ -2,11 +2,9 @@ import hashlib
 import os
 import sys
 
-import intake
 import pandas as pd
 
 from intake_sql import SQLSource
-from intake.catalog.base import Catalog
 
 from .base import cached
 from .intake import IntakeSource
