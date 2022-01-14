@@ -38,21 +38,6 @@ class IntakeSQLSource(IntakeSource):
             return self._cache[key[:1]], True
         return None, not bool(query)
 
-    def _get_key(self, table, **query):
-        """
-        Returns a hashable representation of all the input parameters
-        to the SQL Transform chain to allow for query-by-query caching
-        based on the hash value.
-        """
-        key = (table,)
-        for k, v in sorted(query.items()):
-            if k == 'sql_transforms':
-                v = str([str(t) for t in v])
-            elif isinstance(v, list):
-                v = tuple(v)
-            key += (k, v)
-        return key
-
     @cached(with_query=True)
     def get(self, table, **query):
         '''

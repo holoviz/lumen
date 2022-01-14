@@ -13,16 +13,16 @@ class SQLTransform(Transform):
 
     __abstract = True
 
-    def __str__(self):
+    def __hash__(self):
         """
-        String representation of a transforms.
-        Removes `name` inherited from `param.Parametrized`
-        as to allow for consistent hashing.
+        Implements hashing to allow a Source to compute a hash key.
         """
-        vals = self.param.get_param_values()
-        vals_dict = {k: v for k, v in vals}
-        vals_dict.pop('name', None)
-        return str(vals_dict)
+        hash_vals = (type(self).__name__,)
+        hash_vals += tuple(sorted([
+            (k, v) for k, v in self.param.values().items()
+            if k not in Transform.param
+        ]))
+        return hash(str(hash_vals))
 
     def apply(self, sql_in):
         """
@@ -41,7 +41,7 @@ class SQLTransform(Transform):
         return sql_in
 
 
-class SQLGroupBy(Transform):
+class SQLGroupBy(SQLTransform):
     """
     Performs a Group-By and aggregation
     """
