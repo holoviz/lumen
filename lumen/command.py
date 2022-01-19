@@ -3,11 +3,14 @@ import ast
 import os
 import sys
 
+from pathlib import Path
+
 import bokeh.command.util
 
 from bokeh.application.handlers.code import CodeHandler
+from bokeh.command.subcommand import Argument, Subcommand
 from bokeh.command.util import build_single_handler_application as _build_application, die
-from panel.command import main as _pn_main
+from panel.command import main as _pn_main, Serve
 from panel.io.server import Application
 
 from . import __version__
@@ -65,6 +68,41 @@ def build_single_handler_application(path, argv):
 bokeh.command.util.build_single_handler_application = build_single_handler_application
 
 
+class GUI(Subcommand):
+
+    name = 'gui'
+
+    help = "Launch the Lumen Builder UI"
+
+    args = (
+        tuple(
+            (name, arg) for name, arg in Serve.args
+            if name not in ('files', '--args', '--glob')
+        ) + (
+        ('--launcher', Argument(
+            metavar = 'LAUNCHER',
+            type    = str,
+            help    = "The Launcher plugin to use",
+            default = 'lumen.ui.LocalLauncher'
+        )),
+        ('--components', Argument(
+            metavar = 'COMPONENTS',
+            type    = str,
+            help    = "Directory containing components"
+        ))
+    ))
+
+    def __init__(self, parser: argparse.ArgumentParser, serve: Serve) -> None:
+        super().__init__(parser)
+        self.serve = serve
+
+    def invoke(self, args: argparse.Namespace) -> None:
+        args.glob = False
+        args.args = []
+        args.files = [str(Path(__file__).parent / 'ui')]
+        self.serve.invoke(args)
+
+
 def main(args=None):
     """Merges commands offered by pyct and bokeh and provides help for both"""
     start, template_vars = None, None
@@ -83,7 +121,7 @@ def main(args=None):
         sys.argv = sys.argv[:start] + sys.argv[end+1:]
         config.template_vars = ast.literal_eval(template_vars)
 
-    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version'):
+    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'gui'):
         _pn_main()
         return
 
@@ -94,6 +132,15 @@ def main(args=None):
     parser.add_argument(
         '-v', '--version', action='version', version=__version__
     )
+
+    subs = parser.add_subparsers(help="Sub-commands")
+
+    serve_parser = subs.add_parser(Serve.name, help=Serve.help)
+    serve_command = Serve(parser=serve_parser)
+
+    subparser = subs.add_parser(GUI.name, help=GUI.help)
+    subcommand = GUI(parser=subparser, serve=serve_command)
+    subparser.set_defaults(invoke=subcommand.invoke)
 
     args = parser.parse_args(sys.argv[1:])
 

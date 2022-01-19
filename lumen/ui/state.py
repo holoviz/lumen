@@ -1,9 +1,12 @@
 from weakref import WeakKeyDictionary
 
 import panel as pn
+import param
 
 
-class session_state:
+class session_state(param.Parameterized):
+
+    components = param.Foldername(default='./components')
 
     _modals = WeakKeyDictionary()
 
