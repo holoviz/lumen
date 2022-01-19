@@ -65,7 +65,7 @@ class SQLGroupBy(SQLTransform):
         by_cols = ', '.join(self.by)
         aggs = ', '.join([
             f'{agg}({col}) AS {col}' for agg, col in self.aggregates.items()
-        ]),
+        ])
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(
             by_cols=by_cols, aggs=aggs, sql_in=sql_in
         )
