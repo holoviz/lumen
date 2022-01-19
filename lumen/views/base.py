@@ -54,6 +54,10 @@ class View(param.Parameterized):
     transforms = param.List(constant=True, doc="""
         A list of transforms to apply to the data returned by the
         Source before visualizing it.""")
+    
+    sql_transforms = param.List(constant=True, doc="""
+        A list of sql transforms to apply to the data returned by the
+        Source before visualizing it.""")
 
     table = param.String(doc="The table being visualized.")
 
@@ -158,6 +162,8 @@ class View(param.Parameterized):
         spec = dict(spec)
         transform_specs = spec.pop('transforms', [])
         transforms = [Transform.from_spec(tspec) for tspec in transform_specs]
+        sql_transform_specs = spec.pop('sql_transforms', [])
+        sql_transforms = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
         view_type = View._get_type(spec.pop('type', None))
         resolved_spec = {}
         for p, value in spec.items():
@@ -172,7 +178,7 @@ class View(param.Parameterized):
                     pass
             resolved_spec[p] = value
         view = view_type(
-            filters=filters, source=source, transforms=transforms,
+            filters=filters, source=source, transforms=transforms, sql_transforms=sql_transforms,
             **resolved_spec
         )
 
@@ -223,6 +229,11 @@ class View(param.Parameterized):
         if self._cache is not None:
             return self._cache
         query = {}
+        if self.sql_transforms:
+            if self.source.source_type != 'intake_sql':
+                raise ValueError(f'Can only use sql transforms with intake_sql source. Found source typed {self.source.source_type} instead.')
+            query['sql_transforms'] = self.sql_transforms
+            
         for filt in self.filters:
             filt_query = filt.query
             if (filt_query is not None and

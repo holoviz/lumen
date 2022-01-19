@@ -25,15 +25,14 @@ def set_root():
 @pytest.fixture
 def make_filesource():
     root = config._root
-    def create(root):
+    def create(root, **kwargs):
         config._root = root
-        source = FileSource(tables={'test': 'test.csv'},  kwargs={'parse_dates': ['D']})
+        source = FileSource(tables={'test': 'test.csv'},  kwargs={'parse_dates': ['D']}, **kwargs)
         state.sources['original'] = source
         return source
     yield create
     config._root = root
     state.global_sources.clear()
-
 
 
 @pytest.fixture
@@ -72,3 +71,9 @@ def document():
     doc = Document()
     with pn.io.server.set_curdoc(doc):
         yield
+
+@pytest.fixture
+def cachedir():
+    tmp_dir = tempfile.TemporaryDirectory()
+    yield tmp_dir.name
+    tmp_dir.cleanup()
