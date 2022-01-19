@@ -30,9 +30,8 @@ extras_require = {
         'intake-sql',
         'msgpack-python',
         'toolz',
-        'twine',
-        'rfc3986',
-        'keyring'
+        'pytest-cov',
+        'codecov',
     ],
     'doc': [
         'sphinx',
