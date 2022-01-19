@@ -28,7 +28,7 @@ extras_require = {
         'flake8',
         'intake',
         'intake-sql',
-        'fastparquet',
+        'pyarrow',
         'msgpack-python',
         'toolz',
         'pytest-cov',
