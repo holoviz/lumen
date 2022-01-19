@@ -1,9 +1,3 @@
-import hashlib
-import os
-import sys
-
-import pandas as pd
-
 from intake_sql import SQLSource
 
 from .base import cached

@@ -41,16 +41,6 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
 
-def test_file_source_get_query_cache(make_filesource):
-    root = os.path.dirname(__file__)
-    source = make_filesource(root)
-    source.get('test', A=(1, 2))
-    assert ('test', 'A', (1, 2)) in source._cache
-    pd.testing.assert_frame_equal(
-        source._cache[('test', 'A', (1, 2))],
-        pd._testing.makeMixedDataFrame().iloc[1:3]
-    )
-
 def test_file_source_get_query_dask(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
