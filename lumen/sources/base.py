@@ -50,7 +50,6 @@ def cached(with_query=True):
                 if not with_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
                     cache_query['__dask'] = True
                 df = method(self, table, **cache_query)
-                cache_query.pop('__dask', None)
                 self._set_cache(df, table, **cache_query)
             filtered = df
             if (not with_query or no_query) and query:
@@ -285,11 +284,10 @@ class Source(param.Parameterized):
                 json.dump(schema, f)
 
     def _get_cache(self, table, **query):
+        query.pop('__dask', None)
         key = self._get_key(table, **query)
         if key in self._cache:
             return self._cache[key], not bool(query)
-        elif key[:1] in self._cache:
-            return self._cache[key[:1]], True
         elif self.cache_dir:
             if query:
                 sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
@@ -305,6 +303,7 @@ class Source(param.Parameterized):
         return None, not bool(query)
 
     def _set_cache(self, data, table, write_to_file=True, **query):
+        query.pop('__dask', None)
         key = self._get_key(table, **query)
         self._cache[key] = data
         if self.cache_dir and write_to_file:
