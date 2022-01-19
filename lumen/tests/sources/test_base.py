@@ -35,9 +35,12 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     cache_key = ('test', 'A', (1, 2))
     sha = hashlib.sha256(str(cache_key).encode('utf-8')).hexdigest()
     cache_path = Path(cachedir) / f'{sha}_test.parq'
-    assert cache_path.exists()
+    df = pd.read_parquet(cache_path, engine='fastparquet')
+
+    # Patch index names due to https://github.com/dask/fastparquet/issues/732
+    df.index.names = [None]
     pd.testing.assert_frame_equal(
-        pd.read_parquet(cache_path),
+        df,
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
 
