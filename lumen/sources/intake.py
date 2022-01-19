@@ -12,20 +12,15 @@ class IntakeBaseSource(Source):
 
     __abstract = True
 
-    def _read(self, table, dask=True):
-        try:
-            entry = self.cat[table]
-        except KeyError:
-            raise KeyError(f"'{table}' table could not be found in Intake "
-                           "catalog. Available tables include: "
-                           f"{list(self.cat)}.")
+    def _read(self, entry, dask=True):
         if self.dask or dask:
             try:
                 return entry.to_dask()
             except Exception:
                 if self.dask:
-                    self.param.warning(f"Could not load {table} table with dask.")
-                pass
+                    self.param.warning(
+                        f"Could not load {entry.name!r} table with dask."
+                    )
         return entry.read()
 
     def get_tables(self):
@@ -46,7 +41,13 @@ class IntakeBaseSource(Source):
     @cached(with_query=False)
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
-        df = self._read(table)
+        try:
+            entry = self.cat[table]
+        except KeyError:
+            raise KeyError(f"'{table}' table could not be found in Intake "
+                           "catalog. Available tables include: "
+                           f"{list(self.cat)}.")
+        df = self._read(entry, dask)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
