@@ -465,7 +465,7 @@ class FileSource(Source):
         if 'files' in params:
             params['tables'] = params.pop('files')
         super().__init__(**params)
-        self._template_re = re.compile('(@\{.*\})')
+        self._template_re = re.compile(r'(@\{.*\})')
 
     def _load_fn(self, ext, dask=True):
         kwargs = dict(self._load_kwargs.get(ext, {}))
