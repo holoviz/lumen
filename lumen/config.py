@@ -59,6 +59,10 @@ class _config(param.Parameterized):
             return self._root
         return os.getcwd()
 
+    @root.setter
+    def root(self, root):
+        self._root = root
+
     def load_local_modules(self):
         """
         Loads local modules containing custom components and templates.
@@ -89,8 +93,6 @@ class _config(param.Parameterized):
     @dev.setter
     def dev(self, dev):
         self._dev = dev
-
-
 
 
 config = _config()

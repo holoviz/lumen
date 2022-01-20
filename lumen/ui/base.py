@@ -4,7 +4,6 @@ import param
 from panel.reactive import ReactiveHTML
 
 from .fast import FastDivider
-from .state import state
 
 
 class Wizard(ReactiveHTML):
@@ -48,6 +47,7 @@ class Wizard(ReactiveHTML):
             self._next()
 
     def open_modal(self):
+        from .state import state
         self.preview.object = dict(state.spec)
         if state.modal.objects == [self.preview]:
             state.template.open_modal()
