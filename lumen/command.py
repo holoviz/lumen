@@ -10,7 +10,7 @@ import bokeh.command.util
 from bokeh.application.handlers.code import CodeHandler
 from bokeh.command.subcommand import Argument, Subcommand
 from bokeh.command.util import build_single_handler_application as _build_application, die
-from panel.command import main as _pn_main, Serve
+from panel.command import main as _pn_main, transform_cmds, Serve
 from panel.io.server import Application
 
 from . import __version__
@@ -152,6 +152,7 @@ def main(args=None):
     subcommand = Builder(parser=subparser, serve=serve_command)
     subparser.set_defaults(invoke=subcommand.invoke)
 
+    sys.argv = transform_cmds(sys.argv)
     args = parser.parse_args(sys.argv[1:])
 
     try:
