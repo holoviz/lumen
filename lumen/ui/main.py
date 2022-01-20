@@ -20,7 +20,7 @@ def main():
     state.template = FastListTemplate(theme='dark', title='Lumen Builder')
     builder = Builder(
         template=state.template, spec=state.spec, modal=state.modal,
-        launcher=state.launcher(), **params
+        launcher=state.launcher, **params
     )
     builder.servable()
 

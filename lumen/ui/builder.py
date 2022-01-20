@@ -61,18 +61,22 @@ class Builder(param.Parameterized):
         source_params['path'] = os.path.join(path, 'sources')
         target_params['path'] = os.path.join(path, 'targets')
         view_params['path'] = os.path.join(path, 'views')
+
+        spec = params.pop('spec', {})
         self.welcome = DashboardGallery(**dash_params)
-        super().__init__(**params)
+        if 'launcher' in params:
+            params['launcher'] = params['launcher'](spec=spec)
+        super().__init__(spec=spec, **params)
 
         self.config = ConfigEditor(spec=self.spec['config'])
         state.spec = self.spec
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.views = self.views = ViewGallery(**view_params)
         state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
-        self.launcher.spec = self.spec
         self.wizard = Wizard(items=[
             self.welcome, self.config, self.sources, self.views, self.targets, self.launcher
         ], sizing_mode='stretch_both')
+
 
         preview = pn.widgets.Button(name='Preview', width=100)
         preview.on_click(self._open_dialog)
@@ -110,8 +114,6 @@ class Builder(param.Parameterized):
                     self.spec[key].update(item)
                 else:
                     self.spec[key] = item
-        self.config.param.trigger('spec')
-        self.sources.param.trigger('spec')
 
         for name, source in self.sources.sources.items():
             config.root = str(pathlib.Path(__file__).parent)
@@ -120,7 +122,13 @@ class Builder(param.Parameterized):
                 spec = dict(source.spec)
                 spec['name'] = name
                 spec.pop('filters', None)
-            lm_state.sources[name] = Source.from_spec(spec)
+            try:
+                lm_state.sources[name] = Source.from_spec(spec)
+            except:
+                pass
+
+        self.config.param.trigger('spec')
+        self.sources.param.trigger('spec')
 
         views, view_gallery = [], {}
         targets, target_items = [], {}
@@ -161,4 +169,3 @@ class Builder(param.Parameterized):
 
     def servable(self, title='Lumen Builder'):
         self.template.servable(title=title)
-

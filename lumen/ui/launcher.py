@@ -82,6 +82,3 @@ class YAMLLauncher(Launcher):
         self.spec = state.spec
         self.editor.object = state.spec
 
-
-session_state.param.launcher.class_ = Launcher
-session_state.param.launcher.class_ = LocalLauncher

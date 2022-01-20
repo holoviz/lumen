@@ -515,7 +515,7 @@ class Dashboard(param.Parameterized):
 
     def _render_targets(self):
         items = []
-        for target, spec in zip(self.targets, state.spec['targets']):
+        for target, spec in zip(self.targets, state.spec.get('targets', [])):
             if target is None or isinstance(target, Future):
                 panel = pn.Column(name=spec['title'])
             else:
