@@ -7,7 +7,7 @@ import param
 
 from ..dashboard import Dashboard
 from .base import WizardItem
-from .state import session_state, state
+from .state import state
 
 
 class Launcher(WizardItem):

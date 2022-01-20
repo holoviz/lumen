@@ -124,7 +124,7 @@ class Builder(param.Parameterized):
                 spec.pop('filters', None)
             try:
                 lm_state.sources[name] = Source.from_spec(spec)
-            except:
+            except Exception:
                 pass
 
         self.config.param.trigger('spec')
