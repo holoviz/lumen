@@ -6,7 +6,9 @@ import param
 
 class session_state(param.Parameterized):
 
-    components = param.Foldername(default='./components')
+    components = param.String(default='./components')
+
+    launcher = param.ClassSelector(is_instance=False)
 
     _modals = WeakKeyDictionary()
 

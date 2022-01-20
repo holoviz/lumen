@@ -7,10 +7,9 @@ from panel.template import FastListTemplate
 from lumen.ui.builder import Builder
 from lumen.ui.state import state
 
-
 def main():
     path = Path(state.components)
-    path.mkdir(exist_ok=True)
+    path.mkdir(parents=True, exist_ok=True)
     params = {'component_dir': str(path)}
     (path / 'dashboards').mkdir(parents=True, exist_ok=True)
     (path / 'sources').mkdir(parents=True, exist_ok=True)
@@ -19,7 +18,10 @@ def main():
     state.modal = pn.Column(sizing_mode='stretch_both')
     state.spec = {'config': {}, 'sources': {}, 'targets': []}
     state.template = FastListTemplate(theme='dark', title='Lumen Builder')
-    builder = Builder(template=state.template, spec=state.spec, modal=state.modal, **params)
+    builder = Builder(
+        template=state.template, spec=state.spec, modal=state.modal,
+        launcher=state.launcher(), **params
+    )
     builder.servable()
 
 if __name__.startswith('bokeh'):

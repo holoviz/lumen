@@ -1,7 +1,13 @@
+import io
+import tempfile
+import yaml
+
 import panel as pn
 import param
 
+from ..dashboard import Dashboard
 from .base import WizardItem
+from .state import session_state, state
 
 
 class Launcher(WizardItem):
@@ -12,7 +18,9 @@ class Launcher(WizardItem):
 
 
 class LocalLauncher(Launcher):
-    "WIP: Plugins will allow launching to various cloud providers."
+    """
+    Launches the dashboard locally.
+    """
 
     _template = """
     <span style="font-size: 1.5em">Launcher</span>
@@ -24,7 +32,6 @@ class LocalLauncher(Launcher):
     """
 
     def _launch(self, event):
-        from lumen import Dashboard
         with tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False) as f:
             f.file.write(yaml.dump(state.spec))
         dashboard = Dashboard(f.name)
@@ -63,10 +70,6 @@ class YAMLLauncher(Launcher):
         )
         super().__init__(**params)
 
-    @param.depends('spec', watch=True, on_init=True)
-    def _update_spec(self):
-        self.editor.object = self.spec
-
     def _download_data(self):
         sio = io.StringIO()
         text = yaml.dump(state.spec)
@@ -78,3 +81,7 @@ class YAMLLauncher(Launcher):
     def _update_spec(self):
         self.spec = state.spec
         self.editor.object = state.spec
+
+
+session_state.param.launcher.class_ = Launcher
+session_state.param.launcher.class_ = LocalLauncher

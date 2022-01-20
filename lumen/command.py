@@ -17,6 +17,9 @@ from . import __version__
 from .config import config
 from .dashboard import Defaults, load_yaml
 from .state import state
+from .util import resolve_module_reference
+from .ui.launcher import Launcher
+from .ui.state import state as ui_state
 
 
 class YamlHandler(CodeHandler):
@@ -68,9 +71,9 @@ def build_single_handler_application(path, argv):
 bokeh.command.util.build_single_handler_application = build_single_handler_application
 
 
-class GUI(Subcommand):
+class Builder(Subcommand):
 
-    name = 'gui'
+    name = 'builder'
 
     help = "Launch the Lumen Builder UI"
 
@@ -83,7 +86,7 @@ class GUI(Subcommand):
             metavar = 'LAUNCHER',
             type    = str,
             help    = "The Launcher plugin to use",
-            default = 'lumen.ui.LocalLauncher'
+            default = 'lumen.ui.launcher.LocalLauncher'
         )),
         ('--components', Argument(
             metavar = 'COMPONENTS',
@@ -97,9 +100,16 @@ class GUI(Subcommand):
         self.serve = serve
 
     def invoke(self, args: argparse.Namespace) -> None:
+        # Set panel serve arguments
         args.glob = False
         args.args = []
         args.files = [str(Path(__file__).parent / 'ui')]
+
+        # Set up UI state
+        ui_state.launcher = resolve_module_reference(args.launcher, Launcher)
+        if args.components:
+            ui_state.components = args.components
+
         self.serve.invoke(args)
 
 
@@ -121,7 +131,7 @@ def main(args=None):
         sys.argv = sys.argv[:start] + sys.argv[end+1:]
         config.template_vars = ast.literal_eval(template_vars)
 
-    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'gui'):
+    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'builder'):
         _pn_main()
         return
 
@@ -138,8 +148,8 @@ def main(args=None):
     serve_parser = subs.add_parser(Serve.name, help=Serve.help)
     serve_command = Serve(parser=serve_parser)
 
-    subparser = subs.add_parser(GUI.name, help=GUI.help)
-    subcommand = GUI(parser=subparser, serve=serve_command)
+    subparser = subs.add_parser(Builder.name, help=Builder.help)
+    subcommand = Builder(parser=subparser, serve=serve_command)
     subparser.set_defaults(invoke=subcommand.invoke)
 
     args = parser.parse_args(sys.argv[1:])

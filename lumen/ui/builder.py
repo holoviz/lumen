@@ -1,11 +1,6 @@
-import io
 import os
 import pathlib
 import uuid
-import tempfile
-import yaml
-
-from pathlib import Path
 
 import panel as pn
 import param
@@ -17,10 +12,9 @@ from lumen.config import config
 from lumen.sources import Source
 from lumen.state import state as lm_state
 
-from .base import Wizard, WizardItem
+from .base import Wizard
 from .config import ConfigEditor
-from .dashboard import DashboardGallery, DashboardGalleryItem
-from .gallery import Gallery, GalleryItem
+from .dashboard import DashboardGallery
 from .launcher import Launcher, YAMLLauncher
 from .sources import SourceGallery
 from .state import state
