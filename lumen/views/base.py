@@ -5,7 +5,7 @@ object.
 
 import sys
 
-from io import StringIO
+from io import StringIO, BytesIO
 from weakref import WeakKeyDictionary
 
 import numpy as np
@@ -21,9 +21,64 @@ from panel.param import Param
 
 from ..config import _INDICATORS
 from ..filters import ParamFilter
+from ..panel import DownloadButton
 from ..sources import Source
 from ..transforms import Transform
 from ..util import resolve_module_reference
+
+DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
+
+
+class Download(pn.viewable.Viewer):
+
+    color = param.Color(default='grey', allow_None=True, doc="""
+      The color of the download button.""")
+
+    hide = param.Boolean(default=False, doc="""
+      Whether the download button hides when not in focus.""")
+
+    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+      The format to download the data in.""")
+
+    kwargs = param.Dict(default={}, doc="""
+      Keyword arguments passed to the serialization function, e.g.
+      data.to_csv(file_obj, **kwargs).""")
+
+    size = param.Integer(default=18, doc="""
+      The size of the download button.""")
+
+    view = param.Parameter(doc="Holds the current view.")
+
+    @classmethod
+    def from_spec(cls, spec):
+        return cls(**spec)
+
+    def __bool__(self):
+        return self.format is not None
+
+    def _table_data(self):
+        if self.format in ('json', 'csv'):
+            io = StringIO()
+        else:
+            io = BytesIO()
+        data = self.view.get_data()
+        if self.format == 'csv':
+            data.to_csv(io, **self.kwargs)
+        elif self.format == 'json':
+            data.to_json(io, **self.kwargs)
+        elif self.format == 'xlsx':
+            data.to_excel(io, **self.kwargs)
+        elif self.format == 'parquet':
+            data.to_parquet(io, **self.kwargs)
+        io.seek(0)
+        return io
+
+    def __panel__(self):
+        filename = f'{self.view.table}_{self.view.name}_view.{self.format}'
+        return DownloadButton(
+            callback=self._table_data, filename=filename, color=self.color,
+            size=18, hide=self.hide
+        )
 
 
 class View(param.Parameterized):
@@ -39,6 +94,10 @@ class View(param.Parameterized):
 
     controls = param.List(default=[], doc="""
         Parameters that should be exposed as widgets in the UI.""")
+
+    download = param.ClassSelector(class_=Download, default=Download(), doc="""
+        The download objects determines whether and how the source tables
+        can be downloaded.""")
 
     filters = param.List(constant=True, doc="""
         A list of Filter object providing the query parameters for the
@@ -96,6 +155,7 @@ class View(param.Parameterized):
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
         super().__init__(source=source, table=table, **params)
+        self.download.view = self
         for transform in self.transforms:
             for fp in transform._field_params:
                 if isinstance(transform.param[fp], param.Selector):
@@ -177,9 +237,15 @@ class View(param.Parameterized):
                 except Exception:
                     pass
             resolved_spec[p] = value
+
+        # Resolve download options
+        download_spec = spec.pop('download', {})
+        if isinstance(download_spec, str):
+            download_spec = {'format': download_spec}
+        resolved_spec['download'] = Download.from_spec(download_spec)
         view = view_type(
-            filters=filters, source=source, transforms=transforms, sql_transforms=sql_transforms,
-            **resolved_spec
+            filters=filters, source=source, transforms=transforms,
+            sql_transforms=sql_transforms, **resolved_spec
         )
 
         # Resolve ParamFilter parameters
@@ -337,12 +403,15 @@ class View(param.Parameterized):
 
     @property
     def panel(self):
-        if isinstance(self._panel, PaneBase):
-            pane = self._panel
-            if len(pane.layout) == 1 and pane._unpack:
-                return pane.layout[0]
-            return pane._layout
-        return self._panel
+        panel = self._panel
+        if isinstance(panel, PaneBase):
+            if len(panel.layout) == 1 and panel._unpack:
+                panel = panel.layout[0]
+            else:
+                panel = panel._layout
+        if self.download:
+            return pn.Column(self.download, panel, sizing_mode='stretch_width')
+        return panel
 
 
 class StringView(View):
@@ -554,7 +623,7 @@ class Table(View):
         return dict(value=self.get_data(), disabled=True, **self.kwargs)
 
 
-class Download(View):
+class DownloadView(View):
     """
     The Download View allows downloading the current table as a csv or
     xlsx file.

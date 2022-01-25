@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from lumen.panel import DownloadButton
 from lumen.sources import FileSource
-from lumen.views import View, hvPlotView
+from lumen.views import hvPlotView, View
 
 
 def test_resolve_module_type():
@@ -39,3 +40,24 @@ def test_view_hvplot_basis(set_root):
 
     assert plot.kdims == ['A']
     assert plot.vdims == ['B']
+
+
+def test_view_hvplot_download(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': 'hvplot',
+        'table': 'test',
+        'x': 'A',
+        'y': 'B',
+        'kind': 'scatter',
+        'download': 'csv'
+    }
+
+    view = View.from_spec(view, source, [])
+
+    button = view.panel[0]
+    assert isinstance(button, DownloadButton)
+
+    button._on_click()
+    assert button.data.startswith('data:text/plain;charset=UTF-8;base64')
