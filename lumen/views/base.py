@@ -5,7 +5,7 @@ object.
 
 import sys
 
-from io import StringIO
+from io import StringIO, BytesIO
 from weakref import WeakKeyDictionary
 
 import numpy as np
