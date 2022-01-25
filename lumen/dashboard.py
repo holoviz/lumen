@@ -46,6 +46,9 @@ pn.config.raw_css.append("""
 }
 """)
 
+pn.config.css_files.append(
+    pn.io.resources.CSS_URLS['font-awesome']
+)
 
 def load_yaml(yaml_spec, **kwargs):
     expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)

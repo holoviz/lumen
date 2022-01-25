@@ -11,10 +11,7 @@ from .config import _LAYOUTS
 from .filters import Filter, FacetFilter, ParamFilter
 from .sources import Source
 from .state import state
-from .views import View
-
-
-DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
+from .views import View, DOWNLOAD_FORMATS
 
 
 class Facet(param.Parameterized):
@@ -263,6 +260,9 @@ class Target(param.Parameterized):
     # Create UI
     ##################################################################
 
+    def _construct_view_panel(self, view):
+        return view.panel
+
     def _construct_card(self, title, views):
         kwargs = dict(self.kwargs)
         layout = self.layout
@@ -272,15 +272,15 @@ class Target(param.Parameterized):
                 row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
                     if isinstance(index, int):
-                        view = views[index].panel
+                        view = views[index]
                     else:
                         matches = [view for view in views if view.name == index]
                         if matches:
-                            view = matches[0].panel
+                            view = matches[0]
                         else:
                             raise KeyError("Target could not find named "
                                            f"view '{index}'.")
-                    row.append(view)
+                    row.append(self._construct_view_panel(view))
                 item.append(row)
         else:
             if isinstance(layout, dict):
@@ -290,7 +290,7 @@ class Target(param.Parameterized):
             if layout == 'grid' and 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
             layout_type = _LAYOUTS[layout]
-            item = layout_type(*(view.panel for view in views), **kwargs)
+            item = layout_type(*(self._construct_view_panel(view) for view in views), **kwargs)
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
         return pn.Card(item, title=title, name=title, collapsible=False, **params)
 
