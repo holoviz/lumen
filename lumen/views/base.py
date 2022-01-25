@@ -65,7 +65,7 @@ class Download(pn.viewable.Viewer):
         return io
 
     def __panel__(self):
-        filename = f'{self.view.table}_view.{self.format}'
+        filename = f'{self.view.table}_{self.view.name}_view.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename
         )
@@ -400,7 +400,6 @@ class View(param.Parameterized):
             else:
                 panel = panel._layout
         if self.download:
-            print(self.download)
             return pn.Column(self.download, panel, sizing_mode='stretch_width')
         return panel
 
