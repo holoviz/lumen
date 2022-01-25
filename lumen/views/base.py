@@ -31,14 +31,23 @@ DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
 class Download(pn.viewable.Viewer):
 
+    color = param.Color(default='grey', allow_None=True, doc="""
+      The color of the download button.""")
+
+    hide = param.Boolean(default=False, doc="""
+      Whether the download button hides when not in focus.""")
+
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
-        The format to download the data in.""")
+      The format to download the data in.""")
 
     kwargs = param.Dict(default={}, doc="""
-        Keyword arguments passed to the serialization function, e.g.
-        data.to_csv(file_obj, **kwargs).""")
+      Keyword arguments passed to the serialization function, e.g.
+      data.to_csv(file_obj, **kwargs).""")
 
-    view = param.Parameter()
+    size = param.Integer(default=18, doc="""
+      The size of the download button.""")
+
+    view = param.Parameter(doc="Holds the current view.")
 
     @classmethod
     def from_spec(cls, spec):
@@ -67,7 +76,8 @@ class Download(pn.viewable.Viewer):
     def __panel__(self):
         filename = f'{self.view.table}_{self.view.name}_view.{self.format}'
         return DownloadButton(
-            callback=self._table_data, filename=filename
+            callback=self._table_data, filename=filename, color=self.color,
+            size=18, hide=self.hide
         )
 
 

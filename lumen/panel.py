@@ -9,11 +9,15 @@ class DownloadButton(ReactiveHTML):
 
     callback = param.Callable(precedence=-1)
 
+    color = param.Color(default='grey', allow_None=True)
+
     data = param.String()
 
     filename = param.String()
 
-    size = param.Integer(default=24)
+    hide = param.Boolean(default=False)
+
+    size = param.Integer(default=20)
 
     _template = """
     <style>
@@ -24,11 +28,12 @@ class DownloadButton(ReactiveHTML):
       width: {{ size }}px;
       height: {{ size }}px;
       z-index: 10000;
-      opacity: 0;
+      opacity: {% if hide %}0{% else %}1{% endif %};
       transition-delay: 0.5s;
       transition: 0.5s;
       cursor: pointer;
       font-size: {{ size }}px;
+      {% if color %}color: {{ color }};{% endif %}
     }
 
     .download-button:hover {
