@@ -296,8 +296,11 @@ class View(param.Parameterized):
             return self._cache
         query = {}
         if self.sql_transforms:
-            if self.source.source_type != 'intake_sql':
-                raise ValueError(f'Can only use sql transforms with intake_sql source. Found source typed {self.source.source_type} instead.')
+            if not self.source._supports_sql:
+                raise ValueError(
+                    'Can only use sql transforms with intake_sql source. '
+                    f'Found source typed {self.source.source_type} instead.'
+                )
             query['sql_transforms'] = self.sql_transforms
             
         for filt in self.filters:

@@ -433,6 +433,8 @@ class Target(param.Parameterized):
                     v1.param.watch(partial(self._sync_component, v2), v1.controls)
                     for t1, t2 in zip(v1.transforms, v2.transforms):
                         t1.param.watch(partial(self._sync_component, t2), t1.controls)
+                    for t1, t2 in zip(v1.sql_transforms, v2.sql_transforms):
+                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
 
         # Validate that all filters are applied
         for filt in self.filters:
@@ -453,6 +455,10 @@ class Target(param.Parameterized):
                 if view.controls:
                     view.param.watch(rerender, view.controls)
                 for transform in view.transforms:
+                    if transform.controls and not transform in transforms:
+                        transforms.append(transform)
+                        transform.param.watch(rerender_cache, transform.controls)
+                for transform in view.sql_transforms:
                     if transform.controls and not transform in transforms:
                         transforms.append(transform)
                         transform.param.watch(rerender_cache, transform.controls)
