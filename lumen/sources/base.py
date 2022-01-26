@@ -93,6 +93,9 @@ class Source(param.Parameterized):
 
     source_type = None
 
+    # Declare whether source supports SQL transforms
+    _supports_sql = False
+
     __abstract = True
 
     @classmethod
