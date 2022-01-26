@@ -19,7 +19,7 @@ def test_resolve_module_type():
 
 def test_transform_control_options(make_filesource):
     root = os.path.dirname(__file__)
-    source = make_filesource(root)
+    make_filesource(root)
 
     transform = Transform.from_spec({
         'type': 'test',
@@ -33,7 +33,7 @@ def test_transform_control_options(make_filesource):
 
 def test_transform_control_options_by_reference(make_filesource):
     root = pathlib.Path(__file__).parent / '..' / 'sources' 
-    source = make_filesource(str(root))
+    make_filesource(str(root))
 
     transform = Transform.from_spec({
         'type': 'test',
