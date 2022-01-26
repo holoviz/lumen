@@ -54,6 +54,7 @@ class Transform(param.Parameterized):
         -------
         The resolved Transform object.
         """
+        from ..sources import Source
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
         new_spec = {}
@@ -63,7 +64,28 @@ class Transform(param.Parameterized):
                 not isinstance(v, list)):
                 v = [v]
             new_spec[k] = v
-        return transform_type(**new_spec)
+
+        # Allow declaring control options
+        controls, control_kwargs = [], {}
+        for control in new_spec.get('controls', []):
+            if isinstance(control, dict):
+                ckws = {}
+                if 'options' in control:
+                    options = control['options']
+                    if isinstance(options, str):
+                        options = Source._resolve_reference(options)
+                    ckws['objects'] = options
+                if 'start' in control or 'end' in control:
+                    ckws['bounds'] = (control.get('start'), control.get('end'))
+                control = control['name']
+                control_kwargs[control] = ckws
+            controls.append(control)
+        new_spec['controls'] = controls
+        transform = transform_type(**new_spec)
+        for p, vs in control_kwargs.items():
+            for a, v in vs.items():
+                setattr(transform.param[p], a, v)
+        return transform
     
     @classmethod
     def apply_to(cls, table, **kwargs):
