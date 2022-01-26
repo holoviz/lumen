@@ -21,10 +21,6 @@ from .state import state
 from .targets import TargetGallery, TargetEditor, TargetGalleryItem
 from .views import ViewEditor, ViewGallery, ViewGalleryItem
 
-CSS = [
-    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css'
-]
-
 CSS_RAW = """
 i.fa.fa-plus:hover {
   color: var(--neutral-fill-color) !important;
@@ -39,7 +35,7 @@ i.fa.fa-plus:hover {
 }
 """
 
-pn.extension('ace', 'perspective', 'tabulator', css_files=CSS, raw_css=[CSS_RAW])
+pn.extension('ace', 'perspective', 'tabulator', raw_css=[CSS_RAW])
 
 
 class Builder(param.Parameterized):

@@ -24,7 +24,7 @@ from .util import expand_spec
 from .views import View # noqa
 
 pn.config.css_files.append(
-    pn.io.resources.CSS_URLS['font-awesome']
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css'
 )
 
 def load_yaml(yaml_spec, **kwargs):
