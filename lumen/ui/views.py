@@ -51,7 +51,7 @@ class ViewsEditor(WizardItem):
           <label for="tables-${id}"><b>{{ param.tables.label }}</b></label>
           <fast-select id="tables" style="max-width: 250px; min-width: 150px;" value="${table}">
           {% for tbl in tables %}
-            <fast-option value="{{ tbl }}">{{ tbl }}</fast-option>
+            <fast-option value="{{ tbl|tojson }}">{{ tbl }}</fast-option>
           {% endfor %}
           </fast-select>
           <fast-tooltip anchor="tables-${id}">{{ param.tables.doc }}</fast-tooltip>
