@@ -67,7 +67,7 @@ class Transform(param.Parameterized):
 
         # Allow declaring control options
         controls, control_kwargs = [], {}
-        for control in new_spec.get('controls'):
+        for control in new_spec.get('controls', []):
             if isinstance(control, dict):
                 ckws = {}
                 if 'options' in control:
