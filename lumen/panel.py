@@ -92,3 +92,49 @@ class DownloadButton(ReactiveHTML):
         file_input = FileDownload(callback=self.callback, filename=self.filename)
         file_input._transfer()
         self.data = file_input.data
+
+
+class IconButton(ReactiveHTML):
+
+    disabled = param.Boolean(default=False)
+
+    color = param.Color(default=None)
+
+    icon = param.String(default=None, doc="""
+      The FontAwesome icon to use.""")
+
+    size = param.Integer(default=12, bounds=(0, None))
+
+    _template = """
+      <i id="icon-button" class="fas ${icon}" style="font-size: ${size}px; color: ${color}" onclick=${script('clicked')}></i>
+    """
+
+    _scripts = {
+        'clicked': """
+          if (data.disabled)
+            return
+          data.disabled = true;
+          view._send_event('button', 'click', {target: {value: null}, type: 'icon_click'})
+        """,
+        'disabled': """
+          icon_button.style.cursor = data.disabled ? "not-allowed": "inherit";
+        """
+    }
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._callbacks = []
+
+    @param.depends('size', watch=True, on_init=True)
+    def _update_height(self):
+        self.height = self.size
+
+    def on_click(self, callback):
+        self._callbacks.append(callback)
+
+    def _button_click(self, event=None):
+        try:
+            for cb in self._callbacks:
+                cb(event)
+        finally:
+            self.disabled = False

@@ -9,6 +9,7 @@ import panel as pn
 
 from .config import _LAYOUTS
 from .filters import Filter, FacetFilter, ParamFilter
+from .panel import IconButton
 from .sources import Source
 from .state import state
 from .views import View, DOWNLOAD_FORMATS
@@ -373,9 +374,8 @@ class Target(param.Parameterized):
         if self.reloadable:
             if views:
                 views.append(pn.layout.Divider(margin=0, height=5))
-            self._reload_button = pn.widgets.Button(
-                name='\u21bb', width=50, height=40, css_classes=['reload', 'tab'],
-                margin=0
+            self._reload_button = IconButton(
+                icon='fa-sync', size=18, margin=10
             )
             self._reload_button.on_click(self.update)
             self._timestamp = pn.pane.HTML(
@@ -383,7 +383,8 @@ class Target(param.Parameterized):
                 align='center', margin=(10, 0), sizing_mode='stretch_width'
             )
             reload_panel = pn.Row(
-                self._reload_button, self._timestamp, sizing_mode='stretch_width'
+                self._reload_button, self._timestamp, sizing_mode='stretch_width',
+                margin=(10, 10, 0, 5)
             )
             views.append(reload_panel)
         return pn.Column(*views, name=self.title, sizing_mode='stretch_width')
@@ -648,5 +649,5 @@ class Target(param.Parameterized):
         rerendering the views on this Target.
         """
         self.source.clear_cache()
-        self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
         self._rerender(invalidate_cache=True)
+        self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
