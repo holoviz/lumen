@@ -15,36 +15,13 @@ from panel.template.base import BasicTemplate
 from .auth import AuthPlugin
 from .config import config, _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES
 from .filters import ConstantFilter, Filter, WidgetFilter # noqa
+from .panel import IconButton
 from .sources import Source, RESTSource # noqa
 from .state import state
 from .target import Target
 from .transforms import Transform # noqa
 from .util import expand_spec
 from .views import View # noqa
-
-
-pn.config.raw_css.append("""
-.reload .bk-btn {
-  background: transparent;
-  border: none;
-  font-size: 18pt;
-}
-.logout .bk-btn {
-  background: transparent;
-  font-size: 16pt;
-  border: none;
-  color: white;
-}
-#header .bk.reload .bk.bk-btn {
-  color: white;
-}
-.reload .bk-btn:hover, .logout .bk-btn:hover {
-  background: transparent;
-}
-.bk-root .bk.reload.tab .bk-btn-group > .bk-btn {
-  padding-bottom: 45px;
-}
-""")
 
 pn.config.css_files.append(
     pn.io.resources.CSS_URLS['font-awesome']
@@ -340,9 +317,8 @@ class Dashboard(param.Parameterized):
 
     def _create_header(self):
         self._header = pn.Row()
-        self._reload_button = pn.widgets.Button(
-            name='\u21bb', width=50, css_classes=['reload'], margin=0,
-            align='center'
+        self._reload_button = IconButton(
+            icon='fa-sync', size=18, margin=0
         )
         self._reload_button.on_click(self._reload)
         menu_items = []
@@ -369,9 +345,8 @@ class Dashboard(param.Parameterized):
         if self.config.editable:
             self._header.append(self._edit_button)
         if 'auth' in state.spec:
-            logout = pn.widgets.Button(
-                name='✖', width=40, css_classes=['logout'], margin=0,
-                align='center'
+            logout = IconButton(
+                icon='fa-sign-out-alt', size=18, margin=0
             )
             logout.js_on_click(code="""
             window.location.href = '/logout'
