@@ -2,7 +2,7 @@ import os
 
 import pandas as pd
 
-from lumen.sources.intake import IntakeSQLSource
+from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
 
 
