@@ -72,9 +72,10 @@ class SourceEditor(FastComponent):
     def __init__(self, **params):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
         self.form = pn.Column(sizing_mode='stretch_width')
+        theme = 'midnight' if getattr(pn.config, 'theme', 'default') == 'dark' else 'simple'
         self.preview = pn.widgets.Tabulator(
             sizing_mode='stretch_width', pagination='remote', page_size=12,
-            theme='midnight', height=400
+            theme=theme, height=400
         )
         self._select_table = pn.widgets.Select(
             name='Select table', margin=0, sizing_mode='stretch_width'
@@ -114,7 +115,7 @@ class SourceGalleryItem(GalleryItem):
       ${view}
     </div>
     <p style="height: 4em; max-width: 320px;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px;" onclick="${_open_modal}">Edit</fast-button>
+    <fast-button id="edit-button" style="width: 320px; margin: 1em 0;" onclick="${_open_modal}">Edit</fast-button>
     """
 
     def __init__(self, **params):
@@ -148,11 +149,11 @@ class SourceGallery(WizardItem, Gallery):
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items.values() %}
-      <fast-card id="source-container" style="width: 350px; height: 380px;">
+      <fast-card id="source-container" style="width: 350px; height: 400px;">
         ${item}
       </fast-card>
     {% endfor %}
-      <fast-card id="sources-container-new" style="height: 380px; width: 350px; padding: 1em;">
+      <fast-card id="sources-container-new" style="height: 400px; width: 350px; padding: 1em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Add new source</span>
           <i id="add-button" onclick="${_open_modal}" class="fa fa-plus" style="font-size: 14em; margin: 0.2em auto;" aria-hidden="true"></i>
@@ -396,7 +397,7 @@ class FileSourceTable(ReactiveHTML):
       <div style="flex: 25%; min-width: 150px; display: grid; margin-right: 1em;">
         <label for="name"><b>Table Name</b></label>
         <fast-text-field id="name" placeholder="Enter a name" value="${name}"></fast-text-field>
-        </div>
+      </div>
       <div style="flex: 60%; min-width: 300px; display: grid; margin-right: 1em;">
         <label for="uri"><b>URI</b></label>
         <fast-text-field id="uri" placeholder="{{ param.uri.doc }}" value="${uri}"></fast-text-field>

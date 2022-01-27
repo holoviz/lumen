@@ -36,7 +36,7 @@ class ViewsEditor(WizardItem):
     <span style="font-size: 2em">View Editor</span>
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
-    <div style="display: flex; height: 100%;">
+    <div style="display: flex;">
       <form role="form" style="flex: 30%; max-width: 300px; line-height: 2em;">
         <div style="display: grid;">
           <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
@@ -71,7 +71,7 @@ class ViewsEditor(WizardItem):
           </fast-button>
         </div>
       </form>
-      <div style="flex: auto; margin-left: 2em; overflow-y: auto;">
+      <div style="flex: auto; margin-left: 2em;">
         {% for view in views %}
         <div id="view-container">${view}</div>
         <fast-divider></faster-divider>
@@ -137,6 +137,10 @@ class ViewEditor(ReactiveHTML):
     _template = """
     <span style="font-size: 2em">{{ view_type.title() }} Editor</span>
     <p>Configure the view.</p>
+    <div style="width: 300px; display: grid; margin-right: 1em;">
+      <label for="name"><b>View Name</b></label>
+      <fast-text-field id="name" placeholder="Enter a name" value="${name}"></fast-text-field>
+    </div>
     <fast-divider></fast-divider>
     <div id='view'>${view}</div>
     """
@@ -282,9 +286,15 @@ class TableViewEditor(ViewEditor):
     _template = """
     <span style="font-size: 2em">{{ view_type.title() }} Editor</span>
     <p>Configure the view.</p>
+    <div style="width: 300px; display: grid; margin-right: 1em;">
+      <label for="name"><b>View Name</b></label>
+      <fast-text-field id="name" placeholder="Enter a name" value="${name}"></fast-text-field>
+    </div>
     <fast-divider></fast-divider>
     <div id="view">${view}</div>
     """
+
+    _dom_events = {'name': ['keyup']}
 
     def __init__(self, **params):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})

@@ -34,7 +34,7 @@ class TargetEditor(ReactiveHTML):
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
     <div style="display: flex; width: 100%;">
-      <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
+      <form role="form" style="flex: 25%; max-width: 300px; line-height: 2em;">
         <div id="view-select">${view_select}</div>
         <div style="display: grid; flex: auto;">
           <label for="layout_type-${id}"><b>{{ param.layout_type.label }}</b></label>
@@ -46,7 +46,7 @@ class TargetEditor(ReactiveHTML):
           <fast-tooltip anchor="layout_type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
         </div>
       </form>
-      <div id="layout" style="flex: auto;">${layout}</div>
+      <div id="layout" style="flex: auto; margin-left: 1em;">${layout}</div>
     </div>
     """
 

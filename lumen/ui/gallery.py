@@ -6,6 +6,7 @@ import param
 
 from panel.reactive import ReactiveHTML
 
+from ..util import expand_spec
 from .state import state
 
 
@@ -26,6 +27,8 @@ class GalleryItem(ReactiveHTML):
     margin = param.Integer(default=0)
 
     thumbnail = param.Filename()
+
+    sizing_mode= param.String(default='stretch_both')
 
     __abstract = True
 
@@ -55,20 +58,22 @@ class Gallery(ReactiveHTML):
 
     hidden = param.Boolean(default=True)
 
+    _editor_type = None
+
     _gallery_item = GalleryItem
-    _editor_type = None 
 
     _glob_pattern = '*.y*ml'
 
     __abstract = True
-    
+
     def __init__(self, **params):
         path = params.get('path', self.path)
         components = pathlib.Path(path).glob(self._glob_pattern)
         params['items'] = items = {}
         for source in components:
             with open(source, encoding='utf-8') as f:
-                spec = yaml.safe_load(f.read())
+                yaml_spec = f.read()
+                spec = yaml.safe_load(expand_spec(yaml_spec))
             if not spec:
                 continue
             name = '.'.join(source.name.split('.')[:-1])
