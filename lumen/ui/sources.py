@@ -24,7 +24,9 @@ class SourceEditor(FastComponent):
     cache_dir = param.String(label="Cache directory (optional)", precedence=1, doc="""
         Enter a relative cache directory.""")
 
-    preview = param.Parameter(default=pn.Row(sizing_mode='stretch_width'))
+    form = param.Parameter()
+
+    preview = param.Parameter()
 
     source_type = param.String(default="")
 
@@ -39,7 +41,9 @@ class SourceEditor(FastComponent):
 
     resize = param.Integer(default=0)
 
-    margin = param.Integer(default=5)
+    margin = param.Integer(default=10)
+
+    _preview_display = param.String(default='none')
 
     _scripts = {
         'resize': ['window.dispatchEvent(new Event("resize"))']
@@ -47,7 +51,10 @@ class SourceEditor(FastComponent):
 
     _template = """
     <span style="font-size: 2em"><b>{{ name }} - {{ source_type }}</b></span>
-    <div id="preview">${preview}</div>
+    <div id="preview-area" style="display: ${_preview_display}margin-top: 4.5em;">
+      <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em; margin-top">${form}</form>
+      <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
+    </div>
     """
 
     thumbnail = ASSETS_DIR / 'source.png'
@@ -64,27 +71,30 @@ class SourceEditor(FastComponent):
 
     def __init__(self, **params):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        self.form = pn.Column(sizing_mode='stretch_width')
+        self.preview = pn.widgets.Tabulator(
+            sizing_mode='stretch_width', pagination='remote', page_size=12,
+            theme='midnight', height=400
+        )
+        self._select_table = pn.widgets.Select(
+            name='Select table', margin=0, sizing_mode='stretch_width'
+        )
+        self._load_table = pn.widgets.Button(
+            name='Load table', sizing_mode='stretch_width', margin=(15, 0)
+        )
+        def load_table(event):
+            self.preview.value = self._source.get(self._select_table.value)
+        self._load_table.on_click(load_table)
+        self.form[:] = [self._select_table, self._load_table]
 
     def _update_spec(self, *events):
         for event in events:
             self.spec[event.name] = event.new
 
     def _preview(self, event):
-        source = Source.from_spec(self.spec)
-        tables = source.get_tables()
-        table = pn.widgets.Select(name='Select table', options=tables, width=200, margin=0)
-        table_view = pn.widgets.Tabulator(
-            sizing_mode='stretch_width', pagination='remote', page_size=12, theme='midnight',
-            height=400
-        )
-        load = pn.widgets.Button(name='Load table', width=200, margin=(15, 0))
-        def load_table(event):
-            table_view.value = source.get(table.value)
-        load.on_click(load_table)
-        self.preview[:] = [
-            pn.Column(table, load, margin=(0, 20, 0, 0)),
-            table_view
-        ]
+        self._preview_display = 'flex' if self._preview_display == 'none' else 'none'
+        self._source = Source.from_spec(self.spec)
+        self._select_table.options = self._source.get_tables()
         self.resize += 1
 
     def _save(self):
@@ -246,7 +256,10 @@ class IntakeSourceEditor(SourceEditor):
       Preview
     </fast-button>
     <fast-divider></fast-divider>
-    <div id="preview" style="margin-top: 1.8em;">${preview}</div>
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+      <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em;">${form}</form>
+      <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
+    </div>
     """
 
     _dom_events = {'cache_dir': ['keyup'], 'uri': ['keyup']}
@@ -346,7 +359,10 @@ class IntakeDremioSourceEditor(SourceEditor):
       Preview
     </fast-button>
     <fast-divider></fast-divider>
-    <div id="preview">${preview}</div>
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+      <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em;">${form}</form>
+      <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
+    </div>
     """
 
     _dom_events = {'uri': ['keyup'], 'username': ['keyup'], 'password': ['keyup']}
@@ -434,7 +450,10 @@ class FileSourceEditor(SourceEditor):
       Preview
     </fast-button>
     <fast-divider></fast-divider>
-    <div id="preview" style="margin-top: 4em">${preview}</div>
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+      <form id="form" role="form" style="flex: 30%; max-width: 300px; line-height: 2em;">${form}</form>
+      <div id="preview" style="flex: auto; margin-left: 2em; overflow-y: auto;">${preview}</div>
+    </div>
     """
 
     _dom_events = {'cache_dir': ['keyup']}

@@ -37,10 +37,10 @@ class ViewsEditor(WizardItem):
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
     <div style="display: flex; height: 100%;">
-      <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
+      <form role="form" style="flex: 30%; max-width: 300px; line-height: 2em;">
         <div style="display: grid;">
           <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
-          <fast-select id="sources" style="max-width: 250px; min-width: 150px;" value="${source}">
+          <fast-select id="sources" style="max-width: 300px; min-width: 150px;" value="${source}">
           {% for src in sources %}
             <fast-option value="{{ src }}">{{ src.title() }}</fast-option>
           {% endfor %}
@@ -49,7 +49,7 @@ class ViewsEditor(WizardItem):
         </div>
         <div style="display: grid;">
           <label for="tables-${id}"><b>{{ param.tables.label }}</b></label>
-          <fast-select id="tables" style="max-width: 250px; min-width: 150px;" value="${table}">
+          <fast-select id="tables" style="max-width: 300px; min-width: 150px;" value="${table}">
           {% for tbl in tables %}
             <fast-option value="{{ tbl|tojson }}">{{ tbl }}</fast-option>
           {% endfor %}
@@ -71,7 +71,7 @@ class ViewsEditor(WizardItem):
           </fast-button>
         </div>
       </form>
-      <div style="flex: auto; margin-left: 1em; overflow-y: auto;">
+      <div style="flex: auto; margin-left: 2em; overflow-y: auto;">
         {% for view in views %}
         <div id="view-container">${view}</div>
         <fast-divider></faster-divider>
@@ -96,10 +96,11 @@ class ViewsEditor(WizardItem):
         self.tables = self._source.get_tables()
 
     def _add_view(self, event):
+        table = {t.replace('"', ''): t for t in self.tables}.get(self.table, self.table)
         editor = ViewEditor(
             view_type=self.view_type, source=self.source,
             table=self.table, source_obj=self._source,
-            spec={'table': self.table, 'type': self.view_type}
+            spec={'table': table, 'type': self.view_type}
         )
         editor.param.watch(self._remove_view, 'remove')
         self.views.append(editor)
@@ -290,15 +291,19 @@ class TableViewEditor(ViewEditor):
         kwargs = dict(self.spec)
         df = self.source_obj.get(kwargs.pop('table'))
         if 'sizing_mode' not in kwargs:
-            kwargs['sizing_mode'] = 'stretch_both'
+            kwargs['sizing_mode'] = 'stretch_width'
         self.tabulator = pn.widgets.Tabulator(
-            df, pagination='remote', page_size=15, **kwargs
+            df, pagination='remote', page_size=12, height=400, **kwargs
         )
         controls = ['theme', 'layout', 'page_size', 'pagination']
+        control_widgets = self.tabulator.controls(
+            controls, margin=(0, 20, 0, 0), jslink=False
+        )
+        control_widgets.width = 300
+        for w in control_widgets:
+            w.width = 250
         self.view = pn.Row(
-            self.tabulator.controls(
-                controls, width=250, margin=(0, 20, 0, 0), jslink=False
-            ),
+            control_widgets,
             self.tabulator,
             sizing_mode='stretch_width'
         )
