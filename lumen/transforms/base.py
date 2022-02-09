@@ -9,6 +9,7 @@ import pandas as pd
 import panel as pn
 import param
 
+from ..state import state
 from ..util import resolve_module_reference
 
 
@@ -65,7 +66,7 @@ class Transform(param.Parameterized):
                 v = [v]
             new_spec[k] = v
 
-        # Allow declaring control options
+        # Resolve any specs for the controls
         controls, control_kwargs = [], {}
         for control in new_spec.get('controls', []):
             if isinstance(control, dict):
@@ -73,7 +74,7 @@ class Transform(param.Parameterized):
                 if 'options' in control:
                     options = control['options']
                     if isinstance(options, str):
-                        options = Source._resolve_reference(options)
+                        options = state.resolve_reference(options)
                     ckws['objects'] = options
                 if 'start' in control or 'end' in control:
                     ckws['bounds'] = (control.get('start'), control.get('end'))
@@ -81,12 +82,27 @@ class Transform(param.Parameterized):
                 control_kwargs[control] = ckws
             controls.append(control)
         new_spec['controls'] = controls
+
+        # Instantiate the transform
         transform = transform_type(**new_spec)
+
+        # Modify the parameters for the controls
         for p, vs in control_kwargs.items():
-            for a, v in vs.items():
-                setattr(transform.param[p], a, v)
+            p = transform.param[p]
+            for attr, val in vs.items():
+                if hasattr(p, attr):
+                    setattr(p, attr, val)
+                else:
+                    attr = 'options' if attr == 'objects' else attr
+                    cls.param.warning(
+                        f"{transform_type.__name__} is of type {type(p).__name} "
+                        f"and has not attribute {a!r}. Ensure the controls "
+                        "parameter supports the provided options, e.g. if "
+                        "you are declaring 'options' ensure that the parameter "
+                        "is a param.Selector type."
+                    )
         return transform
-    
+
     @classmethod
     def apply_to(cls, table, **kwargs):
         """

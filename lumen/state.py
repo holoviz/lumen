@@ -131,5 +131,38 @@ class _session_state:
         for ext in exts:
             __import__(pn.extension._imports[ext])
 
+    def _resolve_source_ref(self, refs):
+        if len(refs) == 3:
+            sourceref, table, field = refs
+        elif len(refs) == 2:
+            sourceref, table = refs
+        elif len(refs) == 1:
+            (sourceref,) = refs
+
+        from .source import Source
+        source = Source.from_spec(sourceref)
+        if len(refs) == 1:
+            return source
+        if len(refs) == 2:
+            return source.get(table)
+        table_schema = source.get_schema(table)
+        if field not in table_schema:
+            raise ValueError(f"Field '{field}' was not found in "
+                             f"'{sourceref}' table '{table}'.")
+        field_schema = table_schema[field]
+        if 'enum' not in field_schema:
+            raise ValueError(f"Field '{field}' schema does not "
+                             "declare an enum.")
+        return field_schema['enum']
+
+    def resolve_reference(self, reference):
+        if not reference.startswith('@'):
+            raise ValueError('References should be prefixed by @ symbol.')
+
+        refs = reference[1:].split('.')
+        if refs[0] == 'variables':
+            return self.app.variables.get(refs[1])
+        return self._resolve_source_ref(refs)
+
 
 state = _session_state()
