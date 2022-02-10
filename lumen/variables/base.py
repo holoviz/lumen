@@ -13,8 +13,8 @@ from ..util import resolve_module_reference
 _PARAM_MAP = {
     dict : param.Dict,
     float: param.Number,
-    float: param.Number,
-    str:  param.String
+    list : param.List,
+    str  : param.String
 }
 
 
