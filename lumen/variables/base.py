@@ -61,8 +61,8 @@ class Variable(Component):
     @classmethod
     def from_spec(cls, spec, variables=None):
         if isinstance(spec, dict):
-            var_type = spec.pop('type')
             spec = dict(spec)
+            var_type = spec.pop('type')
         else:
             var_type = 'constant'
             spec = {'default': spec}
@@ -137,6 +137,8 @@ class URLQuery(Variable):
         if pn.state.location:
             pn.state.location.param.watch(self._update_value, 'search')
             self._update_value()
+        if pn.state.session_args and self.key in pn.state.session_args:
+            self.value = pn.state.session_args[self.key][0].decode('utf-8')
 
     def _update_value(self, *args):
         self.value = pn.state.location.query_params.get(self.key, self.default)
