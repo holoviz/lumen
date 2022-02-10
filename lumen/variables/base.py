@@ -138,7 +138,7 @@ class URLQuery(Variable):
             pn.state.location.param.watch(self._update_value, 'search')
             self._update_value()
 
-    def _update_value(self, event):
+    def _update_value(self, *args):
         self.value = pn.state.location.query_params.get(self.key, self.default)
 
 
