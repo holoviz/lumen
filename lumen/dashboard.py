@@ -224,7 +224,8 @@ class Dashboard(param.Parameterized):
         self.auth = Auth.from_spec(state.spec.get('auth', {}))
         self.config = Config.from_spec(state.spec.get('config', {}))
         self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
-        state.variables = self.variables = Variables.from_spec(state.spec.get('variables', {}))
+        vars = Variables.from_spec(state.spec.get('variables', {}))
+        self.variables = state._variables[pn.state.curdoc] = vars
         self.defaults.apply()
 
         # Load and populate template

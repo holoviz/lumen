@@ -47,7 +47,7 @@ def test_view_hvplot_basis(set_root):
 def test_view_hvplot_variable(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
-    state._variables[None] = vars = Variables.from_spec({'y': 'B'}) 
+    state._variables[None] = vars = Variables.from_spec({'y': 'B'})
     view = {
         'type': 'hvplot',
         'table': 'test',

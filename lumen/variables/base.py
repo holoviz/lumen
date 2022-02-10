@@ -170,3 +170,18 @@ class UserInfo(Variable):
         super().__init__(**params)
         if pn.state.user_info:
             self.value = pn.state.user_info.get(self.key, self.default)
+
+
+class Header(Variable):
+    """
+    A variable obtained from the request header.
+    """
+
+    key = param.String(default=None)
+
+    variable_type = 'header'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if pn.state.headers:
+            self.value = pn.state.headers.get(self.key, self.default)
