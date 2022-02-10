@@ -1,9 +1,21 @@
 import os
 
+from functools import partial
+
 import panel as pn
 import param
 
+from panel.widgets import Widget as _PnWidget
+
 from ..base import Component
+from ..util import resolve_module_reference
+
+_PARAM_MAP = {
+    dict : param.Dict,
+    float: param.Number,
+    float: param.Number,
+    str:  param.String
+}
 
 
 class Variables(param.Parameterized):
@@ -11,13 +23,15 @@ class Variables(param.Parameterized):
     def __init__(self, **vars):
         super().__init__()
         for p, var in vars.items():
-            self.param.add_parameter(p, param.Parameter)
-            var.param.watch(self._update_value, 'value')
+            vtype = type(var.value)
+            ptype = _PARAM_MAP.get(vtype, param.Parameter)
+            self.param.add_parameter(p, ptype())
+            var.param.watch(partial(self._update_value, p), 'value')
             var.param.trigger('value')
         self._vars = vars
 
-    def _update_value(self, event):
-        self.param.update({event.name: event.value})
+    def _update_value(self, p, event):
+        self.param.update({p: event.new})
 
     @classmethod
     def from_spec(cls, spec):
@@ -35,9 +49,11 @@ class Variable(Component):
 
     value = param.Parameter()
 
+    variable_type = None
+
     def __init__(self, **params):
-        if 'value' not in params:
-            params['value'] = self.default
+        if 'value' not in params and 'default' in params:
+            params['value'] = params['default']
         super().__init__(**params)
 
     @classmethod
@@ -57,6 +73,8 @@ class Constant(Variable):
     A constant value variable.
     """
 
+    variable_type = 'constant'
+
 
 class EnvVariable(Variable):
     """
@@ -65,10 +83,36 @@ class EnvVariable(Variable):
 
     key = param.String(default=None)
 
+    variable_type = 'env'
+
     def __init__(self, **params):
         super().__init__(**params)
-        if self.key in os.env:
-            self.value = os.env[self.key]
+        if self.key in os.environ:
+            self.value = os.environ[self.key]
+
+
+class Widget(Variable):
+    """
+    A Widget variable that updates when the widget value changes.
+    """
+
+    variable_type = 'widget'
+
+    def __init__(self, **params):
+        default = params.pop('default', None)
+        refs = params.pop('refs', {})
+        super().__init__(default=default, refs=refs)
+        kind = params.pop('kind', None)
+        if kind is None:
+            raise ValueError("A Widget Variable type must declare the kind of widget.")
+        if '.' in kind:
+            widget_type = resolve_module_reference(kind, _PnWidget)
+        else:
+            widget_type = getattr(pn.widgets, kind)
+        if 'value' not in params:
+            params['default'] = default
+        self._widget = widget_type(**params)
+        self._widget.link(self, value='value', bidirectional=True)
 
 
 class URLQuery(Variable):
@@ -77,6 +121,8 @@ class URLQuery(Variable):
     """
 
     key = param.String(default=None)
+
+    variable_type = 'url'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -95,6 +141,8 @@ class Cookie(Variable):
 
     key = param.String(default=None)
 
+    variable_type = 'cookie'
+
     def __init__(self, **params):
         super().__init__(**params)
         if pn.state.cookies:
@@ -107,6 +155,8 @@ class UserInfo(Variable):
     """
 
     key = param.String(default=None)
+
+    variable_type = 'user'
 
     def __init__(self, **params):
         super().__init__(**params)
