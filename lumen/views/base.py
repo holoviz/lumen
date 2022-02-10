@@ -24,6 +24,7 @@ from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..sources import Source
+from ..state import state
 from ..transforms import Transform
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
@@ -141,6 +142,7 @@ class View(Component):
         self._ls = None
         self._panel = None
         self._updates = None
+        refs = params.pop('refs', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
 
         # Populate field selector parameters
@@ -154,7 +156,7 @@ class View(Component):
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
-        super().__init__(source=source, table=table, **params)
+        super().__init__(source=source, table=table, refs=refs, **params)
         self.download.view = self
         for transform in self.transforms:
             for fp in transform._field_params:
@@ -207,12 +209,15 @@ class View(Component):
         sql_transform_specs = spec.pop('sql_transforms', [])
         sql_transforms = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
         view_type = View._get_type(spec.pop('type', None))
-        resolved_spec = {}
+        resolved_spec, refs = {}, {}
         for p, value in spec.items():
             if p not in view_type.param:
                 resolved_spec[p] = value
                 continue
             parameter = view_type.param[p]
+            if isinstance(value, str) and value.startswith('@'):
+                refs[p] = value
+                value = state.resolve_reference(value)
             if isinstance(parameter, param.ObjectSelector) and parameter.names:
                 try:
                     value = parameter.names.get(value, value)
@@ -227,7 +232,7 @@ class View(Component):
         resolved_spec['download'] = Download.from_spec(download_spec)
         view = view_type(
             filters=filters, source=source, transforms=transforms,
-            sql_transforms=sql_transforms, **resolved_spec
+            sql_transforms=sql_transforms, refs=refs, **resolved_spec
         )
 
         # Resolve ParamFilter parameters

@@ -33,12 +33,14 @@ class Variables(param.Parameterized):
     def _update_value(self, p, event):
         self.param.update({p: event.new})
 
+    def __getitem__(self, key):
+        return getattr(self, key)
+
     @classmethod
     def from_spec(cls, spec):
-        vars = {
-            name: Variable.from_spec(var_spec)
-            for name, var_spec in spec.items()
-        }
+        vars = {}
+        for name, var_spec in spec.items():
+            vars[name] = Variable.from_spec(var_spec, vars)
         return cls(**vars)
 
 
@@ -57,7 +59,7 @@ class Variable(Component):
         super().__init__(**params)
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec, variables=None):
         if isinstance(spec, dict):
             var_type = spec.pop('type')
             spec = dict(spec)
@@ -65,7 +67,13 @@ class Variable(Component):
             var_type = 'constant'
             spec = {'default': spec}
         var_type = cls._get_type(var_type)
-        return var_type(**spec)
+        resolved_spec, refs = {}, {}
+        for k, val in spec.items():
+            if isinstance(val, str) and val.startswith('@'):
+                refs[k] = value
+                val = state.resolve_reference(val, variables)
+            resolved_spec[k] = val
+        return var_type(refs=refs, **resolved_spec)
 
 
 class Constant(Variable):

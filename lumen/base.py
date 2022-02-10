@@ -1,3 +1,5 @@
+from functools import partial
+
 import param
 
 from .state import state
@@ -18,13 +20,14 @@ class Component(param.Parameterized):
         for p, ref in self._refs.items():
             if isinstance(ref, str) and ref.startswith('@variables.'):
                 ref = ref.split('@variables.')[1]
-                state.app.variables.param.watch(self._update_ref, ref)
+                state.variables.param.watch(partial(self._update_ref, p), ref)
 
-    def _update_ref(self, event):
+    def _update_ref(self, pname, event):
         """
         Component should implement appropriate downstream events
         following a change in a variable.
         """
+        self.param.update({pname: event.new})
 
     @classmethod
     def _get_type(cls, component_type):

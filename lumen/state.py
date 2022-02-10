@@ -24,6 +24,8 @@ class _session_state:
 
     _filters = WeakKeyDictionary() if pn.state.curdoc else {}
 
+    _variables = WeakKeyDictionary() if pn.state.curdoc else {}
+
     @property
     def app(self):
         return self._apps.get(pn.state.curdoc)
@@ -46,6 +48,10 @@ class _session_state:
         if pn.state.curdoc not in self._sources:
             self._sources[pn.state.curdoc] = dict(self.global_sources)
         return self._sources[pn.state.curdoc]
+
+    @property
+    def variables(self):
+        return self._variables[pn.state.curdoc]
 
     @property
     def loading_msg(self):
@@ -155,13 +161,13 @@ class _session_state:
                              "declare an enum.")
         return field_schema['enum']
 
-    def resolve_reference(self, reference):
+    def resolve_reference(self, reference, variables=None):
         if not reference.startswith('@'):
             raise ValueError('References should be prefixed by @ symbol.')
-
         refs = reference[1:].split('.')
+        vars = variables or self.variables
         if refs[0] == 'variables':
-            return getattr(self.app.variables, refs)
+            return vars[refs[1]]
         return self._resolve_source_ref(refs)
 
 
