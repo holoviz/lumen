@@ -17,12 +17,11 @@ import panel as pn
 import param
 import requests
 
+from ..base import Component
 from ..filters import Filter
 from ..state import state
 from ..transforms import Transform
-from ..util import (
-    get_dataframe_schema, merge_schemas, resolve_module_reference
-)
+from ..util import get_dataframe_schema, merge_schemas
 
 
 def cached(with_query=True):
@@ -74,8 +73,7 @@ def cached_schema(method):
     return wrapped
 
 
-
-class Source(param.Parameterized):
+class Source(Component):
     """
     A Source provides a set of tables which declare their available
     fields. The Source must also be able to return a schema describing
@@ -97,19 +95,6 @@ class Source(param.Parameterized):
     _supports_sql = False
 
     __abstract = True
-
-    @classmethod
-    def _get_type(cls, source_type):
-        if '.' in source_type:
-            return resolve_module_reference(source_type, Source)
-        try:
-            __import__(f'lumen.sources.{source_type}')
-        except Exception:
-            pass
-        for source in param.concrete_descendents(cls).values():
-            if source.source_type == source_type:
-                return source
-        raise ValueError(f"No Source for source_type '{source_type}' could be found.")
 
     @classmethod
     def _range_filter(cls, column, start, end):

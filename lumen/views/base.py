@@ -25,7 +25,6 @@ from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..sources import Source
 from ..transforms import Transform
-from ..util import resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 

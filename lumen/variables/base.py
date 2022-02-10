@@ -4,7 +4,6 @@ import panel as pn
 import param
 
 from ..base import Component
-from ..util import resolve_module_reference
 
 
 class Variables(param.Parameterized):

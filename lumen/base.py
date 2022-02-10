@@ -16,7 +16,7 @@ class Component(param.Parameterized):
         self._refs = params.pop('refs', {})
         super().__init__(**params)
         for p, ref in self._refs.items():
-            if isinstanc(ref, str) and ref.startswith('@variables.'):
+            if isinstance(ref, str) and ref.startswith('@variables.'):
                 ref = ref.split('@variables.')[1]
                 state.app.variables.param.watch(self._update_ref, ref)
 

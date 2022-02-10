@@ -11,7 +11,6 @@ import param
 
 from ..base import Component
 from ..state import state
-from ..util import resolve_module_reference
 
 
 class Transform(Component):
@@ -43,7 +42,6 @@ class Transform(Component):
         -------
         The resolved Transform object.
         """
-        from ..sources import Source
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
         new_spec = {}

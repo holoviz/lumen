@@ -10,7 +10,6 @@ import param
 from ..base import Component
 from ..schema import JSONSchema
 from ..state import state
-from ..util import resolve_module_reference
 
 
 class Filter(Component):
