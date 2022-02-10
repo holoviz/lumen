@@ -9,11 +9,12 @@ import pandas as pd
 import panel as pn
 import param
 
+from ..base import Component
 from ..state import state
 from ..util import resolve_module_reference
 
 
-class Transform(param.Parameterized):
+class Transform(Component):
     """
     A Transform provides the ability to transform a table supplied by
     a Source.
@@ -27,19 +28,6 @@ class Transform(param.Parameterized):
     _field_params = []
 
     __abstract = True
-
-    @classmethod
-    def _get_type(cls, transform_type):
-        if '.' in transform_type:
-            return resolve_module_reference(transform_type, Transform)
-        try:
-            __import__(f'lumen.transforms.{transform_type}')
-        except Exception:
-            pass
-        for transform in param.concrete_descendents(cls).values():
-            if transform.transform_type == transform_type:
-                return transform
-        raise ValueError(f"No Transform for transform_type '{transform_type}' could be found.")
 
     @classmethod
     def from_spec(cls, spec):
@@ -96,7 +84,7 @@ class Transform(param.Parameterized):
                     attr = 'options' if attr == 'objects' else attr
                     cls.param.warning(
                         f"{transform_type.__name__} is of type {type(p).__name} "
-                        f"and has not attribute {a!r}. Ensure the controls "
+                        f"and has not attribute {attr!r}. Ensure the controls "
                         "parameter supports the provided options, e.g. if "
                         "you are declaring 'options' ensure that the parameter "
                         "is a param.Selector type."

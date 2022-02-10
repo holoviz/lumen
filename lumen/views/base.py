@@ -2,7 +2,6 @@
 The View classes render the data returned by a Source as a Panel
 object.
 """
-
 import sys
 
 from io import StringIO, BytesIO
@@ -18,7 +17,9 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
 )
 from panel.param import Param
+from panel.viewable import Viewer
 
+from ..base import Component
 from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..panel import DownloadButton
@@ -29,7 +30,7 @@ from ..util import resolve_module_reference
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
 
-class Download(pn.viewable.Viewer):
+class Download(Viewer):
 
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
@@ -81,7 +82,7 @@ class Download(pn.viewable.Viewer):
         )
 
 
-class View(param.Parameterized):
+class View(Component):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
@@ -180,24 +181,6 @@ class View(param.Parameterized):
 
     def _update_selection_expr(self, event):
         self.selection_expr = event.new
-
-    @classmethod
-    def _get_type(cls, view_type):
-        """
-        Returns the matching View type.
-        """
-        if '.' in view_type:
-            return resolve_module_reference(view_type, View)
-        try:
-            __import__(f'lumen.views.{view_type}')
-        except Exception:
-            pass
-        for view in param.concrete_descendents(cls).values():
-            if view.view_type == view_type:
-                return view
-        if view_type is not None:
-            raise ValueError(f"View type '{view_type}' could not be found.")
-        return View
 
     @classmethod
     def from_spec(cls, spec, source, filters):

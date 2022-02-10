@@ -1,9 +1,24 @@
+import os
+
+import panel as pn
 import param
 
+from ..base import Component
 from ..util import resolve_module_reference
 
 
 class Variables(param.Parameterized):
+
+    def __init__(self, **vars):
+        super().__init__()
+        for p, var in vars.items():
+            self.param.add_parameter(p, param.Parameter)
+            var.param.watch(self._update_value, 'value')
+            var.param.trigger('value')
+        self._vars = vars
+
+    def _update_value(self, event):
+        self.param.update({event.name: event.value})
 
     @classmethod
     def from_spec(cls, spec):
@@ -11,26 +26,20 @@ class Variables(param.Parameterized):
             name: Variable.from_spec(var_spec)
             for name, var_spec in spec.items()
         }
-        return cls(**spec)
+        return cls(**vars)
 
 
-class Variable(Variable):
+class Variable(Component):
 
     default = param.Parameter(doc="""
        Default value to use if no other value is defined""")
 
-    @classmethod
-    def _get_type(cls, variable_type):
-        if '.' in variable:
-            return resolve_module_reference(variable, Variable)
-        try:
-            __import__(f'lumen.variable.{variable_type}')
-        except Exception:
-            pass
-        for var in param.concrete_descendents(cls).values():
-            if var.variable_type == variable_type:
-                return filt
-        raise ValueError(f"No Variable for variable_type '{variable_type}' could be found.")
+    value = param.Parameter()
+
+    def __init__(self, **params):
+        if 'value' not in params:
+            params['value'] = self.default
+        super().__init__(**params)
 
     @classmethod
     def from_spec(cls, spec):
@@ -42,10 +51,6 @@ class Variable(Variable):
             spec = {'default': spec}
         var_type = cls._get_type(var_type)
         return var_type(**spec)
-
-    @property
-    def value(self):
-        return self.default
 
 
 class Constant(Variable):
@@ -61,9 +66,10 @@ class EnvVariable(Variable):
 
     key = param.String(default=None)
 
-    @property
-    def value(self):
-        return os.env.get(self.key, self.default)
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.key in os.env:
+            self.value = os.env[self.key]
 
 
 class URLQuery(Variable):
@@ -73,9 +79,14 @@ class URLQuery(Variable):
 
     key = param.String(default=None)
 
-    @property
-    def value(self):
-        return pn.state.location.query_params.get(self.key, self.default)
+    def __init__(self, **params):
+        super().__init__(**params)
+        if pn.state.location:
+            pn.state.location.param.watch(self._update_value, 'search')
+            self._update_value()
+
+    def _update_value(self):
+        self.value = pn.state.location.query_params.get(self.key, self.default)
 
 
 class Cookie(Variable):
@@ -85,9 +96,10 @@ class Cookie(Variable):
 
     key = param.String(default=None)
 
-    @property
-    def value(self):
-        return pn.state.cookies.get(self.key, self.default)
+    def __init__(self, **params):
+        super().__init__(**params)
+        if pn.state.cookies:
+            self.value = pn.state.cookies.get(self.key, self.default)
 
 
 class UserInfo(Variable):
@@ -97,8 +109,7 @@ class UserInfo(Variable):
 
     key = param.String(default=None)
 
-    @property
-    def value(self):
-        if pn.state.user_info is None:
-            return self.default
-        return pn.state.user_info.get(self.key, self.default)
+    def __init__(self, **params):
+        super().__init__(**params)
+        if pn.state.user_info:
+            self.value = pn.state.user_info.get(self.key, self.default)

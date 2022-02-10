@@ -7,12 +7,13 @@ import pandas as pd
 import panel as pn
 import param
 
+from ..base import Component
 from ..schema import JSONSchema
 from ..state import state
 from ..util import resolve_module_reference
 
 
-class Filter(param.Parameterized):
+class Filter(Component):
     """
     A Filter provides a query which will be used to filter the data
     returned by a Source.
@@ -52,19 +53,6 @@ class Filter(param.Parameterized):
         """
         Called when URL syncing errors.
         """
-
-    @classmethod
-    def _get_type(cls, filter_type):
-        if '.' in filter_type:
-            return resolve_module_reference(filter_type, Filter)
-        try:
-            __import__(f'lumen.filters.{filter_type}')
-        except Exception:
-            pass
-        for filt in param.concrete_descendents(cls).values():
-            if filt.filter_type == filter_type:
-                return filt
-        raise ValueError(f"No Filter for filter_type '{filter_type}' could be found.")
 
     @classmethod
     def from_spec(cls, spec, source_schema, source_filters=None):

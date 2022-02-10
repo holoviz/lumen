@@ -1,0 +1,42 @@
+import param
+
+from .state import state
+from .util import resolve_module_reference
+
+
+class Component(param.Parameterized):
+    """
+    Baseclass for all Lumen component types including Source, Filter,
+    Transform, Variable and View types.
+    """
+
+    __abstract = True
+
+    def __init__(self, **params):
+        self._refs = params.pop('refs', {})
+        super().__init__(**params)
+        for p, ref in self._refs.items():
+            if isinstanc(ref, str) and ref.startswith('@variables.'):
+                ref = ref.split('@variables.')[1]
+                state.app.variables.param.watch(self._update_ref, ref)
+
+    def _update_ref(self, event):
+        """
+        Component should implement appropriate downstream events
+        following a change in a variable.
+        """
+
+    @classmethod
+    def _get_type(cls, component_type):
+        clsname = cls.__name__
+        clslower = clsname.lower()
+        if '.' in component_type:
+            return resolve_module_reference(component_type, cls)
+        try:
+            __import__(f'lumen.{clslower}s.{component_type}')
+        except Exception:
+            pass
+        for component in param.concrete_descendents(cls).values():
+            if getattr(component, f'{clsname.lower()}_type') == component_type:
+                return component
+        raise ValueError(f"No {clsname} for {clslower}_type '{component_type}' could be found.")

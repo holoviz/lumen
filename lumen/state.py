@@ -139,7 +139,7 @@ class _session_state:
         elif len(refs) == 1:
             (sourceref,) = refs
 
-        from .source import Source
+        from .sources import Source
         source = Source.from_spec(sourceref)
         if len(refs) == 1:
             return source
@@ -161,7 +161,7 @@ class _session_state:
 
         refs = reference[1:].split('.')
         if refs[0] == 'variables':
-            return self.app.variables.get(refs[1])
+            return getattr(self.app.variables, refs)
         return self._resolve_source_ref(refs)
 
 

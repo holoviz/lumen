@@ -21,6 +21,7 @@ from .state import state
 from .target import Target
 from .transforms import Transform # noqa
 from .util import expand_spec
+from .variables import Variables
 from .views import View # noqa
 
 pn.config.css_files.append(
