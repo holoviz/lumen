@@ -14,7 +14,7 @@ def test_variables():
     })
 
     # Test initialization
-    assert sorted(vars.param) == ['float', 'int', 'list', 'name', 'str']
+    assert ({'float', 'int', 'list', 'name', 'str'} - set(vars.param)) == set()
 
     assert vars.str == 'a'
     assert vars.int == 1
