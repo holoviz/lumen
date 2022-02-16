@@ -9,7 +9,7 @@ from panel.widgets import Widget as _PnWidget
 
 from ..base import Component
 from ..state import state
-from ..util import resolve_module_reference
+from ..util import is_ref, resolve_module_reference
 
 _PARAM_MAP = {
     dict : param.Dict,
@@ -84,7 +84,7 @@ class Variable(Component):
         var_type = cls._get_type(var_type)
         resolved_spec, refs = {}, {}
         for k, val in spec.items():
-            if isinstance(val, str) and val.startswith('@'):
+            if is_ref(val):
                 refs[k] = val
                 val = state.resolve_reference(val, variables)
             resolved_spec[k] = val

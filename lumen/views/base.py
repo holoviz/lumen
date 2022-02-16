@@ -26,6 +26,7 @@ from ..panel import DownloadButton
 from ..sources import Source
 from ..state import state
 from ..transforms import Transform
+from ..util import is_ref
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -215,7 +216,7 @@ class View(Component):
                 resolved_spec[p] = value
                 continue
             parameter = view_type.param[p]
-            if isinstance(value, str) and value.startswith('@'):
+            if is_ref(value):
                 refs[p] = value
                 value = state.resolve_reference(value)
             if isinstance(parameter, param.ObjectSelector) and parameter.names:

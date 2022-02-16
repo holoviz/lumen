@@ -18,8 +18,8 @@ class Component(param.Parameterized):
         self._refs = params.pop('refs', {})
         super().__init__(**params)
         for p, ref in self._refs.items():
-            if isinstance(ref, str) and ref.startswith('@variables.'):
-                ref = ref.split('@variables.')[1]
+            if isinstance(ref, str) and ref.startswith('$variables.'):
+                ref = ref.split('$variables.')[1]
                 state.variables.param.watch(partial(self._update_ref, p), ref)
 
     def _update_ref(self, pname, event):
@@ -31,7 +31,7 @@ class Component(param.Parameterized):
 
     @property
     def refs(self):
-        return [k for k, v in self._refs.items() if v.startswith('@variables.')]
+        return [k for k, v in self._refs.items() if v.startswith('$variables.')]
 
     @classmethod
     def _get_type(cls, component_type):

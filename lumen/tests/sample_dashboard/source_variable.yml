@@ -6,7 +6,7 @@ variables:
 sources:
   test:
     type: 'file'
-    tables: "@variables.tables"
+    tables: $variables.tables
     kwargs:
       parse_dates: ['D']
 targets:

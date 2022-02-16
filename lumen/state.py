@@ -2,6 +2,8 @@ from weakref import WeakKeyDictionary
 
 import panel as pn
 
+from .util import is_ref
+
 
 class _session_state:
     """
@@ -162,8 +164,8 @@ class _session_state:
         return field_schema['enum']
 
     def resolve_reference(self, reference, variables=None):
-        if not reference.startswith('@'):
-            raise ValueError('References should be prefixed by @ symbol.')
+        if not is_ref(reference):
+            raise ValueError('References should be prefixed by $ symbol.')
         refs = reference[1:].split('.')
         vars = variables or self.variables
         if refs[0] == 'variables':

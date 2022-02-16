@@ -16,4 +16,4 @@ targets:
         table: test
         transforms:
           - type: iloc
-            end: "@variables.length"
+            end: $variables.length

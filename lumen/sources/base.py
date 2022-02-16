@@ -21,7 +21,7 @@ from ..base import Component
 from ..filters import Filter
 from ..state import state
 from ..transforms import Transform
-from ..util import get_dataframe_schema, merge_schemas
+from ..util import get_dataframe_schema, is_ref, merge_schemas
 
 
 def cached(with_query=True):
@@ -172,7 +172,7 @@ class Source(Component):
         if 'source' in source_type.param and 'source' in spec:
             resolved_spec['source'] = cls.from_spec(spec.pop('source'))
         for k, v in spec.items():
-            if isinstance(v, str) and v.startswith('@'):
+            if is_ref(v):
                 refs[k] = v
                 v = state.resolve_reference(v)
             elif isinstance(v, dict):
@@ -492,8 +492,7 @@ class FileSource(Source):
 
     def _resolve_template_vars(self, table):
         for m in self._template_re.findall(table):
-            ref = f'@{m[2:-1]}'
-            values = self._resolve_reference(ref)
+            values = state.resolve_reference(f'${m[2:-1]}')
             values = ','.join([v for v in values])
             table = table.replace(m, quote(values))
         return [table]
@@ -570,8 +569,7 @@ class JSONSource(FileSource):
         template_vars = self._template_re.findall(template)
         template_values = []
         for m in template_vars:
-            ref = f'@{m[2:-1]}'
-            values = self._resolve_reference(ref)
+            values = state.resolve_reference(f'${m[2:-1]}')
             template_values.append(values)
         tables = []
         cross_product = list(product(*template_values))

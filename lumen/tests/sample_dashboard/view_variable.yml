@@ -14,4 +14,4 @@ targets:
     views:
       - type: table
         table: test
-        page_size: "@variables.page_size"
+        page_size: $variables.page_size

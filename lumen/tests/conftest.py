@@ -44,7 +44,7 @@ def make_variable_filesource():
         state._variables[None] = Variables.from_spec({'tables': {'type': 'constant', 'default': {'test': 'test.csv'}}})
         source = Source.from_spec(dict({
             'type': 'file',
-            'tables': '@variables.tables',
+            'tables': '$variables.tables',
             'kwargs': {'parse_dates': ['D']}
         }))
         state.sources['original'] = source

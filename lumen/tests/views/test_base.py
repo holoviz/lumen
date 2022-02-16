@@ -52,7 +52,7 @@ def test_view_hvplot_variable(set_root):
         'type': 'hvplot',
         'table': 'test',
         'x': 'A',
-        'y': '@variables.y',
+        'y': '$variables.y',
         'kind': 'scatter',
     }
 

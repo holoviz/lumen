@@ -11,6 +11,7 @@ import param
 
 from ..base import Component
 from ..state import state
+from ..util import is_ref
 
 
 class Transform(Component):
@@ -50,7 +51,7 @@ class Transform(Component):
                 isinstance(transform_type.param[k], param.ListSelector) and
                 not isinstance(v, list)):
                 v = [v]
-            if isinstance(v, str) and v.startswith('@'):
+            if is_ref(v):
                 refs[k] = v
                 v = state.resolve_reference(v)
             new_spec[k] = v
