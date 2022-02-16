@@ -16,7 +16,6 @@ def test_dashboard_with_local_view(set_root):
     view = View.from_spec(target.views[0], target.source, [])
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 
-
 def test_dashboard_with_url_sync(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
@@ -41,6 +40,22 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     assert pn.state.location.search == '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%2C+%22foo3%22%5D'
     assert f2.value == ['foo1', 'foo2', 'foo3']
+
+def test_dashboard_with_sql_source_and_transforms(set_root, document):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'sql_dashboard.yml'))
+    dashboard._render_dashboard()
+    target = dashboard.targets[0]
+    target.update()
+
+    table = target._cards[0][0][0]
+    expected = pd._testing.makeMixedDataFrame()
+    pd.testing.assert_frame_equal(table.value, expected)
+
+    dashboard._sidebar[0][0][0][1]._widgets['limit'].value = 2
+
+    pd.testing.assert_frame_equal(table.value, expected.iloc[:2])
 
 def test_dashboard_with_transform_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'

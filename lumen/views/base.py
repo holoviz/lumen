@@ -286,8 +286,8 @@ class View(Component):
         if self.sql_transforms:
             if not self.source._supports_sql:
                 raise ValueError(
-                    'Can only use sql transforms with intake_sql source. '
-                    f'Found source typed {self.source.source_type} instead.'
+                    'Can only use sql transforms source that support them. '
+                    f'Found source typed {self.source.source_type!r} instead.'
                 )
             query['sql_transforms'] = self.sql_transforms
             
@@ -384,7 +384,7 @@ class View(Component):
                     self.param, parameters=self.controls, sizing_mode='stretch_width'
                 )
             )
-        for trnsfm in self.transforms:
+        for trnsfm in self.transforms+self.sql_transforms:
             if trnsfm.controls:
                 column.append(trnsfm.control_panel)
         index = (1 if self.controls else 0)

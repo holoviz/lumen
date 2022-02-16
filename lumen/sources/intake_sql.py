@@ -5,7 +5,7 @@ from .intake import IntakeBaseSource, IntakeSource
 class IntakeBaseSQLSource(IntakeBaseSource):
 
     # Declare this source supports SQL transforms
-    _sql = True
+    _supports_sql = True
 
     @cached()
     def get(self, table, **query):
