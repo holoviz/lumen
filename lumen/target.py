@@ -450,7 +450,6 @@ class Target(param.Parameterized):
         # Re-render target when controls or refs update but we ensure
         # that all other views linked to the controls are updated first
         if init:
-            rerender = partial(self._rerender, invalidate_cache=False)
             rerender_cache = partial(self._rerender, invalidate_cache=True)
             transforms = []
             for view in linked_views:
