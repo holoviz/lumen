@@ -253,6 +253,7 @@ class Target(param.Parameterized):
                 continue
             filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
         self._update_views(init=True)
+        self.source.param.watch(lambda _: self.update(clear_cache=False), list(self.source.param))
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -649,11 +650,12 @@ class Target(param.Parameterized):
                 self.update, refresh_rate
             )
 
-    def update(self, *events):
+    def update(self, *events, clear_cache=True):
         """
         Updates the views on this target by clearing any caches and
         rerendering the views on this Target.
         """
-        self.source.clear_cache()
+        if clear_cache:
+            self.source.clear_cache()
         self._rerender(invalidate_cache=True)
         self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'

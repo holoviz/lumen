@@ -96,6 +96,10 @@ class Source(Component):
 
     __abstract = True
 
+    def _update_ref(self, pname, event):
+        super()._update_ref(pname, event)
+        self.clear_cache()
+
     @classmethod
     def _range_filter(cls, column, start, end):
         if start is None and end is None:
@@ -158,33 +162,8 @@ class Source(Component):
         return df
 
     @classmethod
-    def _resolve_reference(cls, reference):
-        refs = reference[1:].split('.')
-        if len(refs) == 3:
-            sourceref, table, field = refs
-        elif len(refs) == 2:
-            sourceref, table = refs
-        elif len(refs) == 1:
-            (sourceref,) = refs
-
-        source = cls.from_spec(sourceref)
-        if len(refs) == 1:
-            return source
-        if len(refs) == 2:
-            return source.get(table)
-        table_schema = source.get_schema(table)
-        if field not in table_schema:
-            raise ValueError(f"Field '{field}' was not found in "
-                             f"'{sourceref}' table '{table}'.")
-        field_schema = table_schema[field]
-        if 'enum' not in field_schema:
-            raise ValueError(f"Field '{field}' schema does not "
-                             "declare an enum.")
-        return field_schema['enum']
-
-    @classmethod
     def _recursive_resolve(cls, spec, source_type):
-        resolved_spec = {}
+        resolved_spec, refs = {}, {}
         if 'sources' in source_type.param and 'sources' in spec:
             resolved_spec['sources'] = {
                 source: cls.from_spec(source)
@@ -192,18 +171,25 @@ class Source(Component):
             }
         if 'source' in source_type.param and 'source' in spec:
             resolved_spec['source'] = cls.from_spec(spec.pop('source'))
+        print(spec)
         for k, v in spec.items():
             if isinstance(v, str) and v.startswith('@'):
-                v = cls._resolve_reference(v)
+                refs[k] = v
+                print(k, v, state.resolve_reference(v))
+                v = state.resolve_reference(v)
             elif isinstance(v, dict):
-                v = cls._recursive_resolve(v, source_type)
+                v, subrefs = cls._recursive_resolve(v, source_type)
+                if subrefs:
+                    cls.param.warning(
+                        "Resolving nested variable references currently not supported."
+                        )
             if k == 'filters' and 'source' in resolved_spec:
                 source_schema = resolved_spec['source'].get_schema()
                 v = [Filter.from_spec(fspec, source_schema) for fspec in v]
             if k == 'transforms':
                 v = [Transform.from_spec(tspec) for tspec in v]
             resolved_spec[k] = v
-        return resolved_spec
+        return resolved_spec, refs
 
     @classmethod
     def from_spec(cls, spec):
@@ -235,8 +221,8 @@ class Source(Component):
 
         spec = dict(spec)
         source_type = Source._get_type(spec.pop('type'))
-        resolved_spec = cls._recursive_resolve(dict(spec), source_type)
-        return source_type(**resolved_spec)
+        resolved_spec, refs = cls._recursive_resolve(spec, source_type)
+        return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
         from ..config import config
