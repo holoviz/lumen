@@ -1,0 +1,23 @@
+sources:
+  test:
+    type: 'intake_sql'
+    catalog:
+      sources:
+        test:
+          description: Generated using pandas.util.testing.makeMixedDataFrame()
+          driver: sql
+          args:
+            uri: 'sqlite:///{{ CATALOG_DIR }}/../sources/test.db'
+            sql_expr: 'SELECT * FROM mixed'
+            sql_kwargs:
+              parse_dates: ['D']
+targets:
+  - title: "Test"
+    source: test
+    views:
+      - type: table
+        table: test
+        sql_transforms:
+          - type: sql_limit
+            limit: 5
+            controls: [limit]

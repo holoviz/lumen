@@ -69,3 +69,24 @@ class SQLGroupBy(SQLTransform):
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(
             by_cols=by_cols, aggs=aggs, sql_in=sql_in
         )
+
+
+class SQLLimit(SQLTransform):
+    """
+    Performs a LIMIT SQL operation on the query
+    """
+
+    limit = param.Integer(default=1000, doc="Limit on the number of rows to return")
+
+    transform_type = 'sql_limit'
+
+    def apply(self, sql_in):
+        template = """
+            SELECT
+                *
+            FROM ( {{sql_in}} )
+            LIMIT {{limit}}
+        """
+        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
+            limit=self.limit, sql_in=sql_in
+        )
