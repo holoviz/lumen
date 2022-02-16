@@ -51,7 +51,7 @@ class _session_state:
 
     @property
     def variables(self):
-        return self._variables[pn.state.curdoc]
+        return self._variables.get(pn.state.curdoc, {})
 
     @property
     def loading_msg(self):
