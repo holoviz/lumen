@@ -2,6 +2,8 @@ from weakref import WeakKeyDictionary
 
 import panel as pn
 
+from .util import is_ref
+
 
 class _session_state:
     """
@@ -23,6 +25,8 @@ class _session_state:
     _sources = WeakKeyDictionary() if pn.state.curdoc else {}
 
     _filters = WeakKeyDictionary() if pn.state.curdoc else {}
+
+    _variables = WeakKeyDictionary() if pn.state.curdoc else {}
 
     @property
     def app(self):
@@ -46,6 +50,10 @@ class _session_state:
         if pn.state.curdoc not in self._sources:
             self._sources[pn.state.curdoc] = dict(self.global_sources)
         return self._sources[pn.state.curdoc]
+
+    @property
+    def variables(self):
+        return self._variables.get(pn.state.curdoc, {})
 
     @property
     def loading_msg(self):
@@ -130,6 +138,39 @@ class _session_state:
                     exts.append(view_type._extension)
         for ext in exts:
             __import__(pn.extension._imports[ext])
+
+    def _resolve_source_ref(self, refs):
+        if len(refs) == 3:
+            sourceref, table, field = refs
+        elif len(refs) == 2:
+            sourceref, table = refs
+        elif len(refs) == 1:
+            (sourceref,) = refs
+
+        from .sources import Source
+        source = Source.from_spec(sourceref)
+        if len(refs) == 1:
+            return source
+        if len(refs) == 2:
+            return source.get(table)
+        table_schema = source.get_schema(table)
+        if field not in table_schema:
+            raise ValueError(f"Field '{field}' was not found in "
+                             f"'{sourceref}' table '{table}'.")
+        field_schema = table_schema[field]
+        if 'enum' not in field_schema:
+            raise ValueError(f"Field '{field}' schema does not "
+                             "declare an enum.")
+        return field_schema['enum']
+
+    def resolve_reference(self, reference, variables=None):
+        if not is_ref(reference):
+            raise ValueError('References should be prefixed by $ symbol.')
+        refs = reference[1:].split('.')
+        vars = variables or self.variables
+        if refs[0] == 'variables':
+            return vars[refs[1]]
+        return self._resolve_source_ref(refs)
 
 
 state = _session_state()

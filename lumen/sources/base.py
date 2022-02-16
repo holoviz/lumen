@@ -17,12 +17,11 @@ import panel as pn
 import param
 import requests
 
+from ..base import Component
 from ..filters import Filter
 from ..state import state
 from ..transforms import Transform
-from ..util import (
-    get_dataframe_schema, merge_schemas, resolve_module_reference
-)
+from ..util import get_dataframe_schema, is_ref, merge_schemas
 
 
 def cached(with_query=True):
@@ -74,8 +73,7 @@ def cached_schema(method):
     return wrapped
 
 
-
-class Source(param.Parameterized):
+class Source(Component):
     """
     A Source provides a set of tables which declare their available
     fields. The Source must also be able to return a schema describing
@@ -98,18 +96,9 @@ class Source(param.Parameterized):
 
     __abstract = True
 
-    @classmethod
-    def _get_type(cls, source_type):
-        if '.' in source_type:
-            return resolve_module_reference(source_type, Source)
-        try:
-            __import__(f'lumen.sources.{source_type}')
-        except Exception:
-            pass
-        for source in param.concrete_descendents(cls).values():
-            if source.source_type == source_type:
-                return source
-        raise ValueError(f"No Source for source_type '{source_type}' could be found.")
+    def _update_ref(self, pname, event):
+        self.clear_cache()
+        super()._update_ref(pname, event)
 
     @classmethod
     def _range_filter(cls, column, start, end):
@@ -173,33 +162,8 @@ class Source(param.Parameterized):
         return df
 
     @classmethod
-    def _resolve_reference(cls, reference):
-        refs = reference[1:].split('.')
-        if len(refs) == 3:
-            sourceref, table, field = refs
-        elif len(refs) == 2:
-            sourceref, table = refs
-        elif len(refs) == 1:
-            (sourceref,) = refs
-
-        source = cls.from_spec(sourceref)
-        if len(refs) == 1:
-            return source
-        if len(refs) == 2:
-            return source.get(table)
-        table_schema = source.get_schema(table)
-        if field not in table_schema:
-            raise ValueError(f"Field '{field}' was not found in "
-                             f"'{sourceref}' table '{table}'.")
-        field_schema = table_schema[field]
-        if 'enum' not in field_schema:
-            raise ValueError(f"Field '{field}' schema does not "
-                             "declare an enum.")
-        return field_schema['enum']
-
-    @classmethod
     def _recursive_resolve(cls, spec, source_type):
-        resolved_spec = {}
+        resolved_spec, refs = {}, {}
         if 'sources' in source_type.param and 'sources' in spec:
             resolved_spec['sources'] = {
                 source: cls.from_spec(source)
@@ -208,17 +172,22 @@ class Source(param.Parameterized):
         if 'source' in source_type.param and 'source' in spec:
             resolved_spec['source'] = cls.from_spec(spec.pop('source'))
         for k, v in spec.items():
-            if isinstance(v, str) and v.startswith('@'):
-                v = cls._resolve_reference(v)
+            if is_ref(v):
+                refs[k] = v
+                v = state.resolve_reference(v)
             elif isinstance(v, dict):
-                v = cls._recursive_resolve(v, source_type)
+                v, subrefs = cls._recursive_resolve(v, source_type)
+                if subrefs:
+                    cls.param.warning(
+                        "Resolving nested variable references currently not supported."
+                        )
             if k == 'filters' and 'source' in resolved_spec:
                 source_schema = resolved_spec['source'].get_schema()
                 v = [Filter.from_spec(fspec, source_schema) for fspec in v]
             if k == 'transforms':
                 v = [Transform.from_spec(tspec) for tspec in v]
             resolved_spec[k] = v
-        return resolved_spec
+        return resolved_spec, refs
 
     @classmethod
     def from_spec(cls, spec):
@@ -250,8 +219,8 @@ class Source(param.Parameterized):
 
         spec = dict(spec)
         source_type = Source._get_type(spec.pop('type'))
-        resolved_spec = cls._recursive_resolve(dict(spec), source_type)
-        return source_type(**resolved_spec)
+        resolved_spec, refs = cls._recursive_resolve(spec, source_type)
+        return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
         from ..config import config
@@ -523,8 +492,7 @@ class FileSource(Source):
 
     def _resolve_template_vars(self, table):
         for m in self._template_re.findall(table):
-            ref = f'@{m[2:-1]}'
-            values = self._resolve_reference(ref)
+            values = state.resolve_reference(f'${m[2:-1]}')
             values = ','.join([v for v in values])
             table = table.replace(m, quote(values))
         return [table]
@@ -601,8 +569,7 @@ class JSONSource(FileSource):
         template_vars = self._template_re.findall(template)
         template_values = []
         for m in template_vars:
-            ref = f'@{m[2:-1]}'
-            values = self._resolve_reference(ref)
+            values = state.resolve_reference(f'${m[2:-1]}')
             template_values.append(values)
         tables = []
         cross_product = list(product(*template_values))

@@ -1,0 +1,17 @@
+variables:
+  page_size:
+    type: constant
+    default: 20
+sources:
+  test:
+    type: 'file'
+    tables: ['../sources/test.csv']
+    kwargs:
+      parse_dates: ['D']
+targets:
+  - title: "Test"
+    source: test
+    views:
+      - type: table
+        table: test
+        page_size: $variables.page_size
