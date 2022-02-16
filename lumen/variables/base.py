@@ -41,8 +41,17 @@ class Variables(param.Parameterized):
     def from_spec(cls, spec):
         vars = {}
         for name, var_spec in spec.items():
-            vars[name] = Variable.from_spec(var_spec, vars)
+            vars[name] = Variable.from_spec(dict(var_spec, name=name), vars)
         return cls(**vars)
+
+    @property
+    def panel(self):
+        column = pn.Column(name='Variables', sizing_mode='stretch_width')
+        for key, var in self._vars.items():
+            var_panel = var.panel
+            if var_panel is not None:
+                column.append(var_panel)
+        return column
 
 
 class Variable(Component):
@@ -76,6 +85,14 @@ class Variable(Component):
             resolved_spec[k] = val
         return var_type(refs=refs, **resolved_spec)
 
+    @property
+    def panel(self):
+        """
+        Optionally returns a renderable component that allows
+        controlling the variable.
+        """
+        return None
+
 
 class Constant(Variable):
     """
@@ -96,8 +113,9 @@ class EnvVariable(Variable):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.key in os.environ:
-            self.value = os.environ[self.key]
+        key = self.key or self.name
+        if key in os.environ:
+            self.value = os.environ[key]
 
 
 class Widget(Variable):
@@ -123,6 +141,10 @@ class Widget(Variable):
         self._widget = widget_type(**params)
         self._widget.link(self, value='value', bidirectional=True)
 
+    @property
+    def panel(self):
+        return self._widget
+
 
 class URLQuery(Variable):
     """
@@ -135,14 +157,16 @@ class URLQuery(Variable):
 
     def __init__(self, **params):
         super().__init__(**params)
+        key = self.key or self.name
         if pn.state.location:
             pn.state.location.param.watch(self._update_value, 'search')
             self._update_value()
-        if pn.state.session_args and self.key in pn.state.session_args:
-            self.value = pn.state.session_args[self.key][0].decode('utf-8')
+        if pn.state.session_args and key in pn.state.session_args:
+            self.value = pn.state.session_args[key][0].decode('utf-8')
 
     def _update_value(self, *args):
-        self.value = pn.state.location.query_params.get(self.key, self.default)
+        key = self.key or self.name
+        self.value = pn.state.location.query_params.get(key, self.default)
 
 
 class Cookie(Variable):
@@ -157,7 +181,8 @@ class Cookie(Variable):
     def __init__(self, **params):
         super().__init__(**params)
         if pn.state.cookies:
-            self.value = pn.state.cookies.get(self.key, self.default)
+            key = self.key or self.name
+            self.value = pn.state.cookies.get(key, self.default)
 
 
 class UserInfo(Variable):
@@ -172,7 +197,8 @@ class UserInfo(Variable):
     def __init__(self, **params):
         super().__init__(**params)
         if pn.state.user_info:
-            self.value = pn.state.user_info.get(self.key, self.default)
+            key = self.key or self.name
+            self.value = pn.state.user_info.get(key, self.default)
 
 
 class Header(Variable):
@@ -187,4 +213,5 @@ class Header(Variable):
     def __init__(self, **params):
         super().__init__(**params)
         if pn.state.headers:
-            self.value = pn.state.headers.get(self.key, self.default)
+            key = self.key or self.name
+            self.value = pn.state.headers.get(key, self.default)
