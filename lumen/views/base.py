@@ -403,6 +403,14 @@ class View(Component):
             return pn.Column(self.download, panel, sizing_mode='stretch_width')
         return panel
 
+    @property
+    def refs(self):
+        refs = super().refs
+        for c in self.controls:
+            if c not in refs:
+                refs.append(c)
+        return refs
+
 
 class StringView(View):
     """
@@ -426,7 +434,6 @@ class StringView(View):
         else:
             params['object'] = f'<p style="font-size: {self.font_size}">{value}</p>'
         return params
-
 
 
 class IndicatorView(View):

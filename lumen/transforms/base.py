@@ -44,12 +44,15 @@ class Transform(Component):
         """
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
-        new_spec = {}
+        new_spec, refs = {}, {}
         for k, v in spec.items():
             if (k in transform_type.param and
                 isinstance(transform_type.param[k], param.ListSelector) and
                 not isinstance(v, list)):
                 v = [v]
+            if isinstance(v, str) and v.startswith('@'):
+                refs[k] = v
+                v = state.resolve_reference(v)
             new_spec[k] = v
 
         # Resolve any specs for the controls
@@ -70,7 +73,7 @@ class Transform(Component):
         new_spec['controls'] = controls
 
         # Instantiate the transform
-        transform = transform_type(**new_spec)
+        transform = transform_type(refs=refs, **new_spec)
 
         # Modify the parameters for the controls
         for p, vs in control_kwargs.items():
@@ -126,6 +129,14 @@ class Transform(Component):
             self.param, parameters=self.controls, sizing_mode='stretch_width',
             margin=(-10, 0, 5, 0)
         )
+
+    @property
+    def refs(self):
+        refs = super().refs
+        for c in self.controls:
+            if c not in refs:
+                refs.append(c)
+        return refs
 
 
 class HistoryTransform(Transform):

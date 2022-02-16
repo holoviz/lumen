@@ -29,6 +29,10 @@ class Component(param.Parameterized):
         """
         self.param.update({pname: event.new})
 
+    @property
+    def refs(self):
+        return [k for k, v in self._refs.items() if v.startswith('@variables.')]
+
     @classmethod
     def _get_type(cls, component_type):
         clsname = cls.__name__
