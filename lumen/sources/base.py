@@ -97,8 +97,8 @@ class Source(Component):
     __abstract = True
 
     def _update_ref(self, pname, event):
-        super()._update_ref(pname, event)
         self.clear_cache()
+        super()._update_ref(pname, event)
 
     @classmethod
     def _range_filter(cls, column, start, end):
@@ -543,6 +543,7 @@ class FileSource(Source):
 
     @cached()
     def get(self, table, **query):
+        print('>>>>>>', table)
         dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
         df = self._filter_dataframe(df, **query)

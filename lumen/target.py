@@ -248,12 +248,13 @@ class Target(param.Parameterized):
 
         # Set up watchers
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
+        rerender = partial(self._rerender, invalidate_cache=True)
         for filt in self.filters:
             if isinstance(filt, FacetFilter):
                 continue
-            filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
+            filt.param.watch(rerender, 'value')
         self._update_views(init=True)
-        self.source.param.watch(lambda _: self.update(clear_cache=False), list(self.source.param))
+        self.source.param.watch(rerender, self.source.refs)
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -456,11 +457,11 @@ class Target(param.Parameterized):
                 if view.controls:
                     view.param.watch(rerender, view.controls)
                 for transform in view.transforms:
-                    if transform.controls and not transform in transforms:
+                    if transform.refs and not transform in transforms:
                         transforms.append(transform)
                         transform.param.watch(rerender_cache, transform.refs)
                 for transform in view.sql_transforms:
-                    if transform.controls and not transform in transforms:
+                    if transform.refs and not transform in transforms:
                         transforms.append(transform)
                         transform.param.watch(rerender_cache, transform.refs)
 
