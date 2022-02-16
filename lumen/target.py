@@ -248,11 +248,13 @@ class Target(param.Parameterized):
 
         # Set up watchers
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
+        rerender = partial(self._rerender, invalidate_cache=True)
         for filt in self.filters:
             if isinstance(filt, FacetFilter):
                 continue
-            filt.param.watch(partial(self._rerender, invalidate_cache=True), 'value')
+            filt.param.watch(rerender, 'value')
         self._update_views(init=True)
+        self.source.param.watch(rerender, self.source.refs)
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -430,11 +432,11 @@ class Target(param.Parameterized):
                 # Only the controls for the first facet is shown so link
                 # the other facets to the controls of the first
                 for v1, v2 in zip(linked_views, views):
-                    v1.param.watch(partial(self._sync_component, v2), v1.controls)
+                    v1.param.watch(partial(self._sync_component, v2), v1.refs)
                     for t1, t2 in zip(v1.transforms, v2.transforms):
-                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
+                        t1.param.watch(partial(self._sync_component, t2), t1.refs)
                     for t1, t2 in zip(v1.sql_transforms, v2.sql_transforms):
-                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
+                        t1.param.watch(partial(self._sync_component, t2), t1.refs)
 
         # Validate that all filters are applied
         for filt in self.filters:
@@ -445,23 +447,22 @@ class Target(param.Parameterized):
                     'found that matches such a field.'
                 )
 
-        # Re-render target when controls update but we ensure that
-        # all other views linked to the controls are updated first
+        # Re-render target when controls or refs update but we ensure
+        # that all other views linked to the controls are updated first
         if init:
-            rerender = partial(self._rerender, invalidate_cache=False)
             rerender_cache = partial(self._rerender, invalidate_cache=True)
             transforms = []
             for view in linked_views:
-                if view.controls:
-                    view.param.watch(rerender, view.controls)
+                if view.refs:
+                    view.param.watch(rerender_cache, view.refs)
                 for transform in view.transforms:
-                    if transform.controls and not transform in transforms:
+                    if transform.refs and not transform in transforms:
                         transforms.append(transform)
-                        transform.param.watch(rerender_cache, transform.controls)
+                        transform.param.watch(rerender_cache, transform.refs)
                 for transform in view.sql_transforms:
-                    if transform.controls and not transform in transforms:
+                    if transform.refs and not transform in transforms:
                         transforms.append(transform)
-                        transform.param.watch(rerender_cache, transform.controls)
+                        transform.param.watch(rerender_cache, transform.refs)
 
         self._view_controls[:] = controls
 
@@ -649,11 +650,12 @@ class Target(param.Parameterized):
                 self.update, refresh_rate
             )
 
-    def update(self, *events):
+    def update(self, *events, clear_cache=True):
         """
         Updates the views on this target by clearing any caches and
         rerendering the views on this Target.
         """
-        self.source.clear_cache()
+        if clear_cache:
+            self.source.clear_cache()
         self._rerender(invalidate_cache=True)
         self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'

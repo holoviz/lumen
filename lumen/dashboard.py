@@ -21,6 +21,7 @@ from .state import state
 from .target import Target
 from .transforms import Transform # noqa
 from .util import expand_spec
+from .variables import Variables
 from .views import View # noqa
 
 pn.config.css_files.append(
@@ -223,6 +224,8 @@ class Dashboard(param.Parameterized):
         self.auth = Auth.from_spec(state.spec.get('auth', {}))
         self.config = Config.from_spec(state.spec.get('config', {}))
         self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
+        vars = Variables.from_spec(state.spec.get('variables', {}))
+        self.variables = state._variables[pn.state.curdoc] = vars
         self.defaults.apply()
 
         # Load and populate template
@@ -479,6 +482,9 @@ class Dashboard(param.Parameterized):
     def _render_filters(self):
         self._global_filters, global_panel = self._get_global_filters()
         filters = [] if global_panel is None else [global_panel]
+        variable_panel = self.variables.panel
+        if len(variable_panel):
+            filters.append(variable_panel)
         for i, target in enumerate(self.targets):
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
                 continue

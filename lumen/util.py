@@ -204,5 +204,11 @@ def resolve_module_reference(reference, component_type):
     component = getattr(module, ctype)
     if not issubclass(component, component_type):
         raise ValueError(f"{cls_name} type '{reference}' did not resolve "
-                         "to a {cls_name} subclass.")
+                         f"to a {cls_name} subclass.")
     return component
+
+def is_ref(value):
+    """
+    Whether the value is a reference.
+    """
+    return isinstance(value, str) and (value.startswith('$') or value.startswith('@'))

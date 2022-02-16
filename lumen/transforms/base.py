@@ -9,10 +9,12 @@ import pandas as pd
 import panel as pn
 import param
 
-from ..util import resolve_module_reference
+from ..base import Component
+from ..state import state
+from ..util import is_ref
 
 
-class Transform(param.Parameterized):
+class Transform(Component):
     """
     A Transform provides the ability to transform a table supplied by
     a Source.
@@ -28,19 +30,6 @@ class Transform(param.Parameterized):
     __abstract = True
 
     @classmethod
-    def _get_type(cls, transform_type):
-        if '.' in transform_type:
-            return resolve_module_reference(transform_type, Transform)
-        try:
-            __import__(f'lumen.transforms.{transform_type}')
-        except Exception:
-            pass
-        for transform in param.concrete_descendents(cls).values():
-            if transform.transform_type == transform_type:
-                return transform
-        raise ValueError(f"No Transform for transform_type '{transform_type}' could be found.")
-
-    @classmethod
     def from_spec(cls, spec):
         """
         Resolves a Transform specification.
@@ -54,18 +43,20 @@ class Transform(param.Parameterized):
         -------
         The resolved Transform object.
         """
-        from ..sources import Source
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
-        new_spec = {}
+        new_spec, refs = {}, {}
         for k, v in spec.items():
             if (k in transform_type.param and
                 isinstance(transform_type.param[k], param.ListSelector) and
                 not isinstance(v, list)):
                 v = [v]
+            if is_ref(v):
+                refs[k] = v
+                v = state.resolve_reference(v)
             new_spec[k] = v
 
-        # Allow declaring control options
+        # Resolve any specs for the controls
         controls, control_kwargs = [], {}
         for control in new_spec.get('controls', []):
             if isinstance(control, dict):
@@ -73,7 +64,7 @@ class Transform(param.Parameterized):
                 if 'options' in control:
                     options = control['options']
                     if isinstance(options, str):
-                        options = Source._resolve_reference(options)
+                        options = state.resolve_reference(options)
                     ckws['objects'] = options
                 if 'start' in control or 'end' in control:
                     ckws['bounds'] = (control.get('start'), control.get('end'))
@@ -81,12 +72,27 @@ class Transform(param.Parameterized):
                 control_kwargs[control] = ckws
             controls.append(control)
         new_spec['controls'] = controls
-        transform = transform_type(**new_spec)
+
+        # Instantiate the transform
+        transform = transform_type(refs=refs, **new_spec)
+
+        # Modify the parameters for the controls
         for p, vs in control_kwargs.items():
-            for a, v in vs.items():
-                setattr(transform.param[p], a, v)
+            p = transform.param[p]
+            for attr, val in vs.items():
+                if hasattr(p, attr):
+                    setattr(p, attr, val)
+                else:
+                    attr = 'options' if attr == 'objects' else attr
+                    cls.param.warning(
+                        f"{transform_type.__name__} is of type {type(p).__name} "
+                        f"and has not attribute {attr!r}. Ensure the controls "
+                        "parameter supports the provided options, e.g. if "
+                        "you are declaring 'options' ensure that the parameter "
+                        "is a param.Selector type."
+                    )
         return transform
-    
+
     @classmethod
     def apply_to(cls, table, **kwargs):
         """
@@ -124,6 +130,14 @@ class Transform(param.Parameterized):
             self.param, parameters=self.controls, sizing_mode='stretch_width',
             margin=(-10, 0, 5, 0)
         )
+
+    @property
+    def refs(self):
+        refs = super().refs
+        for c in self.controls:
+            if c not in refs:
+                refs.append(c)
+        return refs
 
 
 class HistoryTransform(Transform):

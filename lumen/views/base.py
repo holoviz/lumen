@@ -2,7 +2,6 @@
 The View classes render the data returned by a Source as a Panel
 object.
 """
-
 import sys
 
 from io import StringIO, BytesIO
@@ -18,18 +17,21 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
 )
 from panel.param import Param
+from panel.viewable import Viewer
 
+from ..base import Component
 from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..sources import Source
+from ..state import state
 from ..transforms import Transform
-from ..util import resolve_module_reference
+from ..util import is_ref
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
 
-class Download(pn.viewable.Viewer):
+class Download(Viewer):
 
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
@@ -81,7 +83,7 @@ class Download(pn.viewable.Viewer):
         )
 
 
-class View(param.Parameterized):
+class View(Component):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
@@ -141,6 +143,7 @@ class View(param.Parameterized):
         self._ls = None
         self._panel = None
         self._updates = None
+        refs = params.pop('refs', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
 
         # Populate field selector parameters
@@ -154,7 +157,7 @@ class View(param.Parameterized):
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
-        super().__init__(source=source, table=table, **params)
+        super().__init__(source=source, table=table, refs=refs, **params)
         self.download.view = self
         for transform in self.transforms:
             for fp in transform._field_params:
@@ -182,24 +185,6 @@ class View(param.Parameterized):
         self.selection_expr = event.new
 
     @classmethod
-    def _get_type(cls, view_type):
-        """
-        Returns the matching View type.
-        """
-        if '.' in view_type:
-            return resolve_module_reference(view_type, View)
-        try:
-            __import__(f'lumen.views.{view_type}')
-        except Exception:
-            pass
-        for view in param.concrete_descendents(cls).values():
-            if view.view_type == view_type:
-                return view
-        if view_type is not None:
-            raise ValueError(f"View type '{view_type}' could not be found.")
-        return View
-
-    @classmethod
     def from_spec(cls, spec, source, filters):
         """
         Resolves a View specification given the schema of the Source
@@ -225,12 +210,15 @@ class View(param.Parameterized):
         sql_transform_specs = spec.pop('sql_transforms', [])
         sql_transforms = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
         view_type = View._get_type(spec.pop('type', None))
-        resolved_spec = {}
+        resolved_spec, refs = {}, {}
         for p, value in spec.items():
             if p not in view_type.param:
                 resolved_spec[p] = value
                 continue
             parameter = view_type.param[p]
+            if is_ref(value):
+                refs[p] = value
+                value = state.resolve_reference(value)
             if isinstance(parameter, param.ObjectSelector) and parameter.names:
                 try:
                     value = parameter.names.get(value, value)
@@ -245,7 +233,7 @@ class View(param.Parameterized):
         resolved_spec['download'] = Download.from_spec(download_spec)
         view = view_type(
             filters=filters, source=source, transforms=transforms,
-            sql_transforms=sql_transforms, **resolved_spec
+            sql_transforms=sql_transforms, refs=refs, **resolved_spec
         )
 
         # Resolve ParamFilter parameters
@@ -416,6 +404,14 @@ class View(param.Parameterized):
             return pn.Column(self.download, panel, sizing_mode='stretch_width')
         return panel
 
+    @property
+    def refs(self):
+        refs = super().refs
+        for c in self.controls:
+            if c not in refs:
+                refs.append(c)
+        return refs
+
 
 class StringView(View):
     """
@@ -439,7 +435,6 @@ class StringView(View):
         else:
             params['object'] = f'<p style="font-size: {self.font_size}">{value}</p>'
         return params
-
 
 
 class IndicatorView(View):
@@ -615,6 +610,9 @@ class Table(View):
     Renders a Source table using a Panel Table widget.
     """
 
+    page_size = param.Integer(default=20, bounds=(1, None), doc="""
+        Number of rows to render per page, if pagination is enabled.""")
+
     view_type = 'table'
 
     _extension = 'tabulator'
@@ -623,7 +621,8 @@ class Table(View):
         return pn.widgets.tables.Tabulator(**self._get_params())
 
     def _get_params(self):
-        return dict(value=self.get_data(), disabled=True, **self.kwargs)
+        return dict(value=self.get_data(), disabled=True, page_size=self.page_size,
+                    **self.kwargs)
 
 
 class DownloadView(View):

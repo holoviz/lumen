@@ -1,0 +1,19 @@
+variables:
+  length:
+    type: constant
+    default: 5
+sources:
+  test:
+    type: 'file'
+    files: ['../sources/test.csv']
+    kwargs:
+      parse_dates: ['D']
+targets:
+  - title: "Test"
+    source: test
+    views:
+      - type: table
+        table: test
+        transforms:
+          - type: iloc
+            end: $variables.length

@@ -8,8 +8,9 @@ import panel as pn
 from bokeh.document import Document
 
 from lumen.config import config
-from lumen.sources import FileSource
+from lumen.sources import FileSource, Source
 from lumen.state import state
+from lumen.variables import Variables
 
 from unittest.mock import Mock
 
@@ -34,6 +35,24 @@ def make_filesource():
     config._root = root
     state.global_sources.clear()
 
+
+@pytest.fixture
+def make_variable_filesource():
+    root = config._root
+    def create(root, **kwargs):
+        config._root = root
+        state._variables[None] = Variables.from_spec({'tables': {'type': 'constant', 'default': {'test': 'test.csv'}}})
+        source = Source.from_spec(dict({
+            'type': 'file',
+            'tables': '$variables.tables',
+            'kwargs': {'parse_dates': ['D']}
+        }))
+        state.sources['original'] = source
+        return source
+    yield create
+    config._root = root
+    state.global_sources.clear()
+    state._variables.clear()
 
 @pytest.fixture
 def yaml_file():
@@ -64,6 +83,7 @@ def clear_state():
     state._loading.clear()
     state._sources.clear()
     state._filters.clear()
+    state._variables.clear()
 
 
 @pytest.fixture

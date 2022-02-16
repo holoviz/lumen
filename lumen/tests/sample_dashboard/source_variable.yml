@@ -1,0 +1,17 @@
+variables:
+  tables:
+    type: constant
+    default:
+      test: '../sources/test.csv'
+sources:
+  test:
+    type: 'file'
+    tables: $variables.tables
+    kwargs:
+      parse_dates: ['D']
+targets:
+  - title: "Test"
+    source: test
+    views:
+      - type: table
+        table: test
