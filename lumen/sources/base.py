@@ -171,11 +171,9 @@ class Source(Component):
             }
         if 'source' in source_type.param and 'source' in spec:
             resolved_spec['source'] = cls.from_spec(spec.pop('source'))
-        print(spec)
         for k, v in spec.items():
             if isinstance(v, str) and v.startswith('@'):
                 refs[k] = v
-                print(k, v, state.resolve_reference(v))
                 v = state.resolve_reference(v)
             elif isinstance(v, dict):
                 v, subrefs = cls._recursive_resolve(v, source_type)
@@ -543,7 +541,6 @@ class FileSource(Source):
 
     @cached()
     def get(self, table, **query):
-        print('>>>>>>', table)
         dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
         df = self._filter_dataframe(df, **query)

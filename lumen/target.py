@@ -454,8 +454,8 @@ class Target(param.Parameterized):
             rerender_cache = partial(self._rerender, invalidate_cache=True)
             transforms = []
             for view in linked_views:
-                if view.controls:
-                    view.param.watch(rerender, view.controls)
+                if view.refs:
+                    view.param.watch(rerender_cache, view.refs)
                 for transform in view.transforms:
                     if transform.refs and not transform in transforms:
                         transforms.append(transform)

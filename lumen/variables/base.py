@@ -41,6 +41,11 @@ class Variables(param.Parameterized):
     def from_spec(cls, spec):
         vars = {}
         for name, var_spec in spec.items():
+            if not isinstance(var_spec, dict):
+                var_spec = {
+                    'type': 'constant',
+                    'default': var_spec
+                }
             vars[name] = Variable.from_spec(dict(var_spec, name=name), vars)
         return cls(**vars)
 
@@ -138,7 +143,12 @@ class Widget(Variable):
             widget_type = getattr(pn.widgets, kind)
         if 'value' not in params:
             params['default'] = default
-        self._widget = widget_type(**params)
+        deserialized = {}
+        for k, v in params.items():
+            if k in widget_type.param:
+                v = widget_type.param[k].deserialize(v)
+            deserialized[k] = v
+        self._widget = widget_type(**deserialized)
         self._widget.link(self, value='value', bidirectional=True)
 
     @property

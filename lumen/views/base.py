@@ -609,6 +609,9 @@ class Table(View):
     Renders a Source table using a Panel Table widget.
     """
 
+    page_size = param.Integer(default=20, bounds=(1, None), doc="""
+        Number of rows to render per page, if pagination is enabled.""")
+
     view_type = 'table'
 
     _extension = 'tabulator'
@@ -617,7 +620,8 @@ class Table(View):
         return pn.widgets.tables.Tabulator(**self._get_params())
 
     def _get_params(self):
-        return dict(value=self.get_data(), disabled=True, **self.kwargs)
+        return dict(value=self.get_data(), disabled=True, page_size=self.page_size,
+                    **self.kwargs)
 
 
 class DownloadView(View):
