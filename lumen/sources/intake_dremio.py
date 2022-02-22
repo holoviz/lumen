@@ -36,4 +36,4 @@ class IntakeDremioSource(IntakeBaseSQLSource):
             normalized_tables = [t.replace('"', '').lower() for t in tables]
             if table not in tables and normalized_table in normalized_tables:
                 table = tables[normalized_tables.index(normalized_table)]
-        super().get_schema(table)
+        return super().get_schema(table)
