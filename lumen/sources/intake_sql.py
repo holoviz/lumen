@@ -48,11 +48,11 @@ class IntakeBaseSQLSource(IntakeBaseSource):
 
         schemas = {}
         limit = SQLLimit(limit=1)
-        for table in tables:
+        for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
-            source = self._get_source(table)
+            source = self._get_source(entry)
             data = self._read(self._apply_transforms(source, [limit]))
             schema = get_dataframe_schema(data)['items']['properties']
             enums, min_maxes = [], []
@@ -72,9 +72,9 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             for col in min_maxes:
                 schema[col]['inclusiveMinimum'] = minmax_data[f'{col}_min'].iloc[0]
                 schema[col]['inclusiveMaximum'] = minmax_data[f'{col}_max'].iloc[0]
-            schemas[table] = schema
+            schemas[entry] = schema
         return schemas if table is None else schemas[table]
-            
+
 
 class IntakeSQLSource(IntakeBaseSQLSource, IntakeSource):
     """
