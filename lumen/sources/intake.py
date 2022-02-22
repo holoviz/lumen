@@ -31,11 +31,11 @@ class IntakeBaseSource(Source):
         for entry in list(self.cat):
             if table is not None and entry != table:
                 continue
-            data = self.get(entry, __dask=True)
-            if self.load_schema:
-                schemas[entry] = get_dataframe_schema(data)['items']['properties']
-            else:
+            elif not self.load_schema:
                 schemas[entry] = {}
+                continue
+            data = self.get(entry, __dask=True)
+            schemas[entry] = get_dataframe_schema(data)['items']['properties']
         return schemas if table is None else schemas[table]
 
     @cached(with_query=False)
