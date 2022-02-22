@@ -75,7 +75,12 @@ class AE5Source(Source):
                 self.hostname, self.admin_username, self.admin_password
             )
             self._admin_session.authorize()
-            user_id = self._admin_session.user_info(self._user)['id']
+            try:
+                # Try making more optimized query
+                user_info = self._admin_session.user_info(self._user, include_login=False)
+            except Exception:
+                user_info = self._admin_session.user_info(self._user)
+            user_id = user_id['id']
             roles = self._admin_session._get(f'users/{user_id}/role-mappings/realm/composite')
             self._is_admin = any(role['name'] == 'ae-admin' for role in roles)
             self._groups = [g['name'] for g in self._admin_session._get(f'users/{user_id}/groups')]
