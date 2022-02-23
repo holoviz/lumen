@@ -61,11 +61,14 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                     enums.append(name)
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
-            distinct_data = self._read(
-                self._apply_transforms(source, [SQLDistinct(columns=enums)])
-            )
             for col in enums:
-                schema[col]['enum'] = distinct_data[col].to_list()
+                distinct_transforms = [
+                    SQLDistinct(columns=[col]), SQLLimit(limit=1000)
+                ]
+                distinct = self._read(
+                    self._apply_transforms(source, distinct_transforms)
+                )
+                schema[col]['enum'] = distinct[col].to_list()
             minmax_data = self._read(
                 self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
             )
