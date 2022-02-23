@@ -90,3 +90,41 @@ class SQLLimit(SQLTransform):
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(
             limit=self.limit, sql_in=sql_in
         )
+
+
+class SQLDistinct(SQLTransform):
+
+    columns = param.List(default=[], doc="Columns to return distinct values for.")
+
+    transform_type = 'sql_distinct'
+
+    def apply(self, sql_in):
+        template = """
+            SELECT DISTINCT
+                {{columns}}
+            FROM ( {{sql_in}} )
+        """
+        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
+            columns=', '.join(self.columns), sql_in=sql_in
+        )
+
+
+class SQLMinMax(SQLTransform):
+
+    columns = param.List(default=[], doc="Columns to return distinct values for.")
+
+    transform_type = 'sql_minmax'
+
+    def apply(self, sql_in):
+        aggs = []
+        for col in self.columns:
+            aggs.append(f'MIN({col}) as {col}_min')
+            aggs.append(f'MAX({col}) as {col}_max')
+        template = """
+            SELECT
+                {{columns}}
+            FROM ( {{sql_in}} )
+        """
+        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
+            columns=', '.join(aggs), sql_in=sql_in
+        )
