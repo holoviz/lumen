@@ -54,7 +54,10 @@ class AE5Source(Source):
         'id', 'name', 'url', 'owner', 'resource_profile', 'state'
     ]
 
-    _tables = ['deployments', 'nodes', 'resources', 'sessions', 'jobs']
+    _tables = [
+        'deployments', 'nodes', 'resources', 'sessions', 'jobs',
+        'resource_allocations'
+    ]
 
     _units = {
         'm': 0.001,
