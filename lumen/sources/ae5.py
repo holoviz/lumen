@@ -70,7 +70,7 @@ class AE5Source(Source):
             self.hostname, self.username, self.password, persist=False,
             k8s_endpoint=self.k8s_endpoint
         )
-        if self.admin_username:
+        if self.admin_username and self._user:
             self._admin_session = AEAdminSession(
                 self.hostname, self.admin_username, self.admin_password
             )
@@ -201,7 +201,7 @@ class AE5Source(Source):
         return sessions[self._session_columns]
 
     def _get_jobs(self):
-        jobs = self._session.jobs_list(format='dataframe')
+        jobs = self._session.job_list(format='dataframe')
         if self._user and not self._is_admin:
             jobs = jobs[jobs.owner==self._user]
         return jobs[self._job_columns]
