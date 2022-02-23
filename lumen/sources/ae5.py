@@ -40,7 +40,8 @@ class AE5Source(Source):
 
     _deployment_columns = [
         'id', 'name', 'url', 'owner', 'resource_profile', 'public', 'state',
-        'cpu', 'cpu_percent', 'memory', 'memory_percent', 'uptime', 'restarts'
+        'cpu', 'cpu_percent', 'memory', 'memory_percent', 'uptime', 'restarts',
+        'node'
     ]
 
     _job_columns = [
@@ -206,6 +207,18 @@ class AE5Source(Source):
             jobs = jobs[jobs.owner==self._user]
         return jobs[self._job_columns]
 
+    def _get_resource_allocations(self):
+        """
+        Combines deployment resource profiles with resource information
+        and node information to allow computing total and per node
+        resource allocations.
+        """
+        deployments = self.get('deployments')
+        resources = self.get('resources')
+        nodes = self.get('nodes')
+        ...
+        return
+    
     @cached(with_query=False)
     def get(self, table, **query):
         if table not in self._tables:
