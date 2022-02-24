@@ -115,7 +115,7 @@ class View(Component):
     transforms = param.List(constant=True, doc="""
         A list of transforms to apply to the data returned by the
         Source before visualizing it.""")
-    
+
     sql_transforms = param.List(constant=True, doc="""
         A list of sql transforms to apply to the data returned by the
         Source before visualizing it.""")
@@ -290,7 +290,7 @@ class View(Component):
                     f'Found source typed {self.source.source_type!r} instead.'
                 )
             query['sql_transforms'] = self.sql_transforms
-            
+
         for filt in self.filters:
             filt_query = filt.query
             if (filt_query is not None and
@@ -473,40 +473,9 @@ class IndicatorView(View):
         return params
 
 
-class hvPlotUIView(View):
-    """
-    The hvPlotUIView displays provides a component for exploring
-    datasets using widgets.
-    """
+class hvPlotBaseView(View):
 
-    view_type = 'hvplot_ui'
-    def __init__(self, **params):
-        import hvplot.pandas # noqa
-        if 'dask' in sys.modules:
-            try:
-                import hvplot.dask # noqa
-            except Exception:
-                pass
-        super().__init__(**params)
-
-
-    def _get_args(self):
-        return (self.get_data(),), dict()
-    
-    def get_panel(self):
-        from hvplot.ui import hvPlotExplorer
-        args, kwargs = self._get_args()
-        return hvPlotExplorer(*args, **kwargs)
-
-
-class hvPlotView(View):
-    """
-    The hvPlotView renders the queried data as a bokeh plot generated
-    with hvPlot. hvPlot allows for a concise declaration of a plot via
-    its simple API.
-    """
-
-    kind = param.String(doc="The kind of plot, e.g. 'scatter' or 'line'.")
+    kind = param.String(default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.")
 
     x = param.Selector(doc="The column to render on the x-axis.")
 
@@ -515,6 +484,51 @@ class hvPlotView(View):
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
+
+    __abstract = True
+
+    def __init__(self, **params):
+        import hvplot.pandas # noqa
+        if 'dask' in sys.modules:
+            try:
+                import hvplot.dask # noqa
+            except Exception:
+                pass
+        if 'by' in params and isinstance(params['by'], str):
+            params['by'] = [params['by']]
+        if 'groupby' in params and isinstance(params['groupby'], str):
+            params['groupby'] = [params['groupby']]
+        super().__init__(**params)
+
+
+class hvPlotUIView(hvPlotBaseView):
+    """
+    The hvPlotUIView displays provides a component for exploring
+    datasets using widgets.
+    """
+
+    view_type = 'hvplot_ui'
+
+    def _get_args(self):
+        from hvplot.ui import hvPlotExplorer
+        params = {
+            k: v for k, v in self.param.values().items()
+            if k in hvPlotExplorer.param and v is not None and k != 'name'
+        }
+        return (self.get_data(),), dict(params, **self.kwargs)
+
+    def get_panel(self):
+        from hvplot.ui import hvPlotExplorer
+        args, kwargs = self._get_args()
+        return hvPlotExplorer(*args, **kwargs)
+
+
+class hvPlotView(hvPlotBaseView):
+    """
+    The hvPlotView renders the queried data as a bokeh plot generated
+    with hvPlot. hvPlot allows for a concise declaration of a plot via
+    its simple API.
+    """
 
     opts = param.Dict(default={}, doc="HoloViews options to apply on the plot.")
 
@@ -532,16 +546,6 @@ class hvPlotView(View):
     _supports_selections = True
 
     def __init__(self, **params):
-        import hvplot.pandas # noqa
-        if 'dask' in sys.modules:
-            try:
-                import hvplot.dask # noqa
-            except Exception:
-                pass
-        if 'by' in params and isinstance(params['by'], str):
-            params['by'] = [params['by']]
-        if 'groupby' in params and isinstance(params['groupby'], str):
-            params['groupby'] = [params['groupby']]
         self._stream = None
         self._linked_objs = []
         super().__init__(**params)
