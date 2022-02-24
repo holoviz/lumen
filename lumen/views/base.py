@@ -473,6 +473,32 @@ class IndicatorView(View):
         return params
 
 
+class hvPlotUIView(View):
+    """
+    The hvPlotUIView displays provides a component for exploring
+    datasets using widgets.
+    """
+
+    view_type = 'hvplot_ui'
+    def __init__(self, **params):
+        import hvplot.pandas # noqa
+        if 'dask' in sys.modules:
+            try:
+                import hvplot.dask # noqa
+            except Exception:
+                pass
+        super().__init__(**params)
+
+
+    def _get_args(self):
+        return (self.get_data(),), dict()
+    
+    def get_panel(self):
+        from hvplot.ui import hvPlotExplorer
+        args, kwargs = self._get_args()
+        return hvPlotExplorer(*args, **kwargs)
+
+
 class hvPlotView(View):
     """
     The hvPlotView renders the queried data as a bokeh plot generated
