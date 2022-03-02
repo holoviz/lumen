@@ -604,6 +604,39 @@ class hvPlotView(View):
         self._stream.send(self.get_data())
         return False
 
+class Markdown(View):
+    """
+    Renders a scaler using a Panel Markdown Pane.
+    """
+    
+    view_type = 'markdown'
+    
+#     _extension = 'markdown'
+    
+    def get_panel(self):
+        return pn.pane.Markdown(**self._get_params())
+    
+    def _get_params(self):
+        return dict(object=self.get_value(), extensions=['markdown.extensions.fenced_code'])
+    
+class SQLViewer(Markdown):
+    """
+    Shows syntax highlighted sql via markdown.
+    """
+    
+    view_type = 'sql'
+    
+    def get_value(self):
+        val = super().get_value(field='sql')
+        language_tag = '{ sql }'
+        
+        markdown = f'''
+                   ```sql
+                   {val}
+                   ```
+                   '''
+        return markdown
+    
 
 class Table(View):
     """
