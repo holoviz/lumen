@@ -19,12 +19,18 @@ class Wizard(ReactiveHTML):
     spec = param.Dict(precedence=-1)
 
     _template = """
-    <div id="wizard" style="width: 100%; height: 100%;">${current}</div>
-    <fast-divider style="margin: 1em 0;"></fast-divider>
-    <fast-flipper id="previous" onclick="${_previous}" style="float: left" direction="previous" disabled=${previous_disable}>
-    </fast-flipper>
-    <fast-flipper id="next" onclick="${_next}" style="float: right" disabled=${next_disable}>
-    </fast-flipper>
+    <div id="wizard-content" style="display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
+    <div id="wizard">${current}</div>
+    <div id="wizard-footer" style="margin-top: auto;">
+      <fast-divider style="margin: 1em 0;"></fast-divider>
+      <div style="display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
+      <fast-flipper id="previous" onclick="${_previous}" direction="previous" disabled=${previous_disable}>
+      </fast-flipper>
+      <fast-flipper id="next" onclick="${_next}" disabled=${next_disable}>
+      </fast-flipper>
+      </div>
+    </div>
+    </div>
     """
 
     def __init__(self, **params):

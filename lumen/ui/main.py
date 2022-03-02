@@ -15,9 +15,10 @@ def main():
     (path / 'dashboards').mkdir(parents=True, exist_ok=True)
     (path / 'sources').mkdir(parents=True, exist_ok=True)
     (path / 'targets').mkdir(parents=True, exist_ok=True)
+    (path / 'variables').mkdir(parents=True, exist_ok=True)
     (path / 'views').mkdir(parents=True, exist_ok=True)
     state.modal = pn.Column(sizing_mode='stretch_both')
-    state.spec = {'config': {}, 'sources': {}, 'targets': []}
+    state.spec = {'config': {}, 'variables': {}, 'sources': {}, 'targets': []}
     state.template = FastListTemplate(theme='dark', title='Lumen Builder')
     if not state.launcher:
         state.launcher = LocalLauncher

@@ -68,6 +68,8 @@ class Variable(Component):
 
     variable_type = None
 
+    __abstract = True
+
     def __init__(self, **params):
         if 'value' not in params and 'default' in params:
             params['value'] = params['default']

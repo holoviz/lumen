@@ -19,6 +19,7 @@ from .launcher import Launcher, YAMLLauncher
 from .sources import SourceGallery
 from .state import state
 from .targets import TargetGallery, TargetEditor, TargetGalleryItem
+from .variables import VariablesEditor
 from .views import ViewEditor, ViewGallery, ViewGalleryItem
 
 CSS_RAW = """
@@ -32,6 +33,14 @@ i.fa.fa-plus:hover {
 
 .gallery-item {
   cursor: pointer;
+}
+
+.card-margin {
+  height: calc(100% - 40px);
+}
+
+.bk-root {
+  height: 100% !important;
 }
 """
 
@@ -65,14 +74,15 @@ class Builder(param.Parameterized):
         super().__init__(spec=spec, **params)
 
         self.config = ConfigEditor(spec=self.spec['config'])
+        self.variables = VariablesEditor(spec=self.spec['variables'])
         state.spec = self.spec
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.views = self.views = ViewGallery(**view_params)
         state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
         self.wizard = Wizard(items=[
-            self.welcome, self.config, self.sources, self.views, self.targets, self.launcher
+            self.welcome, self.config, self.variables, self.sources,
+            self.views, self.targets, self.launcher
         ], sizing_mode='stretch_both')
-
 
         preview = pn.widgets.Button(name='Preview', width=100)
         preview.on_click(self._open_dialog)
