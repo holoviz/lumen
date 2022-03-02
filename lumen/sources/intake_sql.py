@@ -34,7 +34,6 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         return source
 
     def _get_sql(self, source):
-        import pdb; pdb.set_trace()
         return pd.DataFrame({'sql':[source._sql_expr]})
     
     @cached()

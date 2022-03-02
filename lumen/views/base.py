@@ -628,13 +628,14 @@ class SQLViewer(Markdown):
     
     def get_value(self):
         val = super().get_value(field='sql')
-        language_tag = '{ sql }'
         
+        #TODO: make syntax highlighting work.
         markdown = f'''
-                   ```sql
+                   ---sql
                    {val}
-                   ```
+                   ---
                    '''
+        
         return markdown
     
 
