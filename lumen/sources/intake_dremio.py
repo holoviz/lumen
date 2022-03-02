@@ -28,12 +28,11 @@ class IntakeDremioSource(IntakeBaseSQLSource):
             password=self.password
         )
 
-    def get_schema(self, table=None):
-        if table is not None:
-            # Fuzzy matching to ignore quoting issues
-            normalized_table = table.replace('"', '').lower()
-            tables = self.get_tables()
-            normalized_tables = [t.replace('"', '').lower() for t in tables]
-            if table not in tables and normalized_table in normalized_tables:
-                table = tables[normalized_tables.index(normalized_table)]
-        return super().get_schema(table)
+    def _get_source(self, table):
+        # Fuzzy matching to ignore quoting issues
+        normalized_table = table.replace('"', '').lower()
+        tables = self.get_tables()
+        normalized_tables = [t.replace('"', '').lower() for t in tables]
+        if table not in tables and normalized_table in normalized_tables:
+            table = tables[normalized_tables.index(normalized_table)]
+        return super()._get_source(table)
