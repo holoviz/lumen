@@ -610,9 +610,7 @@ class Markdown(View):
     """
     
     view_type = 'markdown'
-    
-#     _extension = 'markdown'
-    
+        
     def get_panel(self):
         return pn.pane.Markdown(**self._get_params())
     

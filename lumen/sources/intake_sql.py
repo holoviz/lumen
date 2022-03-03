@@ -1,9 +1,9 @@
+from pandas import DataFrame
+
 from ..transforms.sql import SQLDistinct, SQLLimit, SQLMinMax
 from ..util import get_dataframe_schema
 from .base import cached
 from .intake import IntakeBaseSource, IntakeSource
-import pandas as pd
-
 
 class IntakeBaseSQLSource(IntakeBaseSource):
 
@@ -34,7 +34,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         return source
 
     def _get_sql(self, source):
-        return pd.DataFrame({'sql':[source._sql_expr]})
+        return DataFrame({'sql':[source._sql_expr]})
     
     @cached()
     def get(self, table, **query):
