@@ -17,12 +17,12 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         for sql_transform in sql_transforms:
             sql_expr = sql_transform.apply(sql_expr)
             
-        print(sql_expr)
+        
         return type(source)(**dict(source._init_args, sql_expr=sql_expr))
 
     def _get_source(self, table):
         try:
-            if table[-4:]=='@sql':
+            if table.endswith('@sql'):
                 source = self.cat[table[:-4]]
             else:
                 source = self.cat[table]
@@ -46,7 +46,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         sql_transforms = query.pop('sql_transforms', [])
         source = self._get_source(table)
         source = self._apply_transforms(source, sql_transforms)
-        if table[-4:] =='@sql':
+        if table.endswith('@sql'):
             return self._get_sql(source)
         df = self._read(source)
         return df if dask or not hasattr(df, 'compute') else df.compute()
