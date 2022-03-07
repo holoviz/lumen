@@ -20,11 +20,11 @@ class SQLTransform(Transform):
         
         Parameters
         ----------
-        table: `pandas.DataFrame`
+        sql_in: SQL Select statement to input to transformation.
         
         Returns
         -------
-        A DataFrame with the results of the transformation.
+        SQL statement after application of transformation.
         """
         return cls(**kwargs).apply(sql_in)
 
