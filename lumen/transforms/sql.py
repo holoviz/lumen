@@ -12,6 +12,21 @@ class SQLTransform(Transform):
     """
 
     __abstract = True
+    
+    @classmethod
+    def apply_to(cls, sql_in, **kwargs):
+        """
+        Calls the apply method based on keyword arguments passed to define transform.
+        
+        Parameters
+        ----------
+        table: `pandas.DataFrame`
+        
+        Returns
+        -------
+        A DataFrame with the results of the transformation.
+        """
+        return cls(**kwargs).apply(sql_in)
 
     def __hash__(self):
         """
