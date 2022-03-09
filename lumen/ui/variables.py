@@ -1,5 +1,7 @@
 import param
 
+from panel import Param
+
 from ..variables import Variable, Variables
 from .base import WizardItem
 
@@ -72,10 +74,18 @@ class VariablesEditor(WizardItem):
     def _enable_add(self):
         self.disabled = not bool(self.variable_name)
 
-    def _add_variable(self, event):
+    def _update_variable(self, event):
+        var_spec = event.obj.param.values()
+        self.spec[var_spec.pop('name')] = var_spec
+
+    def _add_variable(self, event=None):
         self.spec[self.variable_name] = spec = {
             'type': self.variable_type, 'name': self.variable_name
         }
-        self.variables[self.variable_name] = Variable.from_spec(spec)
+        variable = Variable.from_spec(spec)
+        var_editor = Param(variable).layout
+        var_editor[0].value = f'{variable.name} ({self.variable_type})'
+        self.variables[self.variable_name] = var_editor
+        variable.param.watch(self._update_variable, list(variable.param))
         self.param.trigger('variables')
         self.variable_name = ''
