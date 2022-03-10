@@ -61,10 +61,13 @@ class Builder(param.Parameterized):
 
     def __init__(self, **params):
         path = params['component_dir']
-        dash_params, source_params, target_params, view_params = {}, {}, {}, {}
+        dash_params, source_params, target_params, var_params, view_params = (
+            {}, {}, {}, {}, {}
+        )
         dash_params['path'] = os.path.join(path, 'dashboards')
         source_params['path'] = os.path.join(path, 'sources')
         target_params['path'] = os.path.join(path, 'targets')
+        var_params['path'] = os.path.join(path, 'variables')
         view_params['path'] = os.path.join(path, 'views')
 
         spec = params.pop('spec', {})
@@ -74,7 +77,7 @@ class Builder(param.Parameterized):
         super().__init__(spec=spec, **params)
 
         self.config = ConfigEditor(spec=self.spec['config'])
-        self.variables = VariablesEditor(spec=self.spec['variables'])
+        self.variables = VariablesEditor(spec=self.spec['variables'], **var_params)
         state.spec = self.spec
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.views = self.views = ViewGallery(**view_params)
