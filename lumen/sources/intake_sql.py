@@ -1,8 +1,9 @@
+from pandas import DataFrame
+
 from ..transforms.sql import SQLDistinct, SQLLimit, SQLMinMax
 from ..util import get_dataframe_schema
 from .base import cached
 from .intake import IntakeBaseSource, IntakeSource
-
 
 class IntakeBaseSQLSource(IntakeBaseSource):
 
@@ -15,11 +16,16 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         sql_expr = source._sql_expr
         for sql_transform in sql_transforms:
             sql_expr = sql_transform.apply(sql_expr)
+            
+        print(sql_expr)
         return type(source)(**dict(source._init_args, sql_expr=sql_expr))
 
     def _get_source(self, table):
         try:
-            source = self.cat[table]
+            if table.endswith('@sql'):
+                source = self.cat[table[:-4]]
+            else:
+                source = self.cat[table]
         except KeyError:
             raise KeyError(
                 f"'{table}' table could not be found in Intake catalog. "
@@ -27,6 +33,9 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             )
         return source
 
+    def get_sql(self, source):
+        return DataFrame({'sql':[source._sql_expr]})
+    
     @cached()
     def get(self, table, **query):
         '''
@@ -37,6 +46,8 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         sql_transforms = query.pop('sql_transforms', [])
         source = self._get_source(table)
         source = self._apply_transforms(source, sql_transforms)
+        if table.endswith('@sql'):
+            return self._get_sql(source)
         df = self._read(source)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 

@@ -351,6 +351,26 @@ class View(Component):
         """
         return pn.panel(self.get_data())
 
+    def get_sql(self):
+        """
+        Returns SQL statement after SQL transforms are applied.
+        Only applicable for sources that support SQL
+        
+        Returns
+        -------
+        String
+            SQL string that the view queries.
+        """
+        if not self.source._supports_sql:
+            raise ValueError(
+                'Can only use sql transforms source that support them. '
+                f'Found source typed {self.source.source_type!r} instead.'
+            )
+            
+        self.get_value(field='sql')
+        
+        
+    
     def update(self, *events, invalidate_cache=True):
         """
         Triggers an update in the View.
