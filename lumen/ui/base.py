@@ -48,7 +48,7 @@ class Wizard(ReactiveHTML):
         ]
 
     def _ready(self, event):
-        self.next_disable = False
+        self.next_disable = not event.obj.ready
         if event.obj.auto_advance:
             self._next()
 

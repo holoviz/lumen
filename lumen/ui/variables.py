@@ -4,6 +4,7 @@ import yaml
 import param
 
 from panel import Param
+from panel.widgets import PasswordInput
 
 from ..variables import Variable, Variables
 from .base import WizardItem
@@ -20,6 +21,8 @@ class VariablesEditor(WizardItem):
     enabled = param.List()
 
     ready = param.Boolean(default=True)
+
+    secure = param.Boolean(default=False)
 
     variable_name = param.String(doc="Enter a name for the variable")
 
@@ -41,6 +44,10 @@ class VariablesEditor(WizardItem):
           <label for="variable-name-${id}"><b>{{ param.variable_name.label }}</b></label>
           <fast-text-field id="variable-name" placeholder="{{ param.variable_name.doc }}" value="${variable_name}">
           </fast-text-field>
+        </div>
+        <div style="display: grid;">
+          <label for="secure-${id}"><b>{{ param.secure.label }}</b></label>
+          <fast-switch id="secure" checked="${secure}"></fast-switch>
         </div>
         <div style="display: flex;">
           <div style="display: grid; flex: auto;">
@@ -70,6 +77,8 @@ class VariablesEditor(WizardItem):
     </div>
     """
 
+    _dom_events = {'variable-name': ['keyup']}
+
     _scripts = {
         'toggle': """
           var variable = event.target.id.split('-')[1]
@@ -84,8 +93,6 @@ class VariablesEditor(WizardItem):
           data.enabled = enabled
         """
     }
-
-    _dom_events = {'variable-name': ['keyup']}
 
     _glob_pattern = '*.y*ml'
 
@@ -110,43 +117,57 @@ class VariablesEditor(WizardItem):
                 self._add_from_spec(dict(name=varname, **varspec))
 
     def _get_varspec(self, var):
-        return {
+        spec =  {
             k: v for k, v in self._variables[var].param.values().items() if k != 'value'
         }
+        if spec.pop('materialize', False):
+            spec = {'name': spec['name'], 'default': spec['default'], 'type': 'constant'}
+        return spec
 
     @param.depends('enabled', watch=True)
-    def _update_enabled(self):
+    def _update_enabled(self, *events):
         self.spec.clear()
         var_specs = {var: self._get_varspec(var) for var in self.enabled}
         self.spec.update(var_specs)
+        ready = True
+        for name in self.enabled:
+            var = self._variables[name]
+            if var.required and not var.value:
+                ready = False
+        self.ready = ready
 
     @param.depends('variable_name', watch=True)
     def _enable_add(self):
         self.disabled = not bool(self.variable_name)
 
-    def _update_variable(self, event):
-        if event.obj.name not in enabled:
-            return
-        var_spec = event.obj.param.values()
-        self.spec[var_spec.pop('name')] = var_spec
-
     def _add_variable(self, event=None):
         spec = {
             'type': self.variable_type,
-            'name': self.variable_name
+            'name': self.variable_name,
+            'secure': self.secure
         }
         self._add_from_spec(spec)
         self.variable_name = ''
 
     def _add_from_spec(self, spec, enable=False):
-        varname, vartype = spec['name'], spec['type']
+        varname, vartype, secure = spec['name'], spec['type'], spec.get('secure', False)
         variable = Variable.from_spec(spec)
+        if 'key' in variable.param and not variable.key:
+            variable.key = variable.name
+        variable.default = variable.value
         self._variables[varname] = variable
-        params = [p for p in variable.param if p not in ('name', 'value')]
-        var_editor = Param(variable, parameters=params).layout
+        params = [
+            p for p in variable.param if p not in (
+                'name', 'materialize', 'required', 'secure', 'value'
+            )
+        ]
+        widgets = {}
+        if secure:
+            widgets['default'] = PasswordInput
+        var_editor = Param(variable, parameters=params, widgets=widgets).layout
         var_editor[0].value = f'{varname} ({vartype})'
         self.variables[varname] = var_editor
-        variable.param.watch(self._update_variable, list(variable.param))
+        variable.param.watch(self._update_enabled, list(variable.param))
         if enable:
             self.enabled = self.enabled + [varname]
         self.param.trigger('variables')
