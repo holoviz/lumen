@@ -1,10 +1,14 @@
-from ..transforms.sql import SQLDistinct, SQLLimit, SQLMinMax
+import param
+
+from ..transforms.sql import SQLDistinct, SQLFilter, SQLLimit, SQLMinMax
 from ..util import get_dataframe_schema
 from .base import cached
 from .intake import IntakeBaseSource, IntakeSource
 
 
 class IntakeBaseSQLSource(IntakeBaseSource):
+
+    filter_in_sql = param.Boolean(default=True, doc="")
 
     # Declare this source supports SQL transforms
     _supports_sql = True
@@ -36,8 +40,12 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         dask = query.pop('__dask', self.dask)
         sql_transforms = query.pop('sql_transforms', [])
         source = self._get_source(table)
+        if self.filter_in_sql:
+            sql_transforms = [SQLFilter(conditions=list(query.items()))] + sql_transforms
         source = self._apply_transforms(source, sql_transforms)
         df = self._read(source)
+        if not self.filter_in_sql:
+            self._filter_dataframe(df, **query)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
     def get_schema(self, table=None):
