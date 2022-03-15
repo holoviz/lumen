@@ -140,6 +140,77 @@ class Transform(Component):
         return refs
 
 
+class Filter(Transform):
+    """
+    Transform that applies the query values from Lumen Filter
+    components to a dataframe. The filter values can be one of the
+    following:
+
+      * scalar: A scalar value will be matched using equality operators
+      * tuple:  A tuple value specifies a numeric or date range.
+      * list:   A list value specifies a set of categories to match against.
+      * list(tuple): A list of tuples specifies a list of ranges.
+    """
+
+    conditions = param.List(doc="""
+      List of filter conditions expressed as tuples of the column
+      name and the filter value.""")
+
+    @classmethod
+    def _range_filter(cls, column, start, end):
+        if column.dtype.kind == 'M':
+            if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+                start = dt.datetime(*start.timetuple()[:3], 0, 0, 0)
+            if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+                end = dt.datetime(*end.timetuple()[:3], 23, 59, 59)
+        if start is None and end is None:
+            return None
+        elif start is None:
+            mask = column<=end
+        elif end is None:
+            mask = column>=start
+        else:
+            print(column.compute(), (column>=start).compute(), (column<=end).compute())
+            mask = (column>=start) & (column<=end)
+        return mask
+
+    def apply(self, df):
+        filters = []
+        for k, val in self.conditions:
+            if k not in df.columns:
+                continue
+            column = df[k]
+            if np.isscalar(val) or isinstance(val, dt.date):
+                if (column.dtype.kind == 'M' and isinstance(val, dt.date)
+                    and not isinstance(val, dt.datetime)):
+                    val = dt.datetime(*val.timetuple()[:3], 0, 0, 0)
+                mask = column == val
+            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
+                val = [v for v in val if v is not None]
+                if not val:
+                    continue
+                mask = self._range_filter(column, *val[0])
+                for v in val[1:]:
+                    mask |= self._range_filter(column, *v)
+                if mask is not None:
+                    filters.append(mask)
+                continue
+            elif isinstance(val, list):
+                if not val:
+                    continue
+                mask = column.isin(val)
+            elif isinstance(val, tuple):
+                mask = self._range_filter(column, *val)
+            if mask is not None:
+                filters.append(mask)
+        if filters:
+            mask = filters[0]
+            for f in filters[1:]:
+                mask &= f
+            df = df[mask]
+        return df
+
+
 class HistoryTransform(Transform):
     """
     The HistoryTransform accumulates a history of the queried data in

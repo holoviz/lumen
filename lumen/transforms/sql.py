@@ -153,7 +153,9 @@ class SQLFilter(SQLTransform):
     Translates Lumen Filter query into a SQL WHERE statement.
     """
 
-    conditions = param.List()
+    conditions = param.List(doc="""
+      List of filter conditions expressed as tuples of the column
+      name and the filter value.""")
 
     @classmethod
     def _range_filter(cls, col, v1, v2):

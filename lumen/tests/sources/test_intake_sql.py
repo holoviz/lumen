@@ -100,7 +100,7 @@ def test_intake_sql_filter_datetime_range():
         uri=os.path.join(root, 'catalog.yml'), root=root
     )
     df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', D=(dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 3)))
+    filtered = source.get('test_sql', D=(dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)))
     expected = df.iloc[1:3].reset_index(drop=True)
     pd.testing.assert_frame_equal(filtered, expected)
 
@@ -110,7 +110,7 @@ def test_intake_sql_filter_date_range():
         uri=os.path.join(root, 'catalog.yml'), root=root
     )
     df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', D=(dt.date(2009, 1, 2), dt.date(2009, 1, 3)))
+    filtered = source.get('test_sql', D=(dt.date(2009, 1, 2), dt.date(2009, 1, 5)))
     expected = df.iloc[1:3].reset_index(drop=True)
     pd.testing.assert_frame_equal(filtered, expected)
 

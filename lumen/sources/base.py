@@ -20,7 +20,7 @@ import requests
 from ..base import Component
 from ..filters import Filter
 from ..state import state
-from ..transforms import Transform
+from ..transforms import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 
 
@@ -52,7 +52,9 @@ def cached(with_query=True):
                 self._set_cache(df, table, **cache_query)
             filtered = df
             if (not with_query or no_query) and query:
-                filtered = self._filter_dataframe(df, **query)
+                filtered = FilterTransform.apply_to(
+                    df, conditions=list(query.items())
+                )
             if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
                 return filtered
             return filtered.compute()
@@ -99,67 +101,6 @@ class Source(Component):
     def _update_ref(self, pname, event):
         self.clear_cache()
         super()._update_ref(pname, event)
-
-    @classmethod
-    def _range_filter(cls, column, start, end):
-        if start is None and end is None:
-            return None
-        elif start is None:
-            mask = column<=end
-        elif end is None:
-            mask = column>=start
-        else:
-            mask = (column>=start) & (column<=end)
-        return mask
-
-    @classmethod
-    def _filter_dataframe(cls, df, **query):
-        """
-        Filter the DataFrame.
-
-        Parameters
-        ----------
-        df : DataFrame
-           The DataFrame to filter
-        query : dict
-            A dictionary containing all the query parameters
-
-        Returns
-        -------
-        DataFrame
-            The filtered DataFrame
-        """
-        filters = []
-        for k, val in query.items():
-            if k not in df.columns:
-                continue
-            column = df[k]
-            if np.isscalar(val):
-                mask = column == val
-            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                val = [v for v in val if v is not None]
-                if not val:
-                    continue
-                mask = cls._range_filter(column, *val[0])
-                for v in val[1:]:
-                    mask |= cls._range_filter(column, *v)
-                if mask is not None:
-                    filters.append(mask)
-                continue
-            elif isinstance(val, list):
-                if not val:
-                    continue
-                mask = column.isin(val)
-            elif isinstance(val, tuple):
-                mask = cls._range_filter(column, *val)
-            if mask is not None:
-                filters.append(mask)
-        if filters:
-            mask = filters[0]
-            for f in filters[1:]:
-                mask &= f
-            df = df[mask]
-        return df
 
     @classmethod
     def _recursive_resolve(cls, spec, source_type):
@@ -542,7 +483,7 @@ class FileSource(Source):
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
-        df = self._filter_dataframe(df, **query)
+        df = FilterTransform.apply_to(df, conditions=list(query.items()))
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
@@ -920,9 +861,10 @@ class DerivedSource(Source):
             transforms = self.tables[table].get('transforms', []) + self.transforms
         else:
             transforms = self.transforms
+        transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
             df = transform.apply(df)
-        return self._filter_dataframe(df, **query)
+        return df
 
     get.__doc__ = Source.get.__doc__
 
