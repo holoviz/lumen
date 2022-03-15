@@ -193,7 +193,8 @@ class SQLFilter(SQLTransform):
                 condition = self._range_filter(col, *val)
             else:
                 self.param.warning(
-                    'Condition {val!r} on {col!r} column not understood.'
+                    'Condition {val!r} on {col!r} column not understood. '
+                    'Filter query will not be applied.'
                 )
                 continue
             conditions.append(condition)

@@ -201,6 +201,12 @@ class Filter(Transform):
                 mask = column.isin(val)
             elif isinstance(val, tuple):
                 mask = self._range_filter(column, *val)
+            else:
+                self.param.warning(
+                    'Condition {val!r} on {col!r} column not understood. '
+                    'Filter query will not be applied.'
+                )
+                continue
             if mask is not None:
                 filters.append(mask)
         if filters:
