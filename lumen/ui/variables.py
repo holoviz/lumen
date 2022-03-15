@@ -6,7 +6,7 @@ import param
 from panel import Param
 from panel.widgets import PasswordInput
 
-from ..variables import Variable, Variables
+from ..variables import Variable
 from .base import WizardItem
 from ..util import expand_spec
 
@@ -75,7 +75,7 @@ class VariablesEditor(WizardItem):
         {% endfor %}
       </div>
     </div>
-    """
+    """ # noqa
 
     _dom_events = {'variable-name': ['keyup']}
 
