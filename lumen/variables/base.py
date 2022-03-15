@@ -64,14 +64,31 @@ class Variable(Component):
     default = param.Parameter(doc="""
        Default value to use if no other value is defined""")
 
+    materialize = param.Boolean(default=False, constant=True, doc="""
+       Whether the variable should be inlined as a constant variable
+       (in the Lumen Builder).""")
+
+    required = param.Boolean(default=False, constant=True, doc="""
+       Whether the variable should be treated as required.""")
+
+    secure = param.Boolean(default=False, constant=True, doc="""
+       Whether the variable should be treated as secure.""")
+
     value = param.Parameter()
 
     variable_type = None
+
+    __abstract = True
 
     def __init__(self, **params):
         if 'value' not in params and 'default' in params:
             params['value'] = params['default']
         super().__init__(**params)
+        self.param.watch(self._update_value_from_default, 'default')
+
+    def _update_value_from_default(self, event):
+        if event.old is self.value or self.value is self.param.value.default:
+            self.value = event.new
 
     @classmethod
     def from_spec(cls, spec, variables=None):
@@ -89,6 +106,9 @@ class Variable(Component):
                 val = state.resolve_reference(val, variables)
             resolved_spec[k] = val
         return var_type(refs=refs, **resolved_spec)
+
+    def as_materialized(self):
+        return Constant(default=self.value)
 
     @property
     def panel(self):
