@@ -2,7 +2,7 @@ import intake
 import param
 
 from ..util import get_dataframe_schema
-from .base import Source, cached
+from .base import Source, cached, cached_schema
 
 
 class IntakeBaseSource(Source):
@@ -26,6 +26,7 @@ class IntakeBaseSource(Source):
     def get_tables(self):
         return list(self.cat)
 
+    @cached_schema
     def get_schema(self, table=None):
         schemas = {}
         for entry in list(self.cat):

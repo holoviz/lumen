@@ -6,7 +6,7 @@ import requests
 from ae5_tools.api import AEAdminSession, AEUserSession
 from panel import state
 
-from .base import Source, cached
+from .base import Source, cached, cached_schema
 from ..util import get_dataframe_schema
 
 
@@ -212,6 +212,7 @@ class AE5Source(Source):
             raise ValueError(f"AE5Source has no '{table}' table, choose from {repr(self._tables)}.")
         return getattr(self, f'_get_{table}')()
 
+    @cached_schema
     def get_schema(self, table=None):
         schemas = {}
         for t in self._tables:
