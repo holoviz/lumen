@@ -37,7 +37,6 @@ def test_intake_sql_get_schema():
         'inclusiveMinimum': '2009-01-01T00:00:00',
         'type': 'string'
     })
-        
     assert source.get_schema('test_sql') == expected_sql
     assert 'test' not in source._schema_cache
     assert 'test_sql' in source._schema_cache

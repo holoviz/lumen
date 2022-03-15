@@ -69,7 +69,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             if not hasattr(source, '_sql_expr'):
                 schemas[entry] = super().get_schema(table)
                 continue
-            data = self._read(source)
+            data = self._read(self._apply_transforms(source, [limit]))
             schema = get_dataframe_schema(data)['items']['properties']
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
