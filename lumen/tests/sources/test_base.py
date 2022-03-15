@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import hashlib
 
@@ -72,3 +73,75 @@ def test_file_source_get_query_dask_cache(make_filesource):
         source._cache[('test', 'A', (1, 2))].compute(),
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
+
+def test_file_source_filter_int(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', A=1)
+    expected = df[df.A==1]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_str(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', C='foo2')
+    expected = df[df.C=='foo2']
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_int_range(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', A=(1, 3))
+    expected = df[(df.A>=1) & (df.A<=3)]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_date(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', D=dt.date(2009, 1, 2))
+    expected = df.iloc[1:2]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_datetime(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', D=dt.datetime(2009, 1, 2))
+    expected = df.iloc[1:2]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_datetime_range(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', D=(dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)))
+    expected = df.iloc[1:3]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_date_range(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', D=(dt.date(2009, 1, 2), dt.date(2009, 1, 5)))
+    expected = df.iloc[1:3]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_int_range_list(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', A=[(0, 1), (3, 4)])
+    expected = df[((df.A>=0) & (df.A<=1)) | ((df.A>=3) & (df.A<=4))]
+    pd.testing.assert_frame_equal(filtered, expected)
+
+def test_file_source_filter_list(make_filesource, cachedir):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    df = pd._testing.makeMixedDataFrame()
+    filtered = source.get('test', C=['foo1', 'foo3'])
+    expected = df[df.C.isin(['foo1', 'foo3'])]
+    pd.testing.assert_frame_equal(filtered, expected)

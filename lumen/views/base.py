@@ -25,7 +25,7 @@ from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..sources import Source
 from ..state import state
-from ..transforms import Transform
+from ..transforms import Filter, Transform
 from ..util import is_ref
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
@@ -301,7 +301,7 @@ class View(Component):
         for transform in self.transforms:
             data = transform.apply(data)
         if len(data):
-            data = self.source._filter_dataframe(data, **query)
+            data = Filter.apply_to(data, conditions=list(query.items()))
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
