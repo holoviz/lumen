@@ -66,8 +66,17 @@ def cached_schema(method):
     @wraps(method)
     def wrapped(self, table=None):
         schema = self._get_schema_cache()
-        if schema is None:
-            schema = method(self)
+        if schema is None or (table is not None and table not in schema):
+            schema = schema or {}
+            if table is None:
+                missing_tables = [
+                    table for table in self.get_tables()
+                    if table not in schema
+                ]
+            else:
+                missing_tables = [table]
+            for missing_table in missing_tables:
+                schema[missing_table] = method(self, missing_table)
             self._set_schema_cache(schema)
         if table is None:
             return schema
@@ -262,6 +271,7 @@ class Source(Component):
             The list of available tables on this source.
         """
 
+    @cached_schema
     def get_schema(self, table=None):
         """
         Returns JSON schema describing the tables returned by the
@@ -314,6 +324,7 @@ class RESTSource(Source):
 
     source_type = 'rest'
 
+    @cached_schema
     def get_schema(self, table=None):
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
@@ -551,6 +562,7 @@ class WebsiteSource(Source):
 
     source_type = 'live'
 
+    @cached_schema
     def get_schema(self, table=None):
         schema = {
             "status": {
@@ -587,6 +599,7 @@ class PanelSessionSource(Source):
 
     source_type = 'session_info'
 
+    @cached_schema
     def get_schema(self, table=None):
         schema = {
             "summary": {
@@ -721,6 +734,7 @@ class JoinedSource(Source):
     def get_tables(self):
         return list(self.tables)
 
+    @cached_schema
     def get_schema(self, table=None):
         schemas = {}
         for name, specs in self.tables.items():

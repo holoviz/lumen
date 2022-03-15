@@ -33,6 +33,8 @@ def make_filesource():
         return source
     yield create
     config._root = root
+    for source in state.global_sources.values():
+        source.clear_cache()
     state.global_sources.clear()
 
 
@@ -51,6 +53,8 @@ def make_variable_filesource():
         return source
     yield create
     config._root = root
+    for source in state.global_sources.values():
+        source.clear_cache()
     state.global_sources.clear()
     state._variables.clear()
 
