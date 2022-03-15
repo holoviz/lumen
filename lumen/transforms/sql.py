@@ -173,7 +173,7 @@ class SQLFilter(SQLTransform):
             if np.isscalar(val):
                 condition = f'{col} = {val!r}'
             elif isinstance(val, dt.datetime):
-                 condition = f'{col} = {str(val)!r}'
+                condition = f'{col} = {str(val)!r}'
             elif isinstance(val, dt.date):
                 condition = f"{col} BETWEEN '{str(val)} 00:00:00' AND '{str(val)} 23:59:59'"
             elif (isinstance(val, list) and all(
