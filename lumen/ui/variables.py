@@ -117,12 +117,12 @@ class VariablesEditor(WizardItem):
                 self._add_from_spec(dict(name=varname, **varspec))
 
     def _get_varspec(self, var):
-        spec =  {
-            k: v for k, v in self._variables[var].param.values().items() if k != 'value'
+        variable = self._variables[var]
+        if variable.materialize:
+            variable = variable.as_materialized()
+        return {
+            k: v for k, v in variable.param.values().items() if k != 'value'
         }
-        if spec.pop('materialize', False):
-            spec = {'name': spec['name'], 'default': spec['default'], 'type': 'constant'}
-        return spec
 
     @param.depends('enabled', watch=True)
     def _update_enabled(self, *events):
