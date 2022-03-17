@@ -18,7 +18,9 @@ class Component(param.Parameterized):
         self._refs = params.pop('refs', {})
         super().__init__(**params)
         for p, ref in self._refs.items():
-            if isinstance(ref, str) and ref.startswith('$variables.'):
+            if isinstance(state.variables, dict):
+                continue
+            elif isinstance(ref, str) and ref.startswith('$variables.'):
                 ref = ref.split('$variables.')[1]
                 state.variables.param.watch(partial(self._update_ref, p), ref)
 
