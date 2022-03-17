@@ -104,6 +104,8 @@ class Variable(Component):
             if is_ref(val):
                 refs[k] = val
                 val = state.resolve_reference(val, variables)
+                if isinstance(val, Variable):
+                    val = val.value
             resolved_spec[k] = val
         return var_type(refs=refs, **resolved_spec)
 
