@@ -151,7 +151,7 @@ class VariablesEditor(WizardItem):
 
     def _add_from_spec(self, spec, enable=False):
         varname, vartype, secure = spec['name'], spec['type'], spec.get('secure', False)
-        variable = Variable.from_spec(spec)
+        variable = Variable.from_spec(spec, self._variables)
         if 'key' in variable.param and not variable.key:
             variable.key = variable.name
         variable.default = variable.value
