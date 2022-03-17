@@ -108,6 +108,11 @@ class Variable(Component):
         return var_type(refs=refs, **resolved_spec)
 
     def as_materialized(self):
+        """
+        If the variable is to be materialized by the builder this
+        implements the conversion from a variable that references
+        some external value to a materialized value.
+        """
         return Constant(default=self.value)
 
     @property
