@@ -188,7 +188,8 @@ class SQLFilter(SQLTransform):
             elif isinstance(val, list):
                 if not val:
                     continue
-                condition = f'{col} IN {tuple(val)!r}'
+                val = [f'\'{v}\'' for v in val]
+                condition = f'''{col} IN ({', '.join(val)})'''
             elif isinstance(val, tuple):
                 condition = self._range_filter(col, *val)
             else:
@@ -198,9 +199,9 @@ class SQLFilter(SQLTransform):
                 )
                 continue
             conditions.append(condition)
-        if not self.conditions:
+        if not conditions:
             return sql_in
-        print(conditions)
+        
         template = """
             SELECT
                 *
