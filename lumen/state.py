@@ -166,10 +166,14 @@ class _session_state:
     def resolve_reference(self, reference, variables=None):
         if not is_ref(reference):
             raise ValueError('References should be prefixed by $ symbol.')
+        from .variables import Variable
         refs = reference[1:].split('.')
         vars = variables or self.variables
         if refs[0] == 'variables':
-            return vars[refs[1]]
+            value = vars[refs[1]]
+            if isinstance(value, Variable):
+                value = value.value
+            return value
         return self._resolve_source_ref(refs)
 
 
