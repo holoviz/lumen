@@ -2,11 +2,13 @@ import pathlib
 import yaml
 
 import param
+import panel as pn
 
 from panel import Param
 from panel.widgets import PasswordInput
 
-from ..variables import Variable
+from ..state import state
+from ..variables import Variable, Variables
 from .base import WizardItem
 from ..util import expand_spec
 
@@ -104,7 +106,7 @@ class VariablesEditor(WizardItem):
         ]
         if self.variable_type is None and types:
             self.variable_type = types[0]
-        self._variables = {}
+        self._variables = state._variables[pn.state.curdoc] = Variables()
         path = params.get('path', self.path)
         components = pathlib.Path(path).glob(self._glob_pattern)
         for source in components:
@@ -152,10 +154,10 @@ class VariablesEditor(WizardItem):
     def _add_from_spec(self, spec, enable=False):
         varname, vartype, secure = spec['name'], spec['type'], spec.get('secure', False)
         variable = Variable.from_spec(spec, self._variables)
+        self._variables.add_variable(variable)
         if 'key' in variable.param and not variable.key:
             variable.key = variable.name
         variable.default = variable.value
-        self._variables[varname] = variable
         params = [
             p for p in variable.param if p not in (
                 'name', 'materialize', 'required', 'secure', 'value'
