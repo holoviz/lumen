@@ -20,34 +20,48 @@ _PARAM_MAP = {
 
 
 class Variables(param.Parameterized):
+    """
+    The Variables component stores a number Variable types and mirrors
+    their values onto dynamically created parameters allowing other
+    components to easily watch changes in a variable.
+    """
 
-    def __init__(self, **vars):
-        super().__init__()
-        for p, var in vars.items():
-            vtype = type(var.value)
-            ptype = _PARAM_MAP.get(vtype, param.Parameter)
-            self.param.add_parameter(p, ptype())
-            var.param.watch(partial(self._update_value, p), 'value')
-            var.param.trigger('value')
-        self._vars = vars
-
-    def _update_value(self, p, event):
-        self.param.update({p: event.new})
-
-    def __getitem__(self, key):
-        return getattr(self, key)
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._vars = {}
 
     @classmethod
     def from_spec(cls, spec):
-        vars = {}
+        variables = cls()
+        if pn.state.curdoc:
+            state._variables[pn.state.curdoc] = variables
         for name, var_spec in spec.items():
             if not isinstance(var_spec, dict):
                 var_spec = {
                     'type': 'constant',
                     'default': var_spec
                 }
-            vars[name] = Variable.from_spec(dict(var_spec, name=name), vars)
-        return cls(**vars)
+            var = Variable.from_spec(dict(var_spec, name=name), variables)
+            variables.add_variable(var)
+        return variables
+
+    def add_variable(self, var):
+        """
+        Adds a new variable to the Variables instance and sets up
+        a parameter that can be watched.
+        """
+        self._vars[var.name] = var
+        self.param.add_parameter(var.name, param.Parameter(default=var.value))
+        var.param.watch(partial(self._update_value, var.name), 'value')
+
+    def _update_value(self, name, event):
+        self.param.update({name: event.new})
+
+    def __getitem__(self, key):
+        if key in self.param:
+            return getattr(self, key)
+        else:
+            raise KeyError(f'No variable named {key!r} has been defined.')
 
     @property
     def panel(self):
@@ -60,6 +74,14 @@ class Variables(param.Parameterized):
 
 
 class Variable(Component):
+    """
+    A Variable may declare a static or dynamic value that can be
+    referenced from other components. The source of the Variable value
+    can be anything from an environment variable to a widget or URL
+    parameter. Variable components allow a concise way to configure
+    other components and make it possible to orchestrate actions across
+    multiple components.
+    """
 
     default = param.Parameter(doc="""
        Default value to use if no other value is defined""")
@@ -74,7 +96,8 @@ class Variable(Component):
     secure = param.Boolean(default=False, constant=True, doc="""
        Whether the variable should be treated as secure.""")
 
-    value = param.Parameter()
+    value = param.Parameter(doc="""
+       The materialized value of the variable.""")
 
     variable_type = None
 
