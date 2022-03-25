@@ -216,8 +216,14 @@ class Source(Component):
         if self.cache_dir:
             path = Path(os.path.join(self.root, self.cache_dir))
             path.mkdir(parents=True, exist_ok=True)
-            with open(path / f'{self.name}.json', 'w') as f:
-                json.dump(schema, f, default=str)
+            try:
+                with open(path / f'{self.name}.json', 'w') as f:
+                    json.dump(schema, f, default=str)
+            except Exception as e:
+                self.param.warning(
+                    f"Could not cache schema to disk. Error while "
+                    f"serializing schema to disk: {e}"
+                )
 
     def _get_cache(self, table, **query):
         query.pop('__dask', None)
@@ -259,8 +265,10 @@ class Source(Component):
                     path.unlink()
                 elif path.is_dir():
                     shutil.rmtree(path)
-                self.param.warning(f"Could not cache '{table}' to parquet"
-                                   f"file. Error during saving process: {e}")
+                self.param.warning(
+                    f"Could not cache '{table}' to parquet file. "
+                    f"Error during saving process: {e}"
+                )
 
     def clear_cache(self):
         """
