@@ -192,11 +192,14 @@ class Widget(Variable):
         else:
             widget_type = getattr(pn.widgets, kind)
         if 'value' not in params:
-            params['default'] = default
+            params['value'] = default
         deserialized = {}
         for k, v in params.items():
             if k in widget_type.param:
-                v = widget_type.param[k].deserialize(v)
+                try:
+                    v = widget_type.param[k].deserialize(v)
+                except Exception:
+                    pass
             deserialized[k] = v
         self._widget = widget_type(**deserialized)
         self._widget.link(self, value='value', bidirectional=True)
