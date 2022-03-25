@@ -452,17 +452,23 @@ class Target(param.Parameterized):
         if init:
             rerender_cache = partial(self._rerender, invalidate_cache=True)
             transforms = []
+            rerender_vars = set()
             for view in linked_views:
-                if view.refs:
-                    view.param.watch(rerender_cache, view.refs)
-                for transform in view.transforms:
-                    if transform.refs and not transform in transforms:
-                        transforms.append(transform)
-                        transform.param.watch(rerender_cache, transform.refs)
-                for transform in view.sql_transforms:
-                    if transform.refs and not transform in transforms:
-                        transforms.append(transform)
-                        transform.param.watch(rerender_cache, transform.refs)
+                rerender_vars |= set(view._refs.values())
+                if view.controls:
+                    view.param.watch(rerender_cache, view.controls)
+                for transform in view.transforms+view.sql_transforms:
+                    if not transform.refs or transform in transforms:
+                        continue
+                    transforms.append(transform)
+                    rerender_vars |= set(transform._refs.values())
+                    if transform.controls:
+                        transform.param.watch(rerender_cache, transform.controls)
+            refs = [
+                var.split('.')[1] for var in rerender_vars
+                if var.startswith('$variables.')
+            ]
+            state.variables.param.watch(rerender_cache, refs)
 
         self._view_controls[:] = controls
 
