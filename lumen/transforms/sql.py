@@ -188,8 +188,7 @@ class SQLFilter(SQLTransform):
             elif isinstance(val, list):
                 if not val:
                     continue
-                val = [f'\'{v}\'' for v in val]
-                condition = f'''{col} IN ({', '.join(val)})'''
+                condition = f"{col} IN ({', '.join(map(repr, val))})"
             elif isinstance(val, tuple):
                 condition = self._range_filter(col, *val)
             else:
