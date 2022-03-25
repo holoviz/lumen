@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import pathlib
 import re
 import shutil
 import sys
@@ -188,22 +189,42 @@ class Source(Component):
         return key
 
     def _get_schema_cache(self):
-        if self._schema_cache:
-            return self._schema_cache
-        elif self.cache_dir:
+        schema = self._schema_cache if self._schema_cache else None
+        if self.cache_dir:
             path = os.path.join(self.root, self.cache_dir, f'{self.name}.json')
-            if os.path.isfile(path):
-                with open(path) as f:
-                    return json.load(f)
-        return None
+            if not os.path.isfile(path):
+                return schema
+            with open(path) as f:
+                json_schema = json.load(f)
+            if schema is None:
+                schema = {}
+            for table, tschema in json_schema.items():
+                if table in schema:
+                    continue
+                for col, cschema in tschema.items():
+                    if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
+                        cschema['inclusiveMinimum'] = pd.to_datetime(
+                            cschema['inclusiveMinimum']
+                        )
+                        cschema['inclusiveMaximum'] = pd.to_datetime(
+                            cschema['inclusiveMaximum']
+                        )
+                schema[table] = tschema
+        return schema
 
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
         if self.cache_dir:
             path = Path(os.path.join(self.root, self.cache_dir))
             path.mkdir(parents=True, exist_ok=True)
-            with open(path / f'{self.name}.json', 'w') as f:
-                json.dump(schema, f)
+            try:
+                with open(path / f'{self.name}.json', 'w') as f:
+                    json.dump(schema, f, default=str)
+            except Exception as e:
+                self.param.warning(
+                    f"Could not cache schema to disk. Error while "
+                    f"serializing schema to disk: {e}"
+                )
 
     def _get_cache(self, table, **query):
         query.pop('__dask', None)
@@ -218,7 +239,7 @@ class Source(Component):
                 filename = f'{table}.parq'
             path = os.path.join(self.root, self.cache_dir, filename)
             if os.path.isfile(path) or os.path.isdir(path):
-                if 'dask.dataframe' in sys.modules:
+                if 'dask.dataframe' in sys.modules or os.path.isdir(path):
                     import dask.dataframe as dd
                     return dd.read_parquet(path), not bool(query)
                 return pd.read_parquet(path), not bool(query)
@@ -236,11 +257,19 @@ class Source(Component):
                 filename = f'{sha}_{table}.parq'
             else:
                 filename = f'{table}.parq'
+            filepath = os.path.join(path, filename)
             try:
-                data.to_parquet(os.path.join(path, filename))
+                data.to_parquet(filepath)
             except Exception as e:
-                self.param.warning(f"Could not cache '{table}' to parquet"
-                                   f"file. Error during saving process: {e}")
+                path = pathlib.Path(filepath)
+                if path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    shutil.rmtree(path)
+                self.param.warning(
+                    f"Could not cache '{table}' to parquet file. "
+                    f"Error during saving process: {e}"
+                )
 
     def clear_cache(self):
         """
