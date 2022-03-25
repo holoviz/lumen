@@ -119,7 +119,7 @@ class VariablesEditor(WizardItem):
                 self._add_from_spec(dict(name=varname, **varspec))
 
     def _get_varspec(self, var):
-        variable = self._variables[var]
+        variable = self._variables._vars[var]
         if variable.materialize:
             variable = variable.as_materialized()
         return {
@@ -133,7 +133,7 @@ class VariablesEditor(WizardItem):
         self.spec.update(var_specs)
         ready = True
         for name in self.enabled:
-            var = self._variables[name]
+            var = self._variables._vars[name]
             if var.required and not var.value:
                 ready = False
         self.ready = ready
