@@ -183,7 +183,7 @@ class Widget(Variable):
     def __init__(self, **params):
         default = params.pop('default', None)
         refs = params.pop('refs', {})
-        super().__init__(default=default, refs=refs)
+        super().__init__(default=default, refs=refs, name=params.get('name'))
         kind = params.pop('kind', None)
         if kind is None:
             raise ValueError("A Widget Variable type must declare the kind of widget.")
