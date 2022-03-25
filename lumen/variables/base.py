@@ -191,7 +191,7 @@ class Widget(Variable):
             widget_type = resolve_module_reference(kind, _PnWidget)
         else:
             widget_type = getattr(pn.widgets, kind)
-        if 'value' not in params:
+        if 'value' not in params and default is not None:
             params['value'] = default
         deserialized = {}
         for k, v in params.items():
