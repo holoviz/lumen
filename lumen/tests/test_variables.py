@@ -59,11 +59,12 @@ def test_widget_variable_linking_unthrottled():
     assert var._widget.value == 4
 
 
-def test_widget_variable_linking_unthrottled():
+def test_widget_variable_linking_throttled():
     var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider'})
 
     with param.edit_constant(var._widget):
         var._widget.value_throttled = 3
+
     assert var.value == 3
 
     var.value = 4
