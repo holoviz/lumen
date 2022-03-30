@@ -176,6 +176,11 @@ class BaseWidgetFilter(Filter):
     disabled = param.Boolean(default=False, doc="""
         Whether the filter should be disabled.""")
 
+    throttled = param.Boolean(default=True, doc="""
+       If the widget has a value_throttled parameter use that instead,
+       ensuring that no intermediate events are generated, e.g. when
+       dragging a slider.""")
+
     visible = param.Boolean(default=True, doc="""
         Whether the filter should be visible.""")
 
@@ -193,7 +198,12 @@ class BaseWidgetFilter(Filter):
     @property
     def panel(self):
         widget = self.widget.clone()
-        self.widget.link(widget, value='value', visible='visible', disabled='disabled', bidirectional=True)
+        if self.throttled and 'value_throttled' in self.widget.param:
+            widget.link(self.widget, value_throttled='value')
+            self.widget.link(widget, value='value')
+            self.widget.link(widget, visible='visible', disabled='disabled', bidirectional=True)
+        else:
+            self.widget.link(widget, value='value', visible='visible', disabled='disabled', bidirectional=True)
         return widget
 
 
@@ -213,11 +223,6 @@ class WidgetFilter(BaseWidgetFilter):
         e.g. for a numeric value this could be a regular slider or a
         range slider.""")
 
-    throttled = param.Boolean(default=True, doc="""
-       If the widget has a value_throttled parameter use that instead,
-       ensuring that no intermediate events are generated, e.g. when
-       dragging a slider.""")
-
     widget = param.ClassSelector(class_=pn.widgets.Widget)
 
     filter_type = 'widget'
@@ -233,10 +238,7 @@ class WidgetFilter(BaseWidgetFilter):
         self.widget.name = self.label
         self.widget.visible = self.visible
         self.widget.disabled = self.disabled
-        links = dict(value='value', visible='visible', disabled='disabled')
-        if self.throttled and 'value_throttled' in self.widget.param:
-            links['value_throttled'] = links.pop('value')
-        self.widget.link(self, bidirectional=True, **links)
+        self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
         if self.default is not None:
             self.widget.value = self.default
 

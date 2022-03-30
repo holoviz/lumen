@@ -1,5 +1,7 @@
 import os
 
+import param
+
 from panel.widgets import IntSlider
 
 from lumen.variables import Variables, Variable
@@ -47,10 +49,21 @@ def test_resolve_widget_variable_by_module_ref():
     assert isinstance(var._widget, IntSlider)
 
 
-def test_widget_variable_linking():
-    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider'})
+def test_widget_variable_linking_unthrottled():
+    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider', 'throttled': False})
 
     var._widget.value = 3
+    assert var.value == 3
+
+    var.value = 4
+    assert var._widget.value == 4
+
+
+def test_widget_variable_linking_unthrottled():
+    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider'})
+
+    with param.edit_constant(var._widget):
+        var._widget.value_throttled = 3
     assert var.value == 3
 
     var.value = 4
