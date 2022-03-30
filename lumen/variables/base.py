@@ -208,7 +208,7 @@ class Widget(Variable):
             deserialized[k] = v
         self._widget = widget_type(**deserialized)
         if self.throttled and 'value_throttled' in self._widget.param:
-            self._widget.link(self, value='value_throttled', bidirectional=True)
+            self._widget.link(self, value_throttled='value', bidirectional=True)
         else:
             self._widget.link(self, value='value', bidirectional=True)
 
