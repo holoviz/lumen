@@ -213,6 +213,11 @@ class WidgetFilter(BaseWidgetFilter):
         e.g. for a numeric value this could be a regular slider or a
         range slider.""")
 
+    throttled = param.Boolean(default=True, doc="""
+       If the widget has a value_throttled parameter use that instead,
+       ensuring that no intermediate events are generated, e.g. when
+       dragging a slider.""")
+
     widget = param.ClassSelector(class_=pn.widgets.Widget)
 
     filter_type = 'widget'
@@ -228,7 +233,10 @@ class WidgetFilter(BaseWidgetFilter):
         self.widget.name = self.label
         self.widget.visible = self.visible
         self.widget.disabled = self.disabled
-        self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
+        links = dict(value='value', visible='visible', disabled='disabled')
+        if self.throttled and 'value_throttled' in self.widget.param:
+            links['value_throttled'] = links.pop('value')
+        self.widget.link(self, bidirectional=True, **links)
         if self.default is not None:
             self.widget.value = self.default
 

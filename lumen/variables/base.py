@@ -178,6 +178,11 @@ class Widget(Variable):
     A Widget variable that updates when the widget value changes.
     """
 
+    throttled = param.Boolean(default=True, doc="""
+       If the widget has a value_throttled parameter use that instead,
+       ensuring that no intermediate events are generated, e.g. when
+       dragging a slider.""")
+
     variable_type = 'widget'
 
     def __init__(self, **params):
@@ -202,7 +207,10 @@ class Widget(Variable):
                     pass
             deserialized[k] = v
         self._widget = widget_type(**deserialized)
-        self._widget.link(self, value='value', bidirectional=True)
+        if self.throttled and 'value_throttled' in self._widget.param:
+            self._widget.link(self, value='value_throttled', bidirectional=True)
+        else:
+            self._widget.link(self, value='value', bidirectional=True)
 
     @property
     def panel(self):
