@@ -102,7 +102,8 @@ class VariablesEditor(WizardItem):
         super().__init__(**params)
         variables = param.concrete_descendents(Variable)
         self.param.variable_type.objects = types = [
-            variable.variable_type for variable in variables.values()
+            variable.variable_type or f'{variable.__module__}.{variable.__name__}'
+            for variable in variables.values()
         ]
         if self.variable_type is None and types:
             self.variable_type = types[0]
@@ -153,6 +154,7 @@ class VariablesEditor(WizardItem):
 
     def _add_from_spec(self, spec, enable=False):
         varname, vartype, secure = spec['name'], spec['type'], spec.get('secure', False)
+        enabled = spec.pop('enabled', enable)
         variable = Variable.from_spec(spec, self._variables)
         self._variables.add_variable(variable)
         if 'key' in variable.param and not variable.key:
@@ -170,6 +172,6 @@ class VariablesEditor(WizardItem):
         var_editor[0].value = f'{varname} ({vartype})'
         self.variables[varname] = var_editor
         variable.param.watch(self._update_enabled, list(variable.param))
-        if enable:
+        if enabled:
             self.enabled = self.enabled + [varname]
         self.param.trigger('variables')
