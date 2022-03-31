@@ -102,7 +102,8 @@ class VariablesEditor(WizardItem):
         super().__init__(**params)
         variables = param.concrete_descendents(Variable)
         self.param.variable_type.objects = types = [
-            variable.variable_type for variable in variables.values()
+            variable.variable_type or f'{variable.__module__}.{variable.__name__}'
+            for variable in variables.values()
         ]
         if self.variable_type is None and types:
             self.variable_type = types[0]
