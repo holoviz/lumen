@@ -2,7 +2,7 @@
 # language
 # notifications - no email notifications set up
 
-name: pytest
+name: tests
 on:
   push:
     branches:
