@@ -51,7 +51,7 @@ class SourceEditor(FastComponent):
 
     _template = """
     <span style="font-size: 2em"><b>{{ name }} - {{ source_type }}</b></span>
-    <div id="preview-area" style="display: ${_preview_display}margin-top: 4.5em;">
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
       <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em; margin-top">${form}</form>
       <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
     </div>

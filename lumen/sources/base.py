@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import pathlib
 import re
 import shutil
 import sys
@@ -20,7 +21,7 @@ import requests
 from ..base import Component
 from ..filters import Filter
 from ..state import state
-from ..transforms import Transform
+from ..transforms import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 
 
@@ -52,7 +53,9 @@ def cached(with_query=True):
                 self._set_cache(df, table, **cache_query)
             filtered = df
             if (not with_query or no_query) and query:
-                filtered = self._filter_dataframe(df, **query)
+                filtered = FilterTransform.apply_to(
+                    df, conditions=list(query.items())
+                )
             if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
                 return filtered
             return filtered.compute()
@@ -64,8 +67,17 @@ def cached_schema(method):
     @wraps(method)
     def wrapped(self, table=None):
         schema = self._get_schema_cache()
-        if schema is None:
-            schema = method(self)
+        if schema is None or (table is not None and table not in schema):
+            schema = schema or {}
+            if table is None:
+                missing_tables = [
+                    table for table in self.get_tables()
+                    if table not in schema
+                ]
+            else:
+                missing_tables = [table]
+            for missing_table in missing_tables:
+                schema[missing_table] = method(self, missing_table)
             self._set_schema_cache(schema)
         if table is None:
             return schema
@@ -99,67 +111,6 @@ class Source(Component):
     def _update_ref(self, pname, event):
         self.clear_cache()
         super()._update_ref(pname, event)
-
-    @classmethod
-    def _range_filter(cls, column, start, end):
-        if start is None and end is None:
-            return None
-        elif start is None:
-            mask = column<=end
-        elif end is None:
-            mask = column>=start
-        else:
-            mask = (column>=start) & (column<=end)
-        return mask
-
-    @classmethod
-    def _filter_dataframe(cls, df, **query):
-        """
-        Filter the DataFrame.
-
-        Parameters
-        ----------
-        df : DataFrame
-           The DataFrame to filter
-        query : dict
-            A dictionary containing all the query parameters
-
-        Returns
-        -------
-        DataFrame
-            The filtered DataFrame
-        """
-        filters = []
-        for k, val in query.items():
-            if k not in df.columns:
-                continue
-            column = df[k]
-            if np.isscalar(val):
-                mask = column == val
-            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                val = [v for v in val if v is not None]
-                if not val:
-                    continue
-                mask = cls._range_filter(column, *val[0])
-                for v in val[1:]:
-                    mask |= cls._range_filter(column, *v)
-                if mask is not None:
-                    filters.append(mask)
-                continue
-            elif isinstance(val, list):
-                if not val:
-                    continue
-                mask = column.isin(val)
-            elif isinstance(val, tuple):
-                mask = cls._range_filter(column, *val)
-            if mask is not None:
-                filters.append(mask)
-        if filters:
-            mask = filters[0]
-            for f in filters[1:]:
-                mask &= f
-            df = df[mask]
-        return df
 
     @classmethod
     def _recursive_resolve(cls, spec, source_type):
@@ -238,22 +189,42 @@ class Source(Component):
         return key
 
     def _get_schema_cache(self):
-        if self._schema_cache:
-            return self._schema_cache
-        elif self.cache_dir:
+        schema = self._schema_cache if self._schema_cache else None
+        if self.cache_dir:
             path = os.path.join(self.root, self.cache_dir, f'{self.name}.json')
-            if os.path.isfile(path):
-                with open(path) as f:
-                    return json.load(f)
-        return None
+            if not os.path.isfile(path):
+                return schema
+            with open(path) as f:
+                json_schema = json.load(f)
+            if schema is None:
+                schema = {}
+            for table, tschema in json_schema.items():
+                if table in schema:
+                    continue
+                for col, cschema in tschema.items():
+                    if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
+                        cschema['inclusiveMinimum'] = pd.to_datetime(
+                            cschema['inclusiveMinimum']
+                        )
+                        cschema['inclusiveMaximum'] = pd.to_datetime(
+                            cschema['inclusiveMaximum']
+                        )
+                schema[table] = tschema
+        return schema
 
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
         if self.cache_dir:
             path = Path(os.path.join(self.root, self.cache_dir))
             path.mkdir(parents=True, exist_ok=True)
-            with open(path / f'{self.name}.json', 'w') as f:
-                json.dump(schema, f)
+            try:
+                with open(path / f'{self.name}.json', 'w') as f:
+                    json.dump(schema, f, default=str)
+            except Exception as e:
+                self.param.warning(
+                    f"Could not cache schema to disk. Error while "
+                    f"serializing schema to disk: {e}"
+                )
 
     def _get_cache(self, table, **query):
         query.pop('__dask', None)
@@ -268,7 +239,7 @@ class Source(Component):
                 filename = f'{table}.parq'
             path = os.path.join(self.root, self.cache_dir, filename)
             if os.path.isfile(path) or os.path.isdir(path):
-                if 'dask.dataframe' in sys.modules:
+                if 'dask.dataframe' in sys.modules or os.path.isdir(path):
                     import dask.dataframe as dd
                     return dd.read_parquet(path), not bool(query)
                 return pd.read_parquet(path), not bool(query)
@@ -286,11 +257,19 @@ class Source(Component):
                 filename = f'{sha}_{table}.parq'
             else:
                 filename = f'{table}.parq'
+            filepath = os.path.join(path, filename)
             try:
-                data.to_parquet(os.path.join(path, filename))
+                data.to_parquet(filepath)
             except Exception as e:
-                self.param.warning(f"Could not cache '{table}' to parquet"
-                                   f"file. Error during saving process: {e}")
+                path = pathlib.Path(filepath)
+                if path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    shutil.rmtree(path)
+                self.param.warning(
+                    f"Could not cache '{table}' to parquet file. "
+                    f"Error during saving process: {e}"
+                )
 
     def clear_cache(self):
         """
@@ -321,6 +300,7 @@ class Source(Component):
             The list of available tables on this source.
         """
 
+    @cached_schema
     def get_schema(self, table=None):
         """
         Returns JSON schema describing the tables returned by the
@@ -373,6 +353,7 @@ class RESTSource(Source):
 
     source_type = 'rest'
 
+    @cached_schema
     def get_schema(self, table=None):
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
@@ -542,7 +523,7 @@ class FileSource(Source):
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
-        df = self._filter_dataframe(df, **query)
+        df = FilterTransform.apply_to(df, conditions=list(query.items()))
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
@@ -610,6 +591,7 @@ class WebsiteSource(Source):
 
     source_type = 'live'
 
+    @cached_schema
     def get_schema(self, table=None):
         schema = {
             "status": {
@@ -646,6 +628,7 @@ class PanelSessionSource(Source):
 
     source_type = 'session_info'
 
+    @cached_schema
     def get_schema(self, table=None):
         schema = {
             "summary": {
@@ -780,6 +763,7 @@ class JoinedSource(Source):
     def get_tables(self):
         return list(self.tables)
 
+    @cached_schema
     def get_schema(self, table=None):
         schemas = {}
         for name, specs in self.tables.items():
@@ -920,9 +904,10 @@ class DerivedSource(Source):
             transforms = self.tables[table].get('transforms', []) + self.transforms
         else:
             transforms = self.transforms
+        transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
             df = transform.apply(df)
-        return self._filter_dataframe(df, **query)
+        return df
 
     get.__doc__ = Source.get.__doc__
 

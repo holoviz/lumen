@@ -1,3 +1,6 @@
+import datetime as dt
+
+import numpy as np
 import param
 
 from jinja2 import Template
@@ -12,6 +15,21 @@ class SQLTransform(Transform):
     """
 
     __abstract = True
+    
+    @classmethod
+    def apply_to(cls, sql_in, **kwargs):
+        """
+        Calls the apply method based on keyword arguments passed to define transform.
+        
+        Parameters
+        ----------
+        sql_in: SQL Select statement to input to transformation.
+        
+        Returns
+        -------
+        SQL statement after application of transformation.
+        """
+        return cls(**kwargs).apply(sql_in)
 
     def __hash__(self):
         """
@@ -127,4 +145,68 @@ class SQLMinMax(SQLTransform):
         """
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(
             columns=', '.join(aggs), sql_in=sql_in
+        )
+
+
+class SQLFilter(SQLTransform):
+    """
+    Translates Lumen Filter query into a SQL WHERE statement.
+    """
+
+    conditions = param.List(doc="""
+      List of filter conditions expressed as tuples of the column
+      name and the filter value.""")
+
+    @classmethod
+    def _range_filter(cls, col, v1, v2):
+        start = str(v1) if isinstance(v1, dt.date) else v1
+        end = str(v2) if isinstance(v2, dt.date) else v2
+        if isinstance(v1, dt.date) and not isinstance(v1, dt.datetime):
+            start += ' 00:00:00'
+        if isinstance(v2, dt.date) and not isinstance(v2, dt.datetime):
+            end += ' 00:00:00'
+        return f'{col} BETWEEN {start!r} AND {end!r}'
+
+    def apply(self, sql_in):
+        conditions = []
+        for col, val in self.conditions:
+            if np.isscalar(val):
+                condition = f'{col} = {val!r}'
+            elif isinstance(val, dt.datetime):
+                condition = f'{col} = {str(val)!r}'
+            elif isinstance(val, dt.date):
+                condition = f"{col} BETWEEN '{str(val)} 00:00:00' AND '{str(val)} 23:59:59'"
+            elif (isinstance(val, list) and all(
+                    isinstance(v, tuple) and len(v) == 2 for v in val
+            )):
+                val = [v for v in val if v is not None]
+                if not val:
+                    continue
+                condition = ' OR '.join([
+                    self._range_filter(col, v1, v2) for v1, v2 in val
+                ])
+            elif isinstance(val, list):
+                if not val:
+                    continue
+                condition = f"{col} IN ({', '.join(map(repr, val))})"
+            elif isinstance(val, tuple):
+                condition = self._range_filter(col, *val)
+            else:
+                self.param.warning(
+                    'Condition {val!r} on {col!r} column not understood. '
+                    'Filter query will not be applied.'
+                )
+                continue
+            conditions.append(condition)
+        if not conditions:
+            return sql_in
+        
+        template = """
+            SELECT
+                *
+            FROM ( {{sql_in}} )
+            WHERE ( {{conditions}} )
+        """
+        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
+            conditions=' AND '.join(conditions), sql_in=sql_in
         )
