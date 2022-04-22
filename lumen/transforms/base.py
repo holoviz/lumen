@@ -170,7 +170,6 @@ class Filter(Transform):
         elif end is None:
             mask = column>=start
         else:
-            print(column.compute(), (column>=start).compute(), (column<=end).compute())
             mask = (column>=start) & (column<=end)
         return mask
 
