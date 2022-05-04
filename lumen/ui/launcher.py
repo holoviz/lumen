@@ -96,7 +96,7 @@ class LauncherGallery(WizardItem, Gallery):
         return kwargs
 
     def _advance(self, event):
-        launcher = event.obj.launcher(self.spec)
+        launcher = event.obj.launcher(**self.spec)
         items = self.builder.wizard.items
         if isinstance(items[-1], Launcher):
             items = items[:-1]
@@ -111,7 +111,7 @@ class LocalLauncher(Launcher):
     Launches the dashboard locally.
     """
 
-    icon = param.String(default='fa-house-signal')
+    icon = param.String(default='fa-window-maximize')
 
     _template = """
     <span style="font-size: 1.5em">Launcher</span>
@@ -139,7 +139,7 @@ class YAMLLauncher(Launcher):
 
     editor = param.ClassSelector(class_=pn.pane.JSON)
 
-    icon = param.String(default='fa-file')
+    icon = param.String(default='fa-file-code')
 
     _template = """
     <span style="font-size: 1.5em">Launcher</span>
