@@ -5,7 +5,6 @@ import panel as pn
 from panel.template import FastListTemplate
 
 from lumen.ui.builder import Builder
-from lumen.ui.launcher import LocalLauncher
 from lumen.ui.state import state
 
 def main():
