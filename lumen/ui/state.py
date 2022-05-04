@@ -8,8 +8,6 @@ class session_state(param.Parameterized):
 
     components = param.String(default='./components')
 
-    launcher = param.Parameter()
-
     _modals = WeakKeyDictionary()
 
     _sources = WeakKeyDictionary()
