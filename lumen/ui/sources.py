@@ -546,6 +546,7 @@ class SourcesEditor(WizardItem):
         sources = param.concrete_descendents(Source)
         self.param.source_type.objects = types = [
             source.source_type for source in sources.values()
+            if source.source_type is not None
         ]+['intake', 'intake_dremio']
         if self.source_type is None and types:
             self.source_type = types[0]
