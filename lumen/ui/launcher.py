@@ -1,4 +1,3 @@
-from functools import partial
 import io
 import tempfile
 import yaml
