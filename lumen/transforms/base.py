@@ -446,7 +446,28 @@ class Compute(Transform):
 
     def apply(self, table):
         return table.compute()
+    
+class Pivot(Transform):
+    """
+    Pivots a DataFrame given an index, columns, and values.
+    """
 
+    index = param.String(default=None, doc="""
+        Column to use to make new frame's index. 
+        If None, uses existing index.""")
+
+    columns = param.String(default=None, doc="""
+        Column to use to make new frame’s columns.""")
+
+    values = param.ListSelector(default=None, doc="""
+        Column(s) to use for populating new frame’s values. 
+        If not specified, all remaining columns will be used 
+        and the result will have hierarchically indexed columns.""")
+
+    transform_type = 'pivot'
+
+    def apply(self, table):
+        return table.pivot(index=self.index, columns=self.columns, values=self.values)
 
 class Melt(Transform):
     """
