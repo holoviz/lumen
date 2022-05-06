@@ -26,7 +26,7 @@ class LauncherGalleryItem(GalleryItem):
     _template = """
     <div id="launcher-item" onclick="${_select}" style="display: flex; flex-direction: column; height: 100%; justify-content: space-between;">
       <div style="font-size: 1.25em; font-weight: bold;">{{ name }}</div>
-      <div style="text-align: center; font-size: 5em;">
+      <div style="text-align: center; font-size: 8em;">
         <i id="icon" class="fas {{ launcher.icon }}"></i>
       </div>
       <p style="height: 4em;">${description}</p>
