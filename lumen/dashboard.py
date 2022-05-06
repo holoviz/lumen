@@ -481,9 +481,9 @@ class Dashboard(param.Parameterized):
     def _render_filters(self):
         self._global_filters, global_panel = self._get_global_filters()
         filters = [] if global_panel is None else [global_panel]
-        variable_panel = self.variables.panel
-        if len(variable_panel):
-            filters.append(variable_panel)
+        self._variable_panel = self.variables.panel
+        if len(self._variable_panel):
+            filters.append(self._variable_panel)
         for i, target in enumerate(self.targets):
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
                 continue
@@ -535,7 +535,8 @@ class Dashboard(param.Parameterized):
         if self.auth.authorized:
             self._render_filters()
             if isinstance(self._layout, pn.Tabs):
-                active = [0, 1] if self._global_filters else [0]
+                count = 1 + bool(self._global_filters) + bool(self._variable_panel)
+                active = list(range(count))
             else:
                 active = list(range(len(self._sidebar)))
             self._sidebar.active = active
