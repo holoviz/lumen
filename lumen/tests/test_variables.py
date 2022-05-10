@@ -43,6 +43,13 @@ def test_resolve_widget_variable_by_clsname():
     assert isinstance(var._widget, IntSlider)
 
 
+def test_widget_variable_label():
+    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider', 'label': 'Custom label'})
+
+    assert isinstance(var._widget, IntSlider)
+    assert var._widget.name == 'Custom label'
+
+
 def test_resolve_widget_variable_by_module_ref():
     var = Variable.from_spec({'type': 'widget', 'kind': 'panel.widgets.IntSlider'})
 
