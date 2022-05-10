@@ -15,16 +15,16 @@ class SQLTransform(Transform):
     """
 
     __abstract = True
-    
+
     @classmethod
     def apply_to(cls, sql_in, **kwargs):
         """
         Calls the apply method based on keyword arguments passed to define transform.
-        
+
         Parameters
         ----------
         sql_in: SQL Select statement to input to transformation.
-        
+
         Returns
         -------
         SQL statement after application of transformation.
@@ -170,7 +170,9 @@ class SQLFilter(SQLTransform):
     def apply(self, sql_in):
         conditions = []
         for col, val in self.conditions:
-            if np.isscalar(val):
+            if val is None:
+                condition = f'{col} IS NULL'
+            elif np.isscalar(val):
                 condition = f'{col} = {val!r}'
             elif isinstance(val, dt.datetime):
                 condition = f'{col} = {str(val)!r}'
@@ -188,7 +190,10 @@ class SQLFilter(SQLTransform):
             elif isinstance(val, list):
                 if not val:
                     continue
-                condition = f"{col} IN ({', '.join(map(repr, val))})"
+                non_null = [v for v in val if v is not None]
+                condition = f"{col} IN ({', '.join(map(repr, non_null))})"
+                if len(val) != len(non_null):
+                    condition = f'({condition}) OR ({col} IS NULL)'
             elif isinstance(val, tuple):
                 condition = self._range_filter(col, *val)
             else:
@@ -200,7 +205,7 @@ class SQLFilter(SQLTransform):
             conditions.append(condition)
         if not conditions:
             return sql_in
-        
+
         template = """
             SELECT
                 *
