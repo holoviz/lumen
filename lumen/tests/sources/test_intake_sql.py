@@ -60,12 +60,6 @@ def test_intake_sql_get_schema_with_none():
             'type': 'string'
         }
     }
-    expected_csv = dict(expected_sql, D={
-        'format': 'datetime',
-        'inclusiveMaximum': '2009-01-07T00:00:00',
-        'inclusiveMinimum': '2009-01-01T00:00:00',
-        'type': 'string'
-    })
     assert source.get_schema('test_sql_with_none') == expected_sql
     assert 'test' not in source._schema_cache
     assert 'test_sql_with_none' in source._schema_cache
