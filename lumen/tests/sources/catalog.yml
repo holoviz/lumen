@@ -14,3 +14,11 @@ sources:
       sql_expr: 'SELECT * FROM mixed'
       sql_kwargs:
         parse_dates: ['D']
+  test_sql_with_none:
+    description: Generated using pandas.util.testing.makeMixedDataFrame()
+    driver: sql
+    args:
+      uri: 'sqlite:///{{ CATALOG_DIR }}test.db'
+      sql_expr: 'SELECT * FROM mixed_none'
+      sql_kwargs:
+        parse_dates: ['D']
