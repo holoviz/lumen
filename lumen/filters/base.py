@@ -330,7 +330,7 @@ class DateFilter(BaseWidgetFilter):
             value = value if self.mode == 'slider' else value.date()
             kwargs['value'] = value
         self.widget = widget(**kwargs)
-        self.widget.link(self, value='value')
+        self.widget.link(self, value='value', bidirectional=True)
 
     @property
     def panel(self):
