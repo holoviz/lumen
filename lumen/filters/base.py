@@ -309,6 +309,11 @@ class DateFilter(BaseWidgetFilter):
     filter_type = 'date'
 
     def __init__(self, **params):
+        mode = params.get('mode', self.param.mode.default)
+        if mode == 'slider':
+            self.param.add_parameter('value', param.DateRange())
+        else:
+            self.param.add_parameter('value', param.CalendarDate())
         super().__init__(**params)
         field_schema = self.schema.get(self.field, {})
         start = pd.to_datetime(field_schema.get('inclusiveMinimum', None))
