@@ -310,16 +310,20 @@ class DateFilter(BaseWidgetFilter):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.mode == 'slider':
-            widget = pn.widgets.DateRangeSlider
-        else:
-            widget = pn.widget.DatePicker
         field_schema = self.schema.get(self.field, {})
         start = pd.to_datetime(field_schema.get('inclusiveMinimum', None))
         end = pd.to_datetime(field_schema.get('inclusiveMaximum', None))
+        if self.mode == 'slider':
+            widget = pn.widgets.DateRangeSlider
+        else:
+            widget = pn.widgets.DatePicker
+            start = start.date()
+            end = end.date()
         kwargs = {'name': self.label, 'start': start, 'end': end}
         if self.default is not None:
-            kwargs['value'] = pd.to_datetime(self.default)
+            value = pd.to_datetime(self.default)
+            value = value if self.mode == 'slider' else value.date()
+            kwargs['value'] = value
         self.widget = widget(**kwargs)
         self.widget.link(self, value='value')
 
