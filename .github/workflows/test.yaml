@@ -38,7 +38,7 @@ jobs:
         run: git fetch --prune --tags
       - name: conda setup
         run: |
-          conda install -c pyviz "pyctdev>=0.5"
+          conda install -c pyviz/label/dev "pyctdev>=0.5"
           doit env_create ${{ env.CHANS_DEV}} --python=${{ matrix.python-version }}
       - name: doit develop_install
         run: |
