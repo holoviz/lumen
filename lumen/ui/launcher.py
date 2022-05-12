@@ -6,7 +6,8 @@ import panel as pn
 import param
 
 from ..dashboard import Dashboard
-from ..util import resolve_module_reference
+from ..state import state as lm_state
+from ..util import is_ref, resolve_module_reference
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
 from .state import state
@@ -17,11 +18,13 @@ class LauncherGalleryItem(GalleryItem):
     Gallery Item corresponding to a specific Launcher component.
     """
 
-    icon = param.String()
+    icon = param.String(doc="The FontAwesome icon to render.")
 
-    launcher = param.Parameter(precedence=-1)
+    launcher = param.Parameter(precedence=-1, doc="The Launcher instance.")
 
-    selected = param.Boolean(default=False)
+    selected = param.Boolean(default=False, doc="Whether the item was selected.")
+
+    spec = param.Dict(doc="The specification for the Launcher instance.")
 
     _template = """
     <div id="launcher-item" onclick="${_select}" style="display: flex; flex-direction: column; height: 100%; justify-content: space-between;">
@@ -92,11 +95,14 @@ class LauncherGallery(WizardItem, Gallery):
             cls = launchers[launcher_type]
         else:
             cls = resolve_module_reference(launcher_type, Launcher)
+        for key, value in list(spec.items()):
+            if is_ref(value):
+                spec[key] = lm_state.resolve_reference(value)
         kwargs['launcher'] = cls
         return kwargs
 
     def _advance(self, event):
-        launcher = event.obj.launcher(**self.spec)
+        launcher = event.obj.launcher(**event.obj.spec)
         items = self.builder.wizard.items
         if isinstance(items[-1], Launcher):
             items = items[:-1]
@@ -174,4 +180,3 @@ class YAMLLauncher(Launcher):
     def _update_spec(self):
         self.spec = state.spec
         self.editor.object = state.spec
-
