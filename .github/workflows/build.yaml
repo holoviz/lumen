@@ -42,7 +42,7 @@ jobs:
           conda install -c pyviz/label/dev "pyctdev>=0.5"
           doit ecosystem_setup
       - name: conda build
-        run: doit package_build $CHANS_DEV
+        run: doit package_build $CHANS_DEV --no-pkg-tests
       - name: conda dev upload
         if: (github.event_name == 'push' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
         run: doit package_upload --token=${{ secrets.CONDA_UPLOAD_TOKEN }} --label=dev
