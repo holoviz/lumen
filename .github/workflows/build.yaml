@@ -20,7 +20,7 @@ jobs:
         shell: bash -l {0}
     env:
       CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
-      PKG_TEST_PYTHON: "--test-python=py39"
+      PKG_TEST_PYTHON: "--test-python=py37"
       MPLBACKEND: "Agg"
       PYCTDEV_SELF_CHANNEL: "pyviz/label/dev"
     steps:
@@ -58,7 +58,7 @@ jobs:
         shell: bash -l {0}
     env:
       CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
-      PKG_TEST_PYTHON: "--test-python=py39"
+      PKG_TEST_PYTHON: "--test-python=py37"
       PYTHON_VERSION: "3.7"
       MPLBACKEND: "Agg"
       PPU: ${{ secrets.PPU }}
