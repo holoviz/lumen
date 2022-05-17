@@ -123,9 +123,15 @@ class VariablesEditor(WizardItem):
         variable = self._variables._vars[var]
         if variable.materialize:
             variable = variable.as_materialized()
-        return {
+        varspec = {
             k: v for k, v in variable.param.values().items() if k != 'value'
         }
+        if variable._variable_type:
+            varspec['type'] = variable._variable_type
+        else:
+            vartype = type(variable)
+            varspec['type'] = f'{vartype.__module__}.{vartype.__name__}'
+        return varspec
 
     @param.depends('enabled', watch=True)
     def _update_enabled(self, *events):

@@ -38,10 +38,12 @@ class LauncherGalleryItem(GalleryItem):
 
     def __init__(self, launcher, **params):
         params['name'] = launcher.name.replace('Launcher', '')
-        params['description'] = [
-            l for l in launcher.__doc__.split('\n') if l.strip()
-        ][0]
-        super().__init__(launcher=launcher, **params)
+        description = ''
+        for line in launcher.__doc__.split('\n'):
+            if line.strip() and not line.startswith('params('):
+                description = line
+                break
+        super().__init__(launcher=launcher, description=description, **params)
 
     def _select(self, event):
         self.selected = True
