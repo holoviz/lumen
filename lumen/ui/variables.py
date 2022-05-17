@@ -130,7 +130,7 @@ class VariablesEditor(WizardItem):
             varspec['type'] = variable._variable_type
         else:
             vartype = type(variable)
-            varspec['type'] = '{vartype.__module__}.{vartype.__name__}'
+            varspec['type'] = f'{vartype.__module__}.{vartype.__name__}'
         return varspec
 
     @param.depends('enabled', watch=True)
