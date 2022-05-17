@@ -108,7 +108,7 @@ class Builder(param.Parameterized):
         self.template.modal.append(self.modal)
 
     def _open_dialog(self, event):
-        self.wizard.preview.object = dict(self.spec)
+        self.wizard.preview.object = dict(state.spec)
         self.wizard.open_modal()
 
     @param.depends('welcome.spec', watch=True)
