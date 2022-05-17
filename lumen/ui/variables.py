@@ -126,8 +126,8 @@ class VariablesEditor(WizardItem):
         varspec = {
             k: v for k, v in variable.param.values().items() if k != 'value'
         }
-        if variable._variable_type:
-            varspec['type'] = variable._variable_type
+        if variable.variable_type:
+            varspec['type'] = variable.variable_type
         else:
             vartype = type(variable)
             varspec['type'] = f'{vartype.__module__}.{vartype.__name__}'
