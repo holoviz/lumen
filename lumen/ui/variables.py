@@ -121,6 +121,7 @@ class VariablesEditor(WizardItem):
 
     def _get_varspec(self, var):
         variable = self._variables._vars[var]
+        print('>>>', variable)
         if variable.materialize:
             variable = variable.as_materialized()
         varspec = {
