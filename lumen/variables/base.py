@@ -209,7 +209,7 @@ class Widget(Variable):
         if 'value' not in params and default is not None:
             params['value'] = default
         params['name'] = self.label
-        deserialized = {}
+            params['name'] = self.label
         for k, v in params.items():
             if k in widget_type.param:
                 try:
