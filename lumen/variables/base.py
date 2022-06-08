@@ -208,7 +208,8 @@ class Widget(Variable):
             widget_type = getattr(pn.widgets, kind)
         if 'value' not in params and default is not None:
             params['value'] = default
-        params['name'] = self.label
+        if self.label:
+            params['name'] = self.label
         deserialized = {}
         for k, v in params.items():
             if k in widget_type.param:
