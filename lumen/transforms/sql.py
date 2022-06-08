@@ -147,7 +147,6 @@ class SQLMinMax(SQLTransform):
             columns=', '.join(aggs), sql_in=sql_in
         )
 
-
 class SQLFilter(SQLTransform):
     """
     Translates Lumen Filter query into a SQL WHERE statement.
@@ -192,7 +191,9 @@ class SQLFilter(SQLTransform):
                     continue
                 non_null = [v for v in val if v is not None]
                 condition = f"{col} IN ({', '.join(map(repr, non_null))})"
-                if len(val) != len(non_null):
+                if not non_null:
+                    condition = f'{col} IS NULL'
+                elif len(val) != len(non_null):
                     condition = f'({condition}) OR ({col} IS NULL)'
             elif isinstance(val, tuple):
                 condition = self._range_filter(col, *val)
