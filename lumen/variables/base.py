@@ -63,13 +63,15 @@ class Variables(param.Parameterized):
         else:
             raise KeyError(f'No variable named {key!r} has been defined.')
 
-    @property
-    def panel(self):
+    def panel(self, variables=None):
+        if variables == []:
+            return None
         column = pn.Column(name='Variables', sizing_mode='stretch_width')
         for key, var in self._vars.items():
-            var_panel = var.panel
-            if var_panel is not None:
-                column.append(var_panel)
+            if variables is None or key in variables:
+                var_panel = var.panel
+                if var_panel is not None:
+                    column.append(var_panel)
         return column
 
 

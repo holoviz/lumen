@@ -2,7 +2,7 @@ from weakref import WeakKeyDictionary
 
 import panel as pn
 
-from .util import is_ref
+from .util import extract_refs, is_ref
 
 
 class _session_state:
@@ -57,6 +57,14 @@ class _session_state:
             return self._variables[pn.state.curdoc]
         from .variables import Variables
         return Variables()
+
+    @property
+    def global_refs(self):
+        target_refs = [
+            extract_refs(target, 'variables') for target in self.spec.get('targets', [])
+        ]
+        var_refs = extract_refs(self.spec.get('variables'), 'variables')
+        return list(set.intersection(*map(set, target_refs)) | set(var_refs))
 
     @property
     def loading_msg(self):
@@ -178,6 +186,8 @@ class _session_state:
                 value = value.value
             return value
         return self._resolve_source_ref(refs)
+
+    
 
 
 state = _session_state()
