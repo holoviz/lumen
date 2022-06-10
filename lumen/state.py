@@ -64,7 +64,8 @@ class _session_state:
             extract_refs(target, 'variables') for target in self.spec.get('targets', [])
         ]
         var_refs = extract_refs(self.spec.get('variables'), 'variables')
-        return list(set.intersection(*map(set, target_refs)) | set(var_refs))
+        merged = set.intersection(*map(set, target_refs)) if target_refs else set()
+        return list(merged | set(var_refs))
 
     @property
     def loading_msg(self):
