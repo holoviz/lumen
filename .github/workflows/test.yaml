@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        shell: bash -l {0} 
+        shell: bash -l {0}
     env:
       CHANS_DEV: "-c pyviz/label/dev -c bokeh -c conda-forge"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

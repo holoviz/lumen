@@ -1,7 +1,7 @@
 import os
-import yaml
 
 import pandas as pd
+import yaml
 
 from lumen.sources.intake import IntakeSource
 

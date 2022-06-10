@@ -116,7 +116,7 @@ class TargetEditor(ReactiveHTML):
 
 
 class TargetGalleryItem(GalleryItem):
-                 
+
     editor = param.ClassSelector(class_=TargetEditor, precedence=-1)
 
     selected = param.Boolean(default=True)
@@ -209,7 +209,7 @@ class TargetsEditor(WizardItem):
     source = param.String()
 
     targets = param.List([], precedence=-1)
-    
+
     title = param.String(default='')
 
     _template = """

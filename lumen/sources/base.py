@@ -600,7 +600,7 @@ class WebsiteSource(Source):
             }
         }
         return schema if table is None else schema[table]
-    
+
     def get_tables(self):
         return ['status']
 
@@ -824,13 +824,13 @@ class DerivedSource(Source):
 
     The DerivedSource has two modes:
 
-      1) When an explicit `tables` specification is provided full 
+      1) When an explicit `tables` specification is provided full
          control over the exact tables to filter and transform is
          available. This is referred to as the 'table' mode.
       2) When a `source` is declared all tables on that Source are
          mirrored and filtered and transformed acccording to the
          supplied `filters` and `transforms`. This is referred to as
-         'mirror' mode. 
+         'mirror' mode.
 
     1. Table Mode
     ~~~~~~~~~~~~~
@@ -841,7 +841,7 @@ class DerivedSource(Source):
     look like this:
 
       {
-        'derived_table': 
+        'derived_table':
         {
           'source': 'original_source',
           'table': 'original_table'
@@ -859,7 +859,7 @@ class DerivedSource(Source):
 
     In mirror mode the DerivedSource may reference an existing source
     directly, e.g.:
-    
+
       {
         'type': 'derived',
         'source': 'original_source',

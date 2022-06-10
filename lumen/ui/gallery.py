@@ -1,8 +1,8 @@
 import os
 import pathlib
-import yaml
 
 import param
+import yaml
 
 from panel.reactive import ReactiveHTML
 

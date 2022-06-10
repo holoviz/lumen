@@ -1,18 +1,18 @@
 import datetime as dt
 
 from functools import partial
-from io import StringIO, BytesIO
+from io import BytesIO, StringIO
 from itertools import product
 
-import param
 import panel as pn
+import param
 
 from .config import _LAYOUTS
-from .filters import Filter, FacetFilter, ParamFilter
+from .filters import FacetFilter, Filter, ParamFilter
 from .panel import IconButton
 from .sources import Source
 from .state import state
-from .views import View, DOWNLOAD_FORMATS
+from .views import DOWNLOAD_FORMATS, View
 
 
 class Facet(param.Parameterized):
@@ -96,7 +96,7 @@ class Download(pn.viewable.Viewer):
         The format to download the data in.""")
 
     kwargs = param.Dict(default={}, doc="""
-        Keyword arguments passed to the serialization function, e.g. 
+        Keyword arguments passed to the serialization function, e.g.
         data.to_csv(file_obj, **kwargs).""")
 
     source = param.ClassSelector(class_=Source, doc="""
@@ -563,7 +563,7 @@ class Target(param.Parameterized):
             download_spec = {'format': download_spec}
         if 'tables' not in download_spec:
             download_spec['tables'] = list(tables)
-        spec['download'] = Download.from_spec(download_spec, source, filters) 
+        spec['download'] = Download.from_spec(download_spec, source, filters)
 
         # Backward compatibility
         if facet_spec:

@@ -1,6 +1,6 @@
-from lumen.dashboard import Config
-
 from panel.template.base import BasicTemplate
+
+from lumen.dashboard import Config
 
 
 class CustomTemplate(BasicTemplate):

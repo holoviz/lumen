@@ -1,8 +1,8 @@
 import pathlib
-import yaml
 
 import panel as pn
 import param
+import yaml
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem

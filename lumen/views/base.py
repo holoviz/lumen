@@ -4,17 +4,17 @@ object.
 """
 import sys
 
-from io import StringIO, BytesIO
+from io import BytesIO, StringIO
 from weakref import WeakKeyDictionary
 
 import numpy as np
-import param
 import panel as pn
+import param
 
 from bokeh.models import NumeralTickFormatter
 from panel.pane.base import PaneBase
 from panel.pane.perspective import (
-    THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin
+    THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
 )
 from panel.param import Param
 from panel.viewable import Viewer
@@ -488,10 +488,10 @@ class hvPlotBaseView(View):
     __abstract = True
 
     def __init__(self, **params):
-        import hvplot.pandas # noqa
+        import hvplot.pandas  # noqa
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask # noqa
+                import hvplot.dask  # noqa
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):

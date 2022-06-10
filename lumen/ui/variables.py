@@ -1,16 +1,16 @@
 import pathlib
-import yaml
 
-import param
 import panel as pn
+import param
+import yaml
 
 from panel import Param
 from panel.widgets import PasswordInput
 
 from ..state import state
+from ..util import expand_spec
 from ..variables import Variable, Variables
 from .base import WizardItem
-from ..util import expand_spec
 
 
 class VariablesEditor(WizardItem):

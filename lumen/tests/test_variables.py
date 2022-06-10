@@ -4,7 +4,7 @@ import param
 
 from panel.widgets import IntSlider
 
-from lumen.variables import Variables, Variable
+from lumen.variables import Variable, Variables
 
 
 def test_variables():
@@ -12,7 +12,7 @@ def test_variables():
         'str'  : 'a',
         'int'  : 1,
         'float': 1.4,
-        'list' : [1, 2, 3] 
+        'list' : [1, 2, 3]
     })
 
     # Test initialization
