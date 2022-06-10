@@ -1,9 +1,9 @@
 import io
 import tempfile
-import yaml
 
 import panel as pn
 import param
+import yaml
 
 from ..dashboard import Dashboard
 from ..state import state as lm_state

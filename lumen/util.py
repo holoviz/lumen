@@ -1,11 +1,11 @@
 import datetime as dt
 import importlib
-import re
 import os
-import sys
+import re
 import subprocess
+import sys
 
-from jinja2 import Environment, Undefined, DebugUndefined
+from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
 

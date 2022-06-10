@@ -9,17 +9,19 @@ import bokeh.command.util
 
 from bokeh.application.handlers.code import CodeHandler
 from bokeh.command.subcommand import Argument, Subcommand
-from bokeh.command.util import build_single_handler_application as _build_application, die
-from panel.command import main as _pn_main, transform_cmds, Serve
+from bokeh.command.util import (
+    build_single_handler_application as _build_application, die,
+)
+from panel.command import Serve, main as _pn_main, transform_cmds
 from panel.io.server import Application
 
 from . import __version__
 from .config import config
 from .dashboard import Defaults, load_yaml
 from .state import state
-from .util import resolve_module_reference
 from .ui.launcher import Launcher
 from .ui.state import state as ui_state
+from .util import resolve_module_reference
 
 
 class YamlHandler(CodeHandler):

@@ -12,7 +12,7 @@
    </table>
 
 
-```{toctree} 
+```{toctree}
 ---
 hidden: true
 ---

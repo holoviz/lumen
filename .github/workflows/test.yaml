@@ -11,8 +11,24 @@ on:
     - cron: '0 17 * * SUN'
 
 jobs:
+  pre_commit:
+    name: Run pre-commit hooks
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: "1"
+      - name: set PY
+        run: echo "PY=$(python -VV | sha256sum | cut -d' ' -f1)" >> $GITHUB_ENV
+      - uses: actions/cache@v1
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit|${{ env.PY }}|${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: pre-commit
+        uses: pre-commit/action@v2.0.3
   test_suite:
     name: Pytest on ${{ matrix.python-version }}, ${{ matrix.os }}
+    needs: [pre_commit]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -22,7 +38,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        shell: bash -l {0} 
+        shell: bash -l {0}
     env:
       CHANS_DEV: "-c pyviz/label/dev -c bokeh -c conda-forge"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

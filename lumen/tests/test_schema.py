@@ -15,7 +15,7 @@ def test_number_schema():
     assert isinstance(widget, pn.widgets.FloatSlider)
     assert widget.start == 0
     assert widget.end == 3.14
-    
+
 def test_enum_schema():
     json_schema = JSONSchema(multi=False, schema={
         'enum': {'type': 'enum', 'enum': ['A', 'B', 'C']}

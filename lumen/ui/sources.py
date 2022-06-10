@@ -1,19 +1,19 @@
 import os
 import pathlib
-import yaml
 
 import panel as pn
 import param
 import requests
+import yaml
 
 from panel.reactive import ReactiveHTML
 
 from lumen.sources import Source
+
 from .base import WizardItem
 from .fast import FastComponent
 from .gallery import Gallery, GalleryItem
 from .state import state
-
 
 ASSETS_DIR = pathlib.Path(__file__).parent / 'assets'
 
@@ -163,7 +163,7 @@ class SourceGallery(WizardItem, Gallery):
     """
 
     _gallery_item = SourceGalleryItem
-    
+
     _editor_type = SourceEditor
 
     def __init__(self, **params):
@@ -266,7 +266,7 @@ class IntakeSourceEditor(SourceEditor):
     _dom_events = {'cache_dir': ['keyup'], 'uri': ['keyup']}
 
     def __init__(self, **params):
-        import lumen.sources.intake # noqa
+        import lumen.sources.intake  # noqa
         params.pop('source_type', None)
         self.editor = pn.widgets.Ace(language='yaml', theme='dracula', margin=0, sizing_mode='stretch_width')
         self.upload = pn.widgets.FileInput(sizing_mode='stretch_width', margin=0)
@@ -369,7 +369,7 @@ class IntakeDremioSourceEditor(SourceEditor):
     _dom_events = {'uri': ['keyup'], 'username': ['keyup'], 'password': ['keyup']}
 
     def __init__(self, **params):
-        import lumen.sources.intake # noqa
+        import lumen.sources.intake  # noqa
         super().__init__(**params)
 
     @param.depends('cert', 'load_schema', 'tls', 'uri', 'password', 'username', watch=True)
@@ -476,7 +476,7 @@ class FileSourceEditor(SourceEditor):
             filename = assets/ f'{list(exts)[0]}.png'
             if os.path.isfile(filename):
                 return filename
-    
+
     def _add_table(self, event=None):
         table = FileSourceTable()
         table.param.watch(self._remove_table, 'remove')

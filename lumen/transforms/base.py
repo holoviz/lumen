@@ -97,11 +97,11 @@ class Transform(Component):
     def apply_to(cls, table, **kwargs):
         """
         Calls the apply method based on keyword arguments passed to define transform.
-        
+
         Parameters
         ----------
         table: `pandas.DataFrame`
-        
+
         Returns
         -------
         A DataFrame with the results of the transformation.
@@ -446,22 +446,22 @@ class Compute(Transform):
 
     def apply(self, table):
         return table.compute()
-    
+
 class Pivot(Transform):
     """
     Pivots a DataFrame given an index, columns, and values.
     """
 
     index = param.String(default=None, doc="""
-        Column to use to make new frame's index. 
+        Column to use to make new frame's index.
         If None, uses existing index.""")
 
     columns = param.String(default=None, doc="""
         Column to use to make new frame’s columns.""")
 
     values = param.ListSelector(default=None, doc="""
-        Column(s) to use for populating new frame’s values. 
-        If not specified, all remaining columns will be used 
+        Column(s) to use for populating new frame’s values.
+        If not specified, all remaining columns will be used
         and the result will have hierarchically indexed columns.""")
 
     transform_type = 'pivot'
@@ -471,7 +471,7 @@ class Pivot(Transform):
 
 class Melt(Transform):
     """
-    Melts a DataFrame given the id_vars and value_vars. 
+    Melts a DataFrame given the id_vars and value_vars.
     """
 
     id_vars = param.ListSelector(default=[], doc="""

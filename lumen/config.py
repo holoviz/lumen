@@ -2,13 +2,12 @@ import importlib
 import os
 import sys
 
-import param as param
 import panel as pn
+import param as param
 
-from panel.widgets.indicators import Indicator
+from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
-from panel.template import DefaultTheme, DarkTheme
-
+from panel.widgets.indicators import Indicator
 
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
 

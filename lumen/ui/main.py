@@ -7,6 +7,7 @@ from panel.template import FastListTemplate
 from lumen.ui.builder import Builder
 from lumen.ui.state import state
 
+
 def main():
     path = Path(state.components)
     path.mkdir(parents=True, exist_ok=True)

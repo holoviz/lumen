@@ -18,7 +18,7 @@ def test_yaml_auth_mapper_plugin(yaml_file):
     yaml_file.write(auth_mapper)
     yaml_file.seek(0)
     yaml_file.flush()
-    
+
     mapper = YamlAuthMapperPlugin(yaml_file=yaml_file.name)
 
     original = {
