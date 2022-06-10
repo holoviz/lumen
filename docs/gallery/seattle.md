@@ -1,4 +1,4 @@
-# Seattle Weather 
+# Seattle Weather
 
 <img src="../_static/seattle.png" width="100%">
 

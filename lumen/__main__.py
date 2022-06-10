@@ -1,5 +1,6 @@
 import sys
 
+
 def main():
     from lumen.command import main as _main
 

@@ -18,7 +18,7 @@ from .dashboard import DashboardGallery
 from .launcher import LauncherGallery
 from .sources import SourceGallery
 from .state import state
-from .targets import TargetGallery, TargetEditor, TargetGalleryItem
+from .targets import TargetEditor, TargetGallery, TargetGalleryItem
 from .variables import VariablesEditor
 from .views import ViewEditor, ViewGallery, ViewGalleryItem
 

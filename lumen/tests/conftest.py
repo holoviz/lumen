@@ -1,9 +1,10 @@
 import os
 import tempfile
 
-import pytest
+from unittest.mock import Mock
 
 import panel as pn
+import pytest
 
 from bokeh.document import Document
 
@@ -12,7 +13,6 @@ from lumen.sources import FileSource, Source
 from lumen.state import state
 from lumen.variables import Variables
 
-from unittest.mock import Mock
 
 @pytest.fixture
 def set_root():

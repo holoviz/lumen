@@ -96,7 +96,7 @@ class WizardItem(ReactiveHTML):
     active = param.Boolean(default=False)
 
     auto_advance = param.Boolean(default=False)
-    
+
     sizing_mode = param.String(default='stretch_width', readonly=True)
 
     ready = param.Boolean(default=False)
@@ -113,4 +113,3 @@ class WizardItem(ReactiveHTML):
 
     def _update_spec(self, *events):
         pass
-        

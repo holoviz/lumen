@@ -5,9 +5,10 @@ from panel.reactive import ReactiveHTML
 
 from lumen.sources import Source
 from lumen.views import View
+
 from .base import WizardItem
-from .gallery import GalleryItem, Gallery
-from .sources import SourceGallery, ASSETS_DIR
+from .gallery import Gallery, GalleryItem
+from .sources import ASSETS_DIR, SourceGallery
 from .state import state
 
 
@@ -351,7 +352,8 @@ class hvPlotViewEditor(ViewEditor):
     view_type = param.String(default='hvplot')
 
     def __init__(self, **params):
-        import hvplot.pandas # noqa
+        import hvplot.pandas  # noqa
+
         from hvplot.ui import hvPlotExplorer
         super().__init__(**params)
         kwargs = dict(self.spec)
