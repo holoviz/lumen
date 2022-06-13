@@ -124,12 +124,13 @@ class VariablesEditor(WizardItem):
         if variable.materialize:
             variable = variable.as_materialized()
         varspec = {
-            k: v for k, v in variable.param.values().items() if k != 'value'
+            k: v for k, v in variable.param.values().items()
+            if k != 'value' and v != variable.param[k].default
         }
-        if variable.variable_type:
+        vartype = type(variable)
+        if variable.variable_type and vartype.__module__.startswith('lumen.'):
             varspec['type'] = variable.variable_type
         else:
-            vartype = type(variable)
             varspec['type'] = f'{vartype.__module__}.{vartype.__name__}'
         return varspec
 
