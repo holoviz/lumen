@@ -128,10 +128,12 @@ class VariablesEditor(WizardItem):
             if k != 'value' and v != variable.param[k].default
         }
         vartype = type(variable)
+        print(variable.variable_type, vartype.__module__.startswith('lumen.'))
         if variable.variable_type and vartype.__module__.startswith('lumen.'):
             varspec['type'] = variable.variable_type
         else:
             varspec['type'] = f'{vartype.__module__}.{vartype.__name__}'
+        print('>>', varspec)
         return varspec
 
     @param.depends('enabled', watch=True)
