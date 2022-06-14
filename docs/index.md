@@ -17,20 +17,50 @@ The core strengths of Lumen include:
 
 ## Examples
 
-   <table>
-     <tr>
-       <td><a href="./gallery/bikes.html"><b>London Bike Points</b><br><img src="./_static/bikes.png" /></a></td>
-       <td><a href="./gallery/nyc_taxi.html"><b>NYC Taxi</b><br><img src="./_static/nyc_taxi.png" /></a></td>
-     </tr>
-     <tr>
-	   <td><a href="./gallery/penguins.html"><b>Palmer Penguins</b><br><img src="./_static/penguins.png" /></a></td>
-       <td><a href="./gallery/precip.html"><b>Precipitation</b><br><img src="./_static/precip.png" /></a></td>
-     </tr>
-	 <tr>
-	   <td><a href="./gallery/seattle.html"><b>Seattle Weather</b><br><img src="./_static/seattle.png" /></a></td>
-     </tr>
-   </table>
+::::{grid} 2 2 5 5
+:gutter: 1
 
+:::{grid-item-card} London Bike Points
+:link: gallery/bikes
+:link-type: doc
+
+```{image} ./_static/bikes.png
+```
+:::
+
+:::{grid-item-card} NYC Taxi
+:link: gallery/nyc_taxi
+:link-type: doc
+
+```{image} ./_static/nyc_taxi.png
+```
+:::
+
+:::{grid-item-card} Penguins
+:link: gallery/penguins
+:link-type: doc
+
+```{image} ./_static/penguins.png
+```
+:::
+
+:::{grid-item-card} Precipitation
+:link: gallery/precip
+:link-type: doc
+
+```{image} ./_static/precip.png
+```
+:::
+
+:::{grid-item-card} Seattle Weather
+:link: gallery/seattle
+:link-type: doc
+
+```{image} ./_static/seattle.png
+```
+:::
+
+::::
 
 ## Architecture
 
@@ -64,7 +94,8 @@ Try it out! Click on one of the examples below, copy the yaml specification and 
 hidden: true
 ---
 Home <self>
-Dashboard Specification <dashboard>
+Specification <dashboard>
+UI <ui/index>
 Gallery <gallery/index>
 Architecture <architecture/index>
 REST Specification <rest>

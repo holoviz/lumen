@@ -22,21 +22,29 @@ import param
 param.parameterized.docstring_signature = False
 param.parameterized.docstring_describe_params = False
 
+from nbsite.util import base_version  # noqa
+
 import lumen
 
 project = 'Lumen'
-copyright = '2020-2021, HoloViz Developers'
+copyright = '2020-2022, HoloViz Developers'
 author = 'HoloViz Developers'
 
 # The full version, including alpha/beta/rc tags
-release = lumen.__version__
+version = release = base_version(lumen.__version__)
 
 # -- General configuration ---------------------------------------------------
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ["myst_parser", 'sphinx.ext.autodoc', 'sphinx.ext.napoleon']
+extensions = [
+    'myst_parser',
+    'sphinx_design',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.napoleon',
+    'sphinx_copybutton'
+]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -46,6 +54,11 @@ templates_path = ['_templates']
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
+myst_enable_extensions = ["colon_fence"]
+
+html_css_files = [
+    'custom.css',
+]
 
 # -- Options for HTML output -------------------------------------------------
 
@@ -53,26 +66,20 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # a list of builtin themes.
 #
 html_theme = "pydata_sphinx_theme"
+html_logo = "_static/logo_horizontal.png"
+html_favicon = "_static/favicon.ico"
 
 html_theme_options = {
+    "github_url": "https://github.com/holoviz/lumen",
     "icon_links": [
-        {
-            "name": "GitHub",
-            "url": "https://github.com/holoviz/lumen",
-            "icon": "fab fa-github-square",
-        },
         {
             "name": "Discourse",
             "url": "https://discourse.holoviz.org/",
             "icon": "fab fa-discourse",
         },
-    ]
-}
-
-html_sidebars = {
-    "index": [],
-    "dashboard": [],
-    "rest": []
+    ],
+    "pygment_light_style": "monokai",
+    "pygment_dark_style": "monokai"
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,

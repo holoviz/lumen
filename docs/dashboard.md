@@ -1,4 +1,4 @@
-# Dashboard specification
+# Specification
 
 The Lumen dashboard can be configured using a `dashboard.yml`
 file. The core design principle behind the yaml specification is that
