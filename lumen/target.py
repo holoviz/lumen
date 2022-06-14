@@ -12,6 +12,7 @@ from .filters import FacetFilter, Filter, ParamFilter
 from .panel import IconButton
 from .sources import Source
 from .state import state
+from .util import extract_refs
 from .views import DOWNLOAD_FORMATS, View
 
 
@@ -242,6 +243,9 @@ class Target(param.Parameterized):
         self._cb = None
         self._stale = False
         self._updates = {}
+        self._timestamp = pn.pane.HTML(
+            align='center', margin=(10, 0), sizing_mode='stretch_width'
+        )
         self._view_controls = pn.Column(sizing_mode='stretch_width')
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
@@ -255,6 +259,20 @@ class Target(param.Parameterized):
             filt.param.watch(rerender, 'value')
         self._update_views(init=True)
         self.source.param.watch(rerender, self.source.refs)
+
+    @property
+    def refs(self):
+        refs = self.source.refs.copy()
+        for filt in self.filters:
+            for ref in filt.refs:
+                if ref not in refs:
+                    refs.append(ref)
+        views = self.views
+        for spec in (views if isinstance(views, list) else views.values()):
+            for ref in extract_refs(spec, 'variables'):
+                if ref not in refs:
+                    refs.append(ref)
+        return refs
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -353,6 +371,11 @@ class Target(param.Parameterized):
     def get_filter_panel(self, skip=None):
         skip = skip or []
         views = []
+        global_refs = state.global_refs
+        target_refs = [ref.split('.')[1] for ref in self.refs if ref not in global_refs]
+        var_panel = state.variables.panel(target_refs)
+        if var_panel is not None:
+            views.append(var_panel)
         source_panel = self.source.panel
         if source_panel:
             source_header = pn.pane.Markdown('### Source', margin=(0, 5, -10, 5))
@@ -380,10 +403,7 @@ class Target(param.Parameterized):
                 icon='fa-sync', size=18, margin=10
             )
             self._reload_button.on_click(self.update)
-            self._timestamp = pn.pane.HTML(
-                f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
-                align='center', margin=(10, 0), sizing_mode='stretch_width'
-            )
+            self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
             reload_panel = pn.Row(
                 self._reload_button, self._timestamp, sizing_mode='stretch_width',
                 margin=(10, 10, 0, 5)

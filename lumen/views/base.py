@@ -102,7 +102,7 @@ class View(Component):
         can be downloaded.""")
 
     filters = param.List(constant=True, doc="""
-        A list of Filter object providing the query parameters for the
+        A list of Filter objects providing the query parameters for the
         Source.""")
 
     source = param.ClassSelector(class_=Source, constant=True, doc="""
