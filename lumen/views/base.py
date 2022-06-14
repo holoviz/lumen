@@ -17,7 +17,7 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
 )
 from panel.param import Param
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 
 from ..base import Component
 from ..config import _INDICATORS
@@ -26,7 +26,7 @@ from ..panel import DownloadButton
 from ..sources import Source
 from ..state import state
 from ..transforms import Filter, Transform
-from ..util import is_ref
+from ..util import is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -120,7 +120,7 @@ class View(Component):
         A list of sql transforms to apply to the data returned by the
         Source before visualizing it.""")
 
-    table = param.String(doc="The table being visualized.")
+    table = param.String(allow_None=True, doc="The table being visualized.")
 
     field = param.Selector(doc="The field being visualized.")
 
@@ -131,6 +131,8 @@ class View(Component):
 
     # Parameters which reference fields in the table
     _field_params = ['field']
+
+    _requires_source = True
 
     _selections = WeakKeyDictionary()
 
@@ -149,11 +151,11 @@ class View(Component):
         # Populate field selector parameters
         params = {k: v for k, v in params.items() if k in self.param}
         source, table = params.pop('source', None), params.pop('table', None)
-        if source is None:
+        if source is None and self._requires_source:
             raise ValueError("Views must declare a Source.")
-        if table is None:
+        if table is None and self._requires_source:
             raise ValueError("Views must reference a table on the declared Source.")
-        fields = list(source.get_schema(table))
+        fields = list(source.get_schema(table)) if source else []
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
@@ -411,6 +413,34 @@ class View(Component):
             if c not in refs:
                 refs.append(c)
         return refs
+
+
+class Panel(View):
+
+    spec = param.Dict()
+
+    view_type = 'panel'
+
+    _requires_source = False
+
+    def _resolve_spec(self, spec):
+        if not isinstance(spec, dict) or 'type' not in spec:
+            return spec
+        spec = dict(self.spec)
+        ptype = resolve_module_reference(spec.pop('type'), Viewable)
+        params = {}
+        for p, v in spec.items():
+            if isinstance(v, dict) and 'type' in v:
+                v = self._resolve_spec(v)
+            elif isinstance(v, list):
+                v = [self._resolve_spec(sv) for sv in v]
+            elif is_ref(v):
+                v = state.resolve_reference(v)
+            params[p] = v
+        return ptype(**params)
+
+    def get_panel(self):
+        return self._resolve_spec(self.spec)
 
 
 class StringView(View):
