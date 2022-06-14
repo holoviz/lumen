@@ -426,14 +426,14 @@ class Panel(View):
 
     :Example:
 
-    >>> type: panel
-    ... spec:
-    ...     type: panel.layout.Column
-    ...     objects:
-    ...         - type: pn.pane.Markdown
-    ...           object: '# My custom title'
-    ...         - type: pn.pane.DataFrame
-    ...           object: $data
+        type: panel
+        spec:
+            type: panel.layout.Column
+            objects:
+                - type: pn.pane.Markdown
+                  object: '# My custom title'
+                - type: pn.pane.DataFrame
+                  object: $data
     """
 
     spec = param.Dict()
