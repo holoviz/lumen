@@ -61,11 +61,15 @@ class _session_state:
     @property
     def global_refs(self):
         target_refs = [
-            extract_refs(target, 'variables') for target in self.spec.get('targets', [])
+            set(extract_refs(target, 'variables')) for target in self.spec.get('targets', [])
         ]
         var_refs = extract_refs(self.spec.get('variables'), 'variables')
-        merged = set.intersection(*map(set, target_refs)) if target_refs else set()
-        return list(merged | set(var_refs))
+        if target_refs:
+            combined_refs = set.union(*target_refs)
+            merged_refs = set.intersection(*target_refs)
+        else:
+            combined_refs, merged_refs = set(), set()
+        return list(merged_refs | (set(var_refs) - all_refs))
 
     @property
     def loading_msg(self):
@@ -188,7 +192,7 @@ class _session_state:
             return value
         return self._resolve_source_ref(refs)
 
-    
+
 
 
 state = _session_state()
