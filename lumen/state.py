@@ -69,7 +69,7 @@ class _session_state:
             merged_refs = set.intersection(*target_refs)
         else:
             combined_refs, merged_refs = set(), set()
-        return list(merged_refs | (set(var_refs) - all_refs))
+        return list(merged_refs | (set(var_refs) - combined_refs))
 
     @property
     def loading_msg(self):
