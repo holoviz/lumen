@@ -60,9 +60,14 @@ class _session_state:
 
     @property
     def global_refs(self):
-        target_refs = [
-            set(extract_refs(target, 'variables')) for target in self.spec.get('targets', [])
-        ]
+        target_refs = []
+        source_specs = self.spec.get('sources', {})
+        for target in self.spec.get('targets', []):
+            if isinstance(target.get('source'), str):
+                src_ref = target['source']
+                target = dict(target, source=source_specs.get(src_ref))
+            target_refs.append(set(extract_refs(target, 'variables')))
+
         var_refs = extract_refs(self.spec.get('variables'), 'variables')
         if target_refs:
             combined_refs = set.union(*target_refs)

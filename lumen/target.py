@@ -243,6 +243,9 @@ class Target(param.Parameterized):
         self._cb = None
         self._stale = False
         self._updates = {}
+        self._timestamp = pn.pane.HTML(
+            align='center', margin=(10, 0), sizing_mode='stretch_width'
+        )
         self._view_controls = pn.Column(sizing_mode='stretch_width')
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
@@ -258,10 +261,10 @@ class Target(param.Parameterized):
         self.source.param.watch(rerender, self.source.refs)
 
     @property
-    def var_refs(self):
-        refs = self.source.var_refs.copy()
+    def refs(self):
+        refs = self.source.refs.copy()
         for filt in self.filters:
-            for ref in filt.var_refs:
+            for ref in filt.refs:
                 if ref not in refs:
                     refs.append(ref)
         views = self.views
@@ -369,7 +372,7 @@ class Target(param.Parameterized):
         skip = skip or []
         views = []
         global_refs = state.global_refs
-        target_refs = [ref.split('.')[1] for ref in self.var_refs if ref not in global_refs]
+        target_refs = [ref.split('.')[1] for ref in self.refs if ref not in global_refs]
         var_panel = state.variables.panel(target_refs)
         if var_panel is not None:
             views.append(var_panel)
@@ -400,10 +403,7 @@ class Target(param.Parameterized):
                 icon='fa-sync', size=18, margin=10
             )
             self._reload_button.on_click(self.update)
-            self._timestamp = pn.pane.HTML(
-                f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
-                align='center', margin=(10, 0), sizing_mode='stretch_width'
-            )
+            self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
             reload_panel = pn.Row(
                 self._reload_button, self._timestamp, sizing_mode='stretch_width',
                 margin=(10, 10, 0, 5)
