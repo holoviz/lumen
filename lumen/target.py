@@ -403,7 +403,7 @@ class Target(param.Parameterized):
                 icon='fa-sync', size=18, margin=10
             )
             self._reload_button.on_click(self.update)
-            self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}',
+            self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'
             reload_panel = pn.Row(
                 self._reload_button, self._timestamp, sizing_mode='stretch_width',
                 margin=(10, 10, 0, 5)
