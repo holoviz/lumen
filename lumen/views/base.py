@@ -416,6 +416,25 @@ class View(Component):
 
 
 class Panel(View):
+    """
+    The `Panel` View is a very general purpose view that allows expressing
+    arbitrary Panel objects as a specification. The Panel specification may
+    be arbitrarily nested making it possible to specify entire layouts.
+    Additionally the Panel specification also supports references,
+    including standard source and variable references and a custom `$data`
+    reference that inserts the current data of the `View`.
+
+    :Example:
+
+    >>> type: panel
+    ... spec:
+    ...     type: panel.layout.Column
+    ...     objects:
+    ...         - type: pn.pane.Markdown
+    ...           object: '# My custom title'
+    ...         - type: pn.pane.DataFrame
+    ...           object: $data
+    """
 
     spec = param.Dict()
 
@@ -435,7 +454,10 @@ class Panel(View):
             elif isinstance(v, list):
                 v = [self._resolve_spec(sv) for sv in v]
             elif is_ref(v):
-                v = state.resolve_reference(v)
+                if v == '$data':
+                    v = self.get_data()
+                else:
+                    v = state.resolve_reference(v)
             params[p] = v
         return ptype(**params)
 
