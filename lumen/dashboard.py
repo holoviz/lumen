@@ -483,8 +483,9 @@ class Dashboard(param.Parameterized):
     def _render_filters(self):
         self._global_filters, global_panel = self._get_global_filters()
         filters = [] if global_panel is None else [global_panel]
-        self._variable_panel = self.variables.panel
-        if len(self._variable_panel):
+        global_refs = [ref.split('.')[1] for ref in state.global_refs]
+        self._variable_panel = self.variables.panel(global_refs)
+        if self._variable_panel is not None:
             filters.append(self._variable_panel)
         for i, target in enumerate(self.targets):
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
