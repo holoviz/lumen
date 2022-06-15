@@ -6,6 +6,10 @@ on:
     - 'v[0-9]+.[0-9]+.[0-9]+a[0-9]+'
     - 'v[0-9]+.[0-9]+.[0-9]+b[0-9]+'
     - 'v[0-9]+.[0-9]+.[0-9]+rc[0-9]+'
+  # Dry-run only
+  workflow_dispatch:
+  schedule:
+    - cron: '0 17 * * SUN'
 
 jobs:
   conda_build:
@@ -15,11 +19,9 @@ jobs:
       run:
         shell: bash -l {0}
     env:
-      CHANS_DEV: "-c pyviz/label/dev -c bokeh -c conda-forge"
-      PKG_TEST_PYTHON: "--test-python=py37"
-      PYTHON_VERSION: "3.7"
-      CHANS: "-c pyviz"
+      CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
       MPLBACKEND: "Agg"
+      PYCTDEV_SELF_CHANNEL: "pyviz/label/dev"
     steps:
       - uses: actions/checkout@v2
       - name: Fetch unshallow
@@ -30,22 +32,22 @@ jobs:
       - uses: conda-incubator/setup-miniconda@v2
         with:
           miniconda-version: "latest"
-          python-version: 3.8
+          python-version: 3.7
       - name: Set output
         id: vars
         run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
       - name: conda setup
         run: |
           conda config --set always_yes True
-          conda install -c pyviz "pyctdev>=0.5"
+          conda install -c pyviz/label/dev "pyctdev>=0.5"
           doit ecosystem_setup
       - name: conda build
-        run: doit package_build $CHANS_DEV $PKG_TEST_PYTHON --test-group=all
+        run: doit package_build $CHANS_DEV --no-pkg-tests
       - name: conda dev upload
-        if: (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc'))
+        if: (github.event_name == 'push' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
         run: doit package_upload --token=${{ secrets.CONDA_UPLOAD_TOKEN }} --label=dev
       - name: conda main upload
-        if: (!(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+        if: (github.event_name == 'push' && !(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
         run: doit package_upload --token=${{ secrets.CONDA_UPLOAD_TOKEN }} --label=dev --label=main
   pip_build:
     name: Build PyPI Packages
@@ -54,14 +56,14 @@ jobs:
       run:
         shell: bash -l {0}
     env:
-      CHANS_DEV: "-c pyviz/label/dev -c bokeh -c conda-forge"
+      CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
       PKG_TEST_PYTHON: "--test-python=py37"
       PYTHON_VERSION: "3.7"
-      CHANS: "-c pyviz"
       MPLBACKEND: "Agg"
       PPU: ${{ secrets.PPU }}
       PPP: ${{ secrets.PPP }}
       PYPI: "https://upload.pypi.org/legacy/"
+      PYCTDEV_SELF_CHANNEL: "pyviz/label/dev"
     steps:
       - uses: actions/checkout@v2
       - name: Fetch unshallow
@@ -75,7 +77,7 @@ jobs:
       - name: conda setup
         run: |
           conda config --set always_yes True
-          conda install -c pyviz "pyctdev>=0.5"
+          conda install -c pyviz/label/dev "pyctdev>=0.5"
           doit ecosystem_setup
           doit env_create $CHANS_DEV --python=$PYTHON_VERSION
       - name: env setup
@@ -90,6 +92,7 @@ jobs:
           conda activate test-environment
           doit ecosystem=pip package_build $PKG_TEST_PYTHON --test-group=all
       - name: pip upload
+        if: github.event_name == 'push'
         run: |
           eval "$(conda shell.bash hook)"
           conda activate test-environment

@@ -20,7 +20,7 @@ class Wizard(ReactiveHTML):
 
     _template = """
     <div id="wizard-content" style="display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
-    <div id="wizard">${current}</div>
+    <div id="wizard" style="overflow: clip auto; padding-right: 1em;">${current}</div>
     <div id="wizard-footer" style="margin-top: auto;">
       <fast-divider style="margin: 1em 0;"></fast-divider>
       <div style="display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
@@ -96,7 +96,7 @@ class WizardItem(ReactiveHTML):
     active = param.Boolean(default=False)
 
     auto_advance = param.Boolean(default=False)
-    
+
     sizing_mode = param.String(default='stretch_width', readonly=True)
 
     ready = param.Boolean(default=False)
@@ -113,4 +113,3 @@ class WizardItem(ReactiveHTML):
 
     def _update_spec(self, *events):
         pass
-        

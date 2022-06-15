@@ -6,8 +6,8 @@ import requests
 from ae5_tools.api import AEAdminSession, AEUserSession
 from panel import state
 
-from .base import Source, cached, cached_schema
 from ..util import get_dataframe_schema
+from .base import Source, cached, cached_schema
 
 
 class AE5Source(Source):

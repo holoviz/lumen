@@ -1,8 +1,8 @@
 import pathlib
-import yaml
 
 import panel as pn
 import param
+import yaml
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
@@ -140,7 +140,7 @@ class DashboardGallery(WizardItem, Gallery):
         return
 
     def _create_new(self, event):
-        self.spec = {'config': {}, 'sources': {}, 'targets': [], 'variables': {}}
+        self.spec = {'sources': {}, 'targets': []}
 
     def _selected(self, event):
         self.spec = event.obj.spec

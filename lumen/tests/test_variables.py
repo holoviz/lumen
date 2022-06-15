@@ -4,7 +4,7 @@ import param
 
 from panel.widgets import IntSlider
 
-from lumen.variables import Variables, Variable
+from lumen.variables import Variable, Variables
 
 
 def test_variables():
@@ -12,7 +12,7 @@ def test_variables():
         'str'  : 'a',
         'int'  : 1,
         'float': 1.4,
-        'list' : [1, 2, 3] 
+        'list' : [1, 2, 3]
     })
 
     # Test initialization
@@ -41,6 +41,13 @@ def test_resolve_widget_variable_by_clsname():
     var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider'})
 
     assert isinstance(var._widget, IntSlider)
+
+
+def test_widget_variable_label():
+    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider', 'label': 'Custom label'})
+
+    assert isinstance(var._widget, IntSlider)
+    assert var._widget.name == 'Custom label'
 
 
 def test_resolve_widget_variable_by_module_ref():

@@ -1,11 +1,9 @@
-import yaml
-
 from collections import defaultdict
 
 import param
+import yaml
 
 from .util import resolve_module_reference
-
 
 
 class AuthPlugin(param.Parameterized):
@@ -28,7 +26,7 @@ class AuthPlugin(param.Parameterized):
             if auth.auth_type == auth_type:
                 return auth
         raise ValueError(f"No AuthPlugin for auth_type '{auth_type}' could be found.")
-    
+
     @classmethod
     def from_spec(cls, spec):
         spec = dict(spec)
@@ -62,15 +60,15 @@ class YamlAuthMapperPlugin(AuthPlugin):
             - admins
 
     to this expanded spec:
-   
+
         auth:
           email:
-            - lumen@holoviz.org 
+            - lumen@holoviz.org
             - panel@holoviz.org
             - param@holoviz.org
             - philipp@holoviz.org
     """
-    
+
     yaml_file = param.Filename()
 
     auth_type = 'yaml'

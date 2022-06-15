@@ -1,7 +1,9 @@
 import param
 
 from ..transforms.base import Filter
-from ..transforms.sql import SQLDistinct, SQLFilter, SQLLimit, SQLMinMax
+from ..transforms.sql import (
+    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
+)
 from ..util import get_dataframe_schema
 from .base import cached, cached_schema
 from .intake import IntakeBaseSource, IntakeSource

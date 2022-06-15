@@ -1,8 +1,8 @@
 import os
 import pathlib
-import yaml
 
 import param
+import yaml
 
 from panel.reactive import ReactiveHTML
 
@@ -83,9 +83,13 @@ class Gallery(ReactiveHTML):
                 kwargs['thumbnail'] = thumbnail
             if self._editor_type:
                 kwargs['editor'] = self._editor_type(**dict(spec, **kwargs))
+            kwargs = self._preprocess_kwargs(kwargs)
             items[name] = item = self._gallery_item(**kwargs)
             item.param.watch(self._selected, ['selected'])
         super().__init__(**params)
+
+    def _preprocess_kwargs(self, kwargs):
+        return kwargs
 
     def _selected(self, event):
         """

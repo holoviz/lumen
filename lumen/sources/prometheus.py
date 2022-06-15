@@ -9,8 +9,8 @@ import panel as pn
 import param
 import requests
 
-from .base import Source, cached
 from ..util import parse_timedelta
+from .base import Source, cached
 
 
 class PrometheusSource(Source):

@@ -15,10 +15,10 @@ from lumen.state import state as lm_state
 from .base import Wizard
 from .config import ConfigEditor
 from .dashboard import DashboardGallery
-from .launcher import Launcher, YAMLLauncher
+from .launcher import LauncherGallery
 from .sources import SourceGallery
 from .state import state
-from .targets import TargetGallery, TargetEditor, TargetGalleryItem
+from .targets import TargetEditor, TargetGallery, TargetGalleryItem
 from .variables import VariablesEditor
 from .views import ViewEditor, ViewGallery, ViewGalleryItem
 
@@ -53,18 +53,17 @@ class Builder(param.Parameterized):
 
     spec = param.Dict(default={})
 
-    launcher = param.ClassSelector(class_=Launcher, default=YAMLLauncher())
-
     template = param.ClassSelector(class_=BasicTemplate)
 
     modal = param.ClassSelector(class_=ListLike)
 
     def __init__(self, **params):
         path = params['component_dir']
-        dash_params, source_params, target_params, var_params, view_params = (
-            {}, {}, {}, {}, {}
+        dash_params, launcher_params, source_params, target_params, var_params, view_params = (
+            {}, {}, {}, {}, {}, {}
         )
         dash_params['path'] = os.path.join(path, 'dashboards')
+        launcher_params['path'] = os.path.join(path, 'launchers')
         source_params['path'] = os.path.join(path, 'sources')
         target_params['path'] = os.path.join(path, 'targets')
         var_params['path'] = os.path.join(path, 'variables')
@@ -82,6 +81,7 @@ class Builder(param.Parameterized):
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.views = self.views = ViewGallery(**view_params)
         state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
+        self.launcher = LauncherGallery(builder=self, **launcher_params)
         self.wizard = Wizard(items=[
             self.welcome, self.config, self.variables, self.sources,
             self.views, self.targets, self.launcher
@@ -108,7 +108,7 @@ class Builder(param.Parameterized):
         self.template.modal.append(self.modal)
 
     def _open_dialog(self, event):
-        self.wizard.preview.object = dict(self.spec)
+        self.wizard.preview.object = dict(state.spec)
         self.wizard.open_modal()
 
     @param.depends('welcome.spec', watch=True)

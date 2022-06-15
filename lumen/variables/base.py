@@ -63,13 +63,15 @@ class Variables(param.Parameterized):
         else:
             raise KeyError(f'No variable named {key!r} has been defined.')
 
-    @property
-    def panel(self):
+    def panel(self, variables=None):
+        if variables == []:
+            return None
         column = pn.Column(name='Variables', sizing_mode='stretch_width')
         for key, var in self._vars.items():
-            var_panel = var.panel
-            if var_panel is not None:
-                column.append(var_panel)
+            if variables is None or key in variables:
+                var_panel = var.panel
+                if var_panel is not None:
+                    column.append(var_panel)
         return column
 
 
@@ -85,6 +87,10 @@ class Variable(Component):
 
     default = param.Parameter(doc="""
        Default value to use if no other value is defined""")
+
+    label = param.String(default=None, doc="""
+       Optional label override for variable. Used wherever the variable
+       shows up in the UI.""")
 
     materialize = param.Boolean(default=False, constant=True, doc="""
        Whether the variable should be inlined as a constant variable
@@ -106,6 +112,8 @@ class Variable(Component):
     def __init__(self, **params):
         if 'value' not in params and 'default' in params:
             params['value'] = params['default']
+        if 'label' not in params and 'name' in params:
+            params['label'] = params['name']
         super().__init__(**params)
         self.param.watch(self._update_value_from_default, 'default')
 
@@ -189,7 +197,10 @@ class Widget(Variable):
         default = params.pop('default', None)
         refs = params.pop('refs', {})
         throttled = params.pop('throttled', True)
-        super().__init__(default=default, refs=refs, name=params.get('name'), throttled=throttled)
+        label = params.pop('label', None)
+        super().__init__(
+            default=default, refs=refs, name=params.get('name'), label=label, throttled=throttled
+        )
         kind = params.pop('kind', None)
         if kind is None:
             raise ValueError("A Widget Variable type must declare the kind of widget.")
@@ -199,6 +210,8 @@ class Widget(Variable):
             widget_type = getattr(pn.widgets, kind)
         if 'value' not in params and default is not None:
             params['value'] = default
+        if self.label:
+            params['name'] = self.label
         deserialized = {}
         for k, v in params.items():
             if k in widget_type.param:

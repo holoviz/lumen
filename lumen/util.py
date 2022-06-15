@@ -1,11 +1,11 @@
 import datetime as dt
 import importlib
-import re
 import os
-import sys
+import re
 import subprocess
+import sys
 
-from jinja2 import Environment, Undefined, DebugUndefined
+from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
 
@@ -212,3 +212,22 @@ def is_ref(value):
     Whether the value is a reference.
     """
     return isinstance(value, str) and (value.startswith('$') or value.startswith('@'))
+
+def extract_refs(spec, ref_type=None):
+    refs = []
+    if isinstance(spec, dict):
+        for k, v in spec.items():
+            for ref in extract_refs(v, ref_type):
+                if ref not in refs:
+                    refs.append(ref)
+    elif isinstance(spec, list):
+        for v in spec:
+            for ref in extract_refs(v, ref_type):
+                if ref not in refs:
+                    refs.append(ref)
+    elif is_ref(spec):
+        refs.append(spec)
+    if ref_type is None:
+        return refs
+    filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
+    return filtered

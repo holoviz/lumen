@@ -3,26 +3,28 @@ import importlib
 import importlib.util
 import os
 import traceback
-import yaml
 
 from concurrent.futures import Future, ThreadPoolExecutor
 
-import param
 import panel as pn
+import param
+import yaml
 
 from panel.template.base import BasicTemplate
 
 from .auth import AuthPlugin
-from .config import config, _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES
-from .filters import ConstantFilter, Filter, WidgetFilter # noqa
+from .config import (
+    _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, config,
+)
+from .filters import ConstantFilter, Filter, WidgetFilter  # noqa
 from .panel import IconButton
-from .sources import Source, RESTSource # noqa
+from .sources import RESTSource, Source  # noqa
 from .state import state
 from .target import Target
-from .transforms import Transform # noqa
+from .transforms import Transform  # noqa
 from .util import expand_spec
 from .variables import Variables
-from .views import View # noqa
+from .views import View  # noqa
 
 pn.config.css_files.append(
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css'
@@ -248,7 +250,7 @@ class Dashboard(param.Parameterized):
             self._render()
             self._main[:] = [self._layout]
         except Exception as e:
-            self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}') 
+            self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}')
             self._main.loading = False
             tb = html.escape(traceback.format_exc())
             alert = pn.pane.HTML(
@@ -481,9 +483,10 @@ class Dashboard(param.Parameterized):
     def _render_filters(self):
         self._global_filters, global_panel = self._get_global_filters()
         filters = [] if global_panel is None else [global_panel]
-        variable_panel = self.variables.panel
-        if len(variable_panel):
-            filters.append(variable_panel)
+        global_refs = [ref.split('.')[1] for ref in state.global_refs]
+        self._variable_panel = self.variables.panel(global_refs)
+        if self._variable_panel is not None:
+            filters.append(self._variable_panel)
         for i, target in enumerate(self.targets):
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
                 continue
@@ -535,7 +538,8 @@ class Dashboard(param.Parameterized):
         if self.auth.authorized:
             self._render_filters()
             if isinstance(self._layout, pn.Tabs):
-                active = [0, 1] if self._global_filters else [0]
+                count = 1 + bool(self._global_filters) + bool(self._variable_panel)
+                active = list(range(count))
             else:
                 active = list(range(len(self._sidebar)))
             self._sidebar.active = active

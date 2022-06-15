@@ -1,16 +1,16 @@
 import pathlib
-import yaml
 
-import param
 import panel as pn
+import param
+import yaml
 
 from panel import Param
 from panel.widgets import PasswordInput
 
 from ..state import state
+from ..util import expand_spec
 from ..variables import Variable, Variables
 from .base import WizardItem
-from ..util import expand_spec
 
 
 class VariablesEditor(WizardItem):
@@ -123,9 +123,16 @@ class VariablesEditor(WizardItem):
         variable = self._variables._vars[var]
         if variable.materialize:
             variable = variable.as_materialized()
-        return {
-            k: v for k, v in variable.param.values().items() if k != 'value'
+        varspec = {
+            k: v for k, v in variable.param.values().items()
+            if k != 'value' and v != variable.param[k].default
         }
+        vartype = type(variable)
+        if variable.variable_type and vartype.__module__.startswith('lumen.'):
+            varspec['type'] = variable.variable_type
+        else:
+            varspec['type'] = f'{vartype.__module__}.{vartype.__name__}'
+        return varspec
 
     @param.depends('enabled', watch=True)
     def _update_enabled(self, *events):

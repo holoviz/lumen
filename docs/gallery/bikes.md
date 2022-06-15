@@ -1,4 +1,4 @@
-# Transport for London: Bike Point Occupancy 
+# Transport for London: Bike Point Occupancy
 
 <img src="../_static/bikes.png" width="100%">
 

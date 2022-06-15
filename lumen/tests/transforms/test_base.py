@@ -32,7 +32,7 @@ def test_transform_control_options(make_filesource):
 
 
 def test_transform_control_options_by_reference(make_filesource):
-    root = pathlib.Path(__file__).parent / '..' / 'sources' 
+    root = pathlib.Path(__file__).parent / '..' / 'sources'
     make_filesource(str(root))
 
     transform = Transform.from_spec({
