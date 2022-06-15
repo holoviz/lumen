@@ -40,6 +40,7 @@ extras_require = {
         'myst-parser',
         'nbsite >=0.7.2rc8',
         'sphinx-design',
+        'sphinx-copybutton',
     ]
 }
 
