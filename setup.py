@@ -34,6 +34,7 @@ extras_require = {
         'toolz',
         'pytest-cov',
         'codecov',
+        'pre-commit',
     ],
     'doc': [
         'sphinx',
