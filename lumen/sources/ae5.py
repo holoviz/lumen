@@ -1,5 +1,7 @@
 import datetime as dt
 
+import numpy as np
+import pandas as pd
 import param
 import requests
 
@@ -47,11 +49,18 @@ class AE5Source(Source):
     _job_columns = [
         'id', 'name', 'owner', 'command', 'revision', 'resource_profile',
         'created', 'updated', 'state', 'project_id', 'project_name',
-        'goal_state', 'status_text', 'url', 'schedule', 'source'
+        'goal_state', 'status_text', 'url', 'schedule', 'source',
     ]
 
     _session_columns = [
-        'id', 'name', 'url', 'owner', 'resource_profile', 'state'
+        'id', 'name', 'url', 'owner', 'resource_profile', 'state', 'node',
+    ]
+
+    _allocation_columns = [
+        'id', 'name', 'url', 'owner', 'resource_profile', 'state', 'node',
+        'type', 'node/mem', 'node/cpu', 'node/gpu', 'resource/cpu',
+        'resource/mem', 'resource/gpu', 'allocation/mem_pct',
+        'allocation/cpu_pct', 'allocation/gpu_pct'
     ]
 
     _tables = [
@@ -199,7 +208,7 @@ class AE5Source(Source):
         return self._session.resource_profile_list(format='dataframe')
 
     def _get_sessions(self):
-        sessions = self._session.session_list(format='dataframe')
+        sessions = self._session.session_list(format='dataframe', k8s=True)
         if self._user and not self._is_admin:
             sessions = sessions[sessions.owner==self._user]
         return sessions[self._session_columns]
@@ -216,12 +225,50 @@ class AE5Source(Source):
         and node information to allow computing total and per node
         resource allocations.
         """
-        deployments = self.get('deployments')
-        resources = self.get('resources')
-        nodes = self.get('nodes')
-        ...
-        return
-    
+        resources = self.get('resources').copy()  # Resource profiles
+        nodes = self.get('nodes').copy()  # Cluster nodes
+        jobs = self.get('jobs').copy()
+        deployments = self.get('deployments').copy()
+        sessions = self.get('sessions').copy()
+
+        # Pre-process the nodes, resources and jobs tables
+        nodes['capacity/gpu'] = nodes['capacity/gpu'].astype(float)
+        nodes['capacity/cpu'] = nodes['capacity/cpu'].astype(float)
+        nodes['capacity/mem'] = nodes['capacity/mem'].apply(self._convert_value)
+        nodes_cols = ['capacity/mem', 'capacity/cpu', 'capacity/gpu', 'name']
+        nodes = nodes[nodes_cols]
+        nodes = nodes.rename(columns={
+            'name': 'node',
+            'capacity/mem': 'node/mem',
+            'capacity/cpu': 'node/cpu',
+            'capacity/gpu': 'node/gpu',
+        })
+        resources['cpu'] = resources['cpu'].astype(float)
+        resources['gpu'] = resources['gpu'].astype(float)
+        resources['memory'] = resources['memory'].apply(self._convert_value)
+        resources = resources.set_index('name')
+        resources_cols = ['cpu', 'memory', 'gpu']
+        resources = resources[resources_cols]
+        resources = resources.rename(columns={'memory': 'mem'})
+        resources = resources.add_prefix('resource/')
+        # ae5tools doesn't yet return a note column for the jobs
+        jobs['node'] = np.nan
+
+        deployments['type'] = 'deployment'
+        jobs['type'] = 'job'
+        sessions['type'] = 'session'
+
+        # Concat the deployments, sessions and jobs in a single utilizations table
+        common_cols = ['id', 'name', 'url', 'owner', 'resource_profile', 'state', 'node', 'type']
+        utilizations = pd.concat([deployments[common_cols], sessions[common_cols], jobs[common_cols]])
+        utilizations = pd.merge(utilizations, nodes, left_on='node', right_on='node', how='outer')
+        # To remove the orchestring node that has no attached jobs, resources or deployments.
+        utilizations = utilizations[~utilizations['id'].isna()]
+
+        allocations = pd.merge(utilizations, resources, left_on='resource_profile', right_index=True, how='left')
+
+        return allocations[self._allocation_columns]
+
     @cached(with_query=False)
     def get(self, table, **query):
         if table not in self._tables:
