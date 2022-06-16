@@ -375,13 +375,19 @@ class Stack(Transform):
     df.stack(<level>)
     """
 
-    level = param.ClassSelector(class_=(int, list, str), doc="""
+    dropna = param.Boolean(default=True, doc="""
+        Whether to drop rows in the resulting Frame/Series with missing values.
+        Stacking a column level onto the index axis can create combinations of
+        index and column values that are missing from the original
+        dataframe.""")
+
+    level = param.ClassSelector(default=-1, class_=(int, list, str), doc="""
         The indexes to stack.""")
 
     transform_type = 'stack'
 
     def apply(self, table):
-        return table.stack(self.level)
+        return table.stack(level=self.level, dropna=self.dropna)
 
 
 class Unstack(Transform):
@@ -391,13 +397,16 @@ class Unstack(Transform):
     df.unstack(<level>)
     """
 
-    level = param.ClassSelector(class_=(int, list, str), doc="""
+    fill_value = param.ClassSelector(default=None, class_=(int, str, dict), doc="""
+        Replace NaN with this value if the unstack produces missing values.""")
+
+    level = param.ClassSelector(default=-1, class_=(int, list, str), doc="""
         The indexes to unstack.""")
 
     transform_type = 'unstack'
 
     def apply(self, table):
-        return table.unstack(self.level)
+        return table.unstack(level=self.level, fill_value=self.fill_value)
 
 
 class Iloc(Transform):
@@ -471,6 +480,7 @@ class Pivot(Transform):
     def apply(self, table):
         return table.pivot(index=self.index, columns=self.columns, values=self.values)
 
+
 class Melt(Transform):
     """
     Melts a DataFrame given the id_vars and value_vars.
@@ -478,6 +488,11 @@ class Melt(Transform):
 
     id_vars = param.ListSelector(default=[], doc="""
         Column(s) to use as identifier variables.""")
+
+    ignore_index = param.Boolean(default=True, doc="""
+        If True, original index is ignored. If False, the original
+        index is retained. Index labels will be repeated as
+        necessary.""")
 
     value_vars = param.ListSelector(default=None, doc="""
         Column(s) to unpivot. If not specified, uses all columns that
@@ -496,6 +511,10 @@ class Melt(Transform):
 
     def apply(self, table):
         return pd.melt(table, id_vars=self.id_vars, value_vars=self.value_vars,
+                       var_name=self.var_name, value_name=self.value_name,
+                       ignore_index=self.ignore_index)
+
+
 class SetIndex(Transform):
     """
     Set the DataFrame index using existing columns, see `pandas.DataFrame.set_index`.
