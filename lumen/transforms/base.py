@@ -494,7 +494,149 @@ class Melt(Transform):
 
     def apply(self, table):
         return pd.melt(table, id_vars=self.id_vars, value_vars=self.value_vars,
-                       var_name=self.var_name, value_name=self.value_name)
+class SetIndex(Transform):
+    """
+    Set the DataFrame index using existing columns, see `pandas.DataFrame.set_index`.
+
+    df.set_index(<keys>, drop=<drop>, append=<append>, verify_integrity=<verify_integrity>)
+    """
+
+    append = param.Boolean(default=False, doc="""
+        Whether to append columns to existing index.""")
+
+    drop = param.Boolean(default=True, doc="""
+        Delete columns to be used as the new index.""")
+
+    keys = param.ClassSelector(default=None, class_=(str, list), doc="""
+        This parameter can be either a single column key or a list
+        containing column keys.""")
+
+    verify_integrity = param.Boolean(default=False, doc="""
+        Check the new index for duplicates. Otherwise defer the check
+        until necessary. Setting to False will improve the performance
+        of this method.""")
+
+    transform_type = 'set_index'
+
+    _field_params = ['keys']
+
+    def apply(self, table):
+        return table.set_index(
+            self.keys, drop=self.drop, append=self.append,
+            verify_integrity=self.verify_integrity
+        )
+
+
+class ResetIndex(Transform):
+    """
+    Sort on one or more columns, see `pandas.DataFrame.sort_values`.
+
+    df.sort_values(<by>, ascending=<ascending>)
+    """
+
+    col_fill = param.String(default="", doc="""
+        If the columns have multiple levels, determines how the other
+        levels are named. If None then the index name is repeated.""")
+
+    col_level = param.ClassSelector(default=0, class_=(int, str), doc="""
+        If the columns have multiple levels, determines which level the
+        labels are inserted into. By default it is inserted into the
+        first level.""")
+
+    drop = param.Boolean(default=False, doc="""
+        Do not try to insert index into dataframe columns. This resets
+        the index to the default integer index.""")
+
+    level = param.ClassSelector(default=None, class_=(int, str, list), doc="""
+        Only remove the given levels from the index. Removes all levels
+        by default.""")
+
+    transform_type = 'reset_index'
+
+    def apply(self, table):
+        return table.reset_index(
+            drop=self.drop, col_fill=self.col_fill, col_level=self.col_level,
+            level=self.level
+        )
+
+
+class Rename(Transform):
+    """
+    Alter axes labels,  see `pandas.DataFrame.rename`.
+
+    df.rename(mapper=<mapper>, columns=<columns>, index=<index>,
+              level=<level>, axis=<axis>, copy=<copy>)
+    """
+
+    axis = param.ClassSelector(default=0, class_=(int, str), doc="""
+        The axis to rename. 0 or 'index', 1 or 'columns'""")
+
+    columns = param.Dict(default=None, doc="""
+        Alternative to specifying axis (`mapper, axis=1` is equivalent to
+        `columns=mapper`).""")
+
+    copy = param.Boolean(default=True, doc="""
+        Also copy underlying data.""")
+
+    index = param.Dict(default=None, doc="""
+        Alternative to specifying axis (`mapper, axis=0` is equivalent to
+        `index=mapper`).""")
+
+    mapper = param.Dict(default=None, doc="""
+        Dict to apply to that axis' values. Use either `mapper` and `axis` to
+        specify the axis to target with `mapper`, or `index` and `columns`.""")
+
+    level = param.ClassSelector(default=None, class_=(int, str), doc="""
+        In case of a MultiIndex, only rename labels in the specified level.""")
+
+    transform_type = 'rename'
+
+    def apply(self, table):
+        return table.rename(
+            axis=self.axis, columns=self.columns, copy=self.copy,
+            index=self.index, mapper=self.mapper, level=self.level,
+        )
+
+
+class RenameAxis(Transform):
+    """
+    Set the name of the axis for the index or columns,
+    see `pandas.DataFrame.rename_axis`.
+
+    df.rename_axis(mapper=<mapper>, columns=<columns>, index=<index>,
+                  axis=<axis>, copy=<copy>)
+    """
+
+    axis = param.ClassSelector(default=0, class_=(int, str), doc="""
+        The axis to rename. 0 or 'index', 1 or 'columns'""")
+
+    columns = param.ClassSelector(default=None, class_=(str, list, dict), doc="""
+        A scalar, list-like, dict-like to apply to that axis' values.
+        Note that the columns parameter is not allowed if the object
+        is a Series. This parameter only apply for DataFrame type objects.
+        Use either mapper and axis to specify the axis to target with
+        mapper, or index and/or columns.""")
+
+    copy = param.Boolean(default=True, doc="""
+        Also copy underlying data.""")
+
+    index = param.ClassSelector(default=None, class_=(str, list, dict), doc="""
+        A scalar, list-like, dict-like to apply to that axis' values.
+        Note that the columns parameter is not allowed if the object
+        is a Series. This parameter only apply for DataFrame type objects.
+        Use either mapper and axis to specify the axis to target with
+        mapper, or index and/or columns.""")
+
+    mapper = param.ClassSelector(default=None, class_=(str, list), doc="""
+        Value to set the axis name attribute.""")
+
+    transform_type = 'rename_axis'
+
+    def apply(self, table):
+        return table.rename_axis(
+            axis=self.axis, columns=self.columns, copy=self.copy,
+            index=self.index, mapper=self.mapper,
+        )
 
 
 class project_lnglat(Transform):
