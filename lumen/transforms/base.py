@@ -359,6 +359,8 @@ class Astype(Transform):
 
     dtypes = param.Dict(doc="Mapping from column name to new type.")
 
+    transform_type = 'as_type'
+
     def apply(self, table):
         table = table.copy()
         for col, dtype in self.dtypes.items():
