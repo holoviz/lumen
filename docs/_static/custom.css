@@ -1,0 +1,25 @@
+pre[id^='codecell'] {
+    background-color: unset;
+    border: none;
+    border-radius: 0.5em;
+    color: #f8f8f2;
+    box-shadow: none;
+    padding: 1.5em;
+}
+
+button.copybtn {
+    background-color: rgb(38 39 48);
+}
+
+button.copybtn:hover {
+    background-color: rgb(38 39 48);
+    color: #f8f8f2;
+}
+
+.o-tooltip--left:after {
+    background: none;
+}
+
+ul.current.nav.bd-sidenav {
+    padding: 0;
+}
