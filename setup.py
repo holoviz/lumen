@@ -38,8 +38,9 @@ extras_require = {
         'sphinx',
         'pydata-sphinx-theme',
         'myst-parser',
-        'nbsite',
-        'docutils <0.17'
+        'nbsite >=0.7.2rc8',
+        'sphinx-design',
+        'sphinx-copybutton',
     ]
 }
 
@@ -74,6 +75,7 @@ setup_args = dict(
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
         "Operating System :: OS Independent",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",

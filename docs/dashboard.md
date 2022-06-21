@@ -1,15 +1,8 @@
-# Dashboard specification
+# Specification
 
-The Lumen dashboard can be configured using a `dashboard.yml`
-file. The core design principle behind the yaml specification is that
-it instantiates instances of the four main types, i.e.
-[Filter](lumen.filters.Filter), [Source](lumen.sources.Source),
-[Transform](lumen.transforms.Transform) and [View](lumen.views.View)
-objects.
+The Lumen dashboard can be configured using a `dashboard.yml` file. The core design principle behind the yaml specification is that it instantiates instances of the four main types, i.e. [Filter](lumen.filters.Filter), [Source](lumen.sources.Source), [Transform](lumen.transforms.Transform) and [View](lumen.views.View) objects.
 
-For example the `type` declaration of a `Source` is matched against
-`source_type` and all the other keywords are passed as arguments to
-the class, instantiating the object with the provided configuration.
+For example the `type` declaration of a `Source` is matched against`source_type` and all the other keywords are passed as arguments to the class, instantiating the object with the provided configuration.
 
 ## Sections
 
@@ -41,10 +34,7 @@ config:
 
 ### `defaults`
 
-The `defaults` section allows overriding parameter defaults on the
-[Filter](lumen.filters.Filter), [Source](lumen.sources.Source),
-[Transform](lumen.transforms.Transform) and [View](lumen.views.View)
-objects.
+The `defaults` section allows overriding parameter defaults on the [Filter](lumen.filters.Filter), [Source](lumen.sources.Source), [Transform](lumen.transforms.Transform) and [View](lumen.views.View) objects.
 
 ```yaml
 defaults:
@@ -62,9 +52,7 @@ defaults:
       ...: Parameter to override
 ```
 
-As an example we may want to override the default `WidgetFilter.multi`
-value, because we want to query with a specific value rather than
-multiple values:
+As an example we may want to override the default `WidgetFilter.multi` value, because we want to query with a specific value rather than multiple values:
 
 ```yaml
 defaults:
@@ -73,11 +61,25 @@ defaults:
       multi: false
 ```
 
+### `variables`
+
+Variables are powerful components for declaring values that you want to use throughout your application by referencing throughout the YAML.
+
+
+```yaml
+variables:
+  user:
+    - type: url
+  password:
+    - type: env
+	  key: MY_PASSWORD_ENV_VAR
+```
+
+Once declared variables can be referenced through the rest of your dashboard specification by using the reference syntax (`$`) described below.
+
 ### `sources`
 
-The `sources` section allows defining [Source](lumen.sources.Source)
-instances which can be referenced from the monitoring targets. This is
-useful when reusing a `Source` across multiple targets.
+The `sources` section allows defining [Source](lumen.sources.Source) instances which can be referenced from the monitoring targets. This is useful when reusing a `Source` across multiple targets.
 
 ```yaml
 sources:
@@ -85,8 +87,7 @@ sources:
     ...: Additional parameters for the Source
 ```
 
-As an example we may want to load a table of population data from a
-local CSV file using the [FileSource](lumen.sources.FileSource):
+As an example we may want to load a table of population data from a local CSV file using the [FileSource](lumen.sources.FileSource):
 
 ```yaml
 sources:
@@ -110,14 +111,11 @@ sources:
 		  type: widget
 ```
 
-Any target that uses the population `Source` can now refer to `year`
-filter by name. This allows multiple targets that are fed by the same
-`Source` to reuse a filter.
+Any target that uses the population `Source` can now refer to `year` filter by name. This allows multiple targets that are fed by the same `Source` to reuse a filter.
 
 ### `targets`
 
-The targets section defines the actual monitoring targets and
-therefore makes up the meat of the declaration.
+The targets section defines the actual monitoring targets and therefore makes up the meat of the declaration.
 
 ```yaml
 targets: This is the list of targets to monitor
@@ -150,55 +148,64 @@ targets: This is the list of targets to monitor
 
 ### `auth`
 
-The `auth` field may provide a dictionary of any number of fields
-which are validated against the user information provided the the Auth
-provider, which is made available by Panel in the
-`panel.state.user_info` dictionary. To discover how to configure an
-Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
+The `auth` field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
 
-As an example the GitHub OAuth provider returns the login of the user
-that is visiting the dashboard. If we add the following field to the
-yaml:
+As an example the GitHub OAuth provider returns the login of the user that is visiting the dashboard. If we add the following field to the yaml:
 
 ```yaml
 auth:
   login: [philippjfr]
 ```
 
-Lumen will check the current user `login` against all user logins
-listed here. For a more generic Auth mechanism many Auth providers,
-such as Okta, make it possible to configure a list of groups a user
-belongs to in which case you could list the allowed groups in the auth
-field.
+Lumen will check the current user `login` against all user logins listed here. For a more generic Auth mechanism many Auth providers, such as Okta, make it possible to configure a list of groups a user belongs to in which case you could list the allowed groups in the auth field.
 
 ## Special Syntax
 
 To avoid repeating yourself the yaml specification supports some special syntax.
 
-### Source References
+### References
 
-In some scenarios you might want to refer to a `Source`, a table on a
-`Source` or a field on a table from elsewhere in the yaml
-specification.
+#### Source References
 
-As an example you may have local CSV file which contains a column of
-URLs to monitor and feed that information to a `WebsiteSource` which
-reports whether those URLs are live. Using the `@` syntax we can
-easily establish such references.
+In some scenarios you might want to refer to a `Source`, a table on a `Source` or a field on a table from elsewhere in the yaml specification.
 
-```
+As an example you may have local CSV file which contains a column of URLs to monitor and feed that information to a `WebsiteSource` which reports whether those URLs are live. Using the `$` syntax we can easily establish such references.
+
+```yaml
 sources:
   csv:
     type: file
     files: [websites.csv]
   live:
     type: live
-    urls: "@csv.websites.url"
+    urls: "$csv.websites.url"
 ```
 
-The `@csv.websites.url` syntax will look up a `Source` called 'csv',
-request a table called 'websites' and then feed the 'url' column in
-that table to the `urls` parameter of the `WebsiteSource`.
+The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the `WebsiteSource`.
+
+### Variable References
+
+Variables are powerful components that allow you to link settings across your entire application. Once a `Variable` has been declared in the `variables:` section of the specification you can reference it throughout your application using the `$variables.<variabl-name>` syntax, e.g. you might have a `url` widget `Variable` that allows entering a URL using a `TextInput` widget:
+
+```yaml
+variables:
+  url:
+    type: widget
+	kind: TextInput
+	default: AAPL.csv
+```
+
+Once declared you can reference this variable using the `$variables.` syntax:
+
+```yaml
+sources:
+  stock_data:
+    type: file
+	tables:
+	  ticker: $variables.url
+```
+
+Whenever the `url` variable is updated the `Source` will be refreshed and any views attached to that `Source` will be updated.
 
 ### Templating
 
@@ -218,8 +225,4 @@ In many cases you do not want to hardcode variables inside the yaml specificatio
 
 ## Local components
 
-While Lumen ships with a wide range of components users may also
-define custom components in files which live alongside the
-`dashboard.yml` file. Specifically Lumen will automatically import
-`filters.py`, `sources.py`, `transforms.py` and `views.py` if these
-files exist alongside the dashboard specification.
+While Lumen ships with a wide range of components users may also define custom components in files which live alongside the `dashboard.yml` file. Specifically Lumen will automatically import `filters.py`, `sources.py`, `transforms.py` and `views.py` if these files exist alongside the dashboard specification.
