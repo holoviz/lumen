@@ -267,6 +267,10 @@ class AE5Source(Source):
 
         allocations = pd.merge(utilizations, resources, left_on='resource_profile', right_index=True, how='left')
 
+        allocations['allocation/mem_pct'] = 100 * allocations['resource/mem'] / allocations['node/mem']
+        allocations['allocation/cpu_pct'] = 100 * allocations['resource/cpu'] / allocations['node/cpu']
+        allocations['allocation/gpu_pct'] = 100 * allocations['resource/gpu'] / allocations['node/gpu']
+
         return allocations[self._allocation_columns]
 
     @cached(with_query=False)
