@@ -15,6 +15,7 @@ def get_setup_version(reponame):
 ########## dependencies ##########
 
 dependencies = [
+    "numpy",
     "param",
     "panel >=0.11",
     "pandas",
@@ -33,6 +34,7 @@ extras_require = {
         'toolz',
         'pytest-cov',
         'codecov',
+        'pre-commit',
     ],
     'doc': [
         'sphinx',
