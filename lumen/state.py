@@ -24,6 +24,8 @@ class _session_state:
 
     _sources = WeakKeyDictionary() if pn.state.curdoc else {}
 
+    _pipelines = WeakKeyDictionary() if pn.state.curdoc else {}
+
     _filters = WeakKeyDictionary() if pn.state.curdoc else {}
 
     _variables = WeakKeyDictionary() if pn.state.curdoc else {}
@@ -50,6 +52,12 @@ class _session_state:
         if pn.state.curdoc not in self._sources:
             self._sources[pn.state.curdoc] = dict(self.global_sources)
         return self._sources[pn.state.curdoc]
+
+    @property
+    def pipelines(self):
+        if pn.state.curdoc not in self._pipelines:
+            self._pipelines[pn.state.curdoc] = {}
+        return self._pipelines[pn.state.curdoc]
 
     @property
     def variables(self):
@@ -122,6 +130,14 @@ class _session_state:
                     fname: (filter_spec, schema)
                     for fname, filter_spec in filter_specs.items()
                 }
+
+    def load_pipelines(self):
+        from .pipeline import Pipeline
+        pipelines = {
+            name: Pipeline.from_spec(source_spec)
+            for name, source_spec in self.spec.get('pipelines', {}).items()
+        }
+        self._pipelines[pn.state.curdoc or None] = pipelines
 
     def load_source(self, name, source_spec):
         from .filters import Filter
@@ -196,8 +212,6 @@ class _session_state:
                 value = value.value
             return value
         return self._resolve_source_ref(refs)
-
-
 
 
 state = _session_state()

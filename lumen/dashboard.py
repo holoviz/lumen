@@ -288,6 +288,8 @@ class Dashboard(param.Parameterized):
     def _materialize_specification(self, force=False):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
+        if force or self._load_global or not state.pipelines:
+            state.load_pipelines()
         if not self.auth.authorized:
             self.targets = []
             return

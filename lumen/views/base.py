@@ -23,9 +23,8 @@ from ..base import Component
 from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..panel import DownloadButton
-from ..sources import Source
+from ..pipeline import Pipeline
 from ..state import state
-from ..transforms import Filter, Transform
 from ..util import is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
@@ -101,26 +100,12 @@ class View(Component):
         The download objects determines whether and how the source tables
         can be downloaded.""")
 
-    filters = param.List(constant=True, doc="""
-        A list of Filter objects providing the query parameters for the
-        Source.""")
-
-    source = param.ClassSelector(class_=Source, constant=True, doc="""
-        The Source to query for the data.""")
+    pipeline = param.ClassSelector(class_=Pipeline, doc="""
+        The data pipeline that drives the View.""")
 
     selection_group = param.String(default=None, doc="""
         Declares a selection group the plot is part of. This feature
         requires the separate HoloViews library.""")
-
-    transforms = param.List(constant=True, doc="""
-        A list of transforms to apply to the data returned by the
-        Source before visualizing it.""")
-
-    sql_transforms = param.List(constant=True, doc="""
-        A list of sql transforms to apply to the data returned by the
-        Source before visualizing it.""")
-
-    table = param.String(allow_None=True, doc="The table being visualized.")
 
     field = param.Selector(doc="The field being visualized.")
 
@@ -150,21 +135,15 @@ class View(Component):
 
         # Populate field selector parameters
         params = {k: v for k, v in params.items() if k in self.param}
-        source, table = params.pop('source', None), params.pop('table', None)
-        if source is None and self._requires_source:
-            raise ValueError("Views must declare a Source.")
-        if table is None and self._requires_source:
-            raise ValueError("Views must reference a table on the declared Source.")
-        fields = list(source.get_schema(table)) if source else []
+        pipeline = params.pop('pipeline', None)
+        if pipeline is None:
+            raise ValueError("Views must declare a Pipeline.")
+        fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
-        super().__init__(source=source, table=table, refs=refs, **params)
+        super().__init__(pipeline=pipeline, refs=refs, **params)
         self.download.view = self
-        for transform in self.transforms:
-            for fp in transform._field_params:
-                if isinstance(transform.param[fp], param.Selector):
-                    transform.param[fp].objects = fields
         if self.selection_group:
             self._init_link_selections()
 
@@ -187,7 +166,7 @@ class View(Component):
         self.selection_expr = event.new
 
     @classmethod
-    def from_spec(cls, spec, source, filters):
+    def from_spec(cls, spec, source=None, filters=None):
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -207,12 +186,22 @@ class View(Component):
         The resolved View object.
         """
         spec = dict(spec)
-        transform_specs = spec.pop('transforms', [])
-        transforms = [Transform.from_spec(tspec) for tspec in transform_specs]
-        sql_transform_specs = spec.pop('sql_transforms', [])
-        sql_transforms = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
-        view_type = View._get_type(spec.pop('type', None))
         resolved_spec, refs = {}, {}
+
+        # Resolve pipeline
+        if 'pipeline' in spec:
+            pipeline = spec['pipeline']
+            if isinstance(pipeline, str):
+                pipeline = state.pipelines[pipeline]
+        else:
+            pipeline_spec = {
+                p: spec.pop(p) for p in Pipeline.param if p in spec and p != 'name'
+            }
+            pipeline = Pipeline.from_spec(pipeline_spec, source, filters)
+        resolved_spec['pipeline'] = pipeline
+
+        # Resolve View parameters
+        view_type = View._get_type(spec.pop('type', None))
         for p, value in spec.items():
             if p not in view_type.param:
                 resolved_spec[p] = value
@@ -233,13 +222,11 @@ class View(Component):
         if isinstance(download_spec, str):
             download_spec = {'format': download_spec}
         resolved_spec['download'] = Download.from_spec(download_spec)
-        view = view_type(
-            filters=filters, source=source, transforms=transforms,
-            sql_transforms=sql_transforms, refs=refs, **resolved_spec
-        )
+
+        view = view_type(refs=refs, **resolved_spec)
 
         # Resolve ParamFilter parameters
-        for filt in filters:
+        for filt in (filters or []):
             if isinstance(filt, ParamFilter):
                 if not isinstance(filt.parameter, str):
                     continue
@@ -284,34 +271,9 @@ class View(Component):
         """
         if self._cache is not None:
             return self._cache
-        query = {}
-        if self.sql_transforms:
-            if not self.source._supports_sql:
-                raise ValueError(
-                    'Can only use sql transforms source that support them. '
-                    f'Found source typed {self.source.source_type!r} instead.'
-                )
-            query['sql_transforms'] = self.sql_transforms
-
-        for filt in self.filters:
-            filt_query = filt.query
-            if (filt_query is not None and
-            not getattr(filt, 'disabled', None) and
-            (filt.table is None or filt.table == self.table)):
-                query[filt.field] = filt_query
-        data = self.source.get(self.table, **query)
-        for transform in self.transforms:
-            data = transform.apply(data)
-        if len(data):
-            data = Filter.apply_to(data, conditions=list(query.items()))
-        for filt in self.filters:
-            if not isinstance(filt, ParamFilter):
-                continue
-            from holoviews import Dataset
-            if filt.value is not None:
-                ds = Dataset(data)
-                data = ds.select(filt.value).data
-        self._cache = data
+        if self.pipeline.data is None:
+            self.pipeline._update_data()
+        self._cache = data = self.pipeline.data
         return data
 
     def get_value(self, field=None):
@@ -379,19 +341,13 @@ class View(Component):
 
     @property
     def control_panel(self):
-        column = pn.Column(sizing_mode='stretch_width')
+        column = self.pipeline.control_panel
         if self.controls:
-            column.append(
+            column.insert(0,
                 Param(
                     self.param, parameters=self.controls, sizing_mode='stretch_width'
                 )
             )
-        for trnsfm in self.transforms+self.sql_transforms:
-            if trnsfm.controls:
-                column.append(trnsfm.control_panel)
-        index = (1 if self.controls else 0)
-        if len(column) > index:
-            column.insert(index, '### Transforms')
         return column
 
     @property

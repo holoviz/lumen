@@ -460,7 +460,7 @@ class Target(param.Parameterized):
 
         # Validate that all filters are applied
         for filt in self.filters:
-            if filt.field and not any(filt.field in v.source.get_schema(v.table) for v in all_views):
+            if filt.field and not any(filt.field in v.pipeline.schema for v in all_views):
                 self.param.warning(
                     f'Target {self.title!r} specifies a {type(filt).__name__} '
                     f'to filter on the {filt.field!r} field but no View '
@@ -477,7 +477,8 @@ class Target(param.Parameterized):
                 rerender_vars |= set(view._refs.values())
                 if view.controls:
                     view.param.watch(rerender_cache, view.controls)
-                for transform in view.transforms+view.sql_transforms:
+                transforms = view.pipeline.transforms+view.pipeline.sql_transforms
+                for transform in transforms:
                     if not transform.refs or transform in transforms:
                         continue
                     transforms.append(transform)
