@@ -8,8 +8,9 @@ import panel as pn
 import param
 
 from .config import _LAYOUTS
-from .filters import FacetFilter, Filter, ParamFilter
+from .filters import FacetFilter, Filter
 from .panel import IconButton
+from .pipeline import Pipeline
 from .sources import Source
 from .state import state
 from .util import extract_refs
@@ -90,9 +91,6 @@ class Download(pn.viewable.Viewer):
     labels = param.Dict(default={}, doc="""
         A dictionary to override the Button label for each table.""")
 
-    filters = param.List(class_=Filter, doc="""
-        A list of filters to be rendered.""")
-
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
         The format to download the data in.""")
 
@@ -100,8 +98,8 @@ class Download(pn.viewable.Viewer):
         Keyword arguments passed to the serialization function, e.g.
         data.to_csv(file_obj, **kwargs).""")
 
-    source = param.ClassSelector(class_=Source, doc="""
-        The Source queries the data from some data source.""")
+    pipelines = param.Dict(default={}, doc="""
+        Dictionary of pipelines indexed by table name.""")
 
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
@@ -148,19 +146,7 @@ class Download(pn.viewable.Viewer):
         else:
             io = BytesIO()
         table = self._select_download.value
-        query = {
-            filt.field: filt.query for filt in self.filters
-            if filt.query is not None and
-            (filt.table is None or filt.table == table)
-        }
-        data = self.source.get(table, **query)
-        for filt in self.filters:
-            if not isinstance(filt, ParamFilter):
-                continue
-            from holoviews import Dataset
-            if filt.value is not None:
-                ds = Dataset(data)
-                data = ds.select(filt.value).data
+        data = self._pipelines[table].data
         if self.format == 'csv':
             data.to_csv(io, **self.kwargs)
         elif self.format == 'json':
@@ -173,7 +159,7 @@ class Download(pn.viewable.Viewer):
         return io
 
     @classmethod
-    def from_spec(cls, spec, source, filters):
+    def from_spec(cls, spec, pipelines):
         """
         Creates a Download object from a specification.
 
@@ -181,13 +167,10 @@ class Download(pn.viewable.Viewer):
         ----------
         spec : dict
             Specification declared as a dictionary of parameter values.
-        source: Source
-            The Source to monitor
-        filters: list
-            List of Filter objects
-
+        pipelines: Dict[str, Pipeline]
+            A dictionary of Pipeline objects indexed by table name.
         """
-        return cls(source=source, filters=filters, **spec)
+        return cls(pipelines=pipelines, **spec)
 
 
 
@@ -204,9 +187,6 @@ class Target(param.Parameterized):
     facet = param.ClassSelector(class_=Facet, doc="""
         The facet object determines whether and how to facet the cards
         on the target.""")
-
-    filters = param.List(class_=Filter, doc="""
-        A list of filters to be rendered.""")
 
     layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
         Defines the layout of the views in the monitor target. Can be
@@ -234,6 +214,8 @@ class Target(param.Parameterized):
     views = param.ClassSelector(class_=(list, dict), doc="""
         A list or dictionary of views to be displayed.""")
 
+    _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
+
     def __init__(self, **params):
         if 'facet' not in params:
             params['facet'] = Facet()
@@ -247,24 +229,23 @@ class Target(param.Parameterized):
             align='center', margin=(10, 0), sizing_mode='stretch_width'
         )
         self._view_controls = pn.Column(sizing_mode='stretch_width')
+        self._pipelines = params.pop('pipelines', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
         # Set up watchers
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
         rerender = partial(self._rerender, invalidate_cache=True)
-        for filt in self.filters:
-            if isinstance(filt, FacetFilter):
-                continue
-            filt.param.watch(rerender, 'value')
+        for pipeline in self._pipelines.values():
+            pipeline.param.watch(rerender, 'data')
         self._update_views(init=True)
         self.source.param.watch(rerender, self.source.refs)
 
     @property
     def refs(self):
-        refs = self.source.refs.copy()
-        for filt in self.filters:
-            for ref in filt.refs:
+        refs = []
+        for pipeline in self._pipelines.values():
+            for ref in pipeline.refs:
                 if ref not in refs:
                     refs.append(ref)
         views = self.views
@@ -322,11 +303,20 @@ class Target(param.Parameterized):
                 view_spec = dict(self.views[view], name=view)
             else:
                 view_spec = view
-            view = View.from_spec(view_spec, self.source, filters)
+            if 'table' in view_spec and view_spec['table'] in self._pipelines:
+                pipeline = self._pipelines[view_spec['table']]
+            elif 'pipeline' in view_spec and len(self._pipelines) == 1:
+                pipeline = list(self._pipelines.values())[0]
+                del view_spec['pipeline']
+            else:
+                pipeline = None
+            if pipeline is not None and filters:
+                pipeline = pipeline.clone(filters=pipeline.filters+list(filters))
+            view = View.from_spec(view_spec, pipeline=pipeline)
             views.append(view)
         return views
 
-    def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True, events=[]):
+    def _get_card(self, facet_filters, invalidate_cache=True, update_views=True, events=[]):
         # Get cache key
         if isinstance(self.views, list):
             view_specs = self.views
@@ -340,8 +330,7 @@ class Target(param.Parameterized):
         if key in self._cache:
             card, views = self._cache[key]
         else:
-            view_filters = filters + list(facet_filters)
-            card, views = None, self._materialize_views(view_filters)
+            card, views = None, self._materialize_views(facet_filters)
 
         # Update views
         if update_views:
@@ -378,19 +367,24 @@ class Target(param.Parameterized):
             views.append(var_panel)
         source_panel = self.source.panel
         if source_panel:
-            source_header = pn.pane.Markdown('### Source', margin=(0, 5, -10, 5))
-            views.extend([source_header, source_panel, pn.layout.Divider()])
+            views.extend([
+                self._header_format.format(header='Source'),
+                source_panel,
+                pn.layout.Divider()
+            ])
         if self.download:
             views.append(self.download)
-        filters = [filt.panel for filt in self.filters
-                   if filt not in skip and filt.panel is not None]
+        filters = [
+            filt.panel for pipeline in self._pipelines.values() for filt in pipeline.filters
+            if filt not in skip and filt.panel is not None
+        ]
         if filters:
-            views.append(pn.pane.Markdown('### Filters', margin=(0, 5, -10, 5)))
+            views.append(self._header_format.format(header='Filters'))
             views.extend(filters)
         if self.facet.param.sort.objects:
             views.append(pn.layout.Divider(margin=0, height=5))
             views.extend([
-                pn.pane.Markdown('### Sort', margin=(0, 5, -10, 5)),
+                self._header_format.format(header='Sort'),
                 self.facet._sort_widget,
                 self.facet._reverse_widget
             ])
@@ -436,8 +430,7 @@ class Target(param.Parameterized):
         linked_views = None
         for facet_filters in self.facet.filters:
             key, card, views = self._get_card(
-                self.filters, facet_filters, invalidate_cache, update_views,
-                events=events
+                facet_filters, invalidate_cache, update_views, events=events
             )
             all_views += views
             if card is not None:
@@ -457,15 +450,6 @@ class Target(param.Parameterized):
                         t1.param.watch(partial(self._sync_component, t2), t1.refs)
                     for t1, t2 in zip(v1.sql_transforms, v2.sql_transforms):
                         t1.param.watch(partial(self._sync_component, t2), t1.refs)
-
-        # Validate that all filters are applied
-        for filt in self.filters:
-            if filt.field and not any(filt.field in v.pipeline.schema for v in all_views):
-                self.param.warning(
-                    f'Target {self.title!r} specifies a {type(filt).__name__} '
-                    f'to filter on the {filt.field!r} field but no View '
-                    'found that matches such a field.'
-                )
 
         # Re-render target when controls or refs update but we ensure
         # that all other views linked to the controls are updated first
@@ -552,64 +536,60 @@ class Target(param.Parameterized):
         """
         # Resolve source
         spec = dict(spec)
-        source_spec = spec.pop('source', None)
-        source = Source.from_spec(source_spec)
+        views = spec.get('views', [])
+        pipelines = {}
+        source_filters = None
+        filter_specs = spec.pop('filters', [])
+        view_specs = views if isinstance(views, list) else list(views.values())
+        if 'source' in spec:
+            source_spec = spec.pop('source', None)
+            source = Source.from_spec(source_spec)
+            if isinstance(source_spec, str):
+                source_filters = state.filters.get(source_spec)
+        else:
+            pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
+            if len(set(pspecs)) > 1:
+                raise ValueError('Views on a target must share the same pipeline.')
+            pipeline_spec = pspecs[0]
+            if isinstance(pipeline_spec, str):
+                pipeline = state.pipelines[pipeline_spec]
+            else:
+                pipeline = Pipeline.from_spec(pipeline_spec)
+            source = pipeline.source
+            pipelines[pipeline.table] = pipeline
+
         tables = source.get_tables()
 
-        # Resolve filters
-        filter_specs = spec.pop('filters', [])
-        if isinstance(source_spec, str):
-            source_filters = state.filters.get(source_spec)
-        else:
-            source_filters = None
-
-        if filter_specs or 'facet' in spec:
-            schema = source.get_schema()
-            filters = [
-                Filter.from_spec(filter_spec, schema, source_filters)
-                for filter_spec in filter_specs
-            ]
-
-            # Resolve faceting
+        # Resolve facets
+        if 'facet' in spec:
             facet_spec = spec.pop('facet', {})
-            facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
         else:
-            # Avoid computing schema unless necessary
             facet_spec, schema = {}, {}
-            filters, facet_filters = [], []
-
-        # Resolve download options
-        download_spec = spec.pop('download', {})
-        if isinstance(download_spec, str):
-            download_spec = {'format': download_spec}
-        if 'tables' not in download_spec:
-            download_spec['tables'] = list(tables)
-        spec['download'] = Download.from_spec(download_spec, source, filters)
 
         # Backward compatibility
-        if facet_spec:
-            if facet_filters:
-                param.main.warning(
-                    "Cannot declare FacetFilters and provide a facet spec. "
-                    "Declare the facet.by key of the target instead."
-                )
-            elif 'sort' in spec:
-                param.main.warning(
-                    "Cannot declare sort spec and provide a facet spec. "
-                    "Declare the sort fields on the facet.sort key of "
-                    "the target instead."
-                )
-        elif 'sort' in spec:
-            param.main.param.warning(
-                'Specifying a sort key for a target is deprecated. Use '
-                'facet key instead and declare facet filters under the '
-                '"by" keyword.'
+        if any(fspec.get('type') == 'facet' for fspec in filter_specs):
+            raise ValueError(
+                "Facetting must be declared via the facet specification of a Target, "
+                "specifying filters of type 'facet' is no longer supported"
             )
-            sort_spec = spec['sort']
-            spec['facet'] = dict(
-                sort=sort_spec['fields'],
-                reverse=sort_spec.get('reverse', False),
-                by=facet_filters
+        for view_spec in view_specs:
+            if 'pipeline' in view_spec:
+                continue
+            elif 'table' in view_spec:
+                table = view_spec['table']
+            elif len(tables) == 1:
+                table = tables[0]
+            else:
+                raise ValueError("View spec did not declare unambiguous table reference.")
+            pspec = {'table': table}
+            if filter_specs:
+                pspec['filters'] = filter_specs
+            pipelines[table] = Pipeline.from_spec(pspec, source, source_filters)
+        if facet_spec and 'sort' in spec:
+            param.main.warning(
+                "Cannot declare sort spec and provide a facet spec. "
+                "Declare the sort fields on the facet.sort key of "
+                "the target instead."
             )
         if 'config' in spec:
             param.main.param.warning(
@@ -624,9 +604,17 @@ class Target(param.Parameterized):
             )
             facet_spec['layout'] = spec.pop('facet_layout')
 
+        # Resolve download options
+        download_spec = spec.pop('download', {})
+        if isinstance(download_spec, str):
+            download_spec = {'format': download_spec}
+        if 'tables' not in download_spec:
+            download_spec['tables'] = list(tables)
+        spec['download'] = Download.from_spec(download_spec, pipelines)
+
         spec['facet'] = Facet.from_spec(facet_spec, schema)
         params = dict(kwargs, **spec)
-        return cls(filters=filters, source=source, **params)
+        return cls(source=source, pipelines=pipelines,  **params)
 
     @property
     def panels(self):
