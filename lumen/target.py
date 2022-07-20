@@ -224,22 +224,20 @@ class Target(param.Parameterized):
         self._cache = {}
         self._cb = None
         self._stale = False
+        self._scheduled = False
         self._updates = {}
         self._timestamp = pn.pane.HTML(
             align='center', margin=(10, 0), sizing_mode='stretch_width'
         )
         self._view_controls = pn.Column(sizing_mode='stretch_width')
         self._pipelines = params.pop('pipelines', {})
+        self._pipeline_watchers = {}
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
         # Set up watchers
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
-        rerender = partial(self._rerender, invalidate_cache=True)
-        for pipeline in self._pipelines.values():
-            pipeline.param.watch(rerender, 'data')
         self._update_views(init=True)
-        self.source.param.watch(rerender, self.source.refs)
 
     @property
     def refs(self):
@@ -305,14 +303,16 @@ class Target(param.Parameterized):
                 view_spec = view
             if 'table' in view_spec and view_spec['table'] in self._pipelines:
                 pipeline = self._pipelines[view_spec['table']]
-            elif 'pipeline' in view_spec and len(self._pipelines) == 1:
+            elif len(self._pipelines) == 1:
                 pipeline = list(self._pipelines.values())[0]
-                del view_spec['pipeline']
-            else:
-                pipeline = None
-            if pipeline is not None and filters:
-                pipeline = pipeline.clone(filters=pipeline.filters+list(filters))
+                if 'pipeline' in view_spec:
+                    del view_spec['pipeline']
+            if filters:
+                pipeline = pipeline.chain(filters=list(filters))
             view = View.from_spec(view_spec, pipeline=pipeline)
+            vpipe = view.pipeline
+            if vpipe not in self._pipeline_watchers:
+                self._pipeline_watchers[vpipe] = vpipe.param.watch(self._schedule_rerender, 'data')
             views.append(view)
         return views
 
@@ -374,13 +374,22 @@ class Target(param.Parameterized):
             ])
         if self.download:
             views.append(self.download)
-        filters = [
-            filt.panel for pipeline in self._pipelines.values() for filt in pipeline.filters
-            if filt not in skip and filt.panel is not None
-        ]
+
+        filters = []
+        for pipeline in self._pipelines.values():
+            subpipeline = pipeline
+            while subpipeline is not None:
+                subfilters = []
+                for filt in subpipeline.filters:
+                    fpanel = filt.panel
+                    if filt not in skip and fpanel is not None:
+                        subfilters.append(fpanel)
+                if subfilters:
+                    filters.append(subfilters)
+                subpipeline = subpipeline.pipeline
         if filters:
             views.append(self._header_format.format(header='Filters'))
-            views.extend(filters)
+            views.extend([filt for sfilters in filters[::-1] for filt in sfilters])
         if self.facet.param.sort.objects:
             views.append(pn.layout.Divider(margin=0, height=5))
             views.extend([
@@ -454,26 +463,16 @@ class Target(param.Parameterized):
         # Re-render target when controls or refs update but we ensure
         # that all other views linked to the controls are updated first
         if init:
-            rerender_cache = partial(self._rerender, invalidate_cache=True)
-            transforms = []
             rerender_vars = set()
             for view in linked_views:
                 rerender_vars |= set(view._refs.values())
                 if view.controls:
-                    view.param.watch(rerender_cache, view.controls)
-                transforms = view.pipeline.transforms+view.pipeline.sql_transforms
-                for transform in transforms:
-                    if not transform.refs or transform in transforms:
-                        continue
-                    transforms.append(transform)
-                    rerender_vars |= set(transform._refs.values())
-                    if transform.controls:
-                        transform.param.watch(rerender_cache, transform.controls)
+                    view.param.watch(self._schedule_rerender, view.controls)
             refs = [
                 var.split('.')[1] for var in rerender_vars
                 if var.startswith('$variables.')
             ]
-            state.variables.param.watch(rerender_cache, refs)
+            state.variables.param.watch(self._schedule_rerender, refs)
 
         self._view_controls[:] = controls
 
@@ -489,7 +488,14 @@ class Target(param.Parameterized):
         else:
             self._stale = False
 
+    def _schedule_rerender(self, *events):
+        if self._scheduled:
+            return
+        self._scheduled = True
+        pn.state.curdoc.add_next_tick_callback(partial(self._rerender, invalidate_cache=True))
+
     def _rerender(self, *events, invalidate_cache=False, update_views=True):
+        self._scheduled = False
         self._update_views(invalidate_cache, update_views, events=events)
         rerender = bool(self._updates)
         has_updates = (
@@ -547,11 +553,19 @@ class Target(param.Parameterized):
             if isinstance(source_spec, str):
                 source_filters = state.filters.get(source_spec)
         else:
-            pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
+            if 'pipeline' in spec:
+                pspecs = [spec['pipeline']]
+            else:
+                pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
             if len(set(pspecs)) > 1:
                 raise ValueError('Views on a target must share the same pipeline.')
+            elif not pspecs:
+                raise ValueError('Target must declare a source or a pipeline.')
             pipeline_spec = pspecs[0]
+
             if isinstance(pipeline_spec, str):
+                if pipeline_spec not in state.pipelines:
+                    raise KeyError(f'{pipeline_spec!r} not found in global pipelines.')
                 pipeline = state.pipelines[pipeline_spec]
             else:
                 pipeline = Pipeline.from_spec(pipeline_spec)
@@ -573,7 +587,7 @@ class Target(param.Parameterized):
                 "specifying filters of type 'facet' is no longer supported"
             )
         for view_spec in view_specs:
-            if 'pipeline' in view_spec:
+            if 'pipeline' in view_spec or 'pipeline' in spec:
                 continue
             elif 'table' in view_spec:
                 table = view_spec['table']

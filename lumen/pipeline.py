@@ -30,6 +30,11 @@ class Pipeline(param.Parameterized):
         doc="The Source this pipeline is fed by."
     )
 
+    pipeline = param.ClassSelector(
+        class_=None,
+        doc="Optionally a pipeline may be chained to another pipeline."
+    )
+
     filters = param.List(
         item_type=Filter,
         doc="A list of Filters to apply to the source data."
@@ -50,17 +55,29 @@ class Pipeline(param.Parameterized):
     )
 
     def __init__(self, *, source, table, **params):
-        params['schema'] = source.get_schema(table)
+        if 'schema' not in params:
+            params['schema'] = source.get_schema(table)
         super().__init__(source=source, table=table, **params)
+        self._init_callbacks()
+
+    def _init_callbacks(self):
         for filt in self.filters:
-            print('Setup', filt)
             filt.param.watch(self._update_data, ['value'])
+        refs = set()
         for transform in self.transforms+self.sql_transforms:
             if transform.controls:
                 transform.param.watch(self._update_data, transform.controls)
+            refs |= {
+                var.split('.')[1] for var in transform.refs
+                if var.startswith('$variables.')
+            }
             for fp in transform._field_params:
                 if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = list(self.schema)
+        if refs:
+            state.variables.param.watch(self._update_data, list(refs))
+        if self.pipeline is not None:
+            self.pipeline.param.watch(self._update_data, 'data')
 
     @property
     def refs(self):
@@ -77,25 +94,31 @@ class Pipeline(param.Parameterized):
 
     def _update_data(self, *events: param.Event):
         query = {}
-        if self.sql_transforms:
-            if not self.source._supports_sql:
-                raise ValueError(
-                    'Can only use sql transforms source that support them. '
-                    f'Found source typed {self.source.source_type!r} instead.'
-                )
-            query['sql_transforms'] = self.sql_transforms
+
+        # Compute Filter query
         for filt in self.filters:
             filt_query = filt.query
             if (filt_query is not None and not getattr(filt, 'disabled', None) and
                 (filt.table is None or filt.table == self.table)):
                 query[filt.field] = filt_query
-        data = self.source.get(self.table, **query)
-        for transform in self.transforms:
-            data = transform.apply(data)
 
-        if len(data):
-            data = FilterTransform.apply_to(data, conditions=list(query.items()))
+        if self.pipeline is None:
+            # Compute SQL transform expression
+            if self.sql_transforms:
+                if not self.source._supports_sql:
+                    raise ValueError(
+                        'Can only use sql transforms source that support them. '
+                        f'Found source typed {self.source.source_type!r} instead.'
+                    )
+                query['sql_transforms'] = self.sql_transforms
 
+            data = self.source.get(self.table, **query)
+        else:
+            data = FilterTransform.apply_to(
+                self.pipeline.data, conditions=list(query.items())
+            )
+
+        # Apply ParamFilter
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
@@ -103,6 +126,11 @@ class Pipeline(param.Parameterized):
             if filt.value is not None:
                 ds = Dataset(data)
                 data = ds.select(filt.value).data
+
+        # Apply transforms
+        for transform in self.transforms:
+            data = transform.apply(data)
+
         self.data = data
 
     @classmethod
@@ -126,7 +154,7 @@ class Pipeline(param.Parameterized):
 
         # Resolve filters
         params['filters'] = filters = []
-        filter_specs = spec.pop('filters', [])
+        filter_specs = spec.pop('filters', {})
         if filter_specs:
             table = spec.get('table')
             schema = source.get_schema(table)
@@ -180,6 +208,15 @@ class Pipeline(param.Parameterized):
         transform.param.watch(self._update_data, transform.controls)
         self._update_data()
 
+    def chain(self, filters=None, transforms=None):
+        params = {
+            'filters': filters or [],
+            'transforms': transforms or [],
+            'sql_transforms': [],
+            'pipeline': self.pipeline
+        }
+        return self.clone(**params)
+
     def clone(self, **params) -> Pipeline:
         """
         Create a new instance of the pipeline with optionally overridden parameter values.
@@ -204,3 +241,6 @@ class Pipeline(param.Parameterized):
             if w is not None:
                 col.append(w)
         return col
+
+
+Pipeline.param.pipeline.class_ = Pipeline

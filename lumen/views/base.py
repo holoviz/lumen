@@ -166,7 +166,7 @@ class View(Component):
         self.selection_expr = event.new
 
     @classmethod
-    def from_spec(cls, spec, source=None, filters=None):
+    def from_spec(cls, spec, source=None, filters=None, pipeline=None):
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -175,6 +175,9 @@ class View(Component):
         ----------
         spec: dict
             Specification declared as a dictionary of parameter values.
+        pipeline: lumen.pipeline.Pipeline
+            The Lumen pipeline driving this View. Must not be supplied
+            if the spec contains a pipeline definition or reference.
         source: lumen.sources.Source
             The Source object containing the tables the View renders.
         filters: list(lumen.filters.Filter)
@@ -190,15 +193,21 @@ class View(Component):
 
         # Resolve pipeline
         if 'pipeline' in spec:
+            if pipeline is not None:
+                raise ValueError(
+                    "Either specify the pipeline as part of the specification "
+                    "or pass it in explicitly, not both."
+                )
             pipeline = spec['pipeline']
             if isinstance(pipeline, str):
                 pipeline = state.pipelines[pipeline]
         else:
-            pipeline_spec = {
-                p: spec.pop(p) for p in Pipeline.param if p in spec and p != 'name'
+            overrides = {
+                p: spec.pop(p) for p in Pipeline.param if p != 'name' and p in spec
             }
-            pipeline = Pipeline.from_spec(pipeline_spec, source, filters)
-        resolved_spec['pipeline'] = pipeline
+            if overrides:
+                pipeline = pipeline.chain(**overrides)
+            resolved_spec['pipeline'] = pipeline
 
         # Resolve View parameters
         view_type = View._get_type(spec.pop('type', None))
@@ -341,7 +350,7 @@ class View(Component):
 
     @property
     def control_panel(self):
-        column = self.pipeline.control_panel
+        column = pn.Column()
         if self.controls:
             column.insert(0,
                 Param(
