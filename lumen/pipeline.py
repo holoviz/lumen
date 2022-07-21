@@ -114,6 +114,8 @@ class Pipeline(param.Parameterized):
 
             data = self.source.get(self.table, **query)
         else:
+            if self.pipeline.data is None:
+                self.pipeline._update_data()
             data = FilterTransform.apply_to(
                 self.pipeline.data, conditions=list(query.items())
             )
@@ -158,8 +160,11 @@ class Pipeline(param.Parameterized):
         if filter_specs:
             table = spec.get('table')
             schema = source.get_schema(table)
-        for fname, filt_spec in filter_specs.items():
-            filt_spec = dict(filt_spec, table=table, name=fname)
+        for filt_spec in (filter_specs.items() if isinstance(filter_specs, dict) else filter_specs):
+            if isinstance(filt_spec, tuple):
+                filt_spec = dict(filt_spec[1], table=table, name=filt_spec[0])
+            else:
+                filt_spec = dict(filt_spec, table=table)
             filt = Filter.from_spec(filt_spec, {table: schema}, source_filters)
             filters.append(filt)
 
@@ -213,7 +218,7 @@ class Pipeline(param.Parameterized):
             'filters': filters or [],
             'transforms': transforms or [],
             'sql_transforms': [],
-            'pipeline': self.pipeline
+            'pipeline': self
         }
         return self.clone(**params)
 

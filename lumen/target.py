@@ -455,9 +455,9 @@ class Target(param.Parameterized):
                 # the other facets to the controls of the first
                 for v1, v2 in zip(linked_views, views):
                     v1.param.watch(partial(self._sync_component, v2), v1.refs)
-                    for t1, t2 in zip(v1.transforms, v2.transforms):
+                    for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
                         t1.param.watch(partial(self._sync_component, t2), t1.refs)
-                    for t1, t2 in zip(v1.sql_transforms, v2.sql_transforms):
+                    for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
                         t1.param.watch(partial(self._sync_component, t2), t1.refs)
 
         # Re-render target when controls or refs update but we ensure
@@ -577,6 +577,7 @@ class Target(param.Parameterized):
         # Resolve facets
         if 'facet' in spec:
             facet_spec = spec.pop('facet', {})
+            schema = source.get_schema()
         else:
             facet_spec, schema = {}, {}
 

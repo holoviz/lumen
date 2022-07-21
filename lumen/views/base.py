@@ -206,7 +206,10 @@ class View(Component):
                 p: spec.pop(p) for p in Pipeline.param if p != 'name' and p in spec
             }
             if overrides:
-                pipeline = pipeline.chain(**overrides)
+                pipeline = pipeline.chain(
+                    filters=overrides.get('filters', []),
+                    transforms=overrides.get('transforms', [])
+                )
             resolved_spec['pipeline'] = pipeline
 
         # Resolve View parameters
