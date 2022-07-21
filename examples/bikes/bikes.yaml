@@ -24,21 +24,26 @@ sources:
         - source: occupancy
           table: occupancy
           index: id
-  station_occupancy_projected:
-    type: derived
+pipelines:
+  station_occupancy:
     source: station_occupancy
+    table: station_occupancy
+    filters:
+      - type: param
+        parameter: locations.selection_expr
     transforms:
+      - type: columns
+        columns: [commonName, bikesCount, totalDocks, lat, lon]
       - type: project_lnglat
         latitude: lat
         longitude: lon
 targets:
   - title: "Occupancy"
-    source: station_occupancy_projected
+    pipeline: station_occupancy
     views:
       locations:
         type: hvplot
         kind: points
-        table: station_occupancy
         x: lon
         y: lat
         hover_cols: [commonName]
@@ -52,18 +57,13 @@ targets:
         selection_group: bikes
       table:
         type: table
-        table: station_occupancy
         width: 400
         height: 500
         margin: [0, 100]
         hidden_columns: [lat, lon]
         show_index: false
-        transforms:
-          - type: columns
-            columns: [commonName, bikesCount, totalDocks, lat, lon]
       count_hist:
         type: hvplot
-        table: station_occupancy
         kind: hist
         y: bikesCount
         responsive: true
@@ -72,16 +72,12 @@ targets:
         selection_group: bikes
       total_hist:
         type: hvplot
-        table: station_occupancy
         kind: hist
         y: totalDocks
         responsive: true
         height: 300
         streaming: true
         selection_group: bikes
-    filters:
-      - type: param
-        parameter: locations.selection_expr
     layout: [[locations, table], [count_hist, total_hist]]
     sizing_mode: stretch_width
     height: 900
