@@ -316,7 +316,7 @@ class Target(param.Parameterized):
             views.append(view)
         return views
 
-    def _get_card(self, facet_filters, invalidate_cache=True, update_views=True, events=[]):
+    def _get_card(self, facet_filters, events=[]):
         # Get cache key
         if isinstance(self.views, list):
             view_specs = self.views
@@ -326,17 +326,12 @@ class Target(param.Parameterized):
                tuple(id(view) for view in view_specs))
 
         # Get views
-        update_card = False
         if key in self._cache:
             card, views = self._cache[key]
         else:
             card, views = None, self._materialize_views(facet_filters)
 
-        # Update views
-        if update_views:
-            for view in views:
-                view_stale = view.update(*events, invalidate_cache=invalidate_cache)
-                update_card = update_card or view_stale
+        stale = any(view._stale for view in views)
 
         if not any(view for view in views):
             return None, None, views
@@ -353,18 +348,23 @@ class Target(param.Parameterized):
             self._cache[key] = (card, views)
         else:
             card.title = title
-            if update_card:
+            if stale:
                 self._updates[card] = views
         return sort_key, card, views
 
     def get_filter_panel(self, skip=None):
-        skip = skip or []
+        skip = list(skip or [])
         views = []
+
+        # Variable controls
         global_refs = state.global_refs
+        print(self.refs)
         target_refs = [ref.split('.')[1] for ref in self.refs if ref not in global_refs]
         var_panel = state.variables.panel(target_refs)
         if var_panel is not None:
             views.append(var_panel)
+
+        # Source controls
         source_panel = self.source.panel
         if source_panel:
             views.extend([
@@ -372,9 +372,12 @@ class Target(param.Parameterized):
                 source_panel,
                 pn.layout.Divider()
             ])
+
+        # Download controls
         if self.download:
             views.append(self.download)
 
+        # Filter controls
         filters = []
         for pipeline in self._pipelines.values():
             subpipeline = pipeline
@@ -384,21 +387,29 @@ class Target(param.Parameterized):
                     fpanel = filt.panel
                     if filt not in skip and fpanel is not None:
                         subfilters.append(fpanel)
+                        skip.append(filt)
                 if subfilters:
                     filters.append(subfilters)
                 subpipeline = subpipeline.pipeline
         if filters:
             views.append(self._header_format.format(header='Filters'))
             views.extend([filt for sfilters in filters[::-1] for filt in sfilters])
+
+        # Facet controls
         if self.facet.param.sort.objects:
-            views.append(pn.layout.Divider(margin=0, height=5))
+            if views:
+                views.append(pn.layout.Divider(margin=0, height=5))
             views.extend([
                 self._header_format.format(header='Sort'),
                 self.facet._sort_widget,
                 self.facet._reverse_widget
             ])
+
+        # View controls
         if self._view_controls:
             views.append(self._view_controls)
+
+        # Reload buttons
         if self.reloadable:
             if views:
                 views.append(pn.layout.Divider(margin=0, height=5))
@@ -421,7 +432,7 @@ class Target(param.Parameterized):
     def _sync_component(self, component, *events):
         component.param.set_param(**{event.name: event.new for event in events})
 
-    def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
+    def _update_views(self, init=False, events=[]):
         """
         Updates all views during initialization, cache invalidation
         or because one of the views needs to be updated.
@@ -435,30 +446,41 @@ class Target(param.Parameterized):
         triggered **after** all views have been updated with the new
         control values.
         """
-        cards, controls, all_views = [], [], []
+        cards, controls, all_views, all_transforms = [], [], [], []
         linked_views = None
         for facet_filters in self.facet.filters:
             key, card, views = self._get_card(
-                facet_filters, invalidate_cache, update_views, events=events
+                facet_filters, events=events
             )
             all_views += views
             if card is not None:
                 cards.append((key, card))
+            if not init:
+                continue
+
             if linked_views is None:
                 for view in views:
-                    vcp = view.control_panel
-                    if len(vcp):
-                        controls.append(vcp)
+                    if view.controls:
+                        controls.append(view.control_panel)
+                    transforms = (
+                        view.pipeline.traverse('transforms') +
+                        view.pipeline.traverse('sql_transforms')
+                    )
+                    for transform in transforms:
+                        if transform not in all_transforms and transform.controls:
+                            controls.append(transform.control_panel)
+                            all_transforms.append(transform)
                 linked_views = views
-            elif init:
-                # Only the controls for the first facet is shown so link
-                # the other facets to the controls of the first
-                for v1, v2 in zip(linked_views, views):
-                    v1.param.watch(partial(self._sync_component, v2), v1.refs)
-                    for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
-                        t1.param.watch(partial(self._sync_component, t2), t1.refs)
-                    for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
-                        t1.param.watch(partial(self._sync_component, t2), t1.refs)
+                continue
+
+            # Only the controls for the first facet is shown so link
+            # the other facets to the controls of the first
+            for v1, v2 in zip(linked_views, views):
+                v1.param.watch(partial(self._sync_component, v2), v1.refs)
+                for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
+                    t1.param.watch(partial(self._sync_component, t2), t1.refs)
+                for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
+                    t1.param.watch(partial(self._sync_component, t2), t1.refs)
 
         # Re-render target when controls or refs update but we ensure
         # that all other views linked to the controls are updated first
@@ -473,8 +495,7 @@ class Target(param.Parameterized):
                 if var.startswith('$variables.')
             ]
             state.variables.param.watch(self._schedule_rerender, refs)
-
-        self._view_controls[:] = controls
+            self._view_controls[:] = controls
 
         if self.facet.sort:
             cards = sorted(cards, key=lambda x: x[0])
@@ -492,32 +513,32 @@ class Target(param.Parameterized):
         if self._scheduled:
             return
         self._scheduled = True
-        pn.state.curdoc.add_next_tick_callback(partial(self._rerender, invalidate_cache=True))
+        if pn.state.curdoc:
+            pn.state.curdoc.add_next_tick_callback(self._rerender)
+        else:
+            self._rerender()
 
-    def _rerender(self, *events, invalidate_cache=False, update_views=True):
+    def _rerender(self, *events, update_views=True):
         self._scheduled = False
-        self._update_views(invalidate_cache, update_views, events=events)
+        self._update_views(events=events)
         rerender = bool(self._updates)
         has_updates = (
             any(view._updates for _, (_, views) in self._cache.items() for view in views)
         )
         if update_views and (has_updates or rerender):
             if self._updates:
-                self._application._set_loading(self.title)
+                if self._application:
+                    self._application._set_loading(self.title)
                 for card, views in self._updates.items():
                     card[0][:] = [view.panel for view in views]
                 self._updates = {}
-            for _, (_, views) in self._cache.items():
-                for view in views:
-                    if view._updates:
-                        view._panel.param.set_param(**view._updates)
-                        view._updates = None
         if self._stale or (update_views and rerender):
-            self._application._render()
             self._stale = False
-            # Remove the loading spinner set when a target needs to be
-            # rerendered, for instance when a view has not implemented _get_params.
-            self._application._layout.loading = False
+            if self._application:
+                self._application._render()
+                # Remove the loading spinner set when a target needs to be
+                # rerendered, for instance when a view has not implemented _get_params.
+                self._application._layout.loading = False
 
     ##################################################################
     # Public API
@@ -549,7 +570,10 @@ class Target(param.Parameterized):
         view_specs = views if isinstance(views, list) else list(views.values())
         if 'source' in spec:
             source_spec = spec.pop('source', None)
-            source = Source.from_spec(source_spec)
+            if isinstance(source_spec, Source):
+                source = source_spec
+            else:
+                source = Source.from_spec(source_spec)
             if isinstance(source_spec, str):
                 source_filters = state.filters.get(source_spec)
         else:
@@ -687,5 +711,5 @@ class Target(param.Parameterized):
         """
         if clear_cache:
             self.source.clear_cache()
-        self._rerender(invalidate_cache=True)
+        self._rerender()
         self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'

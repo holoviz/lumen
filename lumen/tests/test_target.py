@@ -22,10 +22,10 @@ def test_view_controls(set_root):
             'x': 'A', 'y': 'B', 'kind': 'scatter'
         }
     }
-    target = Target(source=source, views=views)
+    target = Target.from_spec({'source': source, 'views': views})
 
     filter_panel = target.get_filter_panel()
-    param_pane = filter_panel[0][0][0]
+    param_pane = filter_panel[0][0]
     assert isinstance(param_pane, Param)
     assert param_pane.parameters == ['x', 'y']
 
@@ -63,9 +63,9 @@ def test_transform_controls(set_root):
 
     doc = Document()
     with set_curdoc(doc):
-        target = Target(source=source, views=views)
+        target = Target.from_spec({'views': views, 'source': source})
         filter_panel = target.get_filter_panel()
-        param_pane = filter_panel[0][0][1]
+        param_pane = filter_panel[0][0]
 
         assert isinstance(param_pane, Param)
         assert param_pane.parameters == ['by']
@@ -108,7 +108,7 @@ def test_view_controls_facetted(set_root):
     target = Target.from_spec(spec, sources={'test': source})
 
     filter_panel = target.get_filter_panel()
-    param_pane = filter_panel[4][0][0]
+    param_pane = filter_panel[3][0]
     assert isinstance(param_pane, Param)
     assert param_pane.parameters == ['x', 'y']
 
@@ -159,7 +159,7 @@ def test_transform_controls_facetted(set_root):
         state.sources['test'] = derived
         target = Target.from_spec(spec, sources={'test': derived})
         filter_panel = target.get_filter_panel()
-        param_pane = filter_panel[4][0][1]
+        param_pane = filter_panel[3][0]
 
         assert isinstance(param_pane, Param)
         assert param_pane.parameters == ['ascending']

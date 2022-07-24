@@ -63,17 +63,16 @@ class Pipeline(param.Parameterized):
     def _init_callbacks(self):
         for filt in self.filters:
             filt.param.watch(self._update_data, ['value'])
-        refs = set()
         for transform in self.transforms+self.sql_transforms:
             if transform.controls:
                 transform.param.watch(self._update_data, transform.controls)
-            refs |= {
-                var.split('.')[1] for var in transform.refs
-                if var.startswith('$variables.')
-            }
             for fp in transform._field_params:
                 if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = list(self.schema)
+        refs = {
+            var.split('.')[1] for var in self.refs
+            if var.startswith('$variables.')
+        }
         if refs:
             state.variables.param.watch(self._update_data, list(refs))
         if self.pipeline is not None:
@@ -218,7 +217,8 @@ class Pipeline(param.Parameterized):
             'filters': filters or [],
             'transforms': transforms or [],
             'sql_transforms': [],
-            'pipeline': self
+            'pipeline': self,
+            'data': None
         }
         return self.clone(**params)
 
@@ -228,6 +228,20 @@ class Pipeline(param.Parameterized):
         """
         return type(self)(**dict({p: v for p, v in self.param.values().items()
                                   if p != 'name'}, **params))
+
+    def traverse(self, type) -> List[Transform] | List[Filter]:
+        """
+        Returns all Filter or Transform objects in a potentially chained
+        pipeline.
+        """
+        if type not in ('filters', 'transforms', 'sql_transforms'):
+            raise TypeError(f'May only traverse Pipeline filters, transforms or sql_transforms, not {type}')
+        objects = []
+        pipeline = self
+        while pipeline is not None:
+            objects.extend(getattr(self, type))
+            pipeline = pipeline.pipeline
+        return objects
 
     @property
     def control_panel(self) -> pn.Column:

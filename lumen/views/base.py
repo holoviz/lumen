@@ -25,6 +25,7 @@ from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
+from ..transforms import Transform
 from ..util import is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
@@ -75,7 +76,7 @@ class Download(Viewer):
         return io
 
     def __panel__(self):
-        filename = f'{self.view.table}_{self.view.name}_view.{self.format}'
+        filename = f'{self.view.pipeline.table}_{self.view.name}_view.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
             size=18, hide=self.hide
@@ -130,6 +131,7 @@ class View(Component):
         self._ls = None
         self._panel = None
         self._updates = None
+        self._stale = False
         refs = params.pop('refs', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
 
@@ -142,10 +144,13 @@ class View(Component):
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
+        pipeline.param.watch(self.update, 'data')
         super().__init__(pipeline=pipeline, refs=refs, **params)
+        self.param.watch(self.update, [p for p in self.param if p not in ('selection_expr', 'name')])
         self.download.view = self
         if self.selection_group:
             self._init_link_selections()
+        self.update()
 
     def _init_link_selections(self):
         doc = pn.state.curdoc
@@ -205,7 +210,18 @@ class View(Component):
             overrides = {
                 p: spec.pop(p) for p in Pipeline.param if p != 'name' and p in spec
             }
-            if overrides:
+            for ts in ('transforms', 'sql_transforms'):
+                if ts in overrides:
+                    overrides[ts] = [Transform.from_spec(t) for t in overrides[ts]]
+            if pipeline is None:
+                pipeline = Pipeline(source=source, **overrides)
+            elif 'sql_transforms' in overrides:
+                clone_params = {}
+                for k, v in overrides.items():
+                    oldv = getattr(pipeline, k)
+                    clone_params[k] = oldv+list(v) if oldv and isinstance(v, list) else v
+                pipeline = pipeline.clone(**clone_params)
+            elif overrides:
                 pipeline = pipeline.chain(
                     filters=overrides.get('filters', []),
                     transforms=overrides.get('transforms', [])
@@ -257,8 +273,9 @@ class View(Component):
         """
         if self._panel is not None:
             self._cleanup()
-            self._updates = self._get_params()
-            if self._updates is not None:
+            updates = self._get_params()
+            if updates is not None:
+                self._panel.param.set_param(**updates)
                 return False
         self._panel = self.get_panel()
         return True
@@ -346,21 +363,16 @@ class View(Component):
         """
         if invalidate_cache:
             self._cache = None
-        return self._update_panel()
+        self._stale = self._update_panel()
 
     def _get_params(self):
         return None
 
     @property
     def control_panel(self):
-        column = pn.Column()
-        if self.controls:
-            column.insert(0,
-                Param(
-                    self.param, parameters=self.controls, sizing_mode='stretch_width'
-                )
-            )
-        return column
+        return Param(
+            self.param, parameters=self.controls, sizing_mode='stretch_width'
+        )
 
     @property
     def panel(self):
@@ -578,6 +590,7 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._stream
+        print(df, self.kind, self.x, self.y, processed)
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, **processed
         )
@@ -646,13 +659,15 @@ class hvPlotView(hvPlotBaseView):
             for e in events
         )
         if own_events:
-            return False
+            self._stale = False
+            return
         if invalidate_cache:
             self._cache = None
         if not self.streaming or self._stream is None:
-            return self._update_panel()
+            self._stale = self._update_panel()
+            return
         self._stream.send(self.get_data())
-        return False
+        self._stale = False
 
 
 class Table(View):
