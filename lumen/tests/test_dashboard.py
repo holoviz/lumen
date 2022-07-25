@@ -50,7 +50,7 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -66,7 +66,7 @@ def test_dashboard_with_transform_variable(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -82,7 +82,7 @@ def test_dashboard_with_source_variable(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -98,7 +98,7 @@ def test_dashboard_with_view_variable(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
 
     assert table.page_size == 20
 

@@ -104,6 +104,9 @@ class View(Component):
     pipeline = param.ClassSelector(class_=Pipeline, doc="""
         The data pipeline that drives the View.""")
 
+    rerender = param.Event(default=False, doc="""
+        An event that is triggered whenever the View requests a re-render.""")
+
     selection_group = param.String(default=None, doc="""
         Declares a selection group the plot is part of. This feature
         requires the separate HoloViews library.""")
@@ -131,7 +134,6 @@ class View(Component):
         self._ls = None
         self._panel = None
         self._updates = None
-        self._stale = False
         refs = params.pop('refs', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
 
@@ -146,7 +148,7 @@ class View(Component):
                 self.param[fp].objects = fields
         pipeline.param.watch(self.update, 'data')
         super().__init__(pipeline=pipeline, refs=refs, **params)
-        self.param.watch(self.update, [p for p in self.param if p not in ('selection_expr', 'name')])
+        self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'name')])
         self.download.view = self
         if self.selection_group:
             self._init_link_selections()
@@ -354,16 +356,12 @@ class View(Component):
             param events that may trigger an update.
         invalidate_cache : bool
             Whether to clear the View's cache.
-
-        Returns
-        -------
-        stale : bool
-            Whether the panel on the View is stale and needs to be
-            rerendered.
         """
         if invalidate_cache:
             self._cache = None
-        self._stale = self._update_panel()
+        stale = self._update_panel()
+        if stale:
+            self.param.trigger('rerender')
 
     def _get_params(self):
         return None
@@ -590,7 +588,6 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._stream
-        print(df, self.kind, self.x, self.y, processed)
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, **processed
         )
@@ -643,12 +640,6 @@ class hvPlotView(hvPlotBaseView):
             param events that may trigger an update.
         invalidate_cache : bool
             Whether to clear the View's cache.
-
-        Returns
-        -------
-        stale : bool
-            Whether the panel on the View is stale and needs to be
-            rerendered.
         """
         # Skip events triggered by a parameter change on this View
         own_parameters = [self.param[p] for p in self.param]
@@ -659,16 +650,15 @@ class hvPlotView(hvPlotBaseView):
             for e in events
         )
         if own_events:
-            self._stale = False
             return
         if invalidate_cache:
             self._cache = None
         if not self.streaming or self._stream is None:
-            self._stale = self._update_panel()
-            return
-        self._stream.send(self.get_data())
-        self._stale = False
-
+            stale = self._update_panel()
+            if stale:
+                self.param.trigger('rerender')
+        else:
+            self._stream.send(self.get_data())
 
 class Table(View):
     """
