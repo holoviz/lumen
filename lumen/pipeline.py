@@ -110,7 +110,6 @@ class Pipeline(param.Parameterized):
                         f'Found source typed {self.source.source_type!r} instead.'
                     )
                 query['sql_transforms'] = self.sql_transforms
-
             data = self.source.get(self.table, **query)
         else:
             if self.pipeline.data is None:
@@ -212,14 +211,48 @@ class Pipeline(param.Parameterized):
         transform.param.watch(self._update_data, transform.controls)
         self._update_data()
 
-    def chain(self, filters=None, transforms=None):
-        params = {
-            'filters': filters or [],
-            'transforms': transforms or [],
-            'sql_transforms': [],
-            'pipeline': self,
-            'data': None
-        }
+    def chain(
+        self,
+        filters: Optional[List[Filter]]=None,
+        transforms: Optional[List[Transform]] = None,
+        sql_transforms: Optional[List[Transform]] = None
+    ):
+        """
+        Chains additional filtering, transform and sql_transform operations
+        on an existing pipeline. Note that if one or more sql_transforms
+        are provided the pipeline is cloned rather than applying the
+        operations on top of the existing pipeline.
+
+        Arguments
+        ---------
+        filters: List[Filter] | None
+          Additional filters to apply on top of existing pipeline.
+        transforms: List[Transform] | None
+          Additional transforms to apply on top of existing pipeline.
+        sql_transforms: List[SQLTransform] | None
+          Additional filters to apply on top of existing pipeline.
+
+        Returns
+        -------
+        Pipeline
+        """
+        if not (filters or transforms or sql_transforms):
+            return self
+        elif sql_transforms:
+            params = {
+                'filters': self.filters + (filters or []),
+                'transforms': self.transforms + (transforms or []),
+                'sql_transforms': self.sql_transforms + (sql_transforms or []),
+                'data': None
+            }
+        else:
+            params = {
+                'filters': filters or [],
+                'transforms': transforms or [],
+                'sql_transforms': [],
+                'pipeline': self,
+                'data': None
+            }
         return self.clone(**params)
 
     def clone(self, **params) -> Pipeline:

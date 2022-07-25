@@ -217,16 +217,11 @@ class View(Component):
                     overrides[ts] = [Transform.from_spec(t) for t in overrides[ts]]
             if pipeline is None:
                 pipeline = Pipeline(source=source, **overrides)
-            elif 'sql_transforms' in overrides:
-                clone_params = {}
-                for k, v in overrides.items():
-                    oldv = getattr(pipeline, k)
-                    clone_params[k] = oldv+list(v) if oldv and isinstance(v, list) else v
-                pipeline = pipeline.clone(**clone_params)
             elif overrides:
                 pipeline = pipeline.chain(
                     filters=overrides.get('filters', []),
-                    transforms=overrides.get('transforms', [])
+                    transforms=overrides.get('transforms', []),
+                    sql_transforms=overrides.get('sql_transforms', [])
                 )
             resolved_spec['pipeline'] = pipeline
 
