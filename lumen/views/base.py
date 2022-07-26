@@ -83,7 +83,7 @@ class Download(Viewer):
         )
 
 
-class View(Component):
+class View(Component, Viewer):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
@@ -153,6 +153,9 @@ class View(Component):
         if self.selection_group:
             self._init_link_selections()
         self.update()
+
+    def __panel__(self):
+        return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
     def _init_link_selections(self):
         doc = pn.state.curdoc
@@ -541,6 +544,14 @@ class hvPlotUIView(hvPlotBaseView):
             if k in hvPlotExplorer.param and v is not None and k != 'name'
         }
         return (self.get_data(),), dict(params, **self.kwargs)
+
+    def __panel__(self):
+        panel = self.get_panel()
+        def ui(*events):
+            panel._data = self.get_data()
+            panel._plot()
+            return panel
+        return pn.bind(ui, self.param.rerender)
 
     def get_panel(self):
         from hvplot.ui import hvPlotExplorer
