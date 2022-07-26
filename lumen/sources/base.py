@@ -108,9 +108,10 @@ class Source(Component):
 
     __abstract = True
 
-    def _update_ref(self, pname, event):
-        self.clear_cache()
-        super()._update_ref(pname, event)
+    @property
+    def _reload_params(self):
+        "List of parameters that trigger a data reload."
+        return list(self.param)
 
     @classmethod
     def _recursive_resolve(cls, spec, source_type):
@@ -177,6 +178,7 @@ class Source(Component):
         from ..config import config
         self.root = params.pop('root', config.root)
         super().__init__(**params)
+        self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
         self._schema_cache = {}
 
@@ -271,7 +273,7 @@ class Source(Component):
                     f"Error during saving process: {e}"
                 )
 
-    def clear_cache(self):
+    def clear_cache(self, *events):
         """
         Clears any cached data.
         """

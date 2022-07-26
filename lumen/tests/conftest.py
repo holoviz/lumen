@@ -3,6 +3,7 @@ import tempfile
 
 from unittest.mock import Mock
 
+import pandas as pd
 import panel as pn
 import pytest
 
@@ -22,7 +23,6 @@ def set_root():
     yield _set_root
     config._root = root
 
-
 @pytest.fixture
 def make_filesource():
     root = config._root
@@ -36,7 +36,6 @@ def make_filesource():
     for source in state.global_sources.values():
         source.clear_cache()
     state.global_sources.clear()
-
 
 @pytest.fixture
 def make_variable_filesource():
@@ -59,12 +58,15 @@ def make_variable_filesource():
     state._variables.clear()
 
 @pytest.fixture
+def mixed_df():
+    yield pd._testing.makeMixedDataFrame()
+
+@pytest.fixture
 def yaml_file():
     tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
     yield tf
     tf.close()
     os.unlink(tf.name)
-
 
 @pytest.fixture
 def state_userinfo():
@@ -75,7 +77,6 @@ def state_userinfo():
     pn.state = mock_state
     yield
     pn.state = state
-
 
 @pytest.fixture(autouse=True)
 def clear_state():
@@ -88,7 +89,6 @@ def clear_state():
     state._sources.clear()
     state._filters.clear()
     state._variables.clear()
-
 
 @pytest.fixture
 def document():

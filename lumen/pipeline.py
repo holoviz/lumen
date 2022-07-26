@@ -26,7 +26,7 @@ class Pipeline(param.Parameterized):
     schema = param.Dict(doc="The schema of the input data.")
 
     source = param.ClassSelector(
-        class_=Source,
+        class_=Source, constant=True,
         doc="The Source this pipeline is fed by."
     )
 
@@ -61,11 +61,12 @@ class Pipeline(param.Parameterized):
         self._init_callbacks()
 
     def _init_callbacks(self):
+        self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table'])
+        self.source.param.watch(self._update_data, self.source._reload_params)
         for filt in self.filters:
             filt.param.watch(self._update_data, ['value'])
         for transform in self.transforms+self.sql_transforms:
-            if transform.controls:
-                transform.param.watch(self._update_data, transform.controls)
+            transform.param.watch(self._update_data, list(transform.param))
             for fp in transform._field_params:
                 if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = list(self.schema)
@@ -184,11 +185,13 @@ class Pipeline(param.Parameterized):
         field: str | None
            The field to filter on (required to instantiate Filter type).
         """
+        if isinstance(filt, str):
+            filt = Filter._get_type(filt)
         if not isinstance(filt, Filter):
             tspec = f'{filt.__module__}.{filt.__name__}'
             filt = Filter.from_spec(
                 {'type': tspec, 'field': field, 'table': self.table},
-                {self.table: self._schema}
+                {self.table: self.schema}
             )
         self.filters.append(filt)
         filt.param.watch(self._update_data, ['value'])
@@ -278,7 +281,7 @@ class Pipeline(param.Parameterized):
 
     @property
     def control_panel(self) -> pn.Column:
-        col = pn.Column(sizing_mode='stretch_width')
+        col = pn.Column()
         if self.filters:
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Filters</div>')
         for f in self.filters:
