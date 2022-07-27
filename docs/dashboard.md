@@ -116,11 +116,11 @@ pipelines:
   population:
     source: population
     filters:
-	  - type: widget
-	    field: country
-	transforms:
+      - type: widget
+        field: country
+    transforms:
       - type: columns
-	    columns: [year, country, population]
+        columns: [year, country, population]
 ```
 
 ### `targets`
