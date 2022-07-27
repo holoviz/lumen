@@ -11,6 +11,7 @@ from .filters import Filter, ParamFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
+from .util import get_dataframe_schema
 
 
 class DataFrame(param.DataFrame):
@@ -194,7 +195,7 @@ class Pipeline(param.Parameterized):
         params['sql_transforms'] = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
         return cls(**params)
 
-    def add_filter(self, filt: Union[Filter, Type[Filter]], field: Optional[str] = None):
+    def add_filter(self, filt: Union[Filter, Type[Filter]], field: Optional[str] = None, **kwargs):
         """
         Add a filter to the pipeline.
 
@@ -210,7 +211,7 @@ class Pipeline(param.Parameterized):
         if not isinstance(filt, Filter):
             tspec = f'{filt.__module__}.{filt.__name__}'
             filt = Filter.from_spec(
-                {'type': tspec, 'field': field, 'table': self.table},
+                dict({'type': tspec, 'field': field, 'table': self.table}, **kwargs),
                 {self.table: self.schema}
             )
         self.filters.append(filt)
@@ -264,9 +265,7 @@ class Pipeline(param.Parameterized):
         -------
         Pipeline
         """
-        if not (filters or transforms or sql_transforms):
-            return self
-        elif sql_transforms:
+        if sql_transforms:
             params = {
                 'filters': self.filters + (filters or []),
                 'transforms': self.transforms + (transforms or []),
@@ -279,6 +278,7 @@ class Pipeline(param.Parameterized):
                 'transforms': transforms or [],
                 'sql_transforms': [],
                 'pipeline': self,
+                'schema': get_dataframe_schema(self.data)['items']['properties'],
                 'data': None
             }
         return self.clone(**params)
