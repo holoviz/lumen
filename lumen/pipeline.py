@@ -13,6 +13,17 @@ from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
 
 
+class DataFrame(param.DataFrame):
+    """
+    DataFrame parameter that resolves data on access.
+    """
+
+    def __get__(self, obj, objtype):
+        if obj is not None and obj.__dict__.get(self._internal_name) is None:
+            obj._update_data()
+        return super().__get__(obj, objtype)
+
+
 class Pipeline(param.Parameterized):
     """
     A Pipeline represents a data Source along with any number of
@@ -21,7 +32,7 @@ class Pipeline(param.Parameterized):
     component to encapsulate multiple data processing steps.
     """
 
-    data = param.DataFrame(doc="The current data on this source.")
+    data = DataFrame(doc="The current data on this source.")
 
     schema = param.Dict(doc="The schema of the input data.")
 
@@ -152,12 +163,21 @@ class Pipeline(param.Parameterized):
                 else:
                     source = state.load_source(source, state.spec['sources'][source])
         params['source'] = source
+        table = params.get('table')
+        if table is None:
+            tables = source.get_tables()
+            if len(tables) > 1:
+                raise ValueError(
+                    "The Pipeline specification does not contain a table and the "
+                    "supplied Source has multiple tables. Please specify one of the "
+                    f"following tables: {tables} in the pipeline specification."
+                )
+            params['table'] = table = tables[0]
 
         # Resolve filters
         params['filters'] = filters = []
         filter_specs = spec.pop('filters', {})
         if filter_specs:
-            table = spec.get('table')
             schema = source.get_schema(table)
         for filt_spec in (filter_specs.items() if isinstance(filter_specs, dict) else filter_specs):
             if isinstance(filt_spec, tuple):
@@ -197,7 +217,7 @@ class Pipeline(param.Parameterized):
         filt.param.watch(self._update_data, ['value'])
         self._update_data()
 
-    def add_transform(self, transform: Transform):
+    def add_transform(self, transform: Transform, **kwargs):
         """
         Add a (SQL)Transform to the pipeline.
 
@@ -206,11 +226,16 @@ class Pipeline(param.Parameterized):
         filt: Transform
            The Transform instance to add.
         """
-        self.transforms.append(transform)
-        fields = list(self._schema)
+        if isinstance(transform, str):
+            transform = Transform._get_type(transform)(**kwargs)
+        if isinstance(transform, SQLTransform):
+            self.sql_transforms.append(transform)
+        else:
+            self.transforms.append(transform)
+        fields = list(self.schema)
         for fparam in transform._field_params:
             transform.param[fparam].objects = fields
-            transform.param.update(**{fparam: fields})
+            transform.param.update(**{fparam: kwargs.get(fparam, fields)})
         transform.param.watch(self._update_data, transform.controls)
         self._update_data()
 
@@ -282,19 +307,14 @@ class Pipeline(param.Parameterized):
     @property
     def control_panel(self) -> pn.Column:
         col = pn.Column()
-        if self.filters:
+        filters = [filt.panel for filt in self.filters]
+        if any(filters):
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Filters</div>')
-        for f in self.filters:
-            w = f.panel
-            if w is not None:
-                col.append(w)
-        transforms = (self.transforms+self.sql_transforms)
+        col.extend([filt for filt in filters if filt is not None])
+        transforms = [t.control_panel for t in self.transforms+self.sql_transforms if t.controls]
         if transforms:
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Transforms</div>')
-        for t in transforms:
-            w = t.control_panel
-            if w is not None:
-                col.append(w)
+        col.extend(transforms)
         return col
 
 
