@@ -16,11 +16,13 @@ def get_setup_version(reponame):
 
 dependencies = [
     "numpy",
+    "bokeh",
     "param",
     "panel >=0.11",
     "pandas",
     "hvplot",
-    "holoviews >=1.14"
+    "holoviews >=1.14",
+    "packaging",
 ]
 
 extras_require = {
