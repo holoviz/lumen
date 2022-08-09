@@ -1,4 +1,4 @@
-# Specification
+# Dashboard Specification
 
 The Lumen dashboard can be configured using a `dashboard.yml` file. The core design principle behind the yaml specification is that it instantiates instances of the four main types, i.e. [Filter](lumen.filters.Filter), [Source](lumen.sources.Source), [Transform](lumen.transforms.Transform) and [View](lumen.views.View) objects.
 
