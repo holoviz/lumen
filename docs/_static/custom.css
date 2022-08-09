@@ -23,3 +23,7 @@ button.copybtn:hover {
 ul.current.nav.bd-sidenav {
     padding: 0;
 }
+
+.cell_output {
+    overflow-x: auto;
+}

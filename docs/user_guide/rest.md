@@ -1,4 +1,4 @@
-# REST Endpoint Specification
+# REST Specification
 
 The REST specification defines the default format for data to be consumed by the dashboard. The API consists of three main endpoints providing access to the schema
 

@@ -7,13 +7,103 @@ from itertools import product
 import panel as pn
 import param
 
+from panel.viewable import Viewer
+
 from .config import _LAYOUTS
-from .filters import FacetFilter, Filter, ParamFilter
+from .filters import FacetFilter, Filter
 from .panel import IconButton
+from .pipeline import Pipeline
 from .sources import Source
 from .state import state
 from .util import extract_refs
 from .views import DOWNLOAD_FORMATS, View
+
+
+class Card(Viewer):
+    """
+    A Card renders a layout of multiple views given a layout specification.
+    """
+
+    layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
+        Defines the layout of the views in the monitor target. Can be
+        'column', 'row', 'grid', 'row' or a nested list of indexes
+        corresponding to the views, e.g. [[0, 1], [2]] will create
+        a Column of one row containing views 0 and 1 and a second Row
+        containing view 2.""" )
+
+    title = param.String(doc="A title for this Card.")
+
+    views = param.ClassSelector(class_=(list, dict), doc="""
+        List or dictionary of View objects.""")
+
+    def __init__(self, **params):
+        self.kwargs = params.pop('kwargs', {})
+        super().__init__(**params)
+        params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
+        self._card = pn.Card(
+            title=self.title, name=self.title, collapsible=False, **params
+        )
+        self._card[:] = [self._construct_layout()]
+
+    def __panel__(self):
+        return self._card
+
+    def _construct_layout(self):
+        kwargs = dict(self.kwargs)
+        layout = self.layout
+        if isinstance(layout, list):
+            item = pn.Column(sizing_mode='stretch_both')
+            for row_spec in layout:
+                row = pn.Row(sizing_mode='stretch_width')
+                for index in row_spec:
+                    if isinstance(index, int):
+                        view = self.views[index]
+                    else:
+                        matches = [view for view in self.views if view.name == index]
+                        if matches:
+                            view = matches[0]
+                        else:
+                            raise KeyError("Target could not find named "
+                                           f"view '{index}'.")
+                    row.append(view.panel)
+                item.append(row)
+        else:
+            if isinstance(layout, dict):
+                layout_kwargs = dict(layout)
+                layout = layout_kwargs.pop('type')
+                kwargs.update(layout_kwargs)
+            if layout == 'grid' and 'ncols' not in kwargs:
+                kwargs['ncols'] = 2
+            layout_type = _LAYOUTS[layout]
+            item = layout_type(*(view.panel for view in self.views), **kwargs)
+        return item
+
+    @classmethod
+    def from_spec(cls, spec, filters=None, pipelines={}):
+        spec = dict(spec)
+        view_specs = spec.get('views', [])
+        spec['views'] = views = []
+        for view in view_specs:
+            if isinstance(view_specs, dict):
+                view_spec = dict(view_specs[view], name=view)
+            else:
+                view_spec = view
+            if 'table' in view_spec and view_spec['table'] in pipelines:
+                pipeline = pipelines[view_spec['table']]
+            elif len(pipelines) == 1:
+                pipeline = list(pipelines.values())[0]
+                if 'pipeline' in view_spec:
+                    del view_spec['pipeline']
+            if filters:
+                pipeline = pipeline.chain(filters=list(filters))
+            view = View.from_spec(view_spec, pipeline=pipeline)
+            views.append(view)
+        if filters:
+            spec['title'] = ' '.join([f'{f.label}: {f.value}' for f in filters])
+        return cls(**spec)
+
+    def rerender(self):
+        self._card[:] = [self._construct_layout()]
 
 
 class Facet(param.Parameterized):
@@ -24,11 +114,11 @@ class Facet(param.Parameterized):
     layout = param.ClassSelector(default=None, class_=(str, dict), doc="""
         How to lay out the facets.""")
 
-    sort = param.ListSelector(default=[], objects=[], doc="""
-        List of fields to sort by.""")
-
     reverse = param.Boolean(default=False, doc="""
         Whether to reverse the sort order.""")
+
+    sort = param.ListSelector(default=[], objects=[], doc="""
+        List of fields to sort by.""")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -44,12 +134,20 @@ class Facet(param.Parameterized):
         )
         self._reverse_widget.link(self, value='reverse')
 
+    def get_sort_key(self, views):
+        sort_key = []
+        for field in self.sort:
+            values = [v.get_value(field) for v in views]
+            if values:
+                sort_key.append(values[0])
+        return tuple(sort_key)
+
     @param.depends('sort:objects', watch=True)
     def _update_options(self):
         self._sort_widget.options = self.param.sort.objects
 
     @classmethod
-    def from_spec(cls, spec, schema):
+    def from_spec(cls, spec, schema, pipelines={}):
         """
         Creates a Facet object from a schema and a set of fields.
         """
@@ -63,22 +161,13 @@ class Facet(param.Parameterized):
                 f = by_spec
             by.append(f)
         sort = spec.pop('sort', [b.field for b in by])
-        sorter = cls(by=by, **spec)
+        sorter = cls(by=by, pipelines=pipelines, **spec)
         sorter.param.sort.objects = sort
         return sorter
-
-    def get_sort_key(self, views):
-        sort_key = []
-        for field in self.sort:
-            values = [v.get_value(field) for v in views]
-            if values:
-                sort_key.append(values[0])
-        return tuple(sort_key)
 
     @property
     def filters(self):
         return product(*[filt.filters for filt in self.by])
-
 
 
 class Download(pn.viewable.Viewer):
@@ -90,9 +179,6 @@ class Download(pn.viewable.Viewer):
     labels = param.Dict(default={}, doc="""
         A dictionary to override the Button label for each table.""")
 
-    filters = param.List(class_=Filter, doc="""
-        A list of filters to be rendered.""")
-
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
         The format to download the data in.""")
 
@@ -100,8 +186,8 @@ class Download(pn.viewable.Viewer):
         Keyword arguments passed to the serialization function, e.g.
         data.to_csv(file_obj, **kwargs).""")
 
-    source = param.ClassSelector(class_=Source, doc="""
-        The Source queries the data from some data source.""")
+    pipelines = param.Dict(default={}, doc="""
+        Dictionary of pipelines indexed by table name.""")
 
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
@@ -148,19 +234,7 @@ class Download(pn.viewable.Viewer):
         else:
             io = BytesIO()
         table = self._select_download.value
-        query = {
-            filt.field: filt.query for filt in self.filters
-            if filt.query is not None and
-            (filt.table is None or filt.table == table)
-        }
-        data = self.source.get(table, **query)
-        for filt in self.filters:
-            if not isinstance(filt, ParamFilter):
-                continue
-            from holoviews import Dataset
-            if filt.value is not None:
-                ds = Dataset(data)
-                data = ds.select(filt.value).data
+        data = self._pipelines[table].data
         if self.format == 'csv':
             data.to_csv(io, **self.kwargs)
         elif self.format == 'json':
@@ -173,7 +247,7 @@ class Download(pn.viewable.Viewer):
         return io
 
     @classmethod
-    def from_spec(cls, spec, source, filters):
+    def from_spec(cls, spec, pipelines):
         """
         Creates a Download object from a specification.
 
@@ -181,14 +255,10 @@ class Download(pn.viewable.Viewer):
         ----------
         spec : dict
             Specification declared as a dictionary of parameter values.
-        source: Source
-            The Source to monitor
-        filters: list
-            List of Filter objects
-
+        pipelines: Dict[str, Pipeline]
+            A dictionary of Pipeline objects indexed by table name.
         """
-        return cls(source=source, filters=filters, **spec)
-
+        return cls(pipelines=pipelines, **spec)
 
 
 class Target(param.Parameterized):
@@ -204,9 +274,6 @@ class Target(param.Parameterized):
     facet = param.ClassSelector(class_=Facet, doc="""
         The facet object determines whether and how to facet the cards
         on the target.""")
-
-    filters = param.List(class_=Filter, doc="""
-        A list of filters to be rendered.""")
 
     layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
         Defines the layout of the views in the monitor target. Can be
@@ -232,170 +299,150 @@ class Target(param.Parameterized):
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
 
     views = param.ClassSelector(class_=(list, dict), doc="""
-        A list or dictionary of views to be displayed.""")
+        List or dictionary of View specifications.""")
+
+    _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
     def __init__(self, **params):
         if 'facet' not in params:
             params['facet'] = Facet()
         self._application = params.pop('application', None)
-        self._cards = []
         self._cache = {}
         self._cb = None
-        self._stale = False
-        self._updates = {}
+        self._scheduled = False
+        self._updates = []
         self._timestamp = pn.pane.HTML(
             align='center', margin=(10, 0), sizing_mode='stretch_width'
         )
-        self._view_controls = pn.Column(sizing_mode='stretch_width')
+        self._pipelines = params.pop('pipelines', {})
+        self._pipeline_watchers = {}
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
+        # Render content
+        self._construct_cards()
+        self._cards = self.get_cards()
+
         # Set up watchers
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
-        rerender = partial(self._rerender, invalidate_cache=True)
-        for filt in self.filters:
-            if isinstance(filt, FacetFilter):
-                continue
-            filt.param.watch(rerender, 'value')
-        self._update_views(init=True)
-        self.source.param.watch(rerender, self.source.refs)
-
-    @property
-    def refs(self):
-        refs = self.source.refs.copy()
-        for filt in self.filters:
-            for ref in filt.refs:
-                if ref not in refs:
-                    refs.append(ref)
-        views = self.views
-        for spec in (views if isinstance(views, list) else views.values()):
-            for ref in extract_refs(spec, 'variables'):
-                if ref not in refs:
-                    refs.append(ref)
-        return refs
+        for view in list(self._cache.values())[0].views:
+            view.param.watch(self._schedule_rerender, 'rerender')
 
     def _resort(self, *events):
         self._rerender(update_views=False)
+
+    def _sync_component(self, component, *events):
+        component.param.set_param(**{event.name: event.new for event in events})
+
+    def _construct_cards(self):
+        controls, all_transforms = [], []
+        linked_views = None
+        for facet_filters in self.facet.filters:
+            key = tuple(str(f.value) for f in facet_filters)
+            self._cache[key] = card = Card.from_spec({
+                'kwargs': self.kwargs,
+                'layout': self.layout,
+                'title': self.title,
+                'views': self.views,
+            }, filters=facet_filters, pipelines=self._pipelines)
+            if linked_views is None:
+                for view in card.views:
+                    if view.controls:
+                        controls.append(view.control_panel)
+                    transforms = (
+                        view.pipeline.traverse('transforms') +
+                        view.pipeline.traverse('sql_transforms')
+                    )
+                    for transform in transforms:
+                        if transform not in all_transforms and transform.controls:
+                            controls.append(transform.control_panel)
+                            all_transforms.append(transform)
+                linked_views = card.views
+                continue
+
+            # Only the controls for the first facet is shown so link
+            # the other facets to the controls of the first
+            for v1, v2 in zip(linked_views, card.views):
+                v1.param.watch(partial(self._sync_component, v2), v1.refs)
+                for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
+                    t1.param.watch(partial(self._sync_component, t2), t1.refs)
+                for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
+                    t1.param.watch(partial(self._sync_component, t2), t1.refs)
+        self._view_controls = pn.Column(*controls, sizing_mode='stretch_width')
 
     ##################################################################
     # Create UI
     ##################################################################
 
-    def _construct_view_panel(self, view):
-        return view.panel
-
-    def _construct_card(self, title, views):
-        kwargs = dict(self.kwargs)
-        layout = self.layout
-        if isinstance(layout, list):
-            item = pn.Column(sizing_mode='stretch_both')
-            for row_spec in layout:
-                row = pn.Row(sizing_mode='stretch_width')
-                for index in row_spec:
-                    if isinstance(index, int):
-                        view = views[index]
-                    else:
-                        matches = [view for view in views if view.name == index]
-                        if matches:
-                            view = matches[0]
-                        else:
-                            raise KeyError("Target could not find named "
-                                           f"view '{index}'.")
-                    row.append(self._construct_view_panel(view))
-                item.append(row)
-        else:
-            if isinstance(layout, dict):
-                layout_kwargs = dict(layout)
-                layout = layout_kwargs.pop('type')
-                kwargs.update(layout_kwargs)
-            if layout == 'grid' and 'ncols' not in kwargs:
-                kwargs['ncols'] = 2
-            layout_type = _LAYOUTS[layout]
-            item = layout_type(*(self._construct_view_panel(view) for view in views), **kwargs)
-        params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
-        return pn.Card(item, title=title, name=title, collapsible=False, **params)
-
-    def _materialize_views(self, filters):
-        views = []
-        for view in self.views:
-            if isinstance(self.views, dict):
-                view_spec = dict(self.views[view], name=view)
-            else:
-                view_spec = view
-            view = View.from_spec(view_spec, self.source, filters)
-            views.append(view)
-        return views
-
-    def _get_card(self, filters, facet_filters, invalidate_cache=True, update_views=True, events=[]):
-        # Get cache key
-        if isinstance(self.views, list):
-            view_specs = self.views
-        else:
-            view_specs = list(self.views.values())
-        key = (tuple(str(f.value) for f in facet_filters) +
-               tuple(id(view) for view in view_specs))
-
-        # Get views
-        update_card = False
-        if key in self._cache:
-            card, views = self._cache[key]
-        else:
-            view_filters = filters + list(facet_filters)
-            card, views = None, self._materialize_views(view_filters)
-
-        # Update views
-        if update_views:
-            for view in views:
-                view_stale = view.update(*events, invalidate_cache=invalidate_cache)
-                update_card = update_card or view_stale
-
-        if not any(view for view in views):
-            return None, None, views
-
-        sort_key = self.facet.get_sort_key(views)
-
-        if facet_filters:
-            title = ' '.join([f'{f.label}: {f.value}' for f in facet_filters])
-        else:
-            title = self.title
-
-        if card is None:
-            card = self._construct_card(title, views)
-            self._cache[key] = (card, views)
-        else:
-            card.title = title
-            if update_card:
-                self._updates[card] = views
-        return sort_key, card, views
+    def get_cards(self):
+        cards = []
+        for card in self._cache.values():
+            sort_key = self.facet.get_sort_key(card.views)
+            if any(view for view in card.views):
+                cards.append((sort_key, card))
+        if self.facet.sort:
+            cards = sorted(cards, key=lambda x: x[0])
+            if self.facet.reverse:
+                cards = cards[::-1]
+        return [card for _, card in cards]
 
     def get_filter_panel(self, skip=None):
-        skip = skip or []
+        skip = list(skip or [])
         views = []
+
+        # Variable controls
         global_refs = state.global_refs
         target_refs = [ref.split('.')[1] for ref in self.refs if ref not in global_refs]
         var_panel = state.variables.panel(target_refs)
         if var_panel is not None:
             views.append(var_panel)
+
+        # Source controls
         source_panel = self.source.panel
         if source_panel:
-            source_header = pn.pane.Markdown('### Source', margin=(0, 5, -10, 5))
-            views.extend([source_header, source_panel, pn.layout.Divider()])
+            views.extend([
+                self._header_format.format(header='Source'),
+                source_panel,
+                pn.layout.Divider()
+            ])
+
+        # Download controls
         if self.download:
             views.append(self.download)
-        filters = [filt.panel for filt in self.filters
-                   if filt not in skip and filt.panel is not None]
+
+        # Filter controls
+        filters = []
+        for pipeline in self._pipelines.values():
+            subpipeline = pipeline
+            while subpipeline is not None:
+                subfilters = []
+                for filt in subpipeline.filters:
+                    fpanel = filt.panel
+                    if filt not in skip and fpanel is not None:
+                        subfilters.append(fpanel)
+                        skip.append(filt)
+                if subfilters:
+                    filters.append(subfilters)
+                subpipeline = subpipeline.pipeline
         if filters:
-            views.append(pn.pane.Markdown('### Filters', margin=(0, 5, -10, 5)))
-            views.extend(filters)
+            views.append(self._header_format.format(header='Filters'))
+            views.extend([filt for sfilters in filters[::-1] for filt in sfilters])
+
+        # Facet controls
         if self.facet.param.sort.objects:
-            views.append(pn.layout.Divider(margin=0, height=5))
+            if views:
+                views.append(pn.layout.Divider(margin=0, height=5))
             views.extend([
-                pn.pane.Markdown('### Sort', margin=(0, 5, -10, 5)),
+                self._header_format.format(header='Sort'),
                 self.facet._sort_widget,
                 self.facet._reverse_widget
             ])
+
+        # View controls
         if self._view_controls:
             views.append(self._view_controls)
+
+        # Reload buttons
         if self.reloadable:
             if views:
                 views.append(pn.layout.Divider(margin=0, height=5))
@@ -415,117 +462,36 @@ class Target(param.Parameterized):
     # Rendering API
     ##################################################################
 
-    def _sync_component(self, component, *events):
-        component.param.set_param(**{event.name: event.new for event in events})
+    def _schedule_rerender(self, *events):
+        for e in events:
+            if isinstance(e.obj, View) and e.obj not in self._updates:
+                self._updates.append(e.obj)
+        if self._scheduled:
+            return
+        self._scheduled = True
+        if pn.state.curdoc:
+            pn.state.curdoc.add_next_tick_callback(self._rerender)
+        else:
+            self._rerender()
 
-    def _update_views(self, invalidate_cache=True, update_views=True, init=False, events=[]):
-        """
-        Updates all views during initialization, cache invalidation
-        or because one of the views needs to be updated.
+    def _rerender_cards(self, cards):
+        if self._application:
+            self._application._set_loading(self.title)
+        for card in cards:
+            if any(view in self._updates for view in card.views):
+                card.rerender()
+        self._updates = []
 
-        We accumulate one card per facet but only a single set of
-        controls for all views. The set of controls are then linked
-        to the views for all other facets ensuring they stay synced.
-
-        Only after we have linked all views to we register a watcher
-        which triggers a rerender ensuring that the rerender is
-        triggered **after** all views have been updated with the new
-        control values.
-        """
-        cards, controls, all_views = [], [], []
-        linked_views = None
-        for facet_filters in self.facet.filters:
-            key, card, views = self._get_card(
-                self.filters, facet_filters, invalidate_cache, update_views,
-                events=events
-            )
-            all_views += views
-            if card is not None:
-                cards.append((key, card))
-            if linked_views is None:
-                for view in views:
-                    vcp = view.control_panel
-                    if len(vcp):
-                        controls.append(vcp)
-                linked_views = views
-            elif init:
-                # Only the controls for the first facet is shown so link
-                # the other facets to the controls of the first
-                for v1, v2 in zip(linked_views, views):
-                    v1.param.watch(partial(self._sync_component, v2), v1.refs)
-                    for t1, t2 in zip(v1.transforms, v2.transforms):
-                        t1.param.watch(partial(self._sync_component, t2), t1.refs)
-                    for t1, t2 in zip(v1.sql_transforms, v2.sql_transforms):
-                        t1.param.watch(partial(self._sync_component, t2), t1.refs)
-
-        # Validate that all filters are applied
-        for filt in self.filters:
-            if filt.field and not any(filt.field in v.source.get_schema(v.table) for v in all_views):
-                self.param.warning(
-                    f'Target {self.title!r} specifies a {type(filt).__name__} '
-                    f'to filter on the {filt.field!r} field but no View '
-                    'found that matches such a field.'
-                )
-
-        # Re-render target when controls or refs update but we ensure
-        # that all other views linked to the controls are updated first
-        if init:
-            rerender_cache = partial(self._rerender, invalidate_cache=True)
-            transforms = []
-            rerender_vars = set()
-            for view in linked_views:
-                rerender_vars |= set(view._refs.values())
-                if view.controls:
-                    view.param.watch(rerender_cache, view.controls)
-                for transform in view.transforms+view.sql_transforms:
-                    if not transform.refs or transform in transforms:
-                        continue
-                    transforms.append(transform)
-                    rerender_vars |= set(transform._refs.values())
-                    if transform.controls:
-                        transform.param.watch(rerender_cache, transform.controls)
-            refs = [
-                var.split('.')[1] for var in rerender_vars
-                if var.startswith('$variables.')
-            ]
-            state.variables.param.watch(rerender_cache, refs)
-
-        self._view_controls[:] = controls
-
-        if self.facet.sort:
-            cards = sorted(cards, key=lambda x: x[0])
-            if self.facet.reverse:
-                cards = cards[::-1]
-
-        cards = [card for _, card in cards]
+    def _rerender(self, update_views=True):
+        self._scheduled = False
+        cards = self.get_cards()
+        if update_views:
+            self._rerender_cards(cards)
         if cards != self._cards:
             self._cards[:] = cards
-            self._stale = True
-        else:
-            self._stale = False
-
-    def _rerender(self, *events, invalidate_cache=False, update_views=True):
-        self._update_views(invalidate_cache, update_views, events=events)
-        rerender = bool(self._updates)
-        has_updates = (
-            any(view._updates for _, (_, views) in self._cache.items() for view in views)
-        )
-        if update_views and (has_updates or rerender):
-            if self._updates:
-                self._application._set_loading(self.title)
-                for card, views in self._updates.items():
-                    card[0][:] = [view.panel for view in views]
-                self._updates = {}
-            for _, (_, views) in self._cache.items():
-                for view in views:
-                    if view._updates:
-                        view._panel.param.set_param(**view._updates)
-                        view._updates = None
-        if self._stale or (update_views and rerender):
-            self._application._render()
-            self._stale = False
-            # Remove the loading spinner set when a target needs to be
-            # rerendered, for instance when a view has not implemented _get_params.
+            if self._application:
+                self._application._render()
+        if self._application:
             self._application._layout.loading = False
 
     ##################################################################
@@ -551,64 +517,72 @@ class Target(param.Parameterized):
         """
         # Resolve source
         spec = dict(spec)
-        source_spec = spec.pop('source', None)
-        source = Source.from_spec(source_spec)
+        views = spec.get('views', [])
+        pipelines = {}
+        source_filters = None
+        filter_specs = spec.pop('filters', [])
+        view_specs = views if isinstance(views, list) else list(views.values())
+        if 'source' in spec:
+            source_spec = spec.pop('source', None)
+            if isinstance(source_spec, Source):
+                source = source_spec
+            else:
+                source = Source.from_spec(source_spec)
+            if isinstance(source_spec, str):
+                source_filters = state.filters.get(source_spec)
+        else:
+            if 'pipeline' in spec:
+                pspecs = [spec['pipeline']]
+            else:
+                pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
+            if len(set(pspecs)) > 1:
+                raise ValueError('Views on a target must share the same pipeline.')
+            elif not pspecs:
+                raise ValueError('Target must declare a source or a pipeline.')
+            pipeline_spec = pspecs[0]
+
+            if isinstance(pipeline_spec, str):
+                if pipeline_spec not in state.pipelines:
+                    raise KeyError(f'{pipeline_spec!r} not found in global pipelines.')
+                pipeline = state.pipelines[pipeline_spec]
+            else:
+                pipeline = Pipeline.from_spec(pipeline_spec)
+            source = pipeline.source
+            pipelines[pipeline.table] = pipeline
+
         tables = source.get_tables()
 
-        # Resolve filters
-        filter_specs = spec.pop('filters', [])
-        if isinstance(source_spec, str):
-            source_filters = state.filters.get(source_spec)
-        else:
-            source_filters = None
-
-        if filter_specs or 'facet' in spec:
-            schema = source.get_schema()
-            filters = [
-                Filter.from_spec(filter_spec, schema, source_filters)
-                for filter_spec in filter_specs
-            ]
-
-            # Resolve faceting
+        # Resolve facets
+        if 'facet' in spec:
             facet_spec = spec.pop('facet', {})
-            facet_filters = [f for f in filters if isinstance(f, FacetFilter)]
+            schema = source.get_schema()
         else:
-            # Avoid computing schema unless necessary
             facet_spec, schema = {}, {}
-            filters, facet_filters = [], []
-
-        # Resolve download options
-        download_spec = spec.pop('download', {})
-        if isinstance(download_spec, str):
-            download_spec = {'format': download_spec}
-        if 'tables' not in download_spec:
-            download_spec['tables'] = list(tables)
-        spec['download'] = Download.from_spec(download_spec, source, filters)
 
         # Backward compatibility
-        if facet_spec:
-            if facet_filters:
-                param.main.warning(
-                    "Cannot declare FacetFilters and provide a facet spec. "
-                    "Declare the facet.by key of the target instead."
-                )
-            elif 'sort' in spec:
-                param.main.warning(
-                    "Cannot declare sort spec and provide a facet spec. "
-                    "Declare the sort fields on the facet.sort key of "
-                    "the target instead."
-                )
-        elif 'sort' in spec:
-            param.main.param.warning(
-                'Specifying a sort key for a target is deprecated. Use '
-                'facet key instead and declare facet filters under the '
-                '"by" keyword.'
+        if any(fspec.get('type') == 'facet' for fspec in filter_specs):
+            raise ValueError(
+                "Facetting must be declared via the facet specification of a Target, "
+                "specifying filters of type 'facet' is no longer supported"
             )
-            sort_spec = spec['sort']
-            spec['facet'] = dict(
-                sort=sort_spec['fields'],
-                reverse=sort_spec.get('reverse', False),
-                by=facet_filters
+        for view_spec in view_specs:
+            if 'pipeline' in view_spec or 'pipeline' in spec:
+                continue
+            elif 'table' in view_spec:
+                table = view_spec['table']
+            elif len(tables) == 1:
+                table = tables[0]
+            else:
+                raise ValueError("View spec did not declare unambiguous table reference.")
+            pspec = {'table': table}
+            if filter_specs:
+                pspec['filters'] = filter_specs
+            pipelines[table] = Pipeline.from_spec(pspec, source, source_filters)
+        if facet_spec and 'sort' in spec:
+            param.main.warning(
+                "Cannot declare sort spec and provide a facet spec. "
+                "Declare the sort fields on the facet.sort key of "
+                "the target instead."
             )
         if 'config' in spec:
             param.main.param.warning(
@@ -623,9 +597,30 @@ class Target(param.Parameterized):
             )
             facet_spec['layout'] = spec.pop('facet_layout')
 
+        # Resolve download options
+        download_spec = spec.pop('download', {})
+        if isinstance(download_spec, str):
+            download_spec = {'format': download_spec}
+        if 'tables' not in download_spec:
+            download_spec['tables'] = list(tables)
+        spec['download'] = Download.from_spec(download_spec, pipelines)
         spec['facet'] = Facet.from_spec(facet_spec, schema)
         params = dict(kwargs, **spec)
-        return cls(filters=filters, source=source, **params)
+        return cls(source=source, pipelines=pipelines,  **params)
+
+    @property
+    def refs(self):
+        refs = []
+        for pipeline in self._pipelines.values():
+            for ref in pipeline.refs:
+                if ref not in refs:
+                    refs.append(ref)
+        views = self.views
+        for spec in (views if isinstance(views, list) else views.values()):
+            for ref in extract_refs(spec, 'variables'):
+                if ref not in refs:
+                    refs.append(ref)
+        return refs
 
     @property
     def panels(self):
@@ -648,7 +643,7 @@ class Target(param.Parameterized):
         if self._cards:
             content = self._cards
             if len(self._cards) == 1 and not self.show_title:
-                self._cards[0].param.set_param(
+                self._cards[0]._card.param.set_param(
                     hide_header=True, sizing_mode='stretch_width', margin=0
                 )
         else:
@@ -683,5 +678,5 @@ class Target(param.Parameterized):
         """
         if clear_cache:
             self.source.clear_cache()
-        self._rerender(invalidate_cache=True)
+        self._rerender()
         self._timestamp.object = f'Last updated: {dt.datetime.now().strftime(self.tsformat)}'

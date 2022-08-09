@@ -8,6 +8,10 @@ sources:
     cache_dir: ./cache
     tables:
       penguins: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+pipelines:
+  penguins:
+    source: penguins
+    table: penguins
     filters:
       species:
         type: widget
@@ -23,16 +27,10 @@ sources:
         parameter: scatter.selection_expr
 targets:
   - title: Plots
-    source: penguins
-    filters:
-      - species
-      - island
-      - sex
-      - expr
+    pipeline: penguins
     views:
       scatter:
         type: hvplot
-        table: penguins
         kind: scatter
         x: bill_length_mm
         y: bill_depth_mm
@@ -42,7 +40,6 @@ targets:
         selection_group: penguin
       depth_hist:
         type: hvplot
-        table: penguins
         kind: hist
         y: bill_length_mm
         responsive: true
@@ -50,7 +47,6 @@ targets:
         selection_group: penguin
       length_hist:
         type: hvplot
-        table: penguins
         kind: hist
         y: bill_depth_mm
         responsive: true
@@ -58,7 +54,6 @@ targets:
         selection_group: penguin
       mass_hist:
         type: hvplot
-        table: penguins
         kind: hist
         y: body_mass_g
         responsive: true
@@ -68,16 +63,10 @@ targets:
     sizing_mode: stretch_width
     height: 800
   - title: Table
-    source: penguins
-    filters:
-      - species
-      - island
-      - sex
-      - expr
+    pipeline: penguins
     views:
       table:
         type: table
-        table: penguins
         layout: fit_data_fill
         show_index: false
         theme: midnight

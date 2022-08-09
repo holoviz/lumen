@@ -1,4 +1,4 @@
-# Specification
+# Dashboard Specification
 
 The Lumen dashboard can be configured using a `dashboard.yml` file. The core design principle behind the yaml specification is that it instantiates instances of the four main types, i.e. [Filter](lumen.filters.Filter), [Source](lumen.sources.Source), [Transform](lumen.transforms.Transform) and [View](lumen.views.View) objects.
 
@@ -105,13 +105,23 @@ sources:
   population:
     type: file
     files: [population.csv]
-	filters:
-	  year:
-	    field: country
-		  type: widget
 ```
 
-Any target that uses the population `Source` can now refer to `year` filter by name. This allows multiple targets that are fed by the same `Source` to reuse a filter.
+### `pipelines`
+
+The `pipelines` section allows declaring reusable pipelines that encapsulate a [Source](lumen.sources.Source) along with any number of [Filter](lumen.filters.Filter) and [Transform](lumen.transforms.Transform) components. A pipeline can be declared in this global section or the definition can be inlined on each Target or View.
+
+```yaml
+pipelines:
+  population:
+    source: population
+    filters:
+      - type: widget
+        field: country
+    transforms:
+      - type: columns
+        columns: [year, country, population]
+```
 
 ### `targets`
 
@@ -124,18 +134,11 @@ targets: This is the list of targets to monitor
       format: When specified adds a section to the sidebar allowing users to download the filtered dataset
       kwargs: Additional keyword arguments to pass to the pandas/dask to_<format> method
       tables: Allows declaring a subset of tables to download
-    source: The Source used to monitor an endpoint (may also reference a Source in the sources section
-      type: The type of Source to use, e.g. 'rest' or 'live'
-      ...: Additional parameters for the Source
+    pipeline: The pipeline driving the views of this target. Each View can independently declare a pipeline or all use the shared pipeline defined at the target level
     views: A list of metrics to monitor and display on the endpoint
-      - table: The name of the table to visualize
+      - pipeline: The Pipeline driving the View
         type: The type of View to use for rendering the table
         ...: Additional parameters for the View
-    filters: A list of Filter types to select a subset of the data
-      - field: The name of the filter
-        table: If set filters only on a specific table.
-	    type: The type of the Filter to use, e.g. 'constant', 'widget' or 'facet'
-        ...: Additional parameters for the Filter
     layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
     facet:
 	  by: List of fields to facet by
@@ -144,7 +147,6 @@ targets: This is the list of targets to monitor
 	refresh_rate: How frequently to poll for updates in milliseconds
     ...: Additional parameters passed to the Card layout(s), e.g. width or height
 ```
-
 
 ### `auth`
 

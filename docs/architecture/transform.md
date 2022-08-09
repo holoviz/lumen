@@ -39,3 +39,42 @@ some transformation and returns another `DataFrame`.
 ```{eval-rst}
 .. autoclass:: lumen.transforms.Unstack
 ```
+
+## SQLTransform
+
+A [SQLTransform](lumen.transforms.sql.SQLTransform) is a special type
+of transform that operates on a [Source](lumen.sources.Source) that
+supports SQL expressions. Instead of operating on the data it operates
+on the SQL expression itself, thereby offloading potentially expensive
+transformations onto the database.
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.Transform
+   :members:
+```
+
+### SQLTransform Types
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.sql.SQLGroupBy
+```
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.sql.SQLLimit
+```
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.sql.SQLDistinct
+```
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.sql.SQLMinMax
+```
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.sql.SQLColumns
+```
+
+```{eval-rst}
+.. autoclass:: lumen.transforms.sql.SQLFilter
+```

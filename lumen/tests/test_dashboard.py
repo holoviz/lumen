@@ -32,7 +32,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     dashboard = Dashboard(str(root / 'sync_query_filters.yml'))
     dashboard._render_dashboard()
     target = dashboard.targets[0]
-    f1, f2 = target.filters
+    f1, f2 = list(target._pipelines.values())[0].filters
     f1.value = (0.1, 0.7)
     assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
@@ -50,11 +50,11 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
-    dashboard._sidebar[0][0][0][1]._widgets['limit'].value = 2
+    dashboard._sidebar[0][0][0]._widgets['limit'].value = 2
 
     pd.testing.assert_frame_equal(table.value, expected.iloc[:2])
 
@@ -66,7 +66,7 @@ def test_dashboard_with_transform_variable(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -82,7 +82,7 @@ def test_dashboard_with_source_variable(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -98,7 +98,7 @@ def test_dashboard_with_view_variable(set_root, document):
     target = dashboard.targets[0]
     target.update()
 
-    table = target._cards[0][0][0]
+    table = target._cards[0]._card[0][0]
 
     assert table.page_size == 20
 

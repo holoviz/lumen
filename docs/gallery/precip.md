@@ -2,7 +2,7 @@
 
 <img src="../_static/precip.png" width="100%">
 
-```{literalinclude} ../../examples/precip/dashboard.yaml
+```{literalinclude} ../../examples/precip/precipitation.yaml
 ---
 language: yaml
 ```

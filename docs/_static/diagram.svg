@@ -8,9 +8,9 @@
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   width="775.29779mm"
-   height="245.07307mm"
-   viewBox="0 0 775.29779 245.07307"
+   width="771.17261mm"
+   height="267.41895mm"
+   viewBox="0 0 771.1726 267.41894"
    version="1.1"
    id="svg8"
    inkscape:export-filename="/Users/philippjfr/lumen_dashboard.png"
@@ -276,9 +276,9 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="0.67178376"
-     inkscape:cx="1604.7763"
-     inkscape:cy="641.05179"
+     inkscape:zoom="0.5"
+     inkscape:cx="1343.2627"
+     inkscape:cy="674.38015"
      inkscape:document-units="mm"
      inkscape:current-layer="layer1"
      inkscape:document-rotation="0"
@@ -289,10 +289,10 @@
      fit-margin-left="0"
      fit-margin-right="0"
      fit-margin-bottom="0"
-     inkscape:window-width="2560"
-     inkscape:window-height="1361"
-     inkscape:window-x="-9"
-     inkscape:window-y="-9"
+     inkscape:window-width="2056"
+     inkscape:window-height="1263"
+     inkscape:window-x="0"
+     inkscape:window-y="38"
      inkscape:window-maximized="1" />
   <metadata
      id="metadata5">
@@ -302,7 +302,7 @@
         <dc:format>image/svg+xml</dc:format>
         <dc:type
            rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-        <dc:title />
+        <dc:title></dc:title>
       </cc:Work>
     </rdf:RDF>
   </metadata>
@@ -310,7 +310,7 @@
      inkscape:label="Layer 1"
      inkscape:groupmode="layer"
      id="layer1"
-     transform="translate(127.56963,-10.44389)">
+     transform="translate(131.91664,3.7136203)">
     <circle
        style="fill:#ffffff;fill-opacity:1;stroke:#21b59a;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="path14353"
@@ -343,7 +343,7 @@
        style="fill:#ffffff;fill-opacity:1;stroke:#21b59a"
        clip-path="url(#clipPath1046)" />
     <rect
-       style="fill:#f9f9f9;stroke:#035a86;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:1.5, 1.50000000000000000;stroke-dashoffset:0;stroke-opacity:1"
+       style="fill:#f9f9f9;stroke:#035a86;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:1.5, 1.5;stroke-dashoffset:0;stroke-opacity:1"
        id="rect15228"
        width="157.98579"
        height="47.307571"
@@ -357,7 +357,7 @@
        rx="73.108551"
        ry="70.6716" />
     <circle
-       style="stroke:#21b59a;stroke-width:0.999999;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;fill:#f9f9f9;fill-opacity:1"
+       style="fill:#f9f9f9;fill-opacity:1;stroke:#21b59a;stroke-width:0.999999;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="path14353-7-3"
        cx="-2.5742531"
        cy="119.62304"
@@ -380,11 +380,11 @@
        x="334.25342"
        y="116.0639" />
     <path
-       style="fill:none;stroke:#035a86;stroke-width:1.18719;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;marker-end:url(#marker15296)"
+       style="fill:none;stroke:#035a86;stroke-width:1.5;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;marker-end:url(#marker15296)"
        d="M 202.26699,140.29879 H 237.5955"
        id="path15224" />
     <ellipse
-       style="fill:#f9f9f9;stroke:#21b59a;stroke-width:3;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;fill-opacity:1"
+       style="fill:#f9f9f9;fill-opacity:1;stroke:#21b59a;stroke-width:3;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="path14508"
        cx="129.15845"
        cy="138.8548"
@@ -399,13 +399,13 @@
        x="77.857033"
        y="107.81771" />
     <circle
-       style="fill:#ffffff;stroke:#21b59a;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;fill-opacity:1"
+       style="fill:#ffffff;fill-opacity:1;stroke:#21b59a;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="path14353-7"
        cx="-69.460091"
        cy="171.59695"
        r="26.110197" />
     <circle
-       style="fill:#ffffff;stroke:#21b59a;stroke-width:1.11292;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;fill-opacity:1"
+       style="fill:#ffffff;fill-opacity:1;stroke:#21b59a;stroke-width:1.11292;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="path14353-7-8"
        cx="4.8311009"
        cy="225.70682"
@@ -426,7 +426,7 @@
        id="path14478" />
     <path
        style="fill:none;stroke:#21b59a;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-       d="m -74.501096,116.55603 33.664702,0"
+       d="m -74.501096,116.55603 h 33.664702"
        id="path14480"
        sodipodi:nodetypes="cc" />
     <path
@@ -436,12 +436,12 @@
     <text
        xml:space="preserve"
        style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#21b59a;fill-opacity:1;stroke:none;stroke-width:0.289308"
-       x="87.554558"
+       x="89.142059"
        y="99.613617"
        id="text14512"><tspan
          sodipodi:role="line"
          id="tspan14510"
-         x="87.554558"
+         x="89.142059"
          y="99.613617"
          style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';fill:#21b59a;fill-opacity:1;stroke-width:0.289308">Source</tspan></text>
     <rect
@@ -468,7 +468,7 @@
        y="118.71437" />
     <text
        xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:25.39999999999999858px;line-height:1.25;font-family:sans-serif;fill:#035a86;fill-opacity:1;stroke:none;stroke-width:0.289308;"
+       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#035a86;fill-opacity:1;stroke:none;stroke-width:0.289308"
        x="254.30409"
        y="112.42783"
        id="text14512-8"><tspan
@@ -476,10 +476,10 @@
          id="tspan14510-1"
          x="254.30409"
          y="112.42783"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.39999999999999858px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';stroke-width:0.289308;fill:#035a86;fill-opacity:1;">Filter</tspan></text>
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';fill:#035a86;fill-opacity:1;stroke-width:0.289308">Filter</tspan></text>
     <text
        xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:25.39999999999999858px;line-height:1.25;font-family:sans-serif;fill:#47b14c;fill-opacity:1;stroke:none;stroke-width:0.289308;"
+       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#47b14c;fill-opacity:1;stroke:none;stroke-width:0.289308"
        x="494.82703"
        y="97.179489"
        id="text14512-81"><tspan
@@ -487,13 +487,9 @@
          id="tspan14510-3"
          x="494.82703"
          y="97.179489"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.39999999999999858px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';stroke-width:0.289308;fill:#47b14c;fill-opacity:1;">View</tspan></text>
-    <path
-       style="fill:none;stroke:#47b14c;stroke-width:1.12887;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;marker-end:url(#marker15296-0)"
-       d="m 415.36812,138.62298 h 31.94253"
-       id="path15224-3" />
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';fill:#47b14c;fill-opacity:1;stroke-width:0.289308">View</tspan></text>
     <circle
-       style="fill:#ffffff;stroke:#47b14c;stroke-width:0.744917;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;fill-opacity:1"
+       style="fill:#ffffff;fill-opacity:1;stroke:#47b14c;stroke-width:0.744917;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="path14353-2"
        cx="472.90097"
        cy="224.27477"
@@ -628,27 +624,27 @@
     <text
        xml:space="preserve"
        style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#21b59a;fill-opacity:1;stroke:none;stroke-width:0.264583"
-       x="18.914627"
-       y="46.029305"
+       x="23.246998"
+       y="55.039524"
        id="text15926"><tspan
          sodipodi:role="line"
          id="tspan15924"
-         x="18.914627"
-         y="46.029305"
+         x="23.246998"
+         y="55.039524"
          style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#21b59a;fill-opacity:1;stroke-width:0.264583">Data Intake</tspan></text>
     <text
        xml:space="preserve"
        style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#035a86;fill-opacity:1;stroke:none;stroke-width:0.264583"
-       x="226.83585"
-       y="45.775303"
+       x="223.13173"
+       y="54.785522"
        id="text15926-0"><tspan
          sodipodi:role="line"
          id="tspan15924-4"
-         x="226.83585"
-         y="45.775303"
+         x="223.13173"
+         y="54.785522"
          style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#035a86;fill-opacity:1;stroke-width:0.264583">Data Processing</tspan></text>
     <rect
-       style="fill:#f9f9f9;stroke:#035a86;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:1.5, 1.50000000000000000;stroke-dashoffset:0;stroke-opacity:1"
+       style="fill:#f9f9f9;stroke:#035a86;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:1.5, 1.5;stroke-dashoffset:0;stroke-opacity:1"
        id="rect15228-8"
        width="157.98579"
        height="47.307571"
@@ -656,7 +652,7 @@
        y="144.39357" />
     <text
        xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:22.57779999999999987px;line-height:1.25;font-family:sans-serif;fill:#035a86;fill-opacity:1;stroke:none;stroke-width:0.289308;"
+       style="font-style:normal;font-weight:normal;font-size:22.5778px;line-height:1.25;font-family:sans-serif;fill:#035a86;fill-opacity:1;stroke:none;stroke-width:0.289308"
        x="254.47623"
        y="163.32794"
        id="text14512-8-3"><tspan
@@ -664,7 +660,7 @@
          id="tspan14510-1-1"
          x="254.47623"
          y="163.32794"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:22.57779999999999987px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';stroke-width:0.289308;fill:#035a86;fill-opacity:1;">Transform</tspan></text>
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:22.5778px;font-family:'Ubuntu Mono';-inkscape-font-specification:'Ubuntu Mono Bold';fill:#035a86;fill-opacity:1;stroke-width:0.289308">Transform</tspan></text>
     <rect
        style="fill:none;stroke:#035a86;stroke-width:3;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        id="rect16194"
@@ -684,12 +680,12 @@
        xml:space="preserve"
        style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#47b14c;fill-opacity:1;stroke:none;stroke-width:0.264583"
        x="470.85709"
-       y="46.029305"
+       y="54.785522"
        id="text15926-0-7"><tspan
          sodipodi:role="line"
          id="tspan15924-4-6"
          x="470.85709"
-         y="46.029305"
+         y="54.785522"
          style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#47b14c;fill-opacity:1;stroke-width:0.264583">Data Viz</tspan></text>
     <image
        width="20"
@@ -780,8 +776,8 @@
        d="m 572.37411,86.645978 6.7327,-5.984605"
        id="path16609" />
     <path
-       style="fill:none;stroke:#21b59a;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;stroke-miterlimit:4;stroke-dasharray:none;marker-end:url(#marker16693)"
-       d="m 37.060479,120.72243 18.117187,4.72622"
+       style="fill:none;stroke:#21b59a;stroke-width:1.02653;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#marker16693)"
+       d="m 35.847672,120.74717 19.266818,4.68318"
        id="path16683" />
     <path
        style="fill:none;stroke:#21b59a;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#marker16777)"
@@ -797,5 +793,24 @@
        x="-83.460091"
        y="157.59695"
        style="stroke:#21b59a" />
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#d35f5f;fill-opacity:1;stroke:none;stroke-width:0.264583"
+       x="111.87859"
+       y="20.759279"
+       id="text15926-02"><tspan
+         sodipodi:role="line"
+         id="tspan15924-48"
+         x="111.87859"
+         y="20.759279"
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#d35f5f;fill-opacity:1;stroke-width:0.264583">Data Pipeline</tspan></text>
+    <path
+       style="fill:none;stroke:#47b14c;stroke-width:1.95443;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;marker-end:url(#marker15296-0)"
+       d="m 416.94353,138.62298 h 30.50335"
+       id="path15224-3" />
+    <path
+       style="fill:none;stroke:#d35f5f;stroke-width:3;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       d="M 16.250024,42.853046 V 29.094713 H 423.70835 v 14.816666"
+       id="path1144" />
   </g>
 </svg>

@@ -44,6 +44,10 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         sql_transforms = query.pop('sql_transforms', [])
         source = self._get_source(table)
         if not hasattr(source, '_sql_expr'):
+            if sql_transforms:
+                raise ValueError(
+                    'SQLTransforms cannot be applied to non-SQL based Intake source.'
+                )
             return super().get(table, **query)
         conditions = list(query.items())
         if self.filter_in_sql:

@@ -288,6 +288,8 @@ class Dashboard(param.Parameterized):
     def _materialize_specification(self, force=False):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
+        if force or self._load_global or not state.pipelines:
+            state.load_pipelines()
         if not self.auth.authorized:
             self.targets = []
             return
@@ -470,12 +472,13 @@ class Dashboard(param.Parameterized):
         for target in self.targets:
             if target is None or isinstance(target, Future):
                 continue
-            for filt in target.filters:
-                if ((all(isinstance(target, (type(None), Future)) or filt in target.filters
-                         for target in self.targets) and
-                    filt.panel is not None) and filt.shared) and filt not in filters:
-                    views.append(filt.panel)
-                    filters.append(filt)
+            for pipeline in target._pipelines.values():
+                for filt in pipeline.filters:
+                    if ((all(isinstance(target, (type(None), Future)) or any(filt in p.filters for p in target._pipelines.values())
+                             for target in self.targets) and
+                         filt.panel is not None) and filt.shared) and filt not in filters:
+                        views.append(filt.panel)
+                        filters.append(filt)
         if not views or len(self.targets) == 1:
             return None, None
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
