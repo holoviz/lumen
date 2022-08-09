@@ -33,7 +33,7 @@ class Component(param.Parameterized):
 
     @property
     def refs(self):
-        return [k for k, v in self._refs.items() if v.startswith('$variables.')]
+        return [v for k, v in self._refs.items() if v.startswith('$variables.')]
 
     @classmethod
     def _get_type(cls, component_type):

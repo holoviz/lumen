@@ -28,9 +28,10 @@ def test_view_hvplot_basis(set_root):
 
     assert isinstance(view, hvPlotView)
     assert view.kind == 'scatter'
-    assert view.source == source
-    assert view.filters == []
-    assert view.transforms == []
+    assert view.pipeline.source is source
+    assert view.pipeline.table == 'test'
+    assert view.pipeline.filters == []
+    assert view.pipeline.transforms == []
     assert view.controls == []
 
     df = view.get_data()
@@ -84,7 +85,7 @@ def test_view_hvplot_download(set_root):
         'download': 'csv'
     }
 
-    view = View.from_spec(view, source, [])
+    view = View.from_spec(view, source)
 
     button = view.panel[0]
     assert isinstance(button, DownloadButton)

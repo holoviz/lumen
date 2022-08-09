@@ -22,6 +22,7 @@ import param
 param.parameterized.docstring_signature = False
 param.parameterized.docstring_describe_params = False
 
+from nbsite.shared_conf import setup
 from nbsite.util import base_version  # noqa
 
 import lumen
@@ -39,7 +40,7 @@ version = release = base_version(lumen.__version__)
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    'myst_parser',
+    'myst_nb',
     'sphinx_design',
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
@@ -78,19 +79,11 @@ html_theme_options = {
             "icon": "fab fa-discourse",
         },
     ],
-    "pygment_light_style": "monokai",
-    "pygment_dark_style": "monokai"
+    "pygment_light_style": "material",
+    "pygment_dark_style": "material"
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
-
-def setup(app):
-    try:
-        from nbsite.paramdoc import param_formatter, param_skip
-        app.connect('autodoc-process-docstring', param_formatter)
-        app.connect('autodoc-skip-member', param_skip)
-    except ImportError:
-        print('no param_formatter (no param?)')

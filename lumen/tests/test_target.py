@@ -22,16 +22,16 @@ def test_view_controls(set_root):
             'x': 'A', 'y': 'B', 'kind': 'scatter'
         }
     }
-    target = Target(source=source, views=views)
+    target = Target.from_spec({'source': source, 'views': views})
 
     filter_panel = target.get_filter_panel()
-    param_pane = filter_panel[0][0][0]
+    param_pane = filter_panel[0][0]
     assert isinstance(param_pane, Param)
     assert param_pane.parameters == ['x', 'y']
 
     assert len(target._cards) == 1
     card = target._cards[0]
-    hv_pane = card[0][0]
+    hv_pane = card._card[0][0]
     isinstance(hv_pane.object, hv.Scatter)
     assert hv_pane.object.kdims == ['A']
     assert hv_pane.object.vdims == ['B']
@@ -63,16 +63,16 @@ def test_transform_controls(set_root):
 
     doc = Document()
     with set_curdoc(doc):
-        target = Target(source=source, views=views)
+        target = Target.from_spec({'views': views, 'source': source})
         filter_panel = target.get_filter_panel()
-        param_pane = filter_panel[0][0][1]
+        param_pane = filter_panel[0][0]
 
         assert isinstance(param_pane, Param)
         assert param_pane.parameters == ['by']
 
         assert len(target._cards) == 1
         card = target._cards[0]
-        hv_pane = card[0][0]
+        hv_pane = card._card[0][0]
         isinstance(hv_pane.object, hv.Scatter)
         assert hv_pane.object.kdims == ['A']
         assert hv_pane.object.vdims == ['B']
@@ -108,13 +108,13 @@ def test_view_controls_facetted(set_root):
     target = Target.from_spec(spec, sources={'test': source})
 
     filter_panel = target.get_filter_panel()
-    param_pane = filter_panel[4][0][0]
+    param_pane = filter_panel[3][0]
     assert isinstance(param_pane, Param)
     assert param_pane.parameters == ['x', 'y']
 
     assert len(target._cards) == 5
     for card in target._cards:
-        hv_pane = card[0][0]
+        hv_pane = card._card[0][0]
         isinstance(hv_pane.object, hv.Scatter)
         assert hv_pane.object.kdims == ['A']
         assert hv_pane.object.vdims == ['B']
@@ -123,7 +123,7 @@ def test_view_controls_facetted(set_root):
     param_pane._widgets['y'].value = 'D'
 
     for card in target._cards:
-        hv_pane = card[0][0]
+        hv_pane = card._card[0][0]
         isinstance(hv_pane.object, hv.Scatter)
         assert hv_pane.object.kdims == ['C']
         assert hv_pane.object.vdims == ['D']
@@ -159,18 +159,18 @@ def test_transform_controls_facetted(set_root):
         state.sources['test'] = derived
         target = Target.from_spec(spec, sources={'test': derived})
         filter_panel = target.get_filter_panel()
-        param_pane = filter_panel[4][0][1]
+        param_pane = filter_panel[3][0]
 
         assert isinstance(param_pane, Param)
         assert param_pane.parameters == ['ascending']
 
         assert len(target._cards) == 2
         card1, card2 = target._cards
-        hv_pane1 = card1[0][0]
+        hv_pane1 = card1._card[0][0]
         isinstance(hv_pane1.object, hv.Scatter)
         assert hv_pane1.object.kdims == ['D']
         assert hv_pane1.object.vdims == ['A']
-        hv_pane2 = card2[0][0]
+        hv_pane2 = card2._card[0][0]
         isinstance(hv_pane2.object, hv.Scatter)
         assert hv_pane2.object.kdims == ['D']
         assert hv_pane2.object.vdims == ['A']

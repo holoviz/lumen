@@ -129,7 +129,7 @@ class SQLDistinct(SQLTransform):
 
 class SQLMinMax(SQLTransform):
 
-    columns = param.List(default=[], doc="Columns to return distinct values for.")
+    columns = param.List(default=[], doc="Columns to return min/max values for.")
 
     transform_type = 'sql_minmax'
 
@@ -146,6 +146,24 @@ class SQLMinMax(SQLTransform):
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(
             columns=', '.join(aggs), sql_in=sql_in
         )
+
+
+class SQLColumns(SQLTransform):
+
+    columns = param.List(default=[], doc="Columns to return.")
+
+    transform_type = 'sql_columns'
+
+    def apply(self, sql_in):
+        template = """
+            SELECT
+                {{columns}}
+            FROM ( {{sql_in}} )
+        """
+        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
+            columns=', '.join(self.columns), sql_in=sql_in
+        )
+
 
 class SQLFilter(SQLTransform):
     """

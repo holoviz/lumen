@@ -40,6 +40,7 @@ extras_require = {
         'sphinx',
         'pydata-sphinx-theme',
         'myst-parser',
+        'myst-nb <0.14',
         'nbsite >=0.7.2rc8',
         'sphinx-design',
         'sphinx-copybutton',
