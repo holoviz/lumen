@@ -2,10 +2,14 @@
 The Filter components supply query parameters used to filter the
 tables returned by a Source.
 """
+import types
 
+import bokeh
 import pandas as pd
 import panel as pn
 import param
+
+from packaging.version import Version
 
 from ..base import Component
 from ..schema import JSONSchema
@@ -298,30 +302,51 @@ class BinFilter(BaseWidgetFilter):
         return self.widget.value
 
 
-class DateFilter(BaseWidgetFilter):
+class BaseDateFilter(BaseWidgetFilter):
 
     mode = param.Selector(default='slider', objects=['slider', 'picker'], doc="""
         Whether to use a slider or a picker.""")
 
+    multi = param.Boolean(default=True, doc="""
+        Whether to use a single-value or multi-value/range selection widget.""")
+
     throttled = param.Boolean(default=True, doc="""
         Whether to throttle slider value changes.""")
 
-    filter_type = 'date'
+    _as_date = False
+
+    # Mapping from mode to a Panel widget, or to a function
+    # that must return a tuple of a Panel widget and a dictionnary
+    # of parameter values that will override the current ones.
+    _widget_mode_mapping = {}
+
+    __abstract = True
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.mode == 'slider':
-            widget = pn.widgets.DateRangeSlider
-        else:
-            widget = pn.widget.DatePicker
+        widget_type = self._widget_mode_mapping[self.mode]
+        param_overrides = {}
+        if isinstance(widget_type, types.FunctionType):
+            widget_type, param_overrides = widget_type(self)
+        if param_overrides:
+            self.param.set_param(**param_overrides)
+        self.widget = widget_type(**self._widget_kwargs(as_date=self._as_date))
+        self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
+
+    def _widget_kwargs(self, as_date):
         field_schema = self.schema.get(self.field, {})
-        start = pd.to_datetime(field_schema.get('inclusiveMinimum', None))
-        end = pd.to_datetime(field_schema.get('inclusiveMaximum', None))
-        kwargs = {'name': self.label, 'start': start, 'end': end}
+        kwargs = {
+            'name': self.label,
+            'start': pd.to_datetime(field_schema.get('inclusiveMinimum', None)),
+            'end': pd.to_datetime(field_schema.get('inclusiveMaximum', None)),
+        }
         if self.default is not None:
             kwargs['value'] = pd.to_datetime(self.default)
-        self.widget = widget(**kwargs)
-        self.widget.link(self, value='value')
+        if as_date:
+            for key in ['value', 'start', 'end']:
+                if key in kwargs and kwargs[key] is not None:
+                    kwargs[key] = kwargs[key].date()
+        return kwargs
 
     @property
     def panel(self):
@@ -330,12 +355,114 @@ class DateFilter(BaseWidgetFilter):
             self.widget.link(widget, value='value')
             widget.link(self.widget, value_throttled='value')
         else:
-            self.widget.link(widget, value='value', bidirectional=True)
+            self.widget.link(widget, value='value', visible='visible', disabled='disabled', bidirectional=True)
         return widget
 
     @property
     def query(self):
         return self.widget.value
+
+
+# DateFilter and DatetimeFilter both implement __new__ to return
+# a Parameterized class that has the correct `value` Parameter type,
+# which depends on the filter type (calendar date vs. datetime) and mode
+# (slider vs picker).
+
+class DateFilter(BaseDateFilter):
+    """
+    The DateFilter allows filtering by calendar dates, either by selecting
+    a date or a date range, and with either a slider or a picker widget.
+    """
+
+    filter_type = 'date'
+
+    def __new__(cls, **params):
+        if params.get('multi', cls.param.multi.default):
+            return _MultiCalendarDateFilter(**params)
+        else:
+            return _SingleCalendarDateFilter(**params)
+
+
+class _SingleCalendarDateFilter(BaseDateFilter):
+
+    _as_date = True
+
+    _widget_mode_mapping = {
+        'slider': pn.widgets.DateSlider,
+        'picker': pn.widgets.DatePicker,
+    }
+
+    value = param.CalendarDate()
+
+
+class _MultiCalendarDateFilter(BaseDateFilter):
+
+    _as_date = True
+
+    _widget_mode_mapping = {
+        'slider': pn.widgets.DateRangeSlider,
+        #'picker': pn.widgets.DateRangePicker,
+    }
+
+    value = param.CalendarDateRange()
+
+
+class DatetimeFilter(BaseDateFilter):
+    """
+    The DatetimeFilter allows filtering by datetimes, either by selecting
+    a datetime or a datetime range, and with either a slider or a picker widget.
+    """
+
+    filter_type = 'datetime'
+
+    def __new__(cls, **params):
+        if params.get('multi', cls.param.multi.default):
+            return _MultiDatetimeFilter(**params)
+        else:
+            return _SingleDatetimeFilter(**params)
+
+
+def _fallback_to_datetimepicker(inst):
+    inst.param.warning(
+        'Datetime multi/range slider filter not yet available, '
+        'fallback to using a picker filter.'
+    )
+    return pn.widgets.DatetimePicker, {'mode': 'picker'}
+
+
+class _SingleDatetimeFilter(BaseDateFilter):
+
+    _as_date = False
+
+    _widget_mode_mapping = {
+        'slider': _fallback_to_datetimepicker,
+        'picker': pn.widgets.DatetimePicker,
+    }
+
+    value = param.Date()
+
+
+def _handle_datetimerangeslider(inst):
+    if Version(bokeh.__version__) <= Version('2.4.3'):
+        inst.param.warning(
+            'Datetime multi/range slider filter requires Bokeh >= 2.4.3, '
+            'fallback to using a picker filter.'
+        )
+        return pn.widgets.DatetimeRangePicker, {'mode': 'picker'}
+    else:
+        return pn.widgets.DatetimeRangeSlider, {}
+
+
+class _MultiDatetimeFilter(BaseDateFilter):
+
+    _as_date = False
+
+    _widget_mode_mapping = {
+        'slider': _handle_datetimerangeslider,
+        'picker': pn.widgets.DatetimeRangePicker,
+    }
+
+    value = param.DateRange()
 
 
 class ParamFilter(Filter):
