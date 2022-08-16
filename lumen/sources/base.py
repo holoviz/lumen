@@ -5,6 +5,7 @@ import pathlib
 import re
 import shutil
 import sys
+import threading
 
 from concurrent import futures
 from functools import wraps
@@ -25,7 +26,7 @@ from ..transforms import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 
 
-def cached(with_query=True):
+def cached(with_query=True, locks={}):
     """
     Adds caching to a Source.get query.
 
@@ -44,13 +45,20 @@ def cached(with_query=True):
     def _inner_cached(method):
         @wraps(method)
         def wrapped(self, table, **query):
+            lock_key = (self, table)
+            if lock_key in locks:
+                lock = locks[lock_key]
+            else:
+                locks[lock_key] = lock = threading.Lock()
             cache_query = query if with_query else {}
-            df, no_query = self._get_cache(table, **cache_query)
+            with lock:
+                df, no_query = self._get_cache(table, **cache_query)
             if df is None:
                 if not with_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
                     cache_query['__dask'] = True
                 df = method(self, table, **cache_query)
-                self._set_cache(df, table, **cache_query)
+                with lock:
+                    self._set_cache(df, table, **cache_query)
             filtered = df
             if (not with_query or no_query) and query:
                 filtered = FilterTransform.apply_to(
@@ -63,10 +71,15 @@ def cached(with_query=True):
     return _inner_cached
 
 
-def cached_schema(method):
+def cached_schema(method, locks={}):
     @wraps(method)
     def wrapped(self, table=None):
-        schema = self._get_schema_cache()
+        if self in locks:
+            main_lock = locks[self]
+        else:
+            locks[self] = main_lock = threading.Lock()
+        with main_lock:
+            schema = self._get_schema_cache()
         if schema is None or (table is not None and table not in schema):
             schema = schema or {}
             if table is None:
@@ -77,8 +90,15 @@ def cached_schema(method):
             else:
                 missing_tables = [table]
             for missing_table in missing_tables:
-                schema[missing_table] = method(self, missing_table)
-            self._set_schema_cache(schema)
+                lock_key = (self, missing_table)
+                if lock_key in locks:
+                    lock = locks[lock_key]
+                else:
+                    locks[lock_key] = lock = threading.Lock()
+                with lock:
+                    schema[missing_table] = method(self, missing_table)
+            with main_lock:
+                self._set_schema_cache(schema)
         if table is None:
             return schema
         return schema[table]
