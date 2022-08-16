@@ -1,5 +1,4 @@
 import datetime as dt
-import hashlib
 import os
 
 from pathlib import Path
@@ -8,10 +7,48 @@ import pandas as pd
 
 from lumen.sources import Source
 from lumen.state import state
+from lumen.transforms.sql import SQLLimit
 
 
 def test_resolve_module_type():
     assert Source._get_type('lumen.sources.base.Source') is Source
+
+def test_source_table_cache_key(make_filesource):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    assert source._get_key('test') == source._get_key('test')
+
+def test_source_table_and_int_query_cache_key(make_filesource):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    assert source._get_key('test', A=314) == source._get_key('test', A=314)
+
+def test_source_table_and_range_query_cache_key(make_filesource):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    assert source._get_key('test', A=(13, 314)) == source._get_key('test', A=(13, 314))
+
+def test_source_table_and_list_query_cache_key(make_filesource):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    assert source._get_key('test', A=['A', 314, 'def']) == source._get_key('test', A=['A', 314, 'def'])
+
+def test_source_table_and_sql_transform_cache_key(make_filesource):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    t1 = SQLLimit(limit=100)
+    t2 = SQLLimit(limit=100)
+    assert source._get_key('test', sql_transforms=[t1]) == source._get_key('test', sql_transforms=[t2])
+
+def test_source_table_and_multi_query_sql_transform_cache_key(make_filesource):
+    root = os.path.dirname(__file__)
+    source = make_filesource(root)
+    t1 = SQLLimit(limit=100)
+    t2 = SQLLimit(limit=100)
+    assert (
+        source._get_key('test', A=1, B=(3, 15.9), C=[1, 'A', 'def'], sql_transforms=[t1]) ==
+        source._get_key('test', A=1, B=(3, 15.9), C=[1, 'A', 'def'], sql_transforms=[t2])
+    )
 
 def test_file_source_get_query(make_filesource):
     root = os.path.dirname(__file__)
@@ -35,19 +72,22 @@ def test_file_source_get_query_cache(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     source.get('test', A=(1, 2))
-    assert ('test', 'A', (1, 2)) in source._cache
+    cache_key = source._get_key('test', A=(1, 2))
+    assert cache_key in source._cache
     pd.testing.assert_frame_equal(
-        source._cache[('test', 'A', (1, 2))],
+        source._cache[cache_key],
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
+    cache_key = source._get_key('test', A=(1, 2))
+    assert cache_key in source._cache
 
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
     source.get('test', A=(1, 2))
-    cache_key = ('test', 'A', (1, 2))
-    sha = hashlib.sha256(str(cache_key).encode('utf-8')).hexdigest()
-    cache_path = Path(cachedir) / f'{sha}_test.parq'
+
+    cache_key = source._get_key('test', A=(1, 2))
+    cache_path = Path(cachedir) / f'{cache_key}_test.parq'
     df = pd.read_parquet(cache_path, engine='fastparquet')
 
     # Patch index names due to https://github.com/dask/fastparquet/issues/732
@@ -68,9 +108,10 @@ def test_file_source_get_query_dask_cache(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     source.get('test', A=(1, 2), __dask=True)
-    assert ('test', 'A', (1, 2)) in source._cache
+    cache_key = source._get_key('test', A=(1, 2))
+    assert cache_key in source._cache
     pd.testing.assert_frame_equal(
-        source._cache[('test', 'A', (1, 2))].compute(),
+        source._cache[cache_key].compute(),
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
 
