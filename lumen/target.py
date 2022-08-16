@@ -147,7 +147,7 @@ class Facet(param.Parameterized):
         self._sort_widget.options = self.param.sort.objects
 
     @classmethod
-    def from_spec(cls, spec, schema, pipelines={}):
+    def from_spec(cls, spec, schema):
         """
         Creates a Facet object from a schema and a set of fields.
         """
@@ -161,7 +161,7 @@ class Facet(param.Parameterized):
                 f = by_spec
             by.append(f)
         sort = spec.pop('sort', [b.field for b in by])
-        sorter = cls(by=by, pipelines=pipelines, **spec)
+        sorter = cls(by=by, **spec)
         sorter.param.sort.objects = sort
         return sorter
 
