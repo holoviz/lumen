@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import weakref
 
 import panel as pn
 import param as param
@@ -52,15 +53,28 @@ class _config(param.Parameterized):
 
     _modules = {}
 
+    _session_config = weakref.WeakKeyDictionary()
+
     @property
     def root(self):
+        if pn.state.curdoc and pn.state.curdoc in self._session_config:
+            session_config = self._session_config[pn.state.curdoc]
+            if 'root' in session_config:
+                return session_config['root']
         if self._root:
             return self._root
         return os.getcwd()
 
     @root.setter
     def root(self, root):
-        self._root = root
+        if pn.state.curdoc:
+            if pn.state.curdoc in self._session_config:
+                session_config = self._session_config[pn.state.curdoc]
+            else:
+                self._session_config[pn.state.curdoc] = session_config = {}
+            session_config['root'] = root
+        else:
+            self._root = root
 
     def load_local_modules(self):
         """

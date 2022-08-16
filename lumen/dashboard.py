@@ -209,7 +209,7 @@ class Dashboard(param.Parameterized):
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
         self._yaml_file = specification
-        self._root = os.path.abspath(os.path.dirname(self._yaml_file))
+        self._root = config.root = os.path.abspath(os.path.dirname(self._yaml_file))
         self._edited = False
         super().__init__(**params)
 
