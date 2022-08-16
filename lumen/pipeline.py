@@ -179,7 +179,7 @@ class Pipeline(param.Parameterized):
         params['filters'] = filters = []
         filter_specs = spec.pop('filters', {})
         if filter_specs:
-            schema = source.get_schema(table)
+            params['schema'] = schema = source.get_schema(table)
         for filt_spec in (filter_specs.items() if isinstance(filter_specs, dict) else filter_specs):
             if isinstance(filt_spec, tuple):
                 filt_spec = dict(filt_spec[1], table=table, name=filt_spec[0])
