@@ -49,13 +49,13 @@ def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
             if self in locks:
                 main_lock = locks[self]['main']
             else:
-                main_lock = threading.Lock()
+                main_lock = threading.RLock()
                 locks[self] = {'main': main_lock}
             with main_lock:
                 if table in locks:
                     lock = locks[self][table]
                 else:
-                    locks[self][table] = lock = threading.Lock()
+                    locks[self][table] = lock = threading.RLock()
             cache_query = query if with_query else {}
             with lock:
                 df, no_query = self._get_cache(table, **cache_query)
@@ -65,9 +65,6 @@ def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
                 df = method(self, table, **cache_query)
                 with lock:
                     self._set_cache(df, table, **cache_query)
-            with main_lock:
-                if not lock.locked() and table in locks[self]:
-                    del locks[self][table]
             filtered = df
             if (not with_query or no_query) and query:
                 filtered = FilterTransform.apply_to(
@@ -86,35 +83,31 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
         if self in locks:
             main_lock = locks[self]['main']
         else:
-            main_lock = threading.Lock()
+            main_lock = threading.RLock()
             locks[self] = {'main': main_lock}
         with main_lock:
-            schema = self._get_schema_cache()
-        if schema is None or (table is not None and table not in schema):
-            schema = schema or {}
-            if table is None:
-                missing_tables = [
-                    table for table in self.get_tables()
-                    if table not in schema
-                ]
-            else:
-                missing_tables = [table]
-            for missing_table in missing_tables:
+            schema = self._get_schema_cache() or {}
+        tables = self.get_tables() if table is None else [table]
+        if all(table in schema for table in tables):
+            return schema if table is None else schema[table]
+        for missing in tables:
+            if missing in schema:
+                continue
+            with main_lock:
+                if missing in locks[self]:
+                    lock = locks[self][missing]
+                else:
+                    locks[self][missing] = lock = threading.RLock()
+            with lock:
                 with main_lock:
-                    if missing_table in locks[self]:
-                        lock = locks[self][missing_table]
-                    else:
-                        locks[self][missing_table] = lock = threading.Lock()
-                with lock:
-                    schema[missing_table] = method(self, missing_table)
-                with main_lock:
-                    if not lock.locked() and missing_table in locks[self]:
-                        del locks[self][missing_table]
+                    new_schema = self._get_schema_cache() or {}
+                if missing in new_schema:
+                    schema[missing] = new_schema[missing]
+                else:
+                    schema[missing] = method(self, missing)
             with main_lock:
                 self._set_schema_cache(schema)
-        if table is None:
-            return schema
-        return schema[table]
+        return schema if table is None else schema[table]
     return wrapped
 
 
