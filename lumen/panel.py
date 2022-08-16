@@ -148,7 +148,8 @@ class IconButton(ReactiveHTML):
         self._disabled_watcher = None
 
     def _enable_button(self, event):
-        self.param.unwatch(self._disabled_watcher)
+        if self._disabled_watcher:
+            self.param.unwatch(self._disabled_watcher)
         self.disabled = False
 
     @param.depends('size', watch=True, on_init=True)
