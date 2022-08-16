@@ -200,6 +200,10 @@ def test_intake_sql_transforms_cache():
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
     source.get('test_sql', sql_transforms=transforms)
     expected = df.groupby('B')['A'].sum().reset_index()
-    cache_key = ('test_sql', 'sql_transforms', tuple(transforms))
+    cache_key = source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in source._cache
     pd.testing.assert_frame_equal(source._cache[cache_key], expected)
+
+    transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
+    cache_key = source._get_key('test_sql', sql_transforms=transforms)
+    assert cache_key in source._cache

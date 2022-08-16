@@ -183,12 +183,15 @@ class Source(Component):
         self._schema_cache = {}
 
     def _get_key(self, table, **query):
-        key = (table,)
+        sha = hashlib.sha256()
+        sha.update(table.encode('utf-8'))
         for k, v in sorted(query.items()):
             if isinstance(v, list):
                 v = tuple(v)
-            key += (k, v)
-        return key
+            sha.update(k.encode('utf-8'))
+            vhash = hash(v)
+            sha.update(vhash.to_bytes((vhash.bit_length() + 8) // 8, "little", signed=True))
+        return sha.hexdigest()
 
     def _get_schema_cache(self):
         schema = self._schema_cache if self._schema_cache else None
@@ -235,8 +238,7 @@ class Source(Component):
             return self._cache[key], not bool(query)
         elif self.cache_dir:
             if query:
-                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
-                filename = f'{sha}_{table}.parq'
+                filename = f'{key}_{table}.parq'
             else:
                 filename = f'{table}.parq'
             path = os.path.join(self.root, self.cache_dir, filename)
@@ -255,8 +257,7 @@ class Source(Component):
             path = os.path.join(self.root, self.cache_dir)
             Path(path).mkdir(parents=True, exist_ok=True)
             if query:
-                sha = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
-                filename = f'{sha}_{table}.parq'
+                filename = f'{key}_{table}.parq'
             else:
                 filename = f'{table}.parq'
             filepath = os.path.join(path, filename)
