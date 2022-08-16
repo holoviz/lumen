@@ -133,7 +133,7 @@ class IconButton(ReactiveHTML):
           if (data.disabled)
             return
           data.disabled = true;
-          view._send_event('button', 'click', {target: {value: null}, type: 'icon_click'})
+          view._send_event('button', 'click', state.event)
         """,
         'disabled': """
           icon_button.style.cursor = data.disabled ? "not-allowed": "inherit";
@@ -145,6 +145,11 @@ class IconButton(ReactiveHTML):
     def __init__(self, **params):
         super().__init__(**params)
         self._callbacks = []
+        self._disabled_watcher = None
+
+    def _enable_button(self, event):
+        self.param.unwatch(self._disabled_watcher)
+        self.disabled = False
 
     @param.depends('size', watch=True, on_init=True)
     def _update_height(self):
@@ -155,11 +160,9 @@ class IconButton(ReactiveHTML):
 
     def js_on_click(self, args={}, code=""):
         from panel.links import Callback
-        return Callback(self, code={'event:'+self._event: code}, args=args)
+        return Callback(self, code={'evegnt:'+self._event: code}, args=args)
 
     def _button_click(self, event=None):
-        try:
-            for cb in self._callbacks:
-                cb(event)
-        finally:
-            self.disabled = False
+        for cb in self._callbacks:
+            cb(event)
+        self._disabled_watcher = self.param.watch(self._enable_button, ['disabled'])

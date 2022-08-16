@@ -339,12 +339,13 @@ class Dashboard(param.Parameterized):
                 title = f'{title} {i}'
             menu_items.append(title)
             self._apps[title] = endpoint
-        self._menu_button = pn.widgets.MenuButton(
-            name='Select dashboard', items=menu_items, width=200,
-            align='center', margin=0
-        )
-        self._menu_button.on_click(self._navigate)
         if len(config.yamls) > 1:
+            self._reload_button.margin = (7, 0, 0, 0)
+            self._menu_button = pn.widgets.MenuButton(
+                name='Select dashboard', items=menu_items, width=200,
+                align='center', margin=(0, 25, 0, 0)
+            )
+            self._menu_button.on_click(self._navigate)
             self._header.append(self._menu_button)
         if self.config.reloadable:
             self._header.append(self._reload_button)
