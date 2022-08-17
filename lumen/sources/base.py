@@ -196,7 +196,7 @@ class Source(Component):
             return source
 
         spec = dict(spec)
-        source_type = Source._get_type(spec.pop('type'))
+        source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
 

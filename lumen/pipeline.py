@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from difflib import get_close_matches
 from typing import (
     Any, Dict, List, Optional, Type, Union,
 )
@@ -11,7 +12,7 @@ from .filters import Filter, ParamFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
-from .util import get_dataframe_schema
+from .util import get_dataframe_schema, validate_parameters
 
 
 class DataFrame(param.DataFrame):
@@ -152,6 +153,8 @@ class Pipeline(param.Parameterized):
         source_filters: Optional[List[Filter]] = None
     ):
         params = dict(spec)
+        expected = list(cls.param.params())
+        validate_parameters(params, expected, cls.name)
 
         # Resolve source
         if 'source' in spec:

@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from difflib import get_close_matches
 
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
@@ -231,3 +232,16 @@ def extract_refs(spec, ref_type=None):
         return refs
     filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
     return filtered
+
+def validate_parameters(params, expected, name):
+    for p in params:
+        if p not in expected:
+            msg = f"'{p}' not a parameter for '{name}'"
+            match = get_close_matches(p, expected)
+            if match:
+                if len(match) > 1:
+                    match_str = "', '".join(match[:-1]) + f" or '{match[-1]}"
+                else:
+                    match_str = match[0]
+                msg = msg + f". Did you mean '{match_str}'?"
+            raise ValueError(msg)
