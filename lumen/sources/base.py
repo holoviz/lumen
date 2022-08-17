@@ -467,7 +467,7 @@ class FileSource(Source):
                     kwargs['orient'] = None
                 return dd.read_json, kwargs
         if ext not in self._pd_load_fns:
-            raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
+            raise ValueError(f"File type '{ext}' not recognized and cannot be loaded.")
         return self._pd_load_fns[ext], kwargs
 
     def _set_cache(self, data, table, **query):
@@ -512,9 +512,8 @@ class FileSource(Source):
 
     def _load_table(self, table, dask=True):
         df = None
-        for name, filepath in self._named_files.items():
-            filepath, ext = filepath
-            if '://' not in filepath:
+        for name, (filepath, ext) in self._named_files.items():
+            if isinstance(filepath, Path) or '://' not in filepath:
                 filepath = os.path.join(self.root, filepath)
             if name != table:
                 continue

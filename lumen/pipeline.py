@@ -151,6 +151,7 @@ class Pipeline(param.Parameterized):
         cls, spec: Dict[str, Any], source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
+        spec = spec.copy()
         params = dict(spec)
         expected = list(cls.param.params())
         validate_parameters(params, expected, cls.name)

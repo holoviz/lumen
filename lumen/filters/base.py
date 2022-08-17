@@ -86,7 +86,7 @@ class Filter(Component):
                                  f"available filters on the source include {list(source_filters)}.")
             return source_filters[spec]
         spec = dict(spec)
-        filter_type = Filter._get_type(spec.pop('type'))
+        filter_type = Filter._get_type(spec.pop('type', None))
         if not filter_type._requires_field:
             return filter_type(**spec)
         elif not 'field' in spec:

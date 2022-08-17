@@ -63,5 +63,5 @@ class Component(param.Parameterized):
         msg = f"No '{clslower}' for {clslower}_type '{component_type}' could be found."
         matches = "', '".join(get_close_matches(component_type, cls_types))
         if matches:
-            msg += f" Did you mean: '{matches}'?"
+            msg += f" Did you mean '{matches}'?"
         raise ValueError(msg)

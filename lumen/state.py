@@ -170,7 +170,7 @@ class _session_state:
             if isinstance(views, dict):
                 views = list(views.values())
             for view in views:
-                view_type = View._get_type(view.get('type'))
+                view_type = View._get_type(view.get('type', None))
                 if view_type and view_type._extension:
                     exts.append(view_type._extension)
         for ext in exts:
