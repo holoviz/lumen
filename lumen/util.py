@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+
 from difflib import get_close_matches
 
 from jinja2 import DebugUndefined, Environment, Undefined

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from difflib import get_close_matches
 from typing import (
     Any, Dict, List, Optional, Type, Union,
 )
