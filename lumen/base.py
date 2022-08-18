@@ -1,10 +1,11 @@
-from difflib import get_close_matches
 from functools import partial
 
 import param
 
 from .state import state
-from .util import resolve_module_reference, validate_parameters
+from .util import (
+    match_suggestion_message, resolve_module_reference, validate_parameters,
+)
 
 
 class Component(param.Parameterized):
@@ -61,7 +62,5 @@ class Component(param.Parameterized):
                 return component
 
         msg = f"No '{clslower}' for {clslower}_type '{component_type}' could be found."
-        matches = "', '".join(get_close_matches(component_type, cls_types))
-        if matches:
-            msg += f" Did you mean '{matches}'?"
+        msg = match_suggestion_message(component_type, cls_types, msg)
         raise ValueError(msg)
