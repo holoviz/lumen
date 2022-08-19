@@ -44,7 +44,7 @@ class Component(param.Parameterized):
         clsname = cls.__name__
         clslower = clsname.lower()
         if component_type is None:
-            raise ValueError(f"'type' for '{clslower}' is not available.")
+            raise ValueError(f"No 'type' was provided during instantiation of '{clsname}' component.")
         if '.' in component_type:
             return resolve_module_reference(component_type, cls)
         try:
