@@ -10,7 +10,7 @@ from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
 
-def test_resolve_module_type():
+def test_source_resolve_module_type():
     assert Source._get_type('lumen.sources.base.Source') is Source
 
 def test_source_table_cache_key(make_filesource):
@@ -115,7 +115,7 @@ def test_file_source_get_query_dask_cache(make_filesource):
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
 
-def test_file_source_filter_int(make_filesource, cachedir):
+def test_file_source_filter_int(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -123,7 +123,7 @@ def test_file_source_filter_int(make_filesource, cachedir):
     expected = df[df.A==1]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_str(make_filesource, cachedir):
+def test_file_source_filter_str(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -131,7 +131,7 @@ def test_file_source_filter_str(make_filesource, cachedir):
     expected = df[df.C=='foo2']
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_int_range(make_filesource, cachedir):
+def test_file_source_filter_int_range(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -139,7 +139,7 @@ def test_file_source_filter_int_range(make_filesource, cachedir):
     expected = df[(df.A>=1) & (df.A<=3)]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_date(make_filesource, cachedir):
+def test_file_source_filter_date(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -147,7 +147,7 @@ def test_file_source_filter_date(make_filesource, cachedir):
     expected = df.iloc[1:2]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_datetime(make_filesource, cachedir):
+def test_file_source_filter_datetime(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -155,7 +155,7 @@ def test_file_source_filter_datetime(make_filesource, cachedir):
     expected = df.iloc[1:2]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_datetime_range(make_filesource, cachedir):
+def test_file_source_filter_datetime_range(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -163,7 +163,7 @@ def test_file_source_filter_datetime_range(make_filesource, cachedir):
     expected = df.iloc[1:3]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_date_range(make_filesource, cachedir):
+def test_file_source_filter_date_range(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -171,7 +171,7 @@ def test_file_source_filter_date_range(make_filesource, cachedir):
     expected = df.iloc[1:3]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_int_range_list(make_filesource, cachedir):
+def test_file_source_filter_int_range_list(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
@@ -179,7 +179,7 @@ def test_file_source_filter_int_range_list(make_filesource, cachedir):
     expected = df[((df.A>=0) & (df.A<=1)) | ((df.A>=3) & (df.A<=4))]
     pd.testing.assert_frame_equal(filtered, expected)
 
-def test_file_source_filter_list(make_filesource, cachedir):
+def test_file_source_filter_list(make_filesource):
     root = os.path.dirname(__file__)
     source = make_filesource(root)
     df = pd._testing.makeMixedDataFrame()
