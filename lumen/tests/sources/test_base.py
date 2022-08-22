@@ -94,27 +94,34 @@ def test_file_source_filter(source, column_value_type, dask, expected_df):
     pd.testing.assert_frame_equal(filtered, expected_df)
 
 
-def test_file_source_get_query_cache(source):
-    source.get('test', A=(1, 2))
-    cache_key = source._get_key('test', A=(1, 2))
+@pytest.mark.parametrize(
+    "column_value_type", [
+        ('A', 1, 'single_value'),
+        ('A', (1, 3), 'range'),
+        ('A', (1, 2), 'range'),
+        ('A', [(0, 1), (3, 4)], 'range_list'),
+        ('C', 'foo2', 'single_value'),
+        ('C', ['foo1', 'foo3'], 'list'),
+        ('D', dt.datetime(2009, 1, 2), 'single_value'),
+        ('D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
+        ('D', [dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)], 'list'),
+        ('D', dt.datetime(2009, 1, 2), 'date'),
+        ('D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range'),
+    ]
+)
+@pytest.mark.parametrize("dask", [True, False])
+def test_file_source_get_query_cache(source, column_value_type, dask, expected_df):
+    column, value, _ = column_value_type
+    kwargs = {column: value}
+    source.get('test', __dask=dask, **kwargs)
+    cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
-    pd.testing.assert_frame_equal(
-        source._cache[cache_key],
-        pd._testing.makeMixedDataFrame().iloc[1:3]
-    )
-    cache_key = source._get_key('test', A=(1, 2))
+    cached_df = source._cache[cache_key]
+    if dask:
+        cached_df = cached_df.compute()
+    pd.testing.assert_frame_equal(cached_df, expected_df)
+    cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
-
-
-
-def test_file_source_get_query_dask_cache(source):
-    source.get('test', A=(1, 2), __dask=True)
-    cache_key = source._get_key('test', A=(1, 2))
-    assert cache_key in source._cache
-    pd.testing.assert_frame_equal(
-        source._cache[cache_key].compute(),
-        pd._testing.makeMixedDataFrame().iloc[1:3]
-    )
 
 
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
