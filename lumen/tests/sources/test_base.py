@@ -22,35 +22,21 @@ def test_source_resolve_module_type():
     assert Source._get_type('lumen.sources.base.Source') is Source
 
 
-def test_source_table_cache_key(source):
-    assert source._get_key('test') == source._get_key('test')
-
-
-def test_source_table_and_int_query_cache_key(source):
-    assert source._get_key('test', A=314) == source._get_key('test', A=314)
-
-
-def test_source_table_and_range_query_cache_key(source):
-    assert source._get_key('test', A=(13, 314)) == source._get_key('test', A=(13, 314))
-
-
-def test_source_table_and_list_query_cache_key(source):
-    assert source._get_key('test', A=['A', 314, 'def']) == source._get_key('test', A=['A', 314, 'def'])
-
-
-def test_source_table_and_sql_transform_cache_key(source):
-    t1 = SQLLimit(limit=100)
-    t2 = SQLLimit(limit=100)
-    assert source._get_key('test', sql_transforms=[t1]) == source._get_key('test', sql_transforms=[t2])
-
-
-def test_source_table_and_multi_query_sql_transform_cache_key(source):
-    t1 = SQLLimit(limit=100)
-    t2 = SQLLimit(limit=100)
-    assert (
-        source._get_key('test', A=1, B=(3, 15.9), C=[1, 'A', 'def'], sql_transforms=[t1]) ==
-        source._get_key('test', A=1, B=(3, 15.9), C=[1, 'A', 'def'], sql_transforms=[t2])
-    )
+@pytest.mark.parametrize("filter_col_A", [314, (13, 314), ['A', 314, 'def']])
+@pytest.mark.parametrize("filter_col_B", [(3, 15.9)])
+@pytest.mark.parametrize("filter_col_C", [[1, 'A', 'def']])
+@pytest.mark.parametrize("sql_transforms", [(None, None), (SQLLimit(limit=100), SQLLimit(limit=100))])
+def test_source_table_cache_key(source, filter_col_A, filter_col_B, filter_col_C, sql_transforms):
+    t1, t2 = sql_transforms
+    kwargs1 = {}
+    kwargs2 = {}
+    if t1 is not None:
+        kwargs1['sql_transforms'] = [t1]
+    if t2 is not None:
+        kwargs2['sql_transforms'] = [t2]
+    key1 = source._get_key('test', A=filter_col_A, B=filter_col_B, C=filter_col_C, **kwargs1)
+    key2 = source._get_key('test', A=filter_col_A, B=filter_col_B, C=filter_col_C, **kwargs2)
+    assert key1 == key2
 
 
 def test_file_source_get_query(source):
