@@ -19,9 +19,9 @@ def source(make_filesource):
 
 
 @pytest.fixture
-def expected_df(column_value_type_dask):
+def expected_df(column_value_type):
     df = pd._testing.makeMixedDataFrame()
-    column, value, type, _ = column_value_type_dask
+    column, value, type = column_value_type
 
     if type == 'single_value':
         return df[df[column] == value]
@@ -64,18 +64,9 @@ def test_source_table_cache_key(source, filter_col_A, filter_col_B, filter_col_C
     assert key1 == key2
 
 
-def test_file_source_get_query(source):
-    df = source.get('test', A=(1, 2))
-    expected = pd._testing.makeMixedDataFrame().iloc[1:3]
-    pd.testing.assert_frame_equal(df, expected)
-
-
 def test_file_source_variable(make_variable_filesource):
     root = os.path.dirname(__file__)
     source = make_variable_filesource(root)
-    df = source.get('test')
-    expected = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(df, expected)
     state.variables.tables = {'test': 'test2.csv'}
     df = source.get('test')
     expected = pd._testing.makeMixedDataFrame().iloc[::-1].reset_index(drop=True)
@@ -111,12 +102,6 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     )
 
 
-def test_file_source_get_query_dask(source):
-    df = source.get('test', A=(1, 2), __dask=True)
-    expected = pd._testing.makeMixedDataFrame().iloc[1:3]
-    pd.testing.assert_frame_equal(df, expected)
-
-
 def test_file_source_get_query_dask_cache(source):
     source.get('test', A=(1, 2), __dask=True)
     cache_key = source._get_key('test', A=(1, 2))
@@ -127,20 +112,19 @@ def test_file_source_get_query_dask_cache(source):
     )
 
 
-
-
 @pytest.mark.parametrize(
-    "column_value_type_dask", [
-        ('A', 1, 'single_value', False),
-        ('A', (1, 3), 'range_value', False),
-        ('A', (1, 2), 'range_value', True),
-        ('A', [(0, 1), (3, 4)], 'range_list_value', False),
-        ('C', 'foo2', 'single_value', False),
-        ('C', ['foo1', 'foo3'], 'list_value', False)
+    "column_value_type", [
+        ('A', 1, 'single_value'),
+        ('A', (1, 3), 'range_value'),
+        ('A', (1, 2), 'range_value'),
+        ('A', [(0, 1), (3, 4)], 'range_list_value'),
+        ('C', 'foo2', 'single_value'),
+        ('C', ['foo1', 'foo3'], 'list_value')
     ]
 )
-def test_file_source_filter(source, column_value_type_dask, expected_df):
-    column, value, _, dask = column_value_type_dask
+@pytest.mark.parametrize("dask", [True, False])
+def test_file_source_filter(source, column_value_type, dask, expected_df):
+    column, value, _ = column_value_type
     kwargs = {column: value, '__dask': dask}
     filtered = source.get('test', **kwargs)
     pd.testing.assert_frame_equal(filtered, expected_df)
@@ -172,5 +156,3 @@ def test_file_source_filter_date_range(source):
     filtered = source.get('test', D=(dt.date(2009, 1, 2), dt.date(2009, 1, 5)))
     expected = df.iloc[1:3]
     pd.testing.assert_frame_equal(filtered, expected)
-
-
