@@ -40,6 +40,13 @@ def expected_df(column_value_type):
     elif type == 'list_value':
         return df[df[column].isin(value)]
 
+    elif type == 'date_value':
+        return df[df[column] == pd.to_datetime(value)]
+
+    elif type == 'date_range_value':
+        begin, end = value
+        return df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
+
     return df
 
 
@@ -119,7 +126,12 @@ def test_file_source_get_query_dask_cache(source):
         ('A', (1, 2), 'range_value'),
         ('A', [(0, 1), (3, 4)], 'range_list_value'),
         ('C', 'foo2', 'single_value'),
-        ('C', ['foo1', 'foo3'], 'list_value')
+        ('C', ['foo1', 'foo3'], 'list_value'),
+        ('D', dt.datetime(2009, 1, 2), 'single_value'),
+        ('D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range_value'),
+        ('D', [dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)], 'list_value'),
+        ('D', dt.datetime(2009, 1, 2), 'date_value'),
+        ('D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range_value'),
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
@@ -128,31 +140,3 @@ def test_file_source_filter(source, column_value_type, dask, expected_df):
     kwargs = {column: value, '__dask': dask}
     filtered = source.get('test', **kwargs)
     pd.testing.assert_frame_equal(filtered, expected_df)
-
-
-def test_file_source_filter_date(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', D=dt.date(2009, 1, 2))
-    expected = df.iloc[1:2]
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_file_source_filter_datetime(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', D=dt.datetime(2009, 1, 2))
-    expected = df.iloc[1:2]
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_file_source_filter_datetime_range(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', D=(dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)))
-    expected = df.iloc[1:3]
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_file_source_filter_date_range(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', D=(dt.date(2009, 1, 2), dt.date(2009, 1, 5)))
-    expected = df.iloc[1:3]
-    pd.testing.assert_frame_equal(filtered, expected)
