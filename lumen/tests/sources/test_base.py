@@ -18,6 +18,31 @@ def source(make_filesource):
     return make_filesource(root)
 
 
+@pytest.fixture
+def expected_df(column_value_type_dask):
+    df = pd._testing.makeMixedDataFrame()
+    column, value, type, _ = column_value_type_dask
+
+    if type == 'single_value':
+        return df[df[column] == value]
+
+    elif type == 'range_value':
+        begin, end = value
+        return df[(df[column] >= begin) & (df[column] <= end)]
+
+    elif type == 'range_list_value':
+        conditions = False
+        for range_value in value:
+            begin, end = range_value
+            conditions |= ((df[column] >= begin) & (df[column] <= end))
+        return df[conditions]
+
+    elif type == 'list_value':
+        return df[df[column].isin(value)]
+
+    return df
+
+
 def test_source_resolve_module_type():
     assert Source._get_type('lumen.sources.base.Source') is Source
 
@@ -102,25 +127,23 @@ def test_file_source_get_query_dask_cache(source):
     )
 
 
-def test_file_source_filter_int(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', A=1)
-    expected = df[df.A==1]
-    pd.testing.assert_frame_equal(filtered, expected)
 
 
-def test_file_source_filter_str(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', C='foo2')
-    expected = df[df.C=='foo2']
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_file_source_filter_int_range(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', A=(1, 3))
-    expected = df[(df.A>=1) & (df.A<=3)]
-    pd.testing.assert_frame_equal(filtered, expected)
+@pytest.mark.parametrize(
+    "column_value_type_dask", [
+        ('A', 1, 'single_value', False),
+        ('A', (1, 3), 'range_value', False),
+        ('A', (1, 2), 'range_value', True),
+        ('A', [(0, 1), (3, 4)], 'range_list_value', False),
+        ('C', 'foo2', 'single_value', False),
+        ('C', ['foo1', 'foo3'], 'list_value', False)
+    ]
+)
+def test_file_source_filter(source, column_value_type_dask, expected_df):
+    column, value, _, dask = column_value_type_dask
+    kwargs = {column: value, '__dask': dask}
+    filtered = source.get('test', **kwargs)
+    pd.testing.assert_frame_equal(filtered, expected_df)
 
 
 def test_file_source_filter_date(source):
@@ -151,15 +174,3 @@ def test_file_source_filter_date_range(source):
     pd.testing.assert_frame_equal(filtered, expected)
 
 
-def test_file_source_filter_int_range_list(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', A=[(0, 1), (3, 4)])
-    expected = df[((df.A>=0) & (df.A<=1)) | ((df.A>=3) & (df.A<=4))]
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_file_source_filter_list(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test', C=['foo1', 'foo3'])
-    expected = df[df.C.isin(['foo1', 'foo3'])]
-    pd.testing.assert_frame_equal(filtered, expected)
