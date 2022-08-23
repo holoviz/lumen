@@ -147,3 +147,9 @@ def test_file_source_variable(make_variable_filesource):
     df = source.get('test')
     expected = pd._testing.makeMixedDataFrame().iloc[::-1].reset_index(drop=True)
     pd.testing.assert_frame_equal(df, expected)
+
+
+def test_extension_of_comlicated_url(source):
+    url = "https://api.tfl.gov.uk/Occupancy/BikePoints/@{stations.stations.id}?app_key=random_numbers"
+    source.tables["test"] = url
+    assert source._named_files["test"][1] is None
