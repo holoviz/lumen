@@ -123,6 +123,26 @@ def test_file_source_get_query_cache(source, column_value_type, dask, expected_d
     assert cache_key in source._cache
 
 
+@pytest.mark.parametrize(
+    "column_value_type", [
+        ('A', 1, 'single_value'),
+        ('A', [(0, 1), (3, 4)], 'range_list'),
+        ('C', ['foo1', 'foo3'], 'list'),
+        ('D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
+        ('D', dt.datetime(2009, 1, 2), 'date'),
+    ]
+)
+@pytest.mark.parametrize("dask", [True, False])
+def test_file_source_clear_cache(source, column_value_type, dask):
+    column, value, _ = column_value_type
+    kwargs = {column: value}
+    source.get('test', __dask=dask, **kwargs)
+    cache_key = source._get_key('test', **kwargs)
+    assert cache_key in source._cache
+    source.clear_cache()
+    assert len(source._cache) == 0
+
+
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
