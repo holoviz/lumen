@@ -275,6 +275,10 @@ class Source(Component):
             if 'dask.dataframe' in sys.modules and path.is_dir():
                 import dask.dataframe as dd
                 return dd.read_parquet(path), not bool(query)
+            path = path.with_suffix('')
+            if 'dask.dataframe' in sys.modules and path.is_dir():
+                import dask.dataframe as dd
+                return dd.read_parquet(path), not bool(query)
         return None, not bool(query)
 
     def _set_cache(self, data, table, write_to_file=True, **query):
@@ -289,6 +293,10 @@ class Source(Component):
             else:
                 filename = f'{table}.parq'
             filepath = path / filename
+            if 'dask.dataframe' in sys.modules:
+                import dask.dataframe as dd
+                if isinstance(data, dd.DataFrame) and data.npartitions > 1:
+                    filepath = filepath.with_suffix('')
             try:
                 data.to_parquet(filepath)
             except Exception as e:
