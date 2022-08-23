@@ -1,8 +1,7 @@
-import pytest
-
 import os
 
 import pandas as pd
+import pytest
 
 from lumen.sources.base import DerivedSource
 
