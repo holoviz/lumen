@@ -100,3 +100,14 @@ def test_derived_tables_source_apply(
     assert derived.get_tables() == ['derived']
     pd.testing.assert_frame_equal(derived.get('derived'), expected_table)
     assert derived.get_schema('derived') == expected_schema
+
+
+def test_derived_get_query_cache(original, mirror_mode_spec):
+    derived = DerivedSource.from_spec(mirror_mode_spec)
+    df = derived.get('test')
+    cache_key = derived._get_key('test')
+    assert cache_key in derived._cache
+    cached_df = derived._cache[cache_key]
+    pd.testing.assert_frame_equal(cached_df, df)
+
+
