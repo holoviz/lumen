@@ -506,13 +506,13 @@ class FileSource(Source):
                     file = basename(urlparse(table).path)
                 else:
                     file = basename(table)
-                if ext := re.search("\.\d+$", file):
-                    ext = ext.string
+                if ext := re.search(r"\.(\w+)$", file):
+                    ext = ext.group(1)
             files[name] = (table, ext)
         return files
 
     def _resolve_template_vars(self, table):
-        for m in self._template_re.findall(table):
+        for m in self._template_re.findall(str(table)):
             values = state.resolve_reference(f'${m[2:-1]}')
             values = ','.join([v for v in values])
             table = table.replace(m, quote(values))
