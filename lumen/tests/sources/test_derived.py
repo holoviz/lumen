@@ -36,43 +36,19 @@ def expected_schema():
 
 
 @pytest.fixture
-def mirror_transforms():
-    transforms = [{'type': 'iloc', 'end': 3}]
-    return transforms
-
-
-@pytest.fixture
-def mirror_filters():
-    filters = [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]
-    return filters
-
-
-@pytest.fixture
-def tables_transforms(mirror_transforms):
+def mirror_mode_spec():
     spec = {
         'type': 'derived',
-        'tables': {
-            'derived': {
-                'source': 'original',
-                'table': 'test',
-                'transforms': mirror_transforms
-            }
-        }
+        'source': 'original',
     }
     return spec
 
 
 @pytest.fixture
-def tables_filters(mirror_filters):
+def tables_mode_spec():
     spec = {
         'type': 'derived',
-        'tables': {
-            'derived': {
-                'source': 'original',
-                'table': 'test',
-                'filters': mirror_filters
-            }
-        }
+        'tables': {'derived': {'source': 'original', 'table': 'test'}}
     }
     return spec
 
@@ -81,59 +57,47 @@ def test_derived_source_resolve_module_type():
     assert DerivedSource._get_type('lumen.sources.base.DerivedSource') is DerivedSource
 
 
-def test_derived_mirror_source(original):
-    derived = DerivedSource.from_spec({
-        'type': 'derived',
-        'source': 'original',
-    })
+def test_derived_mirror_source(original, mirror_mode_spec):
+    derived = DerivedSource.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema() == original.get_schema()
     for table in original.get_tables():
         pd.testing.assert_frame_equal(derived.get(table), original.get(table))
 
 
-def test_derived_mirror_source_transforms(original, mirror_transforms, expected_table, expected_schema):
-    derived = DerivedSource.from_spec({
-        'type': 'derived',
-        'source': 'original',
-        'transforms': mirror_transforms,
-    })
+@pytest.mark.parametrize("additional_spec", [
+    ('transforms', [{'type': 'iloc', 'end': 3}]),
+    ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
+])
+def test_derived_mirror_source_apply(
+        original, mirror_mode_spec, additional_spec, expected_table, expected_schema
+):
+    spec_key, spec_value = additional_spec
+    mirror_mode_spec[spec_key] = spec_value
+    derived = DerivedSource.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema('test') == expected_schema
     pd.testing.assert_frame_equal(derived.get('test'), expected_table)
 
 
-def test_derived_mirror_source_filters(original, mirror_filters, expected_table, expected_schema):
-    derived = DerivedSource.from_spec({
-        'type': 'derived',
-        'source': 'original',
-        'filters': mirror_filters
-    })
-    assert derived.get_tables() == original.get_tables()
-    assert derived.get_schema('test') == expected_schema
-    pd.testing.assert_frame_equal(derived.get('test'), expected_table)
-
-
-def test_derived_tables_source(original):
-    derived = DerivedSource.from_spec({
-        'type': 'derived',
-        'tables': {'derived': {'source': 'original', 'table': 'test'}}
-    })
+def test_derived_tables_source(original, tables_mode_spec):
+    derived = DerivedSource.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
     df = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(derived.get('derived'), df)
     assert original.get_schema('test') == derived.get_schema('derived')
 
 
-def test_derived_tables_source_transforms(original, tables_transforms, expected_table, expected_schema):
-    derived = DerivedSource.from_spec(tables_transforms)
-    assert derived.get_tables() == ['derived']
-    pd.testing.assert_frame_equal(derived.get('derived'), expected_table)
-    assert derived.get_schema('derived') == expected_schema
-
-
-def test_derived_tables_source_filters(original, tables_filters, expected_table, expected_schema):
-    derived = DerivedSource.from_spec(tables_filters)
+@pytest.mark.parametrize("additional_spec", [
+    ('transforms', [{'type': 'iloc', 'end': 3}]),
+    ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
+])
+def test_derived_tables_source_apply(
+        original, tables_mode_spec, additional_spec, expected_table, expected_schema
+):
+    spec_key, spec_value = additional_spec
+    tables_mode_spec['tables']['derived'][spec_key] = spec_value
+    derived = DerivedSource.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
     pd.testing.assert_frame_equal(derived.get('derived'), expected_table)
     assert derived.get_schema('derived') == expected_schema
