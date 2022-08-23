@@ -11,7 +11,7 @@ from functools import wraps
 from itertools import product
 from os.path import basename
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import numpy as np
 import pandas as pd
@@ -485,19 +485,21 @@ class FileSource(Source):
                 if f.startswith('http'):
                     name = f
                 else:
-                    name = '.'.join(os.path.basename(f).split('.')[:-1])
+                    name = '.'.join(basename(f).split('.')[:-1])
                 tables[name] = f
         else:
             tables = self.tables
         files = {}
         for name, table in tables.items():
-            ext = None
             if isinstance(table, (list, tuple)):
                 table, ext = table
             else:
-                basename = os.path.basename(table)
-                if '.' in basename:
-                    ext = basename.split('.')[-1]
+                if table.startswith('http'):
+                    file = basename(urlparse(table).path)
+                else:
+                    file = basename(table)
+                if ext := re.search("\.\d+$", file):
+                    ext = ext.string
             files[name] = (table, ext)
         return files
 
