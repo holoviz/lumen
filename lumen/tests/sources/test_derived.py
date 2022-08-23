@@ -111,3 +111,10 @@ def test_derived_get_query_cache(original, mirror_mode_spec):
     pd.testing.assert_frame_equal(cached_df, df)
 
 
+def test_derived_clear_cache(original, mirror_mode_spec):
+    derived = DerivedSource.from_spec(mirror_mode_spec)
+    derived.get('test')
+    cache_key = derived._get_key('test')
+    assert cache_key in derived._cache
+    derived.clear_cache()
+    assert len(derived._cache) == 0
