@@ -57,7 +57,7 @@ def test_source_resolve_module_type():
 @pytest.mark.parametrize("filter_col_B", [(3, 15.9)])
 @pytest.mark.parametrize("filter_col_C", [[1, 'A', 'def']])
 @pytest.mark.parametrize("sql_transforms", [(None, None), (SQLLimit(limit=100), SQLLimit(limit=100))])
-def test_source_table_cache_key(source, filter_col_A, filter_col_B, filter_col_C, sql_transforms):
+def test_file_source_table_cache_key(source, filter_col_A, filter_col_B, filter_col_C, sql_transforms):
     t1, t2 = sql_transforms
     kwargs1 = {}
     kwargs2 = {}
@@ -158,6 +158,11 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
         df,
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
+
+
+def test_file_source_get_tables(source):
+    tables = source.get_tables()
+    assert tables == ['test']
 
 
 def test_file_source_variable(make_variable_filesource):
