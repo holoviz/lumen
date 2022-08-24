@@ -490,7 +490,7 @@ class FileSource(Source):
         if isinstance(self.tables, list):
             tables = {}
             for f in self.tables:
-                if f.startswith('http'):
+                if isinstance(f, str) and f.startswith('http'):
                     name = f
                 else:
                     name = '.'.join(basename(f).split('.')[:-1])
@@ -502,7 +502,7 @@ class FileSource(Source):
             if isinstance(table, (list, tuple)):
                 table, ext = table
             else:
-                if table.startswith('http'):
+                if isinstance(table, str) and table.startswith('http'):
                     file = basename(urlparse(table).path)
                 else:
                     file = basename(table)
