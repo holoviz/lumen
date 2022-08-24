@@ -1,15 +1,27 @@
 import os
 
 import pandas as pd
+import pytest
+
 import yaml
 
 from lumen.sources.intake import IntakeSource
 
 
-def test_intake_source_from_file():
+@pytest.fixture
+def source():
     root = os.path.dirname(__file__)
-    source = IntakeSource(uri=os.path.join(root, 'catalog.yml'),
-                          root=root)
+    return IntakeSource(
+        uri=os.path.join(root, 'catalog.yml'), root=root
+    )
+
+
+def test_intake_resolve_module_type():
+    assert IntakeSource._get_type('lumen.sources.intake_sql.IntakeSource') is IntakeSource
+    assert IntakeSource.source_type == 'intake'
+
+
+def test_intake_source_from_file(source):
     df = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(source.get('test'), df)
 

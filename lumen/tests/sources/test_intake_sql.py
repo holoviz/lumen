@@ -83,6 +83,11 @@ def test_intake_sql_get_schema_with_none(source):
     assert list(source._schema_cache.keys()) == ['test_sql_with_none']
 
 
+def test_intake_sql_get_schema_cache(source):
+    source.get_schema('test_sql')
+    assert 'test_sql' in source._schema_cache
+
+
 @pytest.mark.parametrize(
     "table_column_value_type", [
         ('test_sql', 'A', 1, 'single_value'),
@@ -130,6 +135,9 @@ def test_intake_sql_transforms_cache(source, source_tables):
 
 def test_intake_sql_clear_cache(source):
     source.get('test_sql')
+    source.get_schema('test_sql')
     assert len(source._cache) == 1
+    assert len(source._schema_cache) == 1
     source.clear_cache()
     assert len(source._cache) == 0
+    assert len(source._schema_cache) == 0
