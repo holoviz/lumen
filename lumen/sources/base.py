@@ -295,7 +295,7 @@ class Source(Component):
             filepath = path / filename
             if 'dask.dataframe' in sys.modules:
                 import dask.dataframe as dd
-                if isinstance(data, dd.DataFrame) and data.npartitions > 1:
+                if isinstance(data, dd.DataFrame):
                     filepath = filepath.with_suffix('')
             try:
                 data.to_parquet(filepath)
