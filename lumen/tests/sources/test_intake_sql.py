@@ -156,3 +156,10 @@ def test_intake_sql_transforms_cache(source, source_tables):
 
     cache_key = source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in source._cache
+
+
+def test_intake_sql_clear_cache(source):
+    source.get('test_sql')
+    assert len(source._cache) == 1
+    source.clear_cache()
+    assert len(source._cache) == 0
