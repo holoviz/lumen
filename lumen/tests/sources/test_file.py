@@ -10,6 +10,11 @@ from lumen.sources import FileSource
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
+from .utils import (
+    source_get_tables, source_filter, source_clear_cache,
+    source_get_query_cache, source_table_cache_key
+)
+
 
 @pytest.fixture
 def source(make_filesource):
@@ -27,21 +32,20 @@ def test_source_resolve_module_type():
     assert FileSource.source_type == 'file'
 
 
+@pytest.mark.parametrize("table", ['test'])
 @pytest.mark.parametrize("filter_col_A", [314, (13, 314), ['A', 314, 'def']])
 @pytest.mark.parametrize("filter_col_B", [(3, 15.9)])
 @pytest.mark.parametrize("filter_col_C", [[1, 'A', 'def']])
 @pytest.mark.parametrize("sql_transforms", [(None, None), (SQLLimit(limit=100), SQLLimit(limit=100))])
-def test_file_source_table_cache_key(source, filter_col_A, filter_col_B, filter_col_C, sql_transforms):
+def test_file_source_table_cache_key(source, table, filter_col_A, filter_col_B, filter_col_C, sql_transforms):
     t1, t2 = sql_transforms
-    kwargs1 = {}
-    kwargs2 = {}
+    kwargs1 = {'A': filter_col_A, 'B': filter_col_B, 'C': filter_col_C}
+    kwargs2 = {'A': filter_col_A, 'B': filter_col_B, 'C': filter_col_C}
     if t1 is not None:
         kwargs1['sql_transforms'] = [t1]
     if t2 is not None:
         kwargs2['sql_transforms'] = [t2]
-    key1 = source._get_key('test', A=filter_col_A, B=filter_col_B, C=filter_col_C, **kwargs1)
-    key2 = source._get_key('test', A=filter_col_A, B=filter_col_B, C=filter_col_C, **kwargs2)
-    assert key1 == key2
+    assert source_table_cache_key(source, table, kwargs1, kwargs2)
 
 
 @pytest.mark.parametrize(
@@ -61,10 +65,7 @@ def test_file_source_table_cache_key(source, filter_col_A, filter_col_B, filter_
 )
 @pytest.mark.parametrize("dask", [True, False])
 def test_file_source_filter(source, table_column_value_type, dask, expected_filtered_df):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value, '__dask': dask}
-    filtered = source.get(table, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df)
+    assert source_filter(source, table_column_value_type, dask, expected_filtered_df)
 
 
 @pytest.mark.parametrize(
@@ -84,17 +85,7 @@ def test_file_source_filter(source, table_column_value_type, dask, expected_filt
 )
 @pytest.mark.parametrize("dask", [True, False])
 def test_file_source_get_query_cache(source, table_column_value_type, dask, expected_filtered_df):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value}
-    source.get(table, __dask=dask, **kwargs)
-    cache_key = source._get_key('test', **kwargs)
-    assert cache_key in source._cache
-    cached_df = source._cache[cache_key]
-    if dask:
-        cached_df = cached_df.compute()
-    pd.testing.assert_frame_equal(cached_df, expected_filtered_df)
-    cache_key = source._get_key('test', **kwargs)
-    assert cache_key in source._cache
+    assert source_get_query_cache(source, table_column_value_type, dask, expected_filtered_df)
 
 
 @pytest.mark.parametrize(
@@ -108,13 +99,7 @@ def test_file_source_get_query_cache(source, table_column_value_type, dask, expe
 )
 @pytest.mark.parametrize("dask", [True, False])
 def test_file_source_clear_cache(source, table_column_value_type, dask):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value}
-    source.get(table, __dask=dask, **kwargs)
-    cache_key = source._get_key('test', **kwargs)
-    assert cache_key in source._cache
-    source.clear_cache()
-    assert len(source._cache) == 0
+    assert source_clear_cache(source, table_column_value_type, dask)
 
 
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
@@ -134,9 +119,8 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     )
 
 
-def test_file_source_get_tables(source):
-    tables = source.get_tables()
-    assert tables == ['test']
+def test_file_source_get_tables(source, source_tables):
+    assert source_get_tables(source, source_tables)
 
 
 def test_file_source_variable(make_variable_filesource):
