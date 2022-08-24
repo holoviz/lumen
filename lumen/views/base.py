@@ -579,6 +579,8 @@ class hvPlotView(hvPlotBaseView):
 
     _field_params = ['x', 'y', 'by', 'groupby']
 
+    _ignore_kwargs = ['tables']
+
     _supports_selections = True
 
     def __init__(self, **params):
@@ -589,6 +591,8 @@ class hvPlotView(hvPlotBaseView):
     def get_plot(self, df):
         processed = {}
         for k, v in self.kwargs.items():
+            if k in self._ignore_kwargs:
+                continue
             if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
                 v = NumeralTickFormatter(format=v)
             processed[k] = v
