@@ -18,9 +18,33 @@ def source():
     return intake_sql_source
 
 
-def test_intake_sql_get(source):
+@pytest.fixture
+def df_test():
+    return pd._testing.makeMixedDataFrame()
+
+
+@pytest.fixture
+def df_test_sql():
+    return pd._testing.makeMixedDataFrame()
+
+
+@pytest.fixture
+def df_test_sql_none():
     df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test_sql'), df)
+    df['C'] = ['foo1', None, 'foo3', None, 'foo5']
+    return df
+
+
+def test_intake_sql_get_tables(source):
+    tables = source.get_tables()
+    assert tables == ['test', 'test_sql', 'test_sql_with_none']
+
+
+def test_intake_sql_get(source, df_test, df_test_sql, df_test_sql_none):
+    pd.testing.assert_frame_equal(source.get('test'), df_test)
+    pd.testing.assert_frame_equal(source.get('test_sql'), df_test_sql)
+    pd.testing.assert_frame_equal(source.get('test_sql_with_none'), df_test_sql_none)
+
 
 def test_intake_sql_get_schema(source):
     expected_sql = {
@@ -40,6 +64,7 @@ def test_intake_sql_get_schema(source):
         'inclusiveMinimum': '2009-01-01T00:00:00',
         'type': 'string'
     })
+    print('expected_csv', expected_sql, expected_csv)
     assert source.get_schema('test_sql') == expected_sql
     assert 'test' not in source._schema_cache
     assert 'test_sql' in source._schema_cache
