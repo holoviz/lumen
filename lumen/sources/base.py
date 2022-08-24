@@ -1,7 +1,5 @@
 import hashlib
 import json
-import os
-import pathlib
 import re
 import shutil
 import sys
@@ -11,8 +9,9 @@ import weakref
 from concurrent import futures
 from functools import wraps
 from itertools import product
+from os.path import basename
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import numpy as np
 import pandas as pd
@@ -127,6 +126,9 @@ class Source(Component):
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
 
+    root = param.ClassSelector(class_=Path, precedence=-1, doc="""
+        Root folder of the cache_dir, default is config.root""")
+
     source_type = None
 
     # Declare whether source supports SQL transforms
@@ -202,7 +204,7 @@ class Source(Component):
 
     def __init__(self, **params):
         from ..config import config
-        self.root = params.pop('root', config.root)
+        params['root'] = Path(params.get('root', config.root))
         super().__init__(**params)
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
@@ -222,8 +224,8 @@ class Source(Component):
     def _get_schema_cache(self):
         schema = self._schema_cache if self._schema_cache else None
         if self.cache_dir:
-            path = os.path.join(self.root, self.cache_dir, f'{self.name}.json')
-            if not os.path.isfile(path):
+            path = self.root / self.cache_dir / f'{self.name}.json'
+            if not path.is_file():
                 return schema
             with open(path) as f:
                 json_schema = json.load(f)
@@ -246,7 +248,7 @@ class Source(Component):
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
         if self.cache_dir:
-            path = Path(os.path.join(self.root, self.cache_dir))
+            path = self.root / self.cache_dir
             path.mkdir(parents=True, exist_ok=True)
             try:
                 with open(path / f'{self.name}.json', 'w') as f:
@@ -267,12 +269,16 @@ class Source(Component):
                 filename = f'{key}_{table}.parq'
             else:
                 filename = f'{table}.parq'
-            path = os.path.join(self.root, self.cache_dir, filename)
-            if os.path.isfile(path) or os.path.isdir(path):
-                if 'dask.dataframe' in sys.modules or os.path.isdir(path):
-                    import dask.dataframe as dd
-                    return dd.read_parquet(path), not bool(query)
+            path = self.root / self.cache_dir / filename
+            if path.is_file():
                 return pd.read_parquet(path), not bool(query)
+            if 'dask.dataframe' in sys.modules and path.is_dir():
+                import dask.dataframe as dd
+                return dd.read_parquet(path), not bool(query)
+            path = path.with_suffix('')
+            if 'dask.dataframe' in sys.modules and path.is_dir():
+                import dask.dataframe as dd
+                return dd.read_parquet(path), not bool(query)
         return None, not bool(query)
 
     def _set_cache(self, data, table, write_to_file=True, **query):
@@ -280,17 +286,20 @@ class Source(Component):
         key = self._get_key(table, **query)
         self._cache[key] = data
         if self.cache_dir and write_to_file:
-            path = os.path.join(self.root, self.cache_dir)
-            Path(path).mkdir(parents=True, exist_ok=True)
+            path = self.root / self.cache_dir
+            path.mkdir(parents=True, exist_ok=True)
             if query:
                 filename = f'{key}_{table}.parq'
             else:
                 filename = f'{table}.parq'
-            filepath = os.path.join(path, filename)
+            filepath = path / filename
+            if 'dask.dataframe' in sys.modules:
+                import dask.dataframe as dd
+                if isinstance(data, dd.DataFrame):
+                    filepath = filepath.with_suffix('')
             try:
                 data.to_parquet(filepath)
             except Exception as e:
-                path = pathlib.Path(filepath)
                 if path.is_file():
                     path.unlink()
                 elif path.is_dir():
@@ -307,8 +316,8 @@ class Source(Component):
         self._cache = {}
         self._schema_cache = {}
         if self.cache_dir:
-            path = os.path.join(self.root, self.cache_dir)
-            if os.path.isdir(path):
+            path = self.root / self.cache_dir
+            if path.is_dir():
                 shutil.rmtree(path)
 
     @property
@@ -484,24 +493,27 @@ class FileSource(Source):
                 if f.startswith('http'):
                     name = f
                 else:
-                    name = '.'.join(os.path.basename(f).split('.')[:-1])
+                    name = '.'.join(basename(f).split('.')[:-1])
                 tables[name] = f
         else:
             tables = self.tables
         files = {}
         for name, table in tables.items():
-            ext = None
             if isinstance(table, (list, tuple)):
                 table, ext = table
             else:
-                basename = os.path.basename(table)
-                if '.' in basename:
-                    ext = basename.split('.')[-1]
+                if table.startswith('http'):
+                    file = basename(urlparse(table).path)
+                else:
+                    file = basename(table)
+                ext = re.search(r"\.(\w+)$", file)
+                if ext:
+                    ext = ext.group(1)
             files[name] = (table, ext)
         return files
 
     def _resolve_template_vars(self, table):
-        for m in self._template_re.findall(table):
+        for m in self._template_re.findall(str(table)):
             values = state.resolve_reference(f'${m[2:-1]}')
             values = ','.join([v for v in values])
             table = table.replace(m, quote(values))
@@ -514,7 +526,7 @@ class FileSource(Source):
         df = None
         for name, (filepath, ext) in self._named_files.items():
             if isinstance(filepath, Path) or '://' not in filepath:
-                filepath = os.path.join(self.root, filepath)
+                filepath = self.root / filepath
             if name != table:
                 continue
             load_fn, kwargs = self._load_fn(ext, dask=dask)
@@ -856,7 +868,7 @@ class DerivedSource(Source):
          control over the exact tables to filter and transform is
          available. This is referred to as the 'table' mode.
       2) When a `source` is declared all tables on that Source are
-         mirrored and filtered and transformed acccording to the
+         mirrored and filtered and transformed according to the
          supplied `filters` and `transforms`. This is referred to as
          'mirror' mode.
 
