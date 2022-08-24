@@ -361,12 +361,19 @@ class Source(Component):
             JSON schema(s) for one or all the tables.
         """
         schemas = {}
-        for name in self.get_tables():
+        names = list(self.get_tables())
+        for name in names:
             if table is not None and name != table:
                 continue
             df = self.get(name, __dask=True)
             schemas[name] = get_dataframe_schema(df)['items']['properties']
-        return schemas if table is None else schemas[table]
+
+        try:
+            return schemas if table is None else schemas[table]
+        except KeyError:
+            msg = f"{type(self).name} does not contain '{table}'"
+            msg = match_suggestion_message(table, names, msg)
+            raise ValueError(msg) from None
 
     def get(self, table, **query):
         """
