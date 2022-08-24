@@ -857,7 +857,7 @@ class DerivedSource(Source):
          control over the exact tables to filter and transform is
          available. This is referred to as the 'table' mode.
       2) When a `source` is declared all tables on that Source are
-         mirrored and filtered and transformed acccording to the
+         mirrored and filtered and transformed according to the
          supplied `filters` and `transforms`. This is referred to as
          'mirror' mode.
 
