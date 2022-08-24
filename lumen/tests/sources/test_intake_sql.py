@@ -35,6 +35,38 @@ def df_test_sql_none():
     return df
 
 
+@pytest.fixture
+def expected_df(column_value_type):
+    df = pd._testing.makeMixedDataFrame()
+    column, value, type = column_value_type
+
+    if type == 'single_value':
+        return df[df[column] == value]
+
+    elif type == 'range':
+        begin, end = value
+        return df[(df[column] >= begin) & (df[column] <= end)]
+
+    elif type == 'range_list':
+        conditions = False
+        for range in value:
+            begin, end = range
+            conditions |= ((df[column] >= begin) & (df[column] <= end))
+        return df[conditions]
+
+    elif type == 'list':
+        return df[df[column].isin(value)]
+
+    elif type == 'date':
+        return df[df[column] == pd.to_datetime(value)]
+
+    elif type == 'date_range':
+        begin, end = value
+        return df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
+
+    return df
+
+
 def test_intake_sql_get_tables(source):
     tables = source.get_tables()
     assert tables == ['test', 'test_sql', 'test_sql_with_none']
@@ -64,13 +96,10 @@ def test_intake_sql_get_schema(source):
         'inclusiveMinimum': '2009-01-01T00:00:00',
         'type': 'string'
     })
-    print('expected_csv', expected_sql, expected_csv)
     assert source.get_schema('test_sql') == expected_sql
-    assert 'test' not in source._schema_cache
-    assert 'test_sql' in source._schema_cache
+    assert list(source._schema_cache.keys()) == ['test_sql']
     assert source.get_schema('test') == expected_csv
-    assert 'test' in source._schema_cache
-    assert 'test_sql' in source._schema_cache
+    assert list(source._schema_cache.keys()) == ['test_sql', 'test']
 
 
 def test_intake_sql_get_schema_with_none(source):
@@ -86,8 +115,7 @@ def test_intake_sql_get_schema_with_none(source):
         }
     }
     assert source.get_schema('test_sql_with_none') == expected_sql
-    assert 'test' not in source._schema_cache
-    assert 'test_sql_with_none' in source._schema_cache
+    assert list(source._schema_cache.keys()) == ['test_sql_with_none']
 
 
 def test_intake_sql_transforms(source):
