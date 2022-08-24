@@ -136,4 +136,3 @@ def expected_filtered_df(source_tables, table_column_value_type):
         df = df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
 
     return df.reset_index(drop=True)
-
