@@ -84,6 +84,10 @@ class Card(Viewer):
     def from_spec(cls, spec, filters=None, pipelines={}):
         spec = dict(spec)
         view_specs = spec.get('views', [])
+        if view_specs is None:
+            # If views is not defined in yaml file
+            raise ValueError("No 'views' was provided during instantiation.")
+
         spec['views'] = views = []
         for view in view_specs:
             if isinstance(view_specs, dict):
