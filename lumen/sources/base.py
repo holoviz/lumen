@@ -506,7 +506,8 @@ class FileSource(Source):
                     file = basename(urlparse(table).path)
                 else:
                     file = basename(table)
-                if ext := re.search(r"\.(\w+)$", file):
+                ext = re.search(r"\.(\w+)$", file)
+                if ext:
                     ext = ext.group(1)
             files[name] = (table, ext)
         return files
