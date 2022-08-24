@@ -103,11 +103,12 @@ def test_intake_sql_get_schema_cache(source):
         ('test_sql_with_none', 'C', [None, 'foo5'], 'list'),
     ]
 )
-def test_intake_sql_filter(source, table_column_value_type, expected_filtered_df):
+@pytest.mark.parametrize("dask", [True, False])
+def test_intake_sql_filter(source, table_column_value_type, dask, expected_filtered_df):
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
-    filtered = source.get(table, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df)
+    filtered = source.get(table, __dask=dask, **kwargs)
+    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
 
 
 def test_intake_sql_transforms(source, source_tables):
