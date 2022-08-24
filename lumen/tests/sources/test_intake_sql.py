@@ -31,6 +31,11 @@ def source_tables():
     return tables
 
 
+def test_intake_sql_resolve_module_type():
+    assert IntakeSQLSource._get_type('lumen.sources.intake_sql.IntakeSQLSource') is IntakeSQLSource
+    assert IntakeSQLSource.source_type == 'intake_sql'
+
+
 def test_intake_sql_get_tables(source, source_tables):
     tables = source.get_tables()
     assert tables == list(source_tables.keys())
