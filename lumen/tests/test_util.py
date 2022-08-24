@@ -47,7 +47,7 @@ def test_match_suggestion_message(penguins_file):
         "transforms": [{"type": "aggregate", "method": "mean", "by": ["species"]}],
     }
 
-    expected_error_msg = "(.+? Did you mean .+?|'type' for '.+?' is not available|Filter specification must declare field to filter on)"
+    expected_error_msg = r"(.+? Did you mean .+?|No 'type' was provided|Filter specification must declare field to filter on)"
     ignore_words = ["penguinss", "penguins.csvs", "speciess", "means"]
 
     for s in append_s_to_string(spec):
