@@ -18,7 +18,6 @@ from .state import state
 ASSETS_DIR = pathlib.Path(__file__).parent / 'assets'
 
 
-
 class SourceEditor(FastComponent):
 
     cache_dir = param.String(label="Cache directory (optional)", precedence=1, doc="""

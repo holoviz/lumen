@@ -3,12 +3,11 @@ import param
 
 from panel.reactive import ReactiveHTML
 
-from lumen.sources import Source
 from lumen.views import View
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
-from .sources import ASSETS_DIR, SourceGallery
+from .sources import ASSETS_DIR
 from .state import state
 
 
@@ -19,17 +18,11 @@ class ViewsEditor(WizardItem):
 
     spec = param.List(default=[], precedence=-1)
 
-    source_gallery = param.ClassSelector(class_=SourceGallery, precedence=-1)
-
-    source = param.String()
+    pipeline  = param.String()
 
     view_type = param.Selector()
 
-    sources = param.List(label='Select a source')
-
-    tables = param.List(label='Select a table')
-
-    table = param.String()
+    pipelines = param.List(label='Select a pipeline')
 
     views = param.List()
 
@@ -39,33 +32,24 @@ class ViewsEditor(WizardItem):
     <fast-divider></fast-divider>
     <div style="display: flex;">
       <form role="form" style="flex: 30%; max-width: 300px; line-height: 2em;">
-        <div style="display: grid;">
-          <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
-          <fast-select id="sources" style="max-width: 300px; min-width: 150px;" value="${source}">
-          {% for src in sources %}
-            <fast-option value="{{ src }}">{{ src.title() }}</fast-option>
+        <div style="display: grid; flex: auto;">
+          <label for="view-select-${id}"><b>{{ param.view_type.label }}</b></label>
+          <fast-select id="view-select" style="min-width: 150px;" value="${view_type}">
+          {% for vtype in param.view_type.objects %}
+            <fast-option value="{{ vtype }}">{{ vtype.title() }}</fast-option>
           {% endfor %}
           </fast-select>
-          <fast-tooltip anchor="sources-${id}">{{ param.sources.doc }}</fast-tooltip>
-        </div>
-        <div style="display: grid;">
-          <label for="tables-${id}"><b>{{ param.tables.label }}</b></label>
-          <fast-select id="tables" style="max-width: 300px; min-width: 150px;" value="${table}">
-          {% for tbl in tables %}
-            <fast-option value="{{ tbl|tojson }}">{{ tbl }}</fast-option>
-          {% endfor %}
-          </fast-select>
-          <fast-tooltip anchor="tables-${id}">{{ param.tables.doc }}</fast-tooltip>
+          <fast-tooltip anchor="view-select-${id}">{{ param.view_type.doc }}</fast-tooltip>
         </div>
         <div style="display: flex;">
-          <div style="display: grid; flex: auto;">
-            <label for="view-select-${id}"><b>{{ param.view_type.label }}</b></label>
-            <fast-select id="view-select" style="min-width: 150px;" value="${view_type}">
-            {% for vtype in param.view_type.objects %}
-              <fast-option value="{{ vtype }}">{{ vtype.title() }}</fast-option>
+          <div style="display: grid;">
+            <label for="pipelines-${id}"><b>{{ param.pipelines.label }}</b></label>
+            <fast-select id="pipelines" style="max-width: 300px; min-width: 240px;" value="${pipeline}">
+            {% for ppl in pipelines %}
+              <fast-option value="{{ ppl|tojson }}">{{ ppl }}</fast-option>
             {% endfor %}
             </fast-select>
-            <fast-tooltip anchor="view-select-${id}">{{ param.view_type.doc }}</fast-tooltip>
+            <fast-tooltip anchor="pipelines-${id}">{{ param.pipelines.doc }}</fast-tooltip>
           </div>
           <fast-button id="submit" appearance="accent" style="margin-top: auto; margin-left: 1em; width: 20px;" onclick="${_add_view}">
             <b style="font-size: 2em;">+</b>
@@ -84,33 +68,26 @@ class ViewsEditor(WizardItem):
     def __init__(self, **params):
         super().__init__(**params)
         views = param.concrete_descendents(View)
-        self.param.view_type.objects = [source.view_type for source in views.values()]
-        self._source = None
-        state.sources.param.watch(self._update_sources, 'sources')
-
-    @param.depends('source', watch=True)
-    def _update_tables(self):
-        source = state.sources.sources[self.source]
-        spec = dict(source.spec, cache_dir=None)
-        spec.pop('filters', None)
-        self._source = Source.from_spec(spec)
-        self.tables = self._source.get_tables()
+        self.param.view_type.objects = [
+            view.view_type for view in views.values() if view.view_type
+        ]
+        self._pipeline = None
+        state.pipelines.param.watch(self._update_pipelines, 'pipelines')
 
     def _add_view(self, event):
-        table = {t.replace('"', ''): t for t in self.tables}.get(self.table, self.table)
         editor = ViewEditor(
-            view_type=self.view_type, source=self.source,
-            table=self.table, source_obj=self._source,
-            spec={'table': table, 'type': self.view_type}
+            view_type=self.view_type, pipeline=self.pipeline,
+            pipeline_obj=self._pipeline,
+            spec={'pipeline': self.pipeline, 'type': self.view_type}
         )
         editor.param.watch(self._remove_view, 'remove')
         self.views.append(editor)
         self.param.trigger('views')
 
-    def _update_sources(self, event):
-        self.sources = list(event.new)
-        if not self.source and self.sources:
-            self.source = self.sources[0]
+    def _update_pipelines(self, event):
+        self.pipelines = list(event.new)
+        if not self.pipeline and self.pipelines:
+            self.pipeline = self.pipelines[0]
 
     def _remove_view(self, event):
         self.views.remove(event.obj)
@@ -119,17 +96,15 @@ class ViewsEditor(WizardItem):
 
 class ViewEditor(ReactiveHTML):
 
-    source = param.Parameter(precedence=-1)
+    pipeline = param.Parameter(precedence=-1)
 
-    source_obj = param.Parameter(precedence=-1)
+    pipeline_obj = param.Parameter(precedence=-1)
 
     remove = param.Boolean(default=False)
 
     spec = param.Dict(default={})
 
     sizing_mode = param.String(default='stretch_both')
-
-    table = param.String()
 
     view_type = param.String(default='None')
 
@@ -139,12 +114,14 @@ class ViewEditor(ReactiveHTML):
     <span style="font-size: 2em">{{ view_type.title() }} Editor</span>
     <p>Configure the view.</p>
     <div style="width: 300px; display: grid; margin-right: 1em;">
-      <label for="name"><b>View Name</b></label>
-      <fast-text-field id="name" placeholder="Enter a name" value="${name}"></fast-text-field>
+      <label for="view-name"><b>View Name</b></label>
+      <fast-text-field id="view-name" placeholder="Enter a name" value="${name}"></fast-text-field>
     </div>
     <fast-divider></fast-divider>
     <div id='view'>${view}</div>
     """
+
+    _dom_events = {'view-name': ['keyup']}
 
     def __new__(cls, **params):
         if cls is not ViewEditor:
@@ -158,8 +135,7 @@ class ViewEditor(ReactiveHTML):
     @property
     def description(self):
         return (
-            f"A {self.view_type} view of the {self.spec['table']!r} "
-            f"table on the {self.source_obj.name!r} source."
+            f"A {self.view_type} view of the {self.spec['pipeline']!r} source."
         )
 
     @property
@@ -288,23 +264,22 @@ class TableViewEditor(ViewEditor):
     <span style="font-size: 2em">{{ view_type.title() }} Editor</span>
     <p>Configure the view.</p>
     <div style="width: 300px; display: grid; margin-right: 1em;">
-      <label for="name"><b>View Name</b></label>
-      <fast-text-field id="name" placeholder="Enter a name" value="${name}"></fast-text-field>
+      <label for="view-name"><b>View Name</b></label>
+      <fast-text-field id="view-name" placeholder="Enter a name" value="${name}"></fast-text-field>
     </div>
     <fast-divider></fast-divider>
     <div id="view">${view}</div>
     """
 
-    _dom_events = {'name': ['keyup']}
+    _dom_events = {'view-name': ['keyup']}
 
     def __init__(self, **params):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
         kwargs = dict(self.spec)
-        df = self.source_obj.get(kwargs.pop('table'))
         if 'sizing_mode' not in kwargs:
             kwargs['sizing_mode'] = 'stretch_width'
         self.tabulator = pn.widgets.Tabulator(
-            df, pagination='remote', page_size=12, height=400, **kwargs
+            self.pipeline.data, pagination='remote', page_size=12, height=400, **kwargs
         )
         controls = ['theme', 'layout', 'page_size', 'pagination']
         control_widgets = self.tabulator.controls(
@@ -337,7 +312,7 @@ class PerspectiveViewEditor(ViewEditor):
         spec['height'] = 500 # remove
         params['view'] = view = pn.pane.Perspective(**dict(self._defaults, **spec))
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
-        view.object = self.source_obj.get(self.table)
+        view.object = self.pipeline_obj.data
         view.param.watch(self._update_spec, list(view.param))
 
     @property
@@ -357,8 +332,7 @@ class hvPlotViewEditor(ViewEditor):
         from hvplot.ui import hvPlotExplorer
         super().__init__(**params)
         kwargs = dict(self.spec)
-        df = self.source_obj.get(kwargs.pop('table'))
-        self.view = hvPlotExplorer(df, **kwargs)
+        self.view = hvPlotExplorer(self.pipeline.data, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
         self.view.axes.param.watch(self._update_spec, list(self.view.axes.param))
         self.view.operations.param.watch(self._update_spec, list(self.view.operations.param))

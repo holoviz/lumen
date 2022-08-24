@@ -292,7 +292,7 @@ class Pipeline(Component):
         for fparam in transform._field_params:
             transform.param[fparam].objects = fields
             transform.param.update(**{fparam: kwargs.get(fparam, fields)})
-        transform.param.watch(self._update_data, transform.controls)
+        transform.param.watch(self._update_data, list(transform.param))
         self._update_data()
 
     def chain(
