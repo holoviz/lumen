@@ -101,3 +101,38 @@ def cachedir():
     tmp_dir = tempfile.TemporaryDirectory()
     yield tmp_dir.name
     tmp_dir.cleanup()
+
+
+@pytest.fixture
+def expected_filtered_df(source_tables, table_column_value_type):
+    table, column, value, type = table_column_value_type
+    df = source_tables[table]
+
+    if type == 'single_value':
+        if value is None:
+            df = df[df[column].isnull()]
+        else:
+            df = df[df[column] == value]
+
+    elif type == 'range':
+        begin, end = value
+        df = df[(df[column] >= begin) & (df[column] <= end)]
+
+    elif type == 'range_list':
+        conditions = False
+        for range in value:
+            begin, end = range
+            conditions |= ((df[column] >= begin) & (df[column] <= end))
+        df = df[conditions]
+
+    elif type == 'list':
+        df = df[df[column].isin(value)]
+
+    elif type == 'date':
+        df = df[df[column] == pd.to_datetime(value)]
+
+    elif type == 'date_range':
+        begin, end = value
+        df = df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
+
+    return df
