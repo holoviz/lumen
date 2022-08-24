@@ -1,9 +1,8 @@
-import pytest
-
 import datetime as dt
 import os
 
 import pandas as pd
+import pytest
 
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
@@ -19,63 +18,59 @@ def source():
 
 
 @pytest.fixture
-def df_test():
-    return pd._testing.makeMixedDataFrame()
+def source_tables():
+    df_test = pd._testing.makeMixedDataFrame()
+    df_test_sql = pd._testing.makeMixedDataFrame()
+    df_test_sql_none = pd._testing.makeMixedDataFrame()
+    df_test_sql_none['C'] = ['foo1', None, 'foo3', None, 'foo5']
+    tables = {
+        'test': df_test,
+        'test_sql': df_test_sql,
+        'test_sql_with_none': df_test_sql_none,
+    }
+    return tables
 
 
 @pytest.fixture
-def df_test_sql():
-    return pd._testing.makeMixedDataFrame()
-
-
-@pytest.fixture
-def df_test_sql_none():
-    df = pd._testing.makeMixedDataFrame()
-    df['C'] = ['foo1', None, 'foo3', None, 'foo5']
-    return df
-
-
-@pytest.fixture
-def expected_df(column_value_type):
-    df = pd._testing.makeMixedDataFrame()
-    column, value, type = column_value_type
+def expected_df(source_tables, table_column_value_type):
+    table, column, value, type = table_column_value_type
+    df = source_tables[table]
 
     if type == 'single_value':
-        return df[df[column] == value]
+        if value is None:
+            df = df[df[column].isnull()]
+        else:
+            df = df[df[column] == value]
 
     elif type == 'range':
         begin, end = value
-        return df[(df[column] >= begin) & (df[column] <= end)]
+        df = df[(df[column] >= begin) & (df[column] <= end)]
 
     elif type == 'range_list':
         conditions = False
         for range in value:
             begin, end = range
             conditions |= ((df[column] >= begin) & (df[column] <= end))
-        return df[conditions]
+        df = df[conditions]
 
     elif type == 'list':
-        return df[df[column].isin(value)]
+        df = df[df[column].isin(value)]
 
     elif type == 'date':
-        return df[df[column] == pd.to_datetime(value)]
+        df = df[df[column] == pd.to_datetime(value)]
 
     elif type == 'date_range':
         begin, end = value
-        return df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
+        df = df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
 
-    return df
+    return df.reset_index(drop=True)
 
 
-def test_intake_sql_get_tables(source):
+def test_intake_sql_get_tables(source, source_tables):
     tables = source.get_tables()
-    assert tables == ['test', 'test_sql', 'test_sql_with_none']
-
-
-def test_intake_sql_get(source, df_test, df_test_sql, df_test_sql_none):
-    pd.testing.assert_frame_equal(source.get('test'), df_test)
-    pd.testing.assert_frame_equal(source.get('test_sql'), df_test_sql)
-    pd.testing.assert_frame_equal(source.get('test_sql_with_none'), df_test_sql_none)
+    assert tables == list(source_tables.keys())
+    for table in tables:
+        pd.testing.assert_frame_equal(source.get(table), source_tables[table])
 
 
 def test_intake_sql_get_schema(source):
@@ -118,106 +113,46 @@ def test_intake_sql_get_schema_with_none(source):
     assert list(source._schema_cache.keys()) == ['test_sql_with_none']
 
 
-def test_intake_sql_transforms(source):
-    df = pd._testing.makeMixedDataFrame()
+@pytest.mark.parametrize(
+    "table_column_value_type", [
+        ('test_sql', 'A', 1, 'single_value'),
+        ('test_sql', 'A', (1, 3), 'range'),
+        ('test_sql', 'A', [(0, 1), (3, 4)], 'range_list'),
+        ('test_sql', 'C', 'foo2', 'single_value'),
+        ('test_sql', 'C', ['foo1', 'foo3'], 'list'),
+        ('test_sql', 'D', dt.datetime(2009, 1, 2), 'single_value'),
+        ('test_sql', 'D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
+        ('test_sql', 'D', dt.date(2009, 1, 2), 'date'),
+        ('test_sql', 'D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range'),
+        ('test_sql_with_none', 'C', None, 'single_value'),
+        ('test_sql_with_none', 'C', [None, 'foo5'], 'list'),
+    ]
+)
+def test_intake_sql_filter(source, table_column_value_type, expected_df):
+    table, column, value, _ = table_column_value_type
+    kwargs = {column: value}
+    filtered = source.get(table, **kwargs)
+    pd.testing.assert_frame_equal(filtered, expected_df)
+
+
+def test_intake_sql_transforms(source, source_tables):
+    df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
     transformed = source.get('test_sql', sql_transforms=transforms)
-    expected = df.groupby('B')['A'].sum().reset_index()
+    expected = df_test_sql.groupby('B')['A'].sum().reset_index()
     pd.testing.assert_frame_equal(transformed, expected)
-    source.clear_cache()
 
 
-def test_intake_sql_filter_int(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', A=1)
-    expected = df[df.A==1].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-    source.clear_cache()
-
-
-def test_intake_sql_filter_None(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql_with_none', C=None)
-    expected = df[(df.A==1) | (df.A==3)].reset_index(drop=True)
-    expected['C'] = None
-    pd.testing.assert_frame_equal(filtered, expected)
-    source.clear_cache()
-
-
-def test_intake_sql_filter_str(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', C='foo2')
-    expected = df[df.C=='foo2'].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_int_range(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', A=(1, 3))
-    expected = df[(df.A>=1) & (df.A<=3)].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_date(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', D=dt.date(2009, 1, 2))
-    expected = df.iloc[1:2].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_datetime(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', D=dt.datetime(2009, 1, 2))
-    expected = df.iloc[1:2].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_datetime_range(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', D=(dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)))
-    expected = df.iloc[1:3].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_date_range(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', D=(dt.date(2009, 1, 2), dt.date(2009, 1, 5)))
-    expected = df.iloc[1:3].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_int_range_list(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', A=[(0, 1), (3, 4)])
-    expected = df[((df.A>=0) & (df.A<=1)) | ((df.A>=3) & (df.A<=4))].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_list(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql', C=['foo1', 'foo3'])
-    expected = df[df.C.isin(['foo1', 'foo3'])].reset_index(drop=True)
-    pd.testing.assert_frame_equal(filtered, expected)
-
-
-def test_intake_sql_filter_list_with_None(source):
-    df = pd._testing.makeMixedDataFrame()
-    filtered = source.get('test_sql_with_none', C=[None, 'foo5'])
-    expected = df[df.A.isin([1, 3, 4])].reset_index(drop=True)
-    expected['C'] = [None, None, 'foo5']
-    pd.testing.assert_frame_equal(filtered, expected)
-    source.clear_cache()
-
-
-def test_intake_sql_transforms_cache(source):
-    df = pd._testing.makeMixedDataFrame()
+def test_intake_sql_transforms_cache(source, source_tables):
+    df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
+
     source.get('test_sql', sql_transforms=transforms)
-    expected = df.groupby('B')['A'].sum().reset_index()
     cache_key = source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in source._cache
+
+    expected = df_test_sql.groupby('B')['A'].sum().reset_index()
     pd.testing.assert_frame_equal(source._cache[cache_key], expected)
 
-    transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
     cache_key = source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in source._cache
