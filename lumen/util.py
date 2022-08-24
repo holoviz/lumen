@@ -236,14 +236,14 @@ def extract_refs(spec, ref_type=None):
     filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
     return filtered
 
-def validate_parameters(params: list[str], expected: list[str], name: str):
+def validate_parameters(params: list[str], expected: list[str], name: str) -> None:
     for p in params:
         if p not in expected:
             first_parth_msg = f"'{p}' not a parameter for '{name}'"
             msg = match_suggestion_message(p, expected, first_parth_msg)
             raise ValueError(msg)
 
-def match_suggestion_message(word: str, possibilities: list[str], msg: str|None = None):
+def match_suggestion_message(word: str, possibilities: list[str], msg: str|None = None) -> str:
     match = get_close_matches(word, possibilities)
     if match:
         if len(match) > 1:
@@ -252,7 +252,7 @@ def match_suggestion_message(word: str, possibilities: list[str], msg: str|None 
         else:
             match_str = match[0]
         if msg:
-            msg = msg[-1] if msg.endswith(".") else msg
+            msg = msg[:-1] if msg.endswith(".") else msg
             msg = msg + f". Did you mean '{match_str}'?"
         else:
             msg = "Did you mean '{match_str}'?"

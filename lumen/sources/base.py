@@ -23,7 +23,9 @@ from ..base import Component
 from ..filters import Filter
 from ..state import state
 from ..transforms import Filter as FilterTransform, Transform
-from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..util import (
+    get_dataframe_schema, is_ref, match_suggestion_message, merge_schemas,
+)
 
 
 def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
@@ -194,7 +196,10 @@ class Source(Component):
             elif spec in state.spec.get('sources', {}):
                 source = state.load_source(spec, state.spec['sources'][spec])
             else:
-                raise ValueError(f"Source with name '{spec}' was not found.")
+                msg = f"Source with name '{spec}' was not found."
+                possibilities = list(state.sources) + list(state.spec.get('sources', {}))
+                msg = match_suggestion_message(spec, possibilities, msg)
+                raise ValueError(msg)
             return source
 
         spec = dict(spec)
