@@ -18,35 +18,8 @@ def source(make_filesource):
 
 
 @pytest.fixture
-def expected_df(column_value_type):
-    df = pd._testing.makeMixedDataFrame()
-    column, value, type = column_value_type
-
-    if type == 'single_value':
-        return df[df[column] == value]
-
-    elif type == 'range':
-        begin, end = value
-        return df[(df[column] >= begin) & (df[column] <= end)]
-
-    elif type == 'range_list':
-        conditions = False
-        for range in value:
-            begin, end = range
-            conditions |= ((df[column] >= begin) & (df[column] <= end))
-        return df[conditions]
-
-    elif type == 'list':
-        return df[df[column].isin(value)]
-
-    elif type == 'date':
-        return df[df[column] == pd.to_datetime(value)]
-
-    elif type == 'date_range':
-        begin, end = value
-        return df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
-
-    return df
+def source_tables():
+    return {'test': pd._testing.makeMixedDataFrame()}
 
 
 def test_source_resolve_module_type():
@@ -71,72 +44,72 @@ def test_file_source_table_cache_key(source, filter_col_A, filter_col_B, filter_
 
 
 @pytest.mark.parametrize(
-    "column_value_type", [
-        ('A', 1, 'single_value'),
-        ('A', (1, 3), 'range'),
-        ('A', (1, 2), 'range'),
-        ('A', [(0, 1), (3, 4)], 'range_list'),
-        ('C', 'foo2', 'single_value'),
-        ('C', ['foo1', 'foo3'], 'list'),
-        ('D', dt.datetime(2009, 1, 2), 'single_value'),
-        ('D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
-        ('D', [dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)], 'list'),
-        ('D', dt.datetime(2009, 1, 2), 'date'),
-        ('D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range'),
+    "table_column_value_type", [
+        ('test', 'A', 1, 'single_value'),
+        ('test', 'A', (1, 3), 'range'),
+        ('test', 'A', (1, 2), 'range'),
+        ('test', 'A', [(0, 1), (3, 4)], 'range_list'),
+        ('test', 'C', 'foo2', 'single_value'),
+        ('test', 'C', ['foo1', 'foo3'], 'list'),
+        ('test', 'D', dt.datetime(2009, 1, 2), 'single_value'),
+        ('test', 'D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
+        ('test', 'D', [dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)], 'list'),
+        ('test', 'D', dt.datetime(2009, 1, 2), 'date'),
+        ('test', 'D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range'),
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def test_file_source_filter(source, column_value_type, dask, expected_df):
-    column, value, _ = column_value_type
+def test_file_source_filter(source, table_column_value_type, dask, expected_filtered_df):
+    table, column, value, _ = table_column_value_type
     kwargs = {column: value, '__dask': dask}
-    filtered = source.get('test', **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_df)
+    filtered = source.get(table, **kwargs)
+    pd.testing.assert_frame_equal(filtered, expected_filtered_df)
 
 
 @pytest.mark.parametrize(
-    "column_value_type", [
-        ('A', 1, 'single_value'),
-        ('A', (1, 3), 'range'),
-        ('A', (1, 2), 'range'),
-        ('A', [(0, 1), (3, 4)], 'range_list'),
-        ('C', 'foo2', 'single_value'),
-        ('C', ['foo1', 'foo3'], 'list'),
-        ('D', dt.datetime(2009, 1, 2), 'single_value'),
-        ('D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
-        ('D', [dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)], 'list'),
-        ('D', dt.datetime(2009, 1, 2), 'date'),
-        ('D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range'),
+    "table_column_value_type", [
+        ('test', 'A', 1, 'single_value'),
+        ('test', 'A', (1, 3), 'range'),
+        ('test', 'A', (1, 2), 'range'),
+        ('test', 'A', [(0, 1), (3, 4)], 'range_list'),
+        ('test', 'C', 'foo2', 'single_value'),
+        ('test', 'C', ['foo1', 'foo3'], 'list'),
+        ('test', 'D', dt.datetime(2009, 1, 2), 'single_value'),
+        ('test', 'D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
+        ('test', 'D', [dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)], 'list'),
+        ('test', 'D', dt.datetime(2009, 1, 2), 'date'),
+        ('test', 'D', (dt.date(2009, 1, 2), dt.date(2009, 1, 5)), 'date_range'),
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def test_file_source_get_query_cache(source, column_value_type, dask, expected_df):
-    column, value, _ = column_value_type
+def test_file_source_get_query_cache(source, table_column_value_type, dask, expected_filtered_df):
+    table, column, value, _ = table_column_value_type
     kwargs = {column: value}
-    source.get('test', __dask=dask, **kwargs)
+    source.get(table, __dask=dask, **kwargs)
     cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
     cached_df = source._cache[cache_key]
     if dask:
         cached_df = cached_df.compute()
-    pd.testing.assert_frame_equal(cached_df, expected_df)
+    pd.testing.assert_frame_equal(cached_df, expected_filtered_df)
     cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
 
 
 @pytest.mark.parametrize(
-    "column_value_type", [
-        ('A', 1, 'single_value'),
-        ('A', [(0, 1), (3, 4)], 'range_list'),
-        ('C', ['foo1', 'foo3'], 'list'),
-        ('D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
-        ('D', dt.datetime(2009, 1, 2), 'date'),
+    "table_column_value_type", [
+        ('test', 'A', 1, 'single_value'),
+        ('test', 'A', [(0, 1), (3, 4)], 'range_list'),
+        ('test', 'C', ['foo1', 'foo3'], 'list'),
+        ('test', 'D', (dt.datetime(2009, 1, 2), dt.datetime(2009, 1, 5)), 'range'),
+        ('test', 'D', dt.datetime(2009, 1, 2), 'date'),
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def test_file_source_clear_cache(source, column_value_type, dask):
-    column, value, _ = column_value_type
+def test_file_source_clear_cache(source, table_column_value_type, dask):
+    table, column, value, _ = table_column_value_type
     kwargs = {column: value}
-    source.get('test', __dask=dask, **kwargs)
+    source.get(table, __dask=dask, **kwargs)
     cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
     source.clear_cache()
