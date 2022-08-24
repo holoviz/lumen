@@ -54,6 +54,7 @@ def tables_mode_spec():
 
 def test_derived_source_resolve_module_type():
     assert DerivedSource._get_type('lumen.sources.base.DerivedSource') is DerivedSource
+    assert DerivedSource.source_type == 'derived'
 
 
 def test_derived_mirror_source(original, mirror_mode_spec):
