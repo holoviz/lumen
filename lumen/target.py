@@ -49,7 +49,6 @@ class Card(Viewer):
         return self._card
 
     def _construct_layout(self):
-        kwargs = dict(self.kwargs)
         layout = self.layout
         if isinstance(layout, list):
             item = pn.Column(sizing_mode='stretch_both')
@@ -68,6 +67,7 @@ class Card(Viewer):
                     row.append(view.panel)
                 item.append(row)
         else:
+            kwargs = dict(self.kwargs)
             if isinstance(layout, dict):
                 layout_kwargs = dict(layout)
                 layout = layout_kwargs.pop('type')
@@ -75,6 +75,8 @@ class Card(Viewer):
             if layout == 'grid' and 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
             layout_type = _LAYOUTS[layout]
+            layout_params = list(layout_type.param.params())
+            kwargs = {k: v for k, v in kwargs.items() if k in layout_params}
             item = layout_type(*(view.panel for view in self.views), **kwargs)
         return item
 
