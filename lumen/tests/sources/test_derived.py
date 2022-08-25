@@ -1,9 +1,15 @@
+import datetime as dt
 import os
 
 import pandas as pd
 import pytest
 
 from lumen.sources.base import DerivedSource
+
+from .utils import (
+    source_clear_cache_get_query, source_clear_cache_get_schema,
+    source_get_cache_no_query, source_get_tables, source_table_cache_key,
+)
 
 
 @pytest.fixture
@@ -52,6 +58,16 @@ def tables_mode_spec():
     return spec
 
 
+@pytest.fixture
+def tables_mode_derived(original, tables_mode_spec):
+    return DerivedSource.from_spec(tables_mode_spec)
+
+
+@pytest.fixture
+def source_tables():
+    return {'derived': pd._testing.makeMixedDataFrame()}
+
+
 def test_derived_source_resolve_module_type():
     assert DerivedSource._get_type('lumen.sources.base.DerivedSource') is DerivedSource
     assert DerivedSource.source_type == 'derived'
@@ -80,14 +96,6 @@ def test_derived_mirror_source_apply(
     pd.testing.assert_frame_equal(derived.get('test'), expected_table)
 
 
-def test_derived_tables_source(original, tables_mode_spec):
-    derived = DerivedSource.from_spec(tables_mode_spec)
-    assert derived.get_tables() == ['derived']
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(derived.get('derived'), df)
-    assert original.get_schema('test') == derived.get_schema('derived')
-
-
 @pytest.mark.parametrize("additional_spec", [
     ('transforms', [{'type': 'iloc', 'end': 3}]),
     ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
@@ -103,19 +111,24 @@ def test_derived_tables_source_apply(
     assert derived.get_schema('derived') == expected_schema
 
 
-def test_derived_get_query_cache(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
-    df = derived.get('test')
-    cache_key = derived._get_key('test')
-    assert cache_key in derived._cache
-    cached_df = derived._cache[cache_key]
-    pd.testing.assert_frame_equal(cached_df, df)
+def test_derived_tables_source(tables_mode_derived, source_tables):
+    assert source_get_tables(tables_mode_derived, source_tables)
 
 
-def test_derived_clear_cache(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
-    derived.get('test')
-    cache_key = derived._get_key('test')
-    assert cache_key in derived._cache
-    derived.clear_cache()
-    assert len(derived._cache) == 0
+def test_derived_cache_key(tables_mode_derived):
+    table = 'derived'
+    assert source_table_cache_key(tables_mode_derived, table)
+
+
+def test_derived_get_cache_no_query(tables_mode_derived, source_tables):
+    for table in source_tables:
+        expected_table = source_tables[table]
+        source_get_cache_no_query(tables_mode_derived, table, expected_table)
+
+
+def test_derived_clear_cache_get_query(tables_mode_derived):
+    assert source_clear_cache_get_query(tables_mode_derived, table='derived')
+
+
+def test_derived_clear_cache_get_schema(tables_mode_derived):
+    assert source_clear_cache_get_schema(tables_mode_derived, table='derived')

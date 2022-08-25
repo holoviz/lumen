@@ -11,8 +11,9 @@ from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
 from .utils import (
-    source_get_tables, source_filter, source_clear_cache_get_query,
-    source_get_cache_query, source_table_cache_key
+    source_clear_cache_get_query, source_clear_cache_get_schema, source_filter,
+    source_get_cache_query, source_get_schema_cache,
+    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
 )
 
 
@@ -30,6 +31,10 @@ def source_tables():
 def test_source_resolve_module_type():
     assert FileSource._get_type('lumen.sources.FileSource') is FileSource
     assert FileSource.source_type == 'file'
+
+
+def test_file_source_get_tables(source, source_tables):
+    assert source_get_tables(source, source_tables)
 
 
 @pytest.mark.parametrize("table", ['test'])
@@ -88,6 +93,14 @@ def test_file_source_get_cache_query(source, table_column_value_type, dask, expe
     assert source_get_cache_query(source, table_column_value_type, dask, expected_filtered_df)
 
 
+def test_file_source_get_schema_cache(source):
+    assert source_get_schema_cache(source, table='test')
+
+
+def test_file_source_get_schema_update_cache(source):
+    assert source_get_schema_update_cache(source, table='test')
+
+
 @pytest.mark.parametrize(
     "table_column_value_type", [
         ('test', 'A', 1, 'single_value'),
@@ -106,6 +119,10 @@ def test_file_source_clear_cache_get_query(source, table_column_value_type, dask
     assert source_clear_cache_get_query(source, table, kwargs)
 
 
+def test_file_source_clear_cache_get_schema(source):
+    assert source_clear_cache_get_schema(source, table='test')
+
+
 def test_file_source_get_cache_query_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
@@ -121,10 +138,6 @@ def test_file_source_get_cache_query_to_file(make_filesource, cachedir):
         df,
         pd._testing.makeMixedDataFrame().iloc[1:3]
     )
-
-
-def test_file_source_get_tables(source, source_tables):
-    assert source_get_tables(source, source_tables)
 
 
 def test_file_source_variable(make_variable_filesource):

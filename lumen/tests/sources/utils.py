@@ -8,7 +8,7 @@ def source_get_tables(source, source_tables):
     return True
 
 
-def source_table_cache_key(source, table, kwargs1, kwargs2):
+def source_table_cache_key(source, table, kwargs1={}, kwargs2={}):
     key1 = source._get_key(table, **kwargs1)
     key2 = source._get_key(table, **kwargs2)
     assert key1 == key2
@@ -56,19 +56,11 @@ def source_get_cache_no_query(source, table, expected_df, dask=False):
     return True
 
 
-def source_clear_cache_get_query(source, table, kwargs):
-    source.get(table, **kwargs)
-    assert len(source._cache) == 1
-    source.clear_cache()
-    assert len(source._cache) == 0
-    return True
-
-
-def source_clear_cache_get_query_get_schema(source, table):
+def source_get_schema_cache(source, table):
     source.get_schema(table)
     assert len(source._schema_cache) == 1
-    source.clear_cache()
-    assert len(source._schema_cache) == 0
+    assert table in source._schema_cache
+    return True
 
 
 def source_get_schema_update_cache(source, table):
@@ -81,3 +73,20 @@ def source_get_schema_update_cache(source, table):
     source.get_schema(table)
     assert len(source._schema_cache) == 1
     assert len(source._cache) == 1
+    return True
+
+
+def source_clear_cache_get_query(source, table, kwargs={}):
+    source.get(table, **kwargs)
+    assert len(source._cache) == 1
+    source.clear_cache()
+    assert len(source._cache) == 0
+    return True
+
+
+def source_clear_cache_get_schema(source, table):
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    source.clear_cache()
+    assert len(source._schema_cache) == 0
+    return True
