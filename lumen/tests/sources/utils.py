@@ -60,25 +60,17 @@ def source_get_cache_no_query(source, table, expected_df, dask=None, use_dask=Fa
     return True
 
 
-def source_get_schema_cache(source, table):
-    source.get_schema(table)
-    assert len(source._schema_cache) == 1
-    assert table in source._schema_cache
-    source.get_schema(table)
-    assert len(source._schema_cache) == 1
-    assert table in source._schema_cache
-    return True
-
-
 def source_get_schema_update_cache(source, table):
     # for some source type,
     # source.get_schema() updates both source._schema_cache and source._cache
     source.get_schema(table)
+    assert table in source._schema_cache
     assert len(source._schema_cache) == 1
     assert len(source._cache) == 1
     # schema for this table is now cached, call source.get_schema() again does not update cache
     source.get_schema(table)
     assert len(source._schema_cache) == 1
+    assert table in source._schema_cache
     assert len(source._cache) == 1
     return True
 
@@ -88,10 +80,12 @@ def source_get_schema_not_update_cache(source, table):
     # source.get_schema() only updates source._schema_cache, source._cache remains the same
     source.get_schema(table)
     assert len(source._schema_cache) == 1
+    assert table in source._schema_cache
     assert len(source._cache) == 0
     # schema for this table is now cached, call source.get_schema() again does not update cache
     source.get_schema(table)
     assert len(source._schema_cache) == 1
+    assert table in source._schema_cache
     assert len(source._cache) == 0
     return True
 

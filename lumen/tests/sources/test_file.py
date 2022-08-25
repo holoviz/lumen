@@ -12,8 +12,7 @@ from lumen.transforms.sql import SQLLimit
 
 from .utils import (
     source_clear_cache, source_filter, source_get_cache_query,
-    source_get_schema_cache, source_get_schema_update_cache, source_get_tables,
-    source_table_cache_key,
+    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
 )
 
 
@@ -91,10 +90,6 @@ def test_file_source_filter(source, table_column_value_type, dask, expected_filt
 @pytest.mark.parametrize("dask", [True, False])
 def test_file_source_get_cache_query(source, table_column_value_type, dask, expected_filtered_df):
     assert source_get_cache_query(source, table_column_value_type, dask, expected_filtered_df)
-
-
-def test_file_source_get_schema_cache(source):
-    assert source_get_schema_cache(source, table='test')
 
 
 def test_file_source_get_schema_update_cache(source):

@@ -8,8 +8,7 @@ from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
 
 from .utils import (
-    source_clear_cache, source_filter, source_get_schema_cache,
-    source_get_schema_not_update_cache, source_get_tables,
+    source_filter, source_get_schema_not_update_cache, source_get_tables,
     source_table_cache_key,
 )
 
@@ -76,13 +75,8 @@ def test_intake_sql_get_tables(source, source_tables):
 
 
 def test_intake_sql_get_schema(source, source_schemas):
-    assert source.get_schema('test_sql') == source_schemas['test_sql']
-    assert source_get_schema_cache(source, table='test_sql')
-
-
-def test_intake_sql_get_schema_with_none(source, source_schemas):
-    assert source.get_schema('test_sql_with_none') == source_schemas['test_sql_with_none']
-    assert source_get_schema_cache(source, table='test_sql_with_none')
+    for table in source_schemas:
+        assert source.get_schema(table) == source_schemas[table]
 
 
 def test_intake_sql_cache_key(source, source_tables):
@@ -137,7 +131,3 @@ def test_intake_sql_transforms_cache(source, source_tables):
 
 def test_intake_sql_get_schema_not_update_cache(source):
     assert source_get_schema_not_update_cache(source, table='test_sql')
-
-
-def test_intake_sql_clear_cache_get_query(source):
-    assert source_clear_cache(source, table='test_sql')

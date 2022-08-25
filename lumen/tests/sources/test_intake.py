@@ -8,9 +8,8 @@ import yaml
 from lumen.sources.intake import IntakeSource
 
 from .utils import (
-    source_clear_cache, source_filter, source_get_cache_no_query,
-    source_get_schema_cache, source_get_schema_update_cache, source_get_tables,
-    source_table_cache_key,
+    source_filter, source_get_cache_no_query, source_get_schema_update_cache,
+    source_get_tables,
 )
 
 
@@ -60,10 +59,6 @@ def test_intake_source_from_dict(source_tables):
     assert source_get_tables(source, source_tables)
 
 
-def test_intake_source_table_cache_key(source):
-    assert source_table_cache_key(source, table='test')
-
-
 @pytest.mark.parametrize(
     "table_column_value_type", [
         ('test', 'A', 1, 'single_value'),
@@ -89,15 +84,6 @@ def test_intake_source_get_cache_no_query(source, dask, source_tables):
         assert source_get_cache_no_query(source, table, expected_table, dask, use_dask=True)
 
 
-def test_intake_source_get_schema_cache(source, source_tables):
-    for table in source_tables:
-        assert source_get_schema_cache(source, table)
-
-
 def test_intake_source_get_schema_update_cache(source, source_tables):
     for table in source_tables:
         assert source_get_schema_update_cache(source, table)
-
-
-def test_intake_source_clear_cache(source):
-    assert source_clear_cache(source, table='test')

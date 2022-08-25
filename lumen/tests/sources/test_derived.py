@@ -7,7 +7,7 @@ from lumen.sources.base import DerivedSource
 
 from .utils import (
     source_clear_cache, source_get_cache_no_query,
-    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
+    source_get_schema_update_cache, source_get_tables,
 )
 
 
@@ -112,10 +112,6 @@ def test_derived_source_tables_mode_apply(
 
 def test_derived_source_get_tables(source, source_tables):
     assert source_get_tables(source, source_tables)
-
-
-def test_derived_source_cache_key(source):
-    assert source_table_cache_key(source, table='derived')
 
 
 @pytest.mark.parametrize("dask", [True, False])
