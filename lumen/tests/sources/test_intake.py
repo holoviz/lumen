@@ -14,22 +14,31 @@ from .utils import source_filter, source_get_tables
 def source():
     root = os.path.dirname(__file__)
     return IntakeSource(
-        uri=os.path.join(root, 'catalog.yml'), root=root
+        uri=os.path.join(root, 'catalog_intake.yml'), root=root
     )
 
 
 @pytest.fixture
 def source_tables():
-    df_test = pd._testing.makeMixedDataFrame()
-    df_test_sql = pd._testing.makeMixedDataFrame()
-    df_test_sql_none = pd._testing.makeMixedDataFrame()
-    df_test_sql_none['C'] = ['foo1', None, 'foo3', None, 'foo5']
-    tables = {
-        'test': df_test,
-        'test_sql': df_test_sql,
-        'test_sql_with_none': df_test_sql_none,
+    return {'test': pd._testing.makeMixedDataFrame()}
+
+
+@pytest.fixture
+def source_schemas():
+    schemas = {
+        'test': {
+            'A': {'inclusiveMaximum': 4.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
+            'B': {'inclusiveMaximum': 1.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
+            'C': {'enum': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5'], 'type': 'string'},
+            'D': {
+                'format': 'datetime',
+                'inclusiveMaximum': '2009-01-07T00:00:00',
+                'inclusiveMinimum': '2009-01-01T00:00:00',
+                'type': 'string'
+            }
+        }
     }
-    return tables
+    return schemas
 
 
 def test_intake_resolve_module_type():
@@ -43,7 +52,7 @@ def test_intake_source_from_file(source, source_tables):
 
 def test_intake_source_from_dict():
     root = os.path.dirname(__file__)
-    with open(os.path.join(root, 'catalog.yml')) as f:
+    with open(os.path.join(root, 'catalog_intake.yml')) as f:
         catalog = yaml.load(f, Loader=yaml.Loader)
     source = IntakeSource(catalog=catalog, root=root)
     df = pd._testing.makeMixedDataFrame()

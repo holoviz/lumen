@@ -47,16 +47,21 @@ def source_get_cache_no_query(source, table, expected_df, dask=False):
     source.get(table, __dask=dask)
     cache_key = source._get_key(table)
     assert cache_key in source._cache
+    assert len(source._cache) == 1
     cached_df = source._cache[cache_key]
     if dask:
         cached_df = cached_df.compute()
     pd.testing.assert_frame_equal(cached_df, expected_df)
     cache_key = source._get_key(table)
     assert cache_key in source._cache
+    assert len(source._cache) == 1
     return True
 
 
 def source_get_schema_cache(source, table):
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    assert table in source._schema_cache
     source.get_schema(table)
     assert len(source._schema_cache) == 1
     assert table in source._schema_cache

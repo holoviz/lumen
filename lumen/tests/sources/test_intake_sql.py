@@ -7,6 +7,12 @@ import pytest
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
 
+from .utils import (
+    source_clear_cache_get_query, source_clear_cache_get_schema, source_filter,
+    source_get_cache_query, source_get_schema_cache,
+    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
+)
+
 
 @pytest.fixture
 def source():
@@ -19,32 +25,19 @@ def source():
 
 @pytest.fixture
 def source_tables():
-    df_test = pd._testing.makeMixedDataFrame()
     df_test_sql = pd._testing.makeMixedDataFrame()
     df_test_sql_none = pd._testing.makeMixedDataFrame()
     df_test_sql_none['C'] = ['foo1', None, 'foo3', None, 'foo5']
     tables = {
-        'test': df_test,
         'test_sql': df_test_sql,
         'test_sql_with_none': df_test_sql_none,
     }
     return tables
 
 
-def test_intake_sql_resolve_module_type():
-    assert IntakeSQLSource._get_type('lumen.sources.intake_sql.IntakeSQLSource') is IntakeSQLSource
-    assert IntakeSQLSource.source_type == 'intake_sql'
-
-
-def test_intake_sql_get_tables(source, source_tables):
-    tables = source.get_tables()
-    assert tables == list(source_tables.keys())
-    for table in tables:
-        pd.testing.assert_frame_equal(source.get(table), source_tables[table])
-
-
-def test_intake_sql_get_schema(source):
-    expected_sql = {
+@pytest.fixture
+def source_schemas():
+    test_sql_schema = {
         'A': {'inclusiveMaximum': 4.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
         'B': {'inclusiveMaximum': 1.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
         'C': {'enum': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5'], 'type': 'string'},
@@ -55,20 +48,7 @@ def test_intake_sql_get_schema(source):
             'type': 'string'
         }
     }
-    expected_csv = dict(expected_sql, D={
-        'format': 'datetime',
-        'inclusiveMaximum': '2009-01-07T00:00:00',
-        'inclusiveMinimum': '2009-01-01T00:00:00',
-        'type': 'string'
-    })
-    assert source.get_schema('test_sql') == expected_sql
-    assert list(source._schema_cache.keys()) == ['test_sql']
-    assert source.get_schema('test') == expected_csv
-    assert list(source._schema_cache.keys()) == ['test_sql', 'test']
-
-
-def test_intake_sql_get_schema_with_none(source):
-    expected_sql = {
+    test_sql_with_none_schema = {
         'A': {'inclusiveMaximum': 4.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
         'B': {'inclusiveMaximum': 1.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
         'C': {'enum': ['foo1', None, 'foo3', 'foo5'], 'type': 'string'},
@@ -79,13 +59,30 @@ def test_intake_sql_get_schema_with_none(source):
             'type': 'string'
         }
     }
-    assert source.get_schema('test_sql_with_none') == expected_sql
-    assert list(source._schema_cache.keys()) == ['test_sql_with_none']
+    schemas = {
+        'test_sql': test_sql_schema,
+        'test_sql_with_none': test_sql_with_none_schema,
+    }
+    return schemas
 
 
-def test_intake_sql_get_schema_cache(source):
-    source.get_schema('test_sql')
-    assert 'test_sql' in source._schema_cache
+def test_intake_sql_resolve_module_type():
+    assert IntakeSQLSource._get_type('lumen.sources.intake_sql.IntakeSQLSource') is IntakeSQLSource
+    assert IntakeSQLSource.source_type == 'intake_sql'
+
+
+def test_intake_sql_get_tables(source, source_tables):
+    assert source_get_tables(source, source_tables)
+
+
+def test_intake_sql_get_schema(source, source_schemas):
+    assert source.get_schema('test_sql') == source_schemas['test_sql']
+    assert source_get_schema_cache(source, table='test_sql')
+
+
+def test_intake_sql_get_schema_with_none(source, source_schemas):
+    assert source.get_schema('test_sql_with_none') == source_schemas['test_sql_with_none']
+    assert source_get_schema_cache(source, table='test_sql_with_none')
 
 
 @pytest.mark.parametrize(
