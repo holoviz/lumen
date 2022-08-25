@@ -52,7 +52,7 @@ class Card(Viewer):
     def _construct_layout(self):
         layout = self.layout
         if isinstance(layout, list):
-            if np.max(layout) >= len(self.views):
+            if np.concatenate(layout).max() >= len(self.views):
                 raise ValueError(
                     f"Layout for '{self.title}' can only have values up to {len(self.views) - 1}."
                 )
