@@ -17,7 +17,7 @@ from .utils import (
 def source():
     root = os.path.dirname(__file__)
     intake_sql_source = IntakeSQLSource(
-        uri=os.path.join(root, 'catalog.yml'), root=root
+        uri=os.path.join(root, 'catalog_intake_sql.yml'), root=root
     )
     return intake_sql_source
 
