@@ -4,7 +4,6 @@ from functools import partial
 from io import BytesIO, StringIO
 from itertools import product
 
-import numpy as np
 import panel as pn
 import param
 
@@ -52,16 +51,19 @@ class Card(Viewer):
     def _construct_layout(self):
         layout = self.layout
         if isinstance(layout, list):
-            if np.concatenate(layout).max() >= len(self.views):
-                raise ValueError(
-                    f"Layout for '{self.title}' can only have values up to {len(self.views) - 1}."
-                )
+            view_size = len(self.views)
             item = pn.Column(sizing_mode='stretch_both')
             for row_spec in layout:
                 row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
                     if isinstance(index, int):
-                        view = self.views[index]
+                        if index < view_size:
+                            view = self.views[index]
+                        else:
+                            raise ValueError(
+                                f"Layout for '{self.title}' can only "
+                                f"have values up to {view_size - 1}."
+                            )
                     else:
                         matches = [view for view in self.views if view.name == index]
                         if matches:
