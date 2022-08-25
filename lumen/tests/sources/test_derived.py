@@ -7,7 +7,8 @@ from lumen.sources.base import DerivedSource
 
 from .utils import (
     source_clear_cache_get_query, source_clear_cache_get_schema,
-    source_get_cache_no_query, source_get_tables, source_table_cache_key,
+    source_get_cache_no_query, source_get_schema_update_cache,
+    source_get_tables, source_table_cache_key,
 )
 
 
@@ -125,6 +126,10 @@ def test_derived_source_get_cache_no_query(source, dask, source_tables):
         assert source_get_cache_no_query(
             source, table, expected_table, dask, use_dask=False
         )
+
+
+def test_derived_source_get_schema_update_cache(source):
+    assert source_get_schema_update_cache(source, table='derived')
 
 
 def test_derived_source_clear_cache_get_query(source):

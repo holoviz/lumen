@@ -83,6 +83,19 @@ def source_get_schema_update_cache(source, table):
     return True
 
 
+def source_get_schema_not_update_cache(source, table):
+    # for some source type,
+    # source.get_schema() only updates source._schema_cache, source._cache remains the same
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    assert len(source._cache) == 0
+    # schema for this table is now cached, call source.get_schema() again does not update cache
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    assert len(source._cache) == 0
+    return True
+
+
 def source_clear_cache_get_query(source, table, kwargs={}):
     source.get(table, **kwargs)
     assert len(source._cache) == 1

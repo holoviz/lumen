@@ -9,8 +9,8 @@ from lumen.transforms.sql import SQLGroupBy
 
 from .utils import (
     source_clear_cache_get_query, source_clear_cache_get_schema, source_filter,
-    source_get_cache_query, source_get_schema_cache,
-    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
+    source_get_schema_cache, source_get_schema_not_update_cache,
+    source_get_tables, source_table_cache_key,
 )
 
 
@@ -85,6 +85,11 @@ def test_intake_sql_get_schema_with_none(source, source_schemas):
     assert source_get_schema_cache(source, table='test_sql_with_none')
 
 
+def test_intake_sql_cache_key(source, source_tables):
+    for table in source_tables:
+        assert source_table_cache_key(source, table)
+
+
 @pytest.mark.parametrize(
     "table_column_value_type", [
         ('test_sql', 'A', 1, 'single_value'),
@@ -102,10 +107,9 @@ def test_intake_sql_get_schema_with_none(source, source_schemas):
 )
 @pytest.mark.parametrize("dask", [True, False])
 def test_intake_sql_filter(source, table_column_value_type, dask, expected_filtered_df):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value}
-    filtered = source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
+    assert source_filter(
+        source, table_column_value_type, dask, expected_filtered_df.reset_index(drop=True)
+    )
 
 
 def test_intake_sql_transforms(source, source_tables):
@@ -131,11 +135,13 @@ def test_intake_sql_transforms_cache(source, source_tables):
     assert cache_key in source._cache
 
 
-def test_intake_sql_clear_cache(source):
-    source.get('test_sql')
-    source.get_schema('test_sql')
-    assert len(source._cache) == 1
-    assert len(source._schema_cache) == 1
-    source.clear_cache()
-    assert len(source._cache) == 0
-    assert len(source._schema_cache) == 0
+def test_intake_sql_get_schema_not_update_cache(source):
+    assert source_get_schema_not_update_cache(source, table='test_sql')
+
+
+def test_intake_sql_clear_cache_get_query(source):
+    assert source_clear_cache_get_query(source, table='test_sql')
+
+
+def test_intake_sql_clear_cache_get_schema(source):
+    assert source_clear_cache_get_schema(source, table='test_sql')
