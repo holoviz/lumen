@@ -73,7 +73,7 @@ def test_intake_source_from_dict(source_tables):
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def _test_intake_source_filter(source, table_column_value_type, dask, expected_filtered_df):
+def test_intake_source_filter(source, table_column_value_type, dask, expected_filtered_df):
     assert source_filter(source, table_column_value_type, dask, expected_filtered_df)
 
 
@@ -82,6 +82,10 @@ def test_intake_source_get_cache_no_query(source, dask, source_tables):
     for table in source_tables:
         expected_table = source_tables[table]
         assert source_get_cache_no_query(source, table, expected_table, dask, use_dask=True)
+
+
+def test_intake_source_get_schema(source, source_schemas):
+    assert source.get_schema('test') == source_schemas['test']
 
 
 def test_intake_source_get_schema_update_cache(source, source_tables):
