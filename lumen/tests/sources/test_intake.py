@@ -7,6 +7,8 @@ import yaml
 
 from lumen.sources.intake import IntakeSource
 
+from .utils import source_filter, source_get_tables
+
 
 @pytest.fixture
 def source():
@@ -35,9 +37,8 @@ def test_intake_resolve_module_type():
     assert IntakeSource.source_type == 'intake'
 
 
-def test_intake_source_from_file(source):
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test'), df)
+def test_intake_source_from_file(source, source_tables):
+    assert source_get_tables(source, source_tables)
 
 
 def test_intake_source_from_dict():
@@ -64,7 +65,4 @@ def test_intake_source_from_dict():
 )
 @pytest.mark.parametrize("dask", [True, False])
 def test_intake_filter(source, table_column_value_type, dask, expected_filtered_df):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value}
-    filtered = source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df)
+    assert source_filter(source, table_column_value_type, dask, expected_filtered_df)
