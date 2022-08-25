@@ -57,13 +57,13 @@ class Card(Viewer):
                 row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
                     if isinstance(index, int):
-                        if index < view_size:
-                            view = self.views[index]
-                        else:
+                        if index >= view_size:
                             raise ValueError(
-                                f"Layout for '{self.title}' can only "
-                                f"have values up to {view_size - 1}."
+                                f"Layout specification for '{self.title}' target references "
+                                f"out-of-bounds index ({index}) even though the maximum "
+                                f"available index is {view_size - 1}."
                             )
+                        view = self.views[index]
                     else:
                         matches = [view for view in self.views if view.name == index]
                         if matches:
