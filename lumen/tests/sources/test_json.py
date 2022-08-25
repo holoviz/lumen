@@ -17,8 +17,8 @@ def source(make_jsonsource):
 @pytest.fixture
 def source_tables():
     df = pd._testing.makeMixedDataFrame()
-    df['D'] = pd.to_datetime(df['D']).dt.date
-    df = df.astype({'A': int, 'B': int, "D": 'str'})
+    df['D'] = pd.to_datetime(df['D']).dt.date.astype(str)
+    df = df.astype({'A': int, 'B': int, 'D': 'str'})
     return {'local': df}
 
 
@@ -38,11 +38,13 @@ def test_json_source_resolve_module_type():
 )
 @pytest.mark.parametrize("dask", [True, False])
 def test_json_source_filter(source, table_column_value_type, dask, expected_filtered_df):
-    assert source_filter(source, table_column_value_type, dask, expected_filtered_df)
+    assert source_filter(
+        source, table_column_value_type, dask, expected_filtered_df, check_dtype=False
+    )
 
 
 @pytest.mark.parametrize("dask", [True, False])
-def test_file_source_get_cache_no_query(source, dask, source_tables):
+def test_json_source_get_cache_no_query(source, dask, source_tables):
     assert source_get_cache_no_query(
-        source, 'local', source_tables['local'], dask, use_dask=False
+        source, 'local', source_tables['local'], dask, use_dask=False, check_dtype=False,
     )
