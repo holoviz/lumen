@@ -322,7 +322,8 @@ class Target(param.Parameterized):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
         # Render content
-        self._construct_cards()
+        if self.views:
+            self._construct_cards()
         self._cards = self.get_cards()
 
         # Set up watchers
@@ -340,8 +341,6 @@ class Target(param.Parameterized):
         controls, all_transforms = [], []
         linked_views = None
         for facet_filters in self.facet.filters:
-            if self.views is None:
-                raise ValueError(f"Ensure that the target '{self.title}' declares a 'views' field.")
             key = tuple(str(f.value) for f in facet_filters)
             self._cache[key] = card = Card.from_spec({
                 'kwargs': self.kwargs,
@@ -522,6 +521,9 @@ class Target(param.Parameterized):
         # Resolve source
         spec = dict(spec)
         views = spec.get('views', [])
+        if views is None:
+            raise ValueError(f"Ensure that the target '{spec['title']}' declares a 'views' field.")
+
         pipelines = {}
         source_filters = None
         filter_specs = spec.pop('filters', [])
