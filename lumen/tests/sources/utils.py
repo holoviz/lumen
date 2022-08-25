@@ -96,17 +96,10 @@ def source_get_schema_not_update_cache(source, table):
     return True
 
 
-def source_clear_cache_get_query(source, table, kwargs={}):
+def source_clear_cache(source, table, kwargs={}):
     source.get(table, **kwargs)
-    assert len(source._cache) == 1
+    source.get_schema(table)
     source.clear_cache()
     assert len(source._cache) == 0
-    return True
-
-
-def source_clear_cache_get_schema(source, table):
-    source.get_schema(table)
-    assert len(source._schema_cache) == 1
-    source.clear_cache()
     assert len(source._schema_cache) == 0
     return True

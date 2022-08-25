@@ -6,9 +6,8 @@ import pytest
 from lumen.sources.base import DerivedSource
 
 from .utils import (
-    source_clear_cache_get_query, source_clear_cache_get_schema,
-    source_get_cache_no_query, source_get_schema_update_cache,
-    source_get_tables, source_table_cache_key,
+    source_clear_cache, source_get_cache_no_query,
+    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
 )
 
 
@@ -132,9 +131,5 @@ def test_derived_source_get_schema_update_cache(source):
     assert source_get_schema_update_cache(source, table='derived')
 
 
-def test_derived_source_clear_cache_get_query(source):
-    assert source_clear_cache_get_query(source, table='derived')
-
-
-def test_derived_source_clear_cache_get_schema(source):
-    assert source_clear_cache_get_schema(source, table='derived')
+def test_derived_source_clear_cache(source):
+    assert source_clear_cache(source, table='derived')
