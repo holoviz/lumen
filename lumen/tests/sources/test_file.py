@@ -11,8 +11,8 @@ from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
 from .utils import (
-    source_get_tables, source_filter, source_clear_cache,
-    source_get_query_cache, source_table_cache_key
+    source_get_tables, source_filter, source_clear_cache_get_query,
+    source_get_cache_query, source_table_cache_key
 )
 
 
@@ -84,8 +84,8 @@ def test_file_source_filter(source, table_column_value_type, dask, expected_filt
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def test_file_source_get_query_cache(source, table_column_value_type, dask, expected_filtered_df):
-    assert source_get_query_cache(source, table_column_value_type, dask, expected_filtered_df)
+def test_file_source_get_cache_query(source, table_column_value_type, dask, expected_filtered_df):
+    assert source_get_cache_query(source, table_column_value_type, dask, expected_filtered_df)
 
 
 @pytest.mark.parametrize(
@@ -97,12 +97,16 @@ def test_file_source_get_query_cache(source, table_column_value_type, dask, expe
         ('test', 'D', dt.datetime(2009, 1, 2), 'date'),
     ]
 )
-@pytest.mark.parametrize("dask", [True, False])
-def test_file_source_clear_cache(source, table_column_value_type, dask):
-    assert source_clear_cache(source, table_column_value_type, dask)
+@pytest.mark.parametrize("dask", [True])
+def test_file_source_clear_cache_get_query(source, table_column_value_type, dask):
+    table, column, value, _ = table_column_value_type
+    kwargs = {column: value}
+    if dask is not None:
+        kwargs['__dask'] = dask
+    assert source_clear_cache_get_query(source, table, kwargs)
 
 
-def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
+def test_file_source_get_cache_query_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
     source.get('test', A=(1, 2))

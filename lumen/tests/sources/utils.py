@@ -3,6 +3,8 @@ import pandas as pd
 
 def source_get_tables(source, source_tables):
     assert source.get_tables() == list(source_tables.keys())
+    for table in source_tables:
+        pd.testing.assert_frame_equal(source.get(table), source_tables[table])
     return True
 
 
@@ -23,7 +25,7 @@ def source_filter(source, table_column_value_type, dask, expected_df):
     return True
 
 
-def source_get_query_cache(source, table_column_value_type, dask, expected_df):
+def source_get_cache_query(source, table_column_value_type, dask, expected_df):
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     if dask:
@@ -41,14 +43,41 @@ def source_get_query_cache(source, table_column_value_type, dask, expected_df):
     return True
 
 
-def source_clear_cache(source, table_column_value_type, dask):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value}
-    cache_key = source._get_key(table, **kwargs)
-    if dask is not None:
-        kwargs['__dask'] = dask
-    source.get(table, **kwargs)
+def source_get_cache_no_query(source, table, expected_df, dask=False):
+    source.get(table, __dask=dask)
+    cache_key = source._get_key(table)
     assert cache_key in source._cache
+    cached_df = source._cache[cache_key]
+    if dask:
+        cached_df = cached_df.compute()
+    pd.testing.assert_frame_equal(cached_df, expected_df)
+    cache_key = source._get_key(table)
+    assert cache_key in source._cache
+    return True
+
+
+def source_clear_cache_get_query(source, table, kwargs):
+    source.get(table, **kwargs)
+    assert len(source._cache) == 1
     source.clear_cache()
     assert len(source._cache) == 0
     return True
+
+
+def source_clear_cache_get_query_get_schema(source, table):
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    source.clear_cache()
+    assert len(source._schema_cache) == 0
+
+
+def source_get_schema_update_cache(source, table):
+    # for some source type,
+    # source.get_schema() updates both source._schema_cache and source._cache
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    assert len(source._cache) == 1
+    # schema for this table is now cached, call source.get_schema() again does not update cache
+    source.get_schema(table)
+    assert len(source._schema_cache) == 1
+    assert len(source._cache) == 1
