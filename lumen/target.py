@@ -520,9 +520,9 @@ class Target(param.Parameterized):
         """
         # Resolve source
         spec = dict(spec)
-        views = spec.get('views', [])
-        if views is None:
+        if 'views' not in spec:
             raise ValueError(f"Ensure that the target '{spec['title']}' declares a 'views' field.")
+        views = spec['views']
 
         pipelines = {}
         source_filters = None
