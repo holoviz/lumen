@@ -2,6 +2,7 @@ from pathlib import Path
 
 import holoviews as hv
 import numpy as np
+import pytest
 
 from bokeh.document import Document
 from panel.io.server import set_curdoc
@@ -182,3 +183,40 @@ def test_transform_controls_facetted(set_root):
 
         assert np.array_equal(hv_pane1.object['A'], np.array([4, 2, 0]))
         assert np.array_equal(hv_pane2.object['A'], np.array([3, 1]))
+
+
+@pytest.mark.parametrize(
+    "layout,error",
+    [
+        ([[0]], None),
+        ([[0], [1]], ValueError),
+        ([[0], [1, 2]], ValueError),
+        ([{"test": 0}], None),
+        ([{"test1": 0}], KeyError),
+    ]
+)
+def test_layout_view(set_root, layout, error):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    derived = DerivedSource(source=source, transforms=[Astype(dtypes={'B': 'int'})])
+    views = {
+        'test': {
+            'type': 'table',
+            'table': 'test',
+        },
+    }
+    spec = {
+        'source': 'test',
+        'views': views,
+        'layout': layout
+    }
+
+    doc = Document()
+    with set_curdoc(doc):
+        state.sources['test'] = derived
+
+        if error is not None:
+            with pytest.raises(error):
+                Target.from_spec(spec, sources={'test': derived})
+        else:
+            Target.from_spec(spec, sources={'test': derived})
