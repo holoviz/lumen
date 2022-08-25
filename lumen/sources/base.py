@@ -587,6 +587,7 @@ class JSONSource(FileSource):
     source_type = 'json'
 
     def _resolve_template_vars(self, template):
+        template = str(template)
         template_vars = self._template_re.findall(template)
         template_values = []
         for m in template_vars:

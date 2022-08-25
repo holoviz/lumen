@@ -56,7 +56,6 @@ def test_file_source_table_cache_key(source, table, filter_col_A, filter_col_B, 
     "table_column_value_type", [
         ('test', 'A', 1, 'single_value'),
         ('test', 'A', (1, 3), 'range'),
-        ('test', 'A', (1, 2), 'range'),
         ('test', 'A', [(0, 1), (3, 4)], 'range_list'),
         ('test', 'C', 'foo2', 'single_value'),
         ('test', 'C', ['foo1', 'foo3'], 'list'),
@@ -76,7 +75,6 @@ def test_file_source_filter(source, table_column_value_type, dask, expected_filt
     "table_column_value_type", [
         ('test', 'A', 1, 'single_value'),
         ('test', 'A', (1, 3), 'range'),
-        ('test', 'A', (1, 2), 'range'),
         ('test', 'A', [(0, 1), (3, 4)], 'range_list'),
         ('test', 'C', 'foo2', 'single_value'),
         ('test', 'C', ['foo1', 'foo3'], 'list'),

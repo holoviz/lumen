@@ -10,7 +10,7 @@ import pytest
 from bokeh.document import Document
 
 from lumen.config import config
-from lumen.sources import FileSource, Source
+from lumen.sources import FileSource, JSONSource, Source
 from lumen.state import state
 from lumen.variables import Variables
 
@@ -36,6 +36,22 @@ def make_filesource():
     for source in state.global_sources.values():
         source.clear_cache()
     state.global_sources.clear()
+
+
+@pytest.fixture
+def make_jsonsource():
+    root = config._root
+    def create(root, **kwargs):
+        config._root = root
+        source = JSONSource(tables={'local': './test.json'}, **kwargs)
+        state.sources['original'] = source
+        return source
+    yield create
+    config._root = root
+    for source in state.global_sources.values():
+        source.clear_cache()
+    state.global_sources.clear()
+
 
 @pytest.fixture
 def make_variable_filesource():
