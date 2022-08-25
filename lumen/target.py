@@ -84,10 +84,6 @@ class Card(Viewer):
     def from_spec(cls, spec, filters=None, pipelines={}):
         spec = dict(spec)
         view_specs = spec.get('views', [])
-        if view_specs is None:
-            # If views is not defined in yaml file
-            raise ValueError("No 'views' was provided during instantiation.")
-
         spec['views'] = views = []
         for view in view_specs:
             if isinstance(view_specs, dict):
@@ -344,6 +340,8 @@ class Target(param.Parameterized):
         controls, all_transforms = [], []
         linked_views = None
         for facet_filters in self.facet.filters:
+            if self.views is None:
+                raise ValueError(f"Ensure that the target '{self.title}' declares a 'views' field.")
             key = tuple(str(f.value) for f in facet_filters)
             self._cache[key] = card = Card.from_spec({
                 'kwargs': self.kwargs,
