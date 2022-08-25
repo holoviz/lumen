@@ -4,6 +4,7 @@ from functools import partial
 from io import BytesIO, StringIO
 from itertools import product
 
+import numpy as np
 import panel as pn
 import param
 
@@ -51,6 +52,10 @@ class Card(Viewer):
     def _construct_layout(self):
         layout = self.layout
         if isinstance(layout, list):
+            if np.max(layout) >= len(self.views):
+                raise ValueError(
+                    f"Layout for '{self.title}' can only have values up to {len(self.views) - 1}."
+                )
             item = pn.Column(sizing_mode='stretch_both')
             for row_spec in layout:
                 row = pn.Row(sizing_mode='stretch_width')
