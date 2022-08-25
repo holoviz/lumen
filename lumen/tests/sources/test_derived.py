@@ -58,7 +58,7 @@ def tables_mode_spec():
 
 
 @pytest.fixture
-def tables_mode_derived(original, tables_mode_spec):
+def source(original, tables_mode_spec):
     return DerivedSource.from_spec(tables_mode_spec)
 
 
@@ -72,7 +72,7 @@ def test_derived_source_resolve_module_type():
     assert DerivedSource.source_type == 'derived'
 
 
-def test_derived_mirror_source(original, mirror_mode_spec):
+def test_derived_source_mirror_mode(original, mirror_mode_spec):
     derived = DerivedSource.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema() == original.get_schema()
@@ -84,7 +84,7 @@ def test_derived_mirror_source(original, mirror_mode_spec):
     ('transforms', [{'type': 'iloc', 'end': 3}]),
     ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
 ])
-def test_derived_mirror_source_apply(
+def test_derived_source_mirror_mode_apply(
         original, mirror_mode_spec, additional_spec, expected_table, expected_schema
 ):
     spec_key, spec_value = additional_spec
@@ -99,7 +99,7 @@ def test_derived_mirror_source_apply(
     ('transforms', [{'type': 'iloc', 'end': 3}]),
     ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
 ])
-def test_derived_tables_source_apply(
+def test_derived_source_tables_mode_apply(
         original, tables_mode_spec, additional_spec, expected_table, expected_schema
 ):
     spec_key, spec_value = additional_spec
@@ -110,24 +110,26 @@ def test_derived_tables_source_apply(
     assert derived.get_schema('derived') == expected_schema
 
 
-def test_derived_tables_source(tables_mode_derived, source_tables):
-    assert source_get_tables(tables_mode_derived, source_tables)
+def test_derived_source_get_tables(source, source_tables):
+    assert source_get_tables(source, source_tables)
 
 
-def test_derived_cache_key(tables_mode_derived):
-    table = 'derived'
-    assert source_table_cache_key(tables_mode_derived, table)
+def test_derived_source_cache_key(source):
+    assert source_table_cache_key(source, table='derived')
 
 
-def test_derived_get_cache_no_query(tables_mode_derived, source_tables):
+@pytest.mark.parametrize("dask", [True, False])
+def test_derived_source_get_cache_no_query(source, dask, source_tables):
     for table in source_tables:
         expected_table = source_tables[table]
-        source_get_cache_no_query(tables_mode_derived, table, expected_table)
+        assert source_get_cache_no_query(
+            source, table, expected_table, dask, use_dask=False
+        )
 
 
-def test_derived_clear_cache_get_query(tables_mode_derived):
-    assert source_clear_cache_get_query(tables_mode_derived, table='derived')
+def test_derived_source_clear_cache_get_query(source):
+    assert source_clear_cache_get_query(source, table='derived')
 
 
-def test_derived_clear_cache_get_schema(tables_mode_derived):
-    assert source_clear_cache_get_schema(tables_mode_derived, table='derived')
+def test_derived_source_clear_cache_get_schema(source):
+    assert source_clear_cache_get_schema(source, table='derived')

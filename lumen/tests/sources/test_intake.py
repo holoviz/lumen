@@ -7,15 +7,18 @@ import yaml
 
 from lumen.sources.intake import IntakeSource
 
-from .utils import source_filter, source_get_tables
+
+from .utils import (
+    source_clear_cache_get_query, source_clear_cache_get_schema, source_filter,
+    source_get_cache_no_query, source_get_schema_cache,
+    source_get_schema_update_cache, source_get_tables, source_table_cache_key,
+)
 
 
 @pytest.fixture
 def source():
     root = os.path.dirname(__file__)
-    return IntakeSource(
-        uri=os.path.join(root, 'catalog_intake.yml'), root=root
-    )
+    return IntakeSource(uri=os.path.join(root, 'catalog_intake.yml'), root=root)
 
 
 @pytest.fixture
@@ -41,7 +44,7 @@ def source_schemas():
     return schemas
 
 
-def test_intake_resolve_module_type():
+def test_intake_source_resolve_module_type():
     assert IntakeSource._get_type('lumen.sources.intake_sql.IntakeSource') is IntakeSource
     assert IntakeSource.source_type == 'intake'
 
@@ -50,13 +53,16 @@ def test_intake_source_from_file(source, source_tables):
     assert source_get_tables(source, source_tables)
 
 
-def test_intake_source_from_dict():
+def test_intake_source_from_dict(source_tables):
     root = os.path.dirname(__file__)
     with open(os.path.join(root, 'catalog_intake.yml')) as f:
         catalog = yaml.load(f, Loader=yaml.Loader)
     source = IntakeSource(catalog=catalog, root=root)
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test'), df)
+    assert source_get_tables(source, source_tables)
+
+
+def test_intake_source_table_cache_key(source):
+    assert source_table_cache_key(source, table='test')
 
 
 @pytest.mark.parametrize(
@@ -73,5 +79,30 @@ def test_intake_source_from_dict():
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def test_intake_filter(source, table_column_value_type, dask, expected_filtered_df):
+def _test_intake_source_filter(source, table_column_value_type, dask, expected_filtered_df):
     assert source_filter(source, table_column_value_type, dask, expected_filtered_df)
+
+
+@pytest.mark.parametrize("dask", [True, False])
+def test_intake_source_get_cache_no_query(source, dask, source_tables):
+    for table in source_tables:
+        expected_table = source_tables[table]
+        assert source_get_cache_no_query(source, table, expected_table, dask, use_dask=True)
+
+
+def test_intake_source_get_schema_cache(source, source_tables):
+    for table in source_tables:
+        assert source_get_schema_cache(source, table)
+
+
+def test_intake_source_get_schema_update_cache(source, source_tables):
+    for table in source_tables:
+        assert source_get_schema_update_cache(source, table)
+
+
+def test_intake_source_clear_cache_get_query(source):
+    assert source_clear_cache_get_query(source, table='test')
+
+
+def test_intake_source_clear_cache_get_schema(source):
+    assert source_clear_cache_get_schema(source, table='test')

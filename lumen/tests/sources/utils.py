@@ -43,13 +43,15 @@ def source_get_cache_query(source, table_column_value_type, dask, expected_df):
     return True
 
 
-def source_get_cache_no_query(source, table, expected_df, dask=False):
+def source_get_cache_no_query(source, table, expected_df, dask=None, use_dask=False):
     source.get(table, __dask=dask)
     cache_key = source._get_key(table)
     assert cache_key in source._cache
     assert len(source._cache) == 1
     cached_df = source._cache[cache_key]
-    if dask:
+    if use_dask:
+        # if use_dask is True,
+        # always return a dask DataFrame no matter the value of __dask in the query
         cached_df = cached_df.compute()
     pd.testing.assert_frame_equal(cached_df, expected_df)
     cache_key = source._get_key(table)
