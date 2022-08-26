@@ -11,7 +11,7 @@ from .filters import Filter, ParamFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
-from .util import get_dataframe_schema, validate_parameters
+from .util import SpecificationError, get_dataframe_schema, validate_parameters
 
 
 class DataFrame(param.DataFrame):
@@ -118,7 +118,7 @@ class Pipeline(param.Parameterized):
             # Compute SQL transform expression
             if self.sql_transforms:
                 if not self.source._supports_sql:
-                    raise ValueError(
+                    raise SpecificationError(
                         'Can only use sql transforms source that support them. '
                         f'Found source typed {self.source.source_type!r} instead.'
                     )
@@ -171,7 +171,7 @@ class Pipeline(param.Parameterized):
         if table is None:
             tables = source.get_tables()
             if len(tables) > 1:
-                raise ValueError(
+                raise SpecificationError(
                     "The Pipeline specification does not contain a table and the "
                     "supplied Source has multiple tables. Please specify one of the "
                     f"following tables: {tables} in the pipeline specification."

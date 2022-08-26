@@ -22,7 +22,7 @@ from .sources import RESTSource, Source  # noqa
 from .state import state
 from .target import Target
 from .transforms import Transform  # noqa
-from .util import expand_spec
+from .util import SpecificationError, expand_spec
 from .variables import Variables
 from .views import View  # noqa
 
@@ -89,7 +89,7 @@ class Config(param.Parameterized):
             if template in _TEMPLATES:
                 params['template'] = _TEMPLATES[template]
             elif '.' not in template:
-                raise ValueError(f'Template must be one of {list(_TEMPLATES)} '
+                raise SpecificationError(f'Template must be one of {list(_TEMPLATES)} '
                                  'or an absolute import path.')
             else:
                 *paths, name = template.split('.')
