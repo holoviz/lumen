@@ -259,5 +259,5 @@ def match_suggestion_message(word: str, possibilities: list[str], msg: str|None 
             msg = msg[:-1] if msg.endswith(".") else msg
             msg = msg + f". Did you mean '{match_str}'?"
         else:
-            msg = "Did you mean '{match_str}'?"
+            msg = f"Did you mean '{match_str}'?"
     return msg
