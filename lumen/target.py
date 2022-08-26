@@ -51,11 +51,18 @@ class Card(Viewer):
     def _construct_layout(self):
         layout = self.layout
         if isinstance(layout, list):
+            view_size = len(self.views)
             item = pn.Column(sizing_mode='stretch_both')
             for row_spec in layout:
                 row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
                     if isinstance(index, int):
+                        if index >= view_size:
+                            raise ValueError(
+                                f"Layout specification for '{self.title}' target references "
+                                f"out-of-bounds index ({index}) even though the maximum "
+                                f"available index is {view_size - 1}."
+                            )
                         view = self.views[index]
                     else:
                         matches = [view for view in self.views if view.name == index]
