@@ -4,7 +4,8 @@ import param
 
 from .state import state
 from .util import (
-    match_suggestion_message, resolve_module_reference, validate_parameters,
+    SpecificationError, match_suggestion_message, resolve_module_reference,
+    validate_parameters,
 )
 
 
@@ -44,7 +45,7 @@ class Component(param.Parameterized):
         clsname = cls.__name__
         clslower = clsname.lower()
         if component_type is None:
-            raise ValueError(f"No 'type' was provided during instantiation of '{clsname}' component.")
+            raise SpecificationError(f"No 'type' was provided during instantiation of '{clsname}' component.")
         if '.' in component_type:
             return resolve_module_reference(component_type, cls)
         try:
@@ -63,4 +64,4 @@ class Component(param.Parameterized):
 
         msg = f"No '{clslower}' for {clslower}_type '{component_type}' could be found."
         msg = match_suggestion_message(component_type, cls_types, msg)
-        raise ValueError(msg)
+        raise SpecificationError(msg)

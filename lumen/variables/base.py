@@ -9,7 +9,7 @@ from panel.widgets import Widget as _PnWidget
 
 from ..base import Component
 from ..state import state
-from ..util import is_ref, resolve_module_reference
+from ..util import SpecificationError, is_ref, resolve_module_reference
 
 _PARAM_MAP = {
     dict : param.Dict,
@@ -203,7 +203,7 @@ class Widget(Variable):
         )
         kind = params.pop('kind', None)
         if kind is None:
-            raise ValueError("A Widget Variable type must declare the kind of widget.")
+            raise SpecificationError("A Widget Variable type must declare the kind of widget.")
         if '.' in kind:
             widget_type = resolve_module_reference(kind, _PnWidget)
         else:

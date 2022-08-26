@@ -24,7 +24,8 @@ from ..filters import Filter
 from ..state import state
 from ..transforms import Filter as FilterTransform, Transform
 from ..util import (
-    get_dataframe_schema, is_ref, match_suggestion_message, merge_schemas,
+    SpecificationError, get_dataframe_schema, is_ref, match_suggestion_message,
+    merge_schemas,
 )
 
 
@@ -189,7 +190,7 @@ class Source(Component):
         Resolved and instantiated Source object
         """
         if spec is None:
-            raise ValueError('Source specification empty.')
+            raise SpecificationError('Source specification empty.')
         elif isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
@@ -199,7 +200,7 @@ class Source(Component):
                 msg = f"Source with name '{spec}' was not found."
                 possibilities = list(state.sources) + list(state.spec.get('sources', {}))
                 msg = match_suggestion_message(spec, possibilities, msg)
-                raise ValueError(msg)
+                raise SpecificationError(msg)
             return source
 
         spec = dict(spec)
@@ -373,7 +374,7 @@ class Source(Component):
         except KeyError:
             msg = f"{type(self).name} does not contain '{table}'"
             msg = match_suggestion_message(table, names, msg)
-            raise ValueError(msg) from None
+            raise SpecificationError(msg) from None
 
     def get(self, table, **query):
         """
@@ -938,9 +939,11 @@ class DerivedSource(Source):
         if self.tables:
             spec = self.tables.get(table)
             if spec is None:
-                raise ValueError(f"Table '{table}' was not declared on the"
-                                 "DerivedSource. Available tables include "
-                                 f"{list(self.tables)}")
+                raise SpecificationError(
+                    f"Table '{table}' was not declared on the"
+                    "DerivedSource. Available tables include "
+                    f"{list(self.tables)}"
+                )
             source, table = spec['source'], spec['table']
             filters = spec.get('filters', []) + self.filters
         else:

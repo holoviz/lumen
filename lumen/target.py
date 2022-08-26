@@ -15,7 +15,7 @@ from .panel import IconButton
 from .pipeline import Pipeline
 from .sources import Source
 from .state import state
-from .util import extract_refs
+from .util import SpecificationError, extract_refs
 from .views import DOWNLOAD_FORMATS, View
 
 
@@ -58,7 +58,7 @@ class Card(Viewer):
                 for index in row_spec:
                     if isinstance(index, int):
                         if index >= view_size:
-                            raise ValueError(
+                            raise SpecificationError(
                                 f"Layout specification for '{self.title}' target references "
                                 f"out-of-bounds index ({index}) even though the maximum "
                                 f"available index is {view_size - 1}."
@@ -69,8 +69,9 @@ class Card(Viewer):
                         if matches:
                             view = matches[0]
                         else:
-                            raise KeyError("Target could not find named "
-                                           f"view '{index}'.")
+                            raise SpecificationError(
+                                f"Target could not find named view '{index}'."
+                            )
                     row.append(view.panel)
                 item.append(row)
         else:
@@ -528,7 +529,7 @@ class Target(param.Parameterized):
         # Resolve source
         spec = dict(spec)
         if 'views' not in spec:
-            raise ValueError(f"Ensure that the target '{spec['title']}' declares a 'views' field.")
+            raise SpecificationError(f"Ensure that the target '{spec['title']}' declares a 'views' field.")
         views = spec['views']
 
         pipelines = {}
@@ -549,14 +550,14 @@ class Target(param.Parameterized):
             else:
                 pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
             if len(set(pspecs)) > 1:
-                raise ValueError('Views on a target must share the same pipeline.')
+                raise SpecificationError('Views on a target must share the same pipeline.')
             elif not pspecs:
-                raise ValueError('Target must declare a source or a pipeline.')
+                raise SpecificationError('Target must declare a source or a pipeline.')
             pipeline_spec = pspecs[0]
 
             if isinstance(pipeline_spec, str):
                 if pipeline_spec not in state.pipelines:
-                    raise KeyError(f'{pipeline_spec!r} not found in global pipelines.')
+                    raise SpecificationError(f'{pipeline_spec!r} not found in global pipelines.')
                 pipeline = state.pipelines[pipeline_spec]
             else:
                 pipeline = Pipeline.from_spec(pipeline_spec)
@@ -574,7 +575,7 @@ class Target(param.Parameterized):
 
         # Backward compatibility
         if any(fspec.get('type') == 'facet' for fspec in filter_specs):
-            raise ValueError(
+            raise SpecificationError(
                 "Facetting must be declared via the facet specification of a Target, "
                 "specifying filters of type 'facet' is no longer supported"
             )
@@ -586,7 +587,7 @@ class Target(param.Parameterized):
             elif len(tables) == 1:
                 table = tables[0]
             else:
-                raise ValueError("View spec did not declare unambiguous table reference.")
+                raise SpecificationError("View spec did not declare unambiguous table reference.")
             pspec = {'table': table}
             if filter_specs:
                 pspec['filters'] = filter_specs

@@ -14,6 +14,10 @@ from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
 
 
+class SpecificationError(ValueError):
+    pass
+
+
 def get_dataframe_schema(df, columns=None):
     """
     Returns a JSON schema optionally filtered by a subset of the columns.

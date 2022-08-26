@@ -26,7 +26,7 @@ from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import Transform
-from ..util import is_ref, resolve_module_reference
+from ..util import SpecificationError, is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -141,7 +141,7 @@ class View(Component, Viewer):
         params = {k: v for k, v in params.items() if k in self.param}
         pipeline = params.pop('pipeline', None)
         if pipeline is None:
-            raise ValueError("Views must declare a Pipeline.")
+            raise SpecificationError("Views must declare a Pipeline.")
         fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
@@ -204,7 +204,7 @@ class View(Component, Viewer):
         # Resolve pipeline
         if 'pipeline' in spec:
             if pipeline is not None:
-                raise ValueError(
+                raise SpecificationError(
                     "Either specify the pipeline as part of the specification "
                     "or pass it in explicitly, not both."
                 )

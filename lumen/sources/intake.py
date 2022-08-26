@@ -1,7 +1,7 @@
 import intake
 import param
 
-from ..util import get_dataframe_schema
+from ..util import SpecificationError, get_dataframe_schema
 from .base import Source, cached, cached_schema
 
 
@@ -69,8 +69,10 @@ class IntakeSource(IntakeBaseSource):
     def __init__(self, **params):
         super().__init__(**params)
         if self.uri and self.catalog:
-            raise ValueError("Either specify a Catalog uri or an "
-                             "inlined catalog, not both.")
+            raise SpecificationError(
+                "Either specify a Catalog uri or an "
+                "inlined catalog, not both."
+            )
         elif self.uri:
             self.cat = intake.open_catalog(self.uri)
         elif self.catalog:
