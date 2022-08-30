@@ -7,15 +7,9 @@ import re
 import subprocess
 import sys
 
-from difflib import get_close_matches
-
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
-
-
-class SpecificationError(ValueError):
-    pass
 
 
 def get_dataframe_schema(df, columns=None):
@@ -239,25 +233,3 @@ def extract_refs(spec, ref_type=None):
         return refs
     filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
     return filtered
-
-def validate_parameters(params: list[str], expected: list[str], name: str) -> None:
-    for p in params:
-        if p not in expected:
-            first_parth_msg = f"'{p}' not a parameter for '{name}'"
-            msg = match_suggestion_message(p, expected, first_parth_msg)
-            raise ValueError(msg)
-
-def match_suggestion_message(word: str, possibilities: list[str], msg: str|None = None) -> str:
-    match = get_close_matches(word, possibilities)
-    if match:
-        if len(match) > 1:
-            match = sorted(match)
-            match_str = "', '".join(match[:-1]) + f" or '{match[-1]}"
-        else:
-            match_str = match[0]
-        if msg:
-            msg = msg[:-1] if msg.endswith(".") else msg
-            msg = msg + f". Did you mean '{match_str}'?"
-        else:
-            msg = f"Did you mean '{match_str}'?"
-    return msg

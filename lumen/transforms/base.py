@@ -9,12 +9,12 @@ import pandas as pd
 import panel as pn
 import param
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..state import state
 from ..util import is_ref
 
 
-class Transform(Component):
+class Transform(MultiTypeComponent):
     """
     A Transform provides the ability to transform a table supplied by
     a Source.

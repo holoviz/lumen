@@ -19,14 +19,14 @@ from panel.pane.perspective import (
 from panel.param import Param
 from panel.viewable import Viewable, Viewer
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import Transform
-from ..util import SpecificationError, is_ref, resolve_module_reference
+from ..util import is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -83,7 +83,7 @@ class Download(Viewer):
         )
 
 
-class View(Component, Viewer):
+class View(MultiTypeComponent, Viewer):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
@@ -141,7 +141,7 @@ class View(Component, Viewer):
         params = {k: v for k, v in params.items() if k in self.param}
         pipeline = params.pop('pipeline', None)
         if pipeline is None:
-            raise SpecificationError("Views must declare a Pipeline.")
+            raise ValueError("Views must declare a Pipeline.")
         fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
@@ -204,7 +204,7 @@ class View(Component, Viewer):
         # Resolve pipeline
         if 'pipeline' in spec:
             if pipeline is not None:
-                raise SpecificationError(
+                raise ValueError(
                     "Either specify the pipeline as part of the specification "
                     "or pass it in explicitly, not both."
                 )

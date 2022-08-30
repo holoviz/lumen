@@ -9,13 +9,14 @@ import param
 
 from panel.viewable import Viewer
 
+from .base import Component
 from .config import _LAYOUTS
 from .filters import FacetFilter, Filter
 from .panel import IconButton
 from .pipeline import Pipeline
 from .sources import Source
 from .state import state
-from .util import SpecificationError, extract_refs
+from .util import extract_refs
 from .views import DOWNLOAD_FORMATS, View
 
 
@@ -58,7 +59,7 @@ class Card(Viewer):
                 for index in row_spec:
                     if isinstance(index, int):
                         if index >= view_size:
-                            raise SpecificationError(
+                            raise ValueError(
                                 f"Layout specification for '{self.title}' target references "
                                 f"out-of-bounds index ({index}) even though the maximum "
                                 f"available index is {view_size - 1}."
@@ -69,7 +70,7 @@ class Card(Viewer):
                         if matches:
                             view = matches[0]
                         else:
-                            raise SpecificationError(
+                            raise ValueError(
                                 f"Target could not find named view '{index}'."
                             )
                     row.append(view.panel)
@@ -116,7 +117,7 @@ class Card(Viewer):
         self._card[:] = [self._construct_layout()]
 
 
-class Facet(param.Parameterized):
+class Facet(Component):
 
     by = param.List(default=[], class_=FacetFilter, doc="""
         Fields to facet by.""")
@@ -180,7 +181,7 @@ class Facet(param.Parameterized):
         return product(*[filt.filters for filt in self.by])
 
 
-class Download(pn.viewable.Viewer):
+class Download(Component, pn.viewable.Viewer):
     """
     The Download object controls options to download the Source tables
     in a variety of formats via the Dashboard UI.
@@ -271,7 +272,7 @@ class Download(pn.viewable.Viewer):
         return cls(pipelines=pipelines, **spec)
 
 
-class Target(param.Parameterized):
+class Target(Component):
     """
     A Target renders the results of a Source query using the defined
     set of filters and views.
@@ -312,6 +313,10 @@ class Target(param.Parameterized):
         List or dictionary of View specifications.""")
 
     _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
+
+    _required_fields = [
+        ('source', 'pipeline'), 'views'
+    ]
 
     def __init__(self, **params):
         if 'facet' not in params:
@@ -529,7 +534,7 @@ class Target(param.Parameterized):
         # Resolve source
         spec = dict(spec)
         if 'views' not in spec:
-            raise SpecificationError(f"Ensure that the target '{spec['title']}' declares a 'views' field.")
+            raise ValueError(f"Ensure that the target '{spec['title']}' declares a 'views' field.")
         views = spec['views']
 
         pipelines = {}
@@ -550,14 +555,14 @@ class Target(param.Parameterized):
             else:
                 pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
             if len(set(pspecs)) > 1:
-                raise SpecificationError('Views on a target must share the same pipeline.')
+                raise ValueError('Views on a target must share the same pipeline.')
             elif not pspecs:
-                raise SpecificationError('Target must declare a source or a pipeline.')
+                raise ValueError('Target must declare a source or a pipeline.')
             pipeline_spec = pspecs[0]
 
             if isinstance(pipeline_spec, str):
                 if pipeline_spec not in state.pipelines:
-                    raise SpecificationError(f'{pipeline_spec!r} not found in global pipelines.')
+                    raise ValueError(f'{pipeline_spec!r} not found in global pipelines.')
                 pipeline = state.pipelines[pipeline_spec]
             else:
                 pipeline = Pipeline.from_spec(pipeline_spec)
@@ -575,7 +580,7 @@ class Target(param.Parameterized):
 
         # Backward compatibility
         if any(fspec.get('type') == 'facet' for fspec in filter_specs):
-            raise SpecificationError(
+            raise ValueError(
                 "Facetting must be declared via the facet specification of a Target, "
                 "specifying filters of type 'facet' is no longer supported"
             )
@@ -587,7 +592,7 @@ class Target(param.Parameterized):
             elif len(tables) == 1:
                 table = tables[0]
             else:
-                raise SpecificationError("View spec did not declare unambiguous table reference.")
+                raise ValueError("View spec did not declare unambiguous table reference.")
             pspec = {'table': table}
             if filter_specs:
                 pspec['filters'] = filter_specs

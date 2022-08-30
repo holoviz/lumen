@@ -7,11 +7,13 @@ from typing import (
 import panel as pn
 import param
 
+from .base import Component
 from .filters import Filter, ParamFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
-from .util import SpecificationError, get_dataframe_schema, validate_parameters
+from .util import get_dataframe_schema
+from .validation import ValidationError, validate_parameters
 
 
 class DataFrame(param.DataFrame):
@@ -25,7 +27,7 @@ class DataFrame(param.DataFrame):
         return super().__get__(obj, objtype)
 
 
-class Pipeline(param.Parameterized):
+class Pipeline(Component):
     """
     A Pipeline represents a data Source along with any number of
     Filters and general purpose Transforms. A pipeline can be used
@@ -66,6 +68,8 @@ class Pipeline(param.Parameterized):
         doc="The name of the table driving this pipeline."
     )
 
+    _required_fields = ['source']
+
     def __init__(self, *, source, table, **params):
         if 'schema' not in params:
             params['schema'] = source.get_schema(table)
@@ -82,14 +86,11 @@ class Pipeline(param.Parameterized):
             for fp in transform._field_params:
                 if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = list(self.schema)
-        refs = {
-            var.split('.')[1] for var in self.refs
-            if var.startswith('$variables.')
-        }
-        if refs:
-            state.variables.param.watch(self._update_data, list(refs))
         if self.pipeline is not None:
             self.pipeline.param.watch(self._update_data, 'data')
+
+    def _update_refs(self, *events):
+        self._update_data()
 
     @property
     def refs(self):
@@ -118,7 +119,7 @@ class Pipeline(param.Parameterized):
             # Compute SQL transform expression
             if self.sql_transforms:
                 if not self.source._supports_sql:
-                    raise SpecificationError(
+                    raise ValidationError(
                         'Can only use sql transforms source that support them. '
                         f'Found source typed {self.source.source_type!r} instead.'
                     )
@@ -171,7 +172,7 @@ class Pipeline(param.Parameterized):
         if table is None:
             tables = source.get_tables()
             if len(tables) > 1:
-                raise SpecificationError(
+                raise ValidationError(
                     "The Pipeline specification does not contain a table and the "
                     "supplied Source has multiple tables. Please specify one of the "
                     f"following tables: {tables} in the pipeline specification."

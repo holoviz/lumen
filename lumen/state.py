@@ -2,7 +2,7 @@ from weakref import WeakKeyDictionary
 
 import panel as pn
 
-from .util import SpecificationError, extract_refs, is_ref
+from .util import extract_refs, is_ref
 
 
 class _session_state:
@@ -192,11 +192,11 @@ class _session_state:
             return source.get(table)
         table_schema = source.get_schema(table)
         if field not in table_schema:
-            raise SpecificationError(f"Field '{field}' was not found in "
+            raise ValueError(f"Field '{field}' was not found in "
                              f"'{sourceref}' table '{table}'.")
         field_schema = table_schema[field]
         if 'enum' not in field_schema:
-            raise SpecificationError(f"Field '{field}' schema does not "
+            raise ValueError(f"Field '{field}' schema does not "
                              "declare an enum.")
         return field_schema['enum']
 

@@ -11,14 +11,12 @@ import param
 
 from packaging.version import Version
 
-from lumen.util import SpecificationError
-
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..schema import JSONSchema
 from ..state import state
 
 
-class Filter(Component):
+class Filter(MultiTypeComponent):
     """
     A Filter provides a query which will be used to filter the data
     returned by a Source.
@@ -46,6 +44,8 @@ class Filter(Component):
     filter_type = None
 
     _requires_field = True
+
+    _required_fields = ['field']
 
     __abstract = True
 
@@ -81,10 +81,10 @@ class Filter(Component):
         """
         if isinstance(spec, str):
             if source_filters is None:
-                raise SpecificationError(f"Filter spec {repr(spec)} could not be resolved "
+                raise ValueError(f"Filter spec {repr(spec)} could not be resolved "
                                  "because source has not declared filters.")
             elif spec not in source_filters:
-                raise SpecificationError(f"Filter spec {repr(spec)} could not be resolved, "
+                raise ValueError(f"Filter spec {repr(spec)} could not be resolved, "
                                  f"available filters on the source include {list(source_filters)}.")
             return source_filters[spec]
         spec = dict(spec)
@@ -92,7 +92,7 @@ class Filter(Component):
         if not filter_type._requires_field:
             return filter_type(**spec)
         elif not 'field' in spec:
-            raise SpecificationError('Filter specification must declare field to filter on.')
+            raise ValueError('Filter specification must declare field to filter on.')
         field = spec['field']
         if 'label' not in spec:
             spec['label'] = field.title()
@@ -105,7 +105,7 @@ class Filter(Component):
             if schema is not None:
                 break
         if not schema:
-            raise SpecificationError("Source did not declare a schema for "
+            raise ValueError("Source did not declare a schema for "
                              f"'{field}' filter.")
         return filter_type(schema={field: schema}, **spec)
 

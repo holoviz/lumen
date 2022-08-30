@@ -19,14 +19,12 @@ import panel as pn
 import param
 import requests
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..filters import Filter
 from ..state import state
 from ..transforms import Filter as FilterTransform, Transform
-from ..util import (
-    SpecificationError, get_dataframe_schema, is_ref, match_suggestion_message,
-    merge_schemas,
-)
+from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..validation import ValidationError, match_suggestion_message
 
 
 def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
@@ -113,7 +111,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
-class Source(Component):
+class Source(MultiTypeComponent):
     """
     A Source provides a set of tables which declare their available
     fields. The Source must also be able to return a schema describing
@@ -190,7 +188,7 @@ class Source(Component):
         Resolved and instantiated Source object
         """
         if spec is None:
-            raise SpecificationError('Source specification empty.')
+            raise ValidationError('Source specification empty.')
         elif isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
@@ -200,7 +198,7 @@ class Source(Component):
                 msg = f"Source with name '{spec}' was not found."
                 possibilities = list(state.sources) + list(state.spec.get('sources', {}))
                 msg = match_suggestion_message(spec, possibilities, msg)
-                raise SpecificationError(msg)
+                raise ValidationError(msg)
             return source
 
         spec = dict(spec)
@@ -371,10 +369,10 @@ class Source(Component):
 
         try:
             return schemas if table is None else schemas[table]
-        except KeyError:
+        except KeyError as e:
             msg = f"{type(self).name} does not contain '{table}'"
             msg = match_suggestion_message(table, names, msg)
-            raise SpecificationError(msg) from None
+            raise ValidationError(msg) from e
 
     def get(self, table, **query):
         """
@@ -939,10 +937,9 @@ class DerivedSource(Source):
         if self.tables:
             spec = self.tables.get(table)
             if spec is None:
-                raise SpecificationError(
-                    f"Table '{table}' was not declared on the"
-                    "DerivedSource. Available tables include "
-                    f"{list(self.tables)}"
+                raise ValidationError(
+                    f"Table '{table}' was not declared on the DerivedSource. "
+                    f"Available tables include {list(self.tables)}."
                 )
             source, table = spec['source'], spec['table']
             filters = spec.get('filters', []) + self.filters

@@ -13,17 +13,20 @@ import yaml
 from panel.template.base import BasicTemplate
 
 from .auth import AuthPlugin
+from .base import Component
 from .config import (
     _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, config,
 )
 from .filters import ConstantFilter, Filter, WidgetFilter  # noqa
 from .panel import IconButton
+from .pipeline import Pipeline
 from .sources import RESTSource, Source  # noqa
 from .state import state
 from .target import Target
 from .transforms import Transform  # noqa
-from .util import SpecificationError, expand_spec
-from .variables import Variables
+from .util import expand_spec
+from .validation import ValidationError
+from .variables import Variable, Variables
 from .views import View  # noqa
 
 pn.config.css_files.append(
@@ -35,7 +38,7 @@ def load_yaml(yaml_spec, **kwargs):
     return yaml.load(expanded, Loader=yaml.Loader)
 
 
-class Config(param.Parameterized):
+class Config(Component):
     """
     High-level configuration options for the Dashboard.
     """
@@ -80,35 +83,48 @@ class Config(param.Parameterized):
         The Panel template theme to style the dashboard with.""")
 
     @classmethod
-    def from_spec(cls, spec):
-        params = dict(spec)
-        if 'theme' in params:
-            params['theme'] = _THEMES[params['theme']]
-        if 'template' in params:
-            template = params['template']
-            if template in _TEMPLATES:
-                params['template'] = _TEMPLATES[template]
-            elif '.' not in template:
-                raise SpecificationError(f'Template must be one of {list(_TEMPLATES)} '
-                                 'or an absolute import path.')
-            else:
-                *paths, name = template.split('.')
-                path = '.'.join(paths)
-                try:
-                    module = importlib.import_module(path)
-                except Exception as e:
-                    raise ImportError(f'Template {path} module could not '
-                                      f'be imported and errored with: {e}.')
-                if not hasattr(module, name):
-                    raise ImportError(f'Template {name} was not found in '
-                                      f'module {path}.')
-                params['template'] = template = getattr(module, name)
-                if not issubclass(template, BasicTemplate):
-                    raise ValueError(f'Imported template {path}.{name} '
-                                     'is not a valid Panel template.')
-        if 'layout' in params:
-            params['layout'] = _LAYOUTS[params['layout']]
-        return cls(**params)
+    def _validate_layout(cls, layout, spec, context):
+        if layout not in _LAYOUTS:
+            msg = f'Config layout {layout!r} could not be found. '
+            raise ValidationError(msg, spec, 'layout')
+        return _LAYOUTS[layout]
+
+    @classmethod
+    def _validate_theme(cls, theme, spec, context):
+        if theme not in _THEMES:
+            msg = f'Config theme {theme!r} could not be found. '
+            raise ValidationError(msg, spec, 'theme')
+        return _THEMES[theme]
+
+    @classmethod
+    def _validate_template(cls, template, spec, context):
+        if template in _TEMPLATES:
+            template = _TEMPLATES[template]
+        elif '.' not in template:
+            raise ValidationError(f'Template must be one of {list(_TEMPLATES)} '
+                                  'or an absolute import path.', spec, 'template')
+        else:
+            *paths, name = template.split('.')
+            path = '.'.join(paths)
+            try:
+                module = importlib.import_module(path)
+            except Exception as e:
+                raise ValidationError(
+                    f'Config template {path} module could not be imported '
+                    f'errored with: {e}.', spec, 'template'
+                )
+            if not hasattr(module, name):
+                raise ValidationError(
+                    f'Config template {name} was not found in model {path}.',
+                    spec, 'template'
+                )
+            template = getattr(module, name)
+            if not issubclass(template, BasicTemplate):
+                raise ValidationError(
+                    f'Config template {path}.{name} is not a valid Panel template.',
+                    spec, 'template'
+                )
+        return template
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -122,7 +138,7 @@ class Config(param.Parameterized):
         return self.template(**params)
 
 
-class Defaults(param.Parameterized):
+class Defaults(Component):
     """
     Defaults to apply to the component classes.
     """
@@ -148,7 +164,7 @@ class Defaults(param.Parameterized):
                 obj_type.param.set_param(**params)
 
 
-class Auth(param.Parameterized):
+class Auth(Component):
 
     case_sensitive = param.Boolean(default=False, doc="""
         Whether auth validation is case-sensitive or not.""")
@@ -192,7 +208,7 @@ class Auth(param.Parameterized):
         return authorized
 
 
-class Dashboard(param.Parameterized):
+class Dashboard(Component):
 
     auth = param.ClassSelector(default=Auth(), class_=Auth, doc="""
         Auth object which validates the auth spec against pn.state.user_info.""")
@@ -206,11 +222,14 @@ class Dashboard(param.Parameterized):
     targets = param.List(default=[], class_=Target, doc="""
         List of targets monitoring some source.""")
 
+    _allowed_fields = ['variables', 'auth', 'config', 'sources', 'pipelines', 'targets']
+
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
         self._yaml_file = specification
         self._root = config.root = os.path.abspath(os.path.dirname(self._yaml_file))
         self._edited = False
+        self._debug = params.pop('debug', False)
         super().__init__(**params)
 
         # Initialize from spec
@@ -250,6 +269,8 @@ class Dashboard(param.Parameterized):
             self._render()
             self._main[:] = [self._layout]
         except Exception as e:
+            if self._debug:
+                raise e
             self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}')
             self._main.loading = False
             tb = html.escape(traceback.format_exc())
@@ -556,6 +577,54 @@ class Dashboard(param.Parameterized):
         self._load_specification()
         self._materialize_specification(force=True)
         self._render()
+
+    ##################################################################
+    # Validation API
+    ##################################################################
+
+    @classmethod
+    def _validate_auth(cls, auth, spec, context):
+        context['auth'] = Auth.validate(auth, context)
+
+    @classmethod
+    def _validate_config(cls, config, spec, context):
+        context['config'] = Config.validate(config, context)
+
+    @classmethod
+    def _validate_pipelines(cls, pipelines, spec, context):
+        if 'pipelines' not in context:
+            context['pipelines'] = {}
+        for pipeline_name, pipeline_spec in pipelines.items():
+            context['pipelines'][pipeline_name] = Pipeline.validate(
+                pipeline_spec, context
+            )
+
+    @classmethod
+    def _validate_sources(cls, sources, spec, context):
+        if 'sources' not in context:
+            context['sources'] = {}
+        for source_name, source_spec in sources.items():
+            context['sources'][source_name] = Source.validate(
+                source_spec, context
+            )
+
+    @classmethod
+    def _validate_targets(cls, targets, spec, context):
+        if 'targets' not in context:
+            context['targets'] = []
+        for target_spec in targets:
+            context['targets'].append(Target.validate(
+                target_spec, context
+            ))
+
+    @classmethod
+    def _validate_variables(cls, variables, spec, context):
+        if 'variables' not in context:
+            context['variables'] = {}
+        for var_name, var_spec in variables.items():
+            context['variables'][var_name] = Variable.validate(
+                var_spec, context
+            )
 
     ##################################################################
     # Public API

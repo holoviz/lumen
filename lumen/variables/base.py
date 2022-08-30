@@ -7,9 +7,9 @@ import param
 
 from panel.widgets import Widget as _PnWidget
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..state import state
-from ..util import SpecificationError, is_ref, resolve_module_reference
+from ..util import is_ref, resolve_module_reference
 
 _PARAM_MAP = {
     dict : param.Dict,
@@ -75,7 +75,7 @@ class Variables(param.Parameterized):
         return column
 
 
-class Variable(Component):
+class Variable(MultiTypeComponent):
     """
     A Variable may declare a static or dynamic value that can be
     referenced from other components. The source of the Variable value
@@ -203,7 +203,7 @@ class Widget(Variable):
         )
         kind = params.pop('kind', None)
         if kind is None:
-            raise SpecificationError("A Widget Variable type must declare the kind of widget.")
+            raise ValueError("A Widget Variable type must declare the kind of widget.")
         if '.' in kind:
             widget_type = resolve_module_reference(kind, _PnWidget)
         else:

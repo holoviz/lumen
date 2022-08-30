@@ -10,7 +10,7 @@ from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
 from panel.widgets.indicators import Indicator
 
-from .util import SpecificationError, match_suggestion_message
+from .validation import ValidationError, match_suggestion_message
 
 
 class ConfigDict(dict):
@@ -21,10 +21,10 @@ class ConfigDict(dict):
     def __getitem__(self, key):
         try:
             return super().__getitem__(key)
-        except KeyError:
+        except KeyError as e:
             msg = f"{self.name} with name '{key}' was not found."
             msg = match_suggestion_message(key, list(self), msg)
-            raise SpecificationError(msg) from None
+            raise ValidationError(msg) from e
 
 
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
