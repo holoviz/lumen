@@ -12,7 +12,7 @@ from lumen.sources import DerivedSource, FileSource
 from lumen.state import state
 from lumen.target import Target
 from lumen.transforms import Astype
-from lumen.util import SpecificationError
+from lumen.validation import ValidationError
 
 
 def test_view_controls(set_root):
@@ -190,10 +190,10 @@ def test_transform_controls_facetted(set_root):
     "layout,error",
     [
         ([[0]], None),
-        ([[0], [1]], SpecificationError),
-        ([[0], [1, 2]], SpecificationError),
+        ([[0], [1]], ValidationError),
+        ([[0], [1, 2]], ValidationError),
         ([{"test": 0}], None),
-        ([{"test1": 0}], SpecificationError),
+        ([{"test1": 0}], ValidationError),
     ]
 )
 def test_layout_view(set_root, layout, error):
