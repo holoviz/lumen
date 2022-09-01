@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import pytest
 
-from lumen.sources.base import DerivedSource
+from lumen.sources.base import DerivedSource, Source
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_derived_source_resolve_module_type():
 
 
 def test_derived_mirror_source(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
+    derived = Source.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema() == original.get_schema()
     for table in original.get_tables():
@@ -73,14 +73,14 @@ def test_derived_mirror_source_apply(
 ):
     spec_key, spec_value = additional_spec
     mirror_mode_spec[spec_key] = spec_value
-    derived = DerivedSource.from_spec(mirror_mode_spec)
+    derived = Source.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema('test') == expected_schema
     pd.testing.assert_frame_equal(derived.get('test'), expected_table)
 
 
 def test_derived_tables_source(original, tables_mode_spec):
-    derived = DerivedSource.from_spec(tables_mode_spec)
+    derived = Source.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
     df = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(derived.get('derived'), df)
@@ -96,14 +96,14 @@ def test_derived_tables_source_apply(
 ):
     spec_key, spec_value = additional_spec
     tables_mode_spec['tables']['derived'][spec_key] = spec_value
-    derived = DerivedSource.from_spec(tables_mode_spec)
+    derived = Source.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
     pd.testing.assert_frame_equal(derived.get('derived'), expected_table)
     assert derived.get_schema('derived') == expected_schema
 
 
 def test_derived_get_query_cache(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
+    derived = Source.from_spec(mirror_mode_spec)
     df = derived.get('test')
     cache_key = derived._get_key('test')
     assert cache_key in derived._cache
@@ -112,7 +112,7 @@ def test_derived_get_query_cache(original, mirror_mode_spec):
 
 
 def test_derived_clear_cache(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
+    derived = Source.from_spec(mirror_mode_spec)
     derived.get('test')
     cache_key = derived._get_key('test')
     assert cache_key in derived._cache

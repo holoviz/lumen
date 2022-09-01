@@ -149,7 +149,9 @@ class Pipeline(Component):
 
     @classmethod
     def _validate_source(cls, source_spec, spec, context, subcontext):
-        if isinstance(source_spec, str):
+        if isinstance(source_spec, Source):
+            return source_spec
+        elif isinstance(source_spec, str):
             if source_spec not in context['sources']:
                 msg = f'Pipeline specified non-existent source {source_spec!r}.'
                 msg = match_suggestion_message(source_spec, list(context['sources']), msg)
@@ -187,25 +189,29 @@ class Pipeline(Component):
         return super().validate(spec, context, subcontext)
 
     @classmethod
+    def _runtime_validate(cls, spec, source, source_filters):
+        spec = spec.copy()
+        if source is not None:
+            spec['source'] = source
+        return cls.validate(spec, {'sources': state.sources, 'pipelines': state.pipelines})
+
+    @classmethod
     def from_spec(
         cls, spec: Dict[str, Any], source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
-        spec = spec.copy()
+        spec = cls._runtime_validate(spec, source, source_filters)
         params = dict(spec)
 
         # Resolve source
-        if 'source' in spec:
-            source = spec['source']
-            if isinstance(source, dict):
-                print(source)
-                source = Source.from_spec(source)
-                print(source)
-            elif isinstance(source, str):
-                if source in state.sources:
-                    source = state.sources[source]
-                else:
-                    source = state.load_source(source, state.spec['sources'][source])
+        source = spec['source']
+        if isinstance(source, dict):
+            source = Source.from_spec(source)
+        elif isinstance(source, str):
+            if source in state.sources:
+                source = state.sources[source]
+            else:
+                source = state.load_source(source, state.spec['sources'][source])
         params['source'] = source
 
         # Validate table

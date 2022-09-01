@@ -175,19 +175,26 @@ class Source(MultiTypeComponent):
     def _validate_filters(cls, filter_specs, spec, context, subcontext):
         warnings.warn(
             'Providing filters in a Source definition is deprecated, '
-            'please declare filters as part of a Pipeline.', spec, 'filters'
+            'please declare filters as part of a Pipeline.', DeprecationWarning
         )
         return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
 
     @classmethod
     def validate(cls, spec, context=None, subcontext=None):
-        if isinstance(spec, str):
+        if isinstance(spec, cls):
+            return spec
+        elif isinstance(spec, str):
             if spec not in context['sources']:
                 msg = f'Referenced non-existent source {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
         return super().validate(spec, context, subcontext)
+
+    @classmethod
+    def _runtime_validate(cls, spec):
+        spec = spec.copy()
+        return cls.validate(spec, {'sources': state.sources})
 
     @classmethod
     def from_spec(cls, spec):
@@ -211,12 +218,12 @@ class Source(MultiTypeComponent):
                 source = state.sources[spec]
             elif spec in state.spec.get('sources', {}):
                 source = state.load_source(spec, state.spec['sources'][spec])
-        else:
-            spec = dict(spec)
-            source_type = Source._get_type(spec.pop('type', None))
-            resolved_spec, refs = cls._recursive_resolve(spec, source_type)
-            source = source_type(refs=refs, **resolved_spec)
-        return source
+            return source
+
+        spec = cls._runtime_validate(spec)
+        source_type = Source._get_type(spec.pop('type', None))
+        resolved_spec, refs = cls._recursive_resolve(spec, source_type)
+        return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
         from ..config import config
@@ -944,6 +951,10 @@ class DerivedSource(Source):
         A list of transforms to apply to all tables of this source.""")
 
     source_type = 'derived'
+
+    @classmethod
+    def _validate_filters(cls, filter_specs, spec, context, subcontext):
+        return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
 
     def _get_source_table(self, table):
         if self.tables:
