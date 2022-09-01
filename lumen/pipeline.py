@@ -159,6 +159,8 @@ class Pipeline(Component):
         Source.validate(source_spec, context, source_context)
         src_cls = Source._get_type(source_spec['type'])
         source_name = f'{src_cls.name}'
+        if 'sources' not in context:
+            context['sources'] = {}
         context['sources'][source_name] = source_context
         return source_name
 
@@ -196,7 +198,9 @@ class Pipeline(Component):
         if 'source' in spec:
             source = spec['source']
             if isinstance(source, dict):
+                print(source)
                 source = Source.from_spec(source)
+                print(source)
             elif isinstance(source, str):
                 if source in state.sources:
                     source = state.sources[source]

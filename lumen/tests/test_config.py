@@ -8,5 +8,5 @@ class CustomTemplate(BasicTemplate):
 
 
 def test_config_template():
-    config = Config.from_spec({'template': 'lumen.tests.test_config.CustomTemplate'})
-    assert config.template is CustomTemplate
+    config = Config.validate({'template': 'lumen.tests.test_config.CustomTemplate'})
+    assert config['template'] is CustomTemplate

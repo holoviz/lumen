@@ -114,7 +114,7 @@ class Config(Component):
                     spec, 'template'
                 )
             template_cls = getattr(module, name)
-            if not issubclass(template, BasicTemplate):
+            if not issubclass(template_cls, BasicTemplate):
                 raise ValidationError(
                     f'Config template {path}.{name} is not a valid Panel template.',
                     spec, 'template'
