@@ -237,7 +237,8 @@ class WidgetFilter(BaseWidgetFilter):
             schema=self.schema, sizing_mode='stretch_width', multi=self.multi
         )._widgets[self.field]
         if isinstance(self.widget, pn.widgets.Select) and self.empty_select:
-            self.widget.options.insert(0, ' ')
+            if self.widget.options[0] != ' ':
+                self.widget.options.insert(0, ' ')
             self.widget.value = ' '
         self.widget.name = self.label
         self.widget.visible = self.visible
