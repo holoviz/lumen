@@ -83,26 +83,21 @@ class Config(Component):
         The Panel template theme to style the dashboard with.""")
 
     @classmethod
-    def _validate_layout(cls, layout, spec, context):
+    def _validate_layout(cls, layout, spec, context, subcontext):
         if layout not in _LAYOUTS:
-            msg = f'Config layout {layout!r} could not be found. '
+            msg = f'Config layout {layout!r} could not be found.'
             raise ValidationError(msg, spec, 'layout')
         return _LAYOUTS[layout]
 
     @classmethod
-    def _validate_theme(cls, theme, spec, context):
-        if theme not in _THEMES:
-            msg = f'Config theme {theme!r} could not be found. '
-            raise ValidationError(msg, spec, 'theme')
-        return _THEMES[theme]
-
-    @classmethod
-    def _validate_template(cls, template, spec, context):
+    def _validate_template(cls, template, spec, context, subcontext):
         if template in _TEMPLATES:
-            template = _TEMPLATES[template]
+            template_cls = _TEMPLATES[template]
         elif '.' not in template:
-            raise ValidationError(f'Template must be one of {list(_TEMPLATES)} '
-                                  'or an absolute import path.', spec, 'template')
+            raise ValidationError(
+                f'Template must be one of {list(_TEMPLATES)} or an absolute '
+                'import path.', spec, 'template'
+            )
         else:
             *paths, name = template.split('.')
             path = '.'.join(paths)
@@ -118,18 +113,27 @@ class Config(Component):
                     f'Config template {name} was not found in model {path}.',
                     spec, 'template'
                 )
-            template = getattr(module, name)
+            template_cls = getattr(module, name)
             if not issubclass(template, BasicTemplate):
                 raise ValidationError(
                     f'Config template {path}.{name} is not a valid Panel template.',
                     spec, 'template'
                 )
-        return template
+        return template_cls
+
+    @classmethod
+    def _validate_theme(cls, theme, spec, context, subcontext):
+        if theme not in _THEMES:
+            msg = f'Config theme {theme!r} could not be found.'
+            raise ValidationError(msg, spec, 'theme')
+        return _THEMES[theme]
 
     def __init__(self, **params):
         super().__init__(**params)
-        pn.config.loading_spinner = self.loading_spinner
-        pn.config.loading_color = self.loading_color
+        pn.config.param.update(
+            loading_spinner=self.loading_spinner,
+            loading_color=self.loading_color
+        )
 
     def construct_template(self):
         params = {'title': self.title, 'theme': self.theme}
@@ -289,7 +293,7 @@ class Dashboard(Component):
                 self._yaml = f.read()
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        state.spec = load_yaml(self._yaml, **kwargs)
+        state.spec = self.validate(load_yaml(self._yaml, **kwargs))
         state.resolve_views()
 
     def _load_target(self, target_spec):
@@ -583,48 +587,30 @@ class Dashboard(Component):
     ##################################################################
 
     @classmethod
-    def _validate_auth(cls, auth, spec, context):
-        context['auth'] = Auth.validate(auth, context)
+    def _validate_auth(cls, auth, spec, context, subcontext):
+        subcontext['auth'] = {}
+        return Auth.validate(auth, context, subcontext['auth'])
 
     @classmethod
-    def _validate_config(cls, config, spec, context):
-        context['config'] = Config.validate(config, context)
+    def _validate_config(cls, config, spec, context, subcontext):
+        subcontext['config'] = {}
+        return Config.validate(config, context, subcontext['config'])
 
     @classmethod
-    def _validate_pipelines(cls, pipelines, spec, context):
-        if 'pipelines' not in context:
-            context['pipelines'] = {}
-        for pipeline_name, pipeline_spec in pipelines.items():
-            context['pipelines'][pipeline_name] = Pipeline.validate(
-                pipeline_spec, context
-            )
+    def _validate_pipelines(cls, pipeline_specs, spec, context, subcontext):
+        return cls._validate_dict_subtypes('pipelines', Pipeline, pipeline_specs, spec, context, subcontext)
 
     @classmethod
-    def _validate_sources(cls, sources, spec, context):
-        if 'sources' not in context:
-            context['sources'] = {}
-        for source_name, source_spec in sources.items():
-            context['sources'][source_name] = Source.validate(
-                source_spec, context
-            )
+    def _validate_sources(cls, source_specs, spec, context, subcontext):
+        return cls._validate_dict_subtypes('sources', Source, source_specs, spec, context, subcontext)
 
     @classmethod
-    def _validate_targets(cls, targets, spec, context):
-        if 'targets' not in context:
-            context['targets'] = []
-        for target_spec in targets:
-            context['targets'].append(Target.validate(
-                target_spec, context
-            ))
+    def _validate_targets(cls, target_specs, spec, context, subcontext):
+        return cls._validate_list_subtypes('targets', Target, target_specs, spec, context, subcontext)
 
     @classmethod
-    def _validate_variables(cls, variables, spec, context):
-        if 'variables' not in context:
-            context['variables'] = {}
-        for var_name, var_spec in variables.items():
-            context['variables'][var_name] = Variable.validate(
-                var_spec, context
-            )
+    def _validate_variables(cls, variable_specs, spec, context, subcontext):
+        return cls._validate_dict_subtypes('variables', Variable, variable_specs, spec, context, subcontext)
 
     ##################################################################
     # Public API

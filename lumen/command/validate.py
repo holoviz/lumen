@@ -2,6 +2,8 @@ import argparse
 
 from pathlib import Path
 
+import yaml
+
 from bokeh.command.subcommand import Argument, Subcommand
 
 
@@ -25,4 +27,6 @@ class Validate(Subcommand):
     def invoke(self, args: argparse.Namespace):
         from ..dashboard import Dashboard, load_yaml
         spec = load_yaml(Path(args.file).read_text())
-        Dashboard.validate(spec)
+        context = {}
+        Dashboard.validate(spec, context=context)
+        print(yaml.dump(context))

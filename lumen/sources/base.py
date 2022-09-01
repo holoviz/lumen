@@ -4,6 +4,7 @@ import re
 import shutil
 import sys
 import threading
+import warnings
 import weakref
 
 from concurrent import futures
@@ -171,6 +172,24 @@ class Source(MultiTypeComponent):
         return resolved_spec, refs
 
     @classmethod
+    def _validate_filters(cls, filter_specs, spec, context, subcontext):
+        warnings.warn(
+            'Providing filters in a Source definition is deprecated, '
+            'please declare filters as part of a Pipeline.', spec, 'filters'
+        )
+        return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+
+    @classmethod
+    def validate(cls, spec, context=None, subcontext=None):
+        if isinstance(spec, str):
+            if spec not in context['sources']:
+                msg = f'Referenced non-existent source {spec!r}.'
+                msg = match_suggestion_message(spec, list(context['sources']), msg)
+                raise ValidationError(msg, spec, spec)
+            return spec
+        return super().validate(spec, context, subcontext)
+
+    @classmethod
     def from_spec(cls, spec):
         """
         Creates a Source object from a specification. If a Source
@@ -187,24 +206,17 @@ class Source(MultiTypeComponent):
         -------
         Resolved and instantiated Source object
         """
-        if spec is None:
-            raise ValidationError('Source specification empty.')
-        elif isinstance(spec, str):
+        if isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
             elif spec in state.spec.get('sources', {}):
                 source = state.load_source(spec, state.spec['sources'][spec])
-            else:
-                msg = f"Source with name '{spec}' was not found."
-                possibilities = list(state.sources) + list(state.spec.get('sources', {}))
-                msg = match_suggestion_message(spec, possibilities, msg)
-                raise ValidationError(msg)
-            return source
-
-        spec = dict(spec)
-        source_type = Source._get_type(spec.pop('type', None))
-        resolved_spec, refs = cls._recursive_resolve(spec, source_type)
-        return source_type(refs=refs, **resolved_spec)
+        else:
+            spec = dict(spec)
+            source_type = Source._get_type(spec.pop('type', None))
+            resolved_spec, refs = cls._recursive_resolve(spec, source_type)
+            source = source_type(refs=refs, **resolved_spec)
+        return source
 
     def __init__(self, **params):
         from ..config import config

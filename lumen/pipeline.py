@@ -13,7 +13,7 @@ from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
 from .util import get_dataframe_schema
-from .validation import ValidationError, validate_parameters
+from .validation import ValidationError, match_suggestion_message
 
 
 class DataFrame(param.DataFrame):
@@ -148,14 +148,49 @@ class Pipeline(Component):
         self.data = data
 
     @classmethod
+    def _validate_source(cls, source_spec, spec, context, subcontext):
+        if isinstance(source_spec, str):
+            if source_spec not in context['sources']:
+                msg = f'Pipeline specified non-existent source {source_spec!r}.'
+                msg = match_suggestion_message(source_spec, list(context['sources']), msg)
+                raise ValidationError(msg, spec, source_spec)
+            return source_spec
+        source_context = {}
+        Source.validate(source_spec, context, source_context)
+        src_cls = Source._get_type(source_spec['type'])
+        source_name = f'{src_cls.name}'
+        context['sources'][source_name] = source_context
+        return source_name
+
+    @classmethod
+    def _validate_filters(cls, filter_specs, spec, context, subcontext):
+        return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+
+    @classmethod
+    def _validate_transforms(cls, transform_specs, spec, context, subcontext):
+        return cls._validate_dict_or_list_subtypes('transforms', Transform, transform_specs, spec, context, subcontext)
+
+    @classmethod
+    def _validate_sql_transforms(cls, transform_specs, spec, context, subcontext):
+        return cls._validate_dict_or_list_subtypes('transforms', SQLTransform, transform_specs, spec, context, subcontext)
+
+    @classmethod
+    def validate(cls, spec, context=None, subcontext=None):
+        if isinstance(spec, str):
+            if spec not in context['pipelines']:
+                msg = f'Referenced non-existent pipeline {spec!r}.'
+                msg = match_suggestion_message(spec, list(context['pipelines']), msg)
+                raise ValidationError(msg, spec, spec)
+            return spec
+        return super().validate(spec, context, subcontext)
+
+    @classmethod
     def from_spec(
         cls, spec: Dict[str, Any], source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
         spec = spec.copy()
         params = dict(spec)
-        expected = list(cls.param.params())
-        validate_parameters(params, expected, cls.name)
 
         # Resolve source
         if 'source' in spec:
@@ -168,16 +203,24 @@ class Pipeline(Component):
                 else:
                     source = state.load_source(source, state.spec['sources'][source])
         params['source'] = source
+
+        # Validate table
         table = params.get('table')
+        tables = source.get_tables()
         if table is None:
-            tables = source.get_tables()
             if len(tables) > 1:
                 raise ValidationError(
                     "The Pipeline specification does not contain a table and the "
                     "supplied Source has multiple tables. Please specify one of the "
-                    f"following tables: {tables} in the pipeline specification."
+                    f"following tables: {tables} in the pipeline specification.",
+                    spec
                 )
             params['table'] = table = tables[0]
+        elif table not in tables:
+            raise ValidationError(
+                "The Pipeline specification references a table that is not "
+                "available on the specified source. ", spec
+            )
 
         # Resolve filters
         params['filters'] = filters = []

@@ -476,6 +476,8 @@ class ParamFilter(Filter):
 
     _requires_field = False
 
+    _required_fields = []
+
     def __init__(self, **params):
         super().__init__(**params)
         self.param.watch(self._attach_watcher, 'parameter')
