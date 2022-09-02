@@ -150,7 +150,7 @@ class Component(param.Parameterized):
         subcontext[key].update(update)
 
     @classmethod
-    def _validate_fields(cls, spec, context, subcontext, runtime):
+    def _validate_fields(cls, spec, context, subcontext):
         validated = {}
         allowed = cls._allowed()
         for field in (allowed or list(spec)):
@@ -187,15 +187,27 @@ class Component(param.Parameterized):
                     msg = f"{cls.__name__} component {field!r} value failed validation: {str(e)}"
                     raise ValidationError(msg, spec, field)
             validated[field] = val
-        return validated if runtime else subcontext
+        return subcontext
 
     @classmethod
     def from_spec(cls, spec):
-        spec = cls.validate(spec, runtime=True)
+        """
+        Creates a Component instanceobject from a specification.
+
+        Parameters
+        ----------
+        spec : dict or str
+            Specification declared as a dictionary of parameter values
+            or a string referencing a source in the sources dictionary.
+
+        Returns
+        -------
+        Resolved and instantiated Component object
+        """
         return cls(**spec)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None, runtime=False):
+    def validate(cls, spec, context=None, subcontext=None):
         """
         Validates the component specification given the validation context.
 
@@ -206,27 +218,16 @@ class Component(param.Parameterized):
         context: dict
           Validation context contains the specification of all previously validated components,
           e.g. to allow resolving of references.
-        runtime: boolean
-          Whether to perform runtime validation and return concrete types
-          or keep type references.
 
         Returns
         --------
         Validated specification.
         """
-        if runtime and not context:
-            context = {
-                'variables': state.variables._vars,
-                'sources': state.sources,
-                'pipelines': state.pipelines
-            }
-            subcontext = {}
-        else:
-            context = {} if context is None else context
-            subcontext = context if subcontext is None else subcontext
+        context = {} if context is None else context
+        subcontext = {} if subcontext is None else subcontext
         cls._validate_allowed(spec)
         cls._validate_required(spec)
-        return cls._validate_fields(spec, context, subcontext, runtime)
+        return cls._validate_fields(spec, context, subcontext)
 
 
 class MultiTypeComponent(Component):
@@ -278,12 +279,11 @@ class MultiTypeComponent(Component):
 
     @classmethod
     def from_spec(cls, spec):
-        spec = cls.validate(spec, runtime=True)
         component_cls = cls._get_type(spec['type'], spec)
         return component_cls(**spec)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None, runtime=False):
+    def validate(cls, spec, context=None, subcontext=None):
         """
         Validates the component specification given the validation context and the path.
 
@@ -294,28 +294,17 @@ class MultiTypeComponent(Component):
         context: dict
           Validation context contains the specification of all previously validated components,
           e.g. to allow resolving of references.
-        runtime: boolean
-          Whether to perform runtime validation and return concrete types
-          or keep type references.
 
         Returns
         --------
         Validated specification.
         """
-        if runtime and not context:
-            context = {
-                'variables': state.variables._vars,
-                'sources': state.sources,
-                'pipelines': state.pipelines
-            }
-            subcontext = {}
-        else:
-            context = {} if context is None else context
-            subcontext = context if subcontext is None else subcontext
+        context = {} if context is None else context
+        subcontext = {} if subcontext is None else subcontext
         if 'type' not in spec:
             cls._missing_type(spec)
         component_cls = cls._get_type(spec['type'], spec)
         component_cls._validate_allowed(spec)
         component_cls._validate_required(spec)
-        component_cls._validate_fields(spec, context, subcontext, runtime)
+        component_cls._validate_fields(spec, context, subcontext)
         return spec

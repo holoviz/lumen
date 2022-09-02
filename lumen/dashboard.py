@@ -24,7 +24,7 @@ from .sources import RESTSource, Source  # noqa
 from .state import state
 from .target import Target
 from .transforms import Transform  # noqa
-from .util import expand_spec
+from .util import expand_spec, resolve_module_reference
 from .validation import ValidationError, match_suggestion_message
 from .variables import Variable, Variables
 from .views import View  # noqa
@@ -50,7 +50,8 @@ class Config(Component):
         Whether the dashboard specification is editable from within
         the deployed dashboard.""")
 
-    layout = param.Selector(default=_DEFAULT_LAYOUT, constant=True, objects=_LAYOUTS, doc="""
+    layout = param.Selector(default=_DEFAULT_LAYOUT, constant=True, objects=_LAYOUTS,
+                            check_on_set=False, doc="""
         Overall layout of the dashboard.""")
 
     loading_spinner = param.Selector(default='dots', constant=True, objects=[
@@ -79,7 +80,8 @@ class Config(Component):
                               check_on_set=False, doc="""
         The Panel template to render the dashboard into.""")
 
-    theme = param.Selector(default=_THEMES['default'], objects=_THEMES, constant=True, doc="""
+    theme = param.Selector(default=_THEMES['default'], objects=_THEMES, constant=True,
+                           check_on_set=False, doc="""
         The Panel template theme to style the dashboard with.""")
 
     _allowed_fields = 'params'
@@ -90,46 +92,60 @@ class Config(Component):
         if layout not in _LAYOUTS:
             msg = f'Config layout {layout!r} could not be found. Layout must be one of {list(_LAYOUTS)}.'
             raise ValidationError(msg, spec, 'layout')
-        return _LAYOUTS[layout]
+        return layout
 
     @classmethod
     def _validate_template(cls, template, spec, context, subcontext):
         if template in _TEMPLATES:
-            template_cls = _TEMPLATES[template]
+            return template
         elif '.' not in template:
             raise ValidationError(
                 f'Config template {template!r} not found. Template must be one '
                 'of {list(_TEMPLATES)} or an absolute import path.', spec, template
             )
-        else:
-            *paths, name = template.split('.')
-            path = '.'.join(paths)
-            try:
-                module = importlib.import_module(path)
-            except Exception as e:
-                raise ValidationError(
-                    f'Config template {path!r} module could not be imported '
-                    f'errored with: {e}.', spec, path
-                )
-            if not hasattr(module, name):
-                raise ValidationError(
-                    f'Config template {name!r} was not found in {path!r} module.',
-                    spec, name
-                )
-            template_cls = getattr(module, name)
-            if not issubclass(template_cls, BasicTemplate):
-                raise ValidationError(
-                    f'Config template \'{path}.{name}\' is not a valid Panel template.',
-                    spec, 'template'
-                )
-        return template_cls
+        *paths, name = template.split('.')
+        path = '.'.join(paths)
+        try:
+            module = importlib.import_module(path)
+        except Exception as e:
+            raise ValidationError(
+                f'Config template {path!r} module could not be imported '
+                f'errored with: {e}.', spec, path
+            )
+        if not hasattr(module, name):
+            raise ValidationError(
+                f'Config template {name!r} was not found in {path!r} module.',
+                spec, name
+            )
+        template_cls = getattr(module, name)
+        if not issubclass(template_cls, BasicTemplate):
+            raise ValidationError(
+                f'Config template \'{path}.{name}\' is not a valid Panel template.',
+                spec, 'template'
+            )
+        return template
 
     @classmethod
     def _validate_theme(cls, theme, spec, context, subcontext):
         if theme not in _THEMES:
             msg = f'Config theme {theme!r} could not be found. Theme must be one of {list(_THEMES)}.'
             raise ValidationError(msg, spec, 'theme')
-        return _THEMES[theme]
+        return theme
+
+    @classmethod
+    def from_spec(cls, spec):
+        if 'template' in spec:
+            template = spec['template']
+            if template in _TEMPLATES:
+                template_cls = _TEMPLATES[template]
+            else:
+                template_cls = resolve_module_reference(template, BasicTemplate)
+            spec['template'] = template_cls
+        if 'theme' in spec:
+            spec['theme'] = _THEMES[spec['theme']]
+        if 'layout' in spec:
+            spec['layout'] = _LAYOUTS[spec['layout']]
+        return cls(**spec)
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -348,8 +364,7 @@ class Dashboard(Component):
                 self._yaml = f.read()
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        state.spec = {}
-        self.validate(load_yaml(self._yaml, **kwargs), state.spec)
+        state.spec = self.validate(load_yaml(self._yaml, **kwargs))
         state.resolve_views()
 
     def _load_target(self, target_spec):
@@ -641,6 +656,27 @@ class Dashboard(Component):
     ##################################################################
     # Validation API
     ##################################################################
+
+    @classmethod
+    def validate(cls, spec, context=None, subcontext=None):
+        """
+        Validates the component specification given the validation context.
+
+        Arguments
+        -----------
+        spec: dict
+          The specification for the component being validated.
+        context: dict
+          Validation context contains the specification of all previously validated components,
+          e.g. to allow resolving of references.
+
+        Returns
+        --------
+        Validated specification.
+        """
+        context = {} if context is None else context
+        subcontext = context if subcontext is None else subcontext
+        return super().validate(spec, context, subcontext)
 
     @classmethod
     def _validate_auth(cls, auth, spec, context, subcontext):

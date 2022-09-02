@@ -60,10 +60,10 @@ class Filter(MultiTypeComponent):
         """
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None, runtime=False):
+    def validate(cls, spec, context=None, subcontext=None):
         if isinstance(spec, str):
             return spec
-        return super().validate(spec, context, subcontext, runtime)
+        return super().validate(spec, context, subcontext)
 
     @classmethod
     def from_spec(cls, spec, source_schema, source_filters=None):

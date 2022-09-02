@@ -1,6 +1,6 @@
 import pytest
 
-from lumen.dashboard import Dashboard, Defaults
+from lumen.dashboard import Dashboard
 from lumen.validation import ValidationError
 
 
@@ -14,7 +14,6 @@ def test_defaults():
         }
     }
     assert Dashboard.validate(spec) == spec
-    assert Defaults.validate(spec['defaults'], runtime=True) == spec['defaults']
 
 def test_defaults_key_wrong():
     spec = {'defaults': {

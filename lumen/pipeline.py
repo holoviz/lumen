@@ -208,14 +208,15 @@ class Pipeline(Component):
         return cls._validate_dict_or_list_subtypes('transforms', SQLTransform, transform_specs, spec, context, subcontext)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None, runtime=False):
+    def validate(cls, spec, context=None, subcontext=None):
         if isinstance(spec, str):
             if spec not in context['pipelines']:
                 msg = f'Referenced non-existent pipeline {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['pipelines']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
-        return super().validate(spec, context, subcontext, runtime)
+        ret = super().validate(spec, context, subcontext)
+        return ret
 
     @classmethod
     def from_spec(
@@ -225,7 +226,6 @@ class Pipeline(Component):
         spec = spec.copy()
         if source is not None:
             spec['source'] = source
-        spec = cls.validate(spec, runtime=True)
         params = dict(spec)
 
         # Resolve source

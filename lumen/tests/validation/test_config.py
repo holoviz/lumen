@@ -1,18 +1,12 @@
 import pytest
 
-from panel.layout import Column
-from panel.template import BootstrapTemplate, DarkTheme
-
-from lumen.dashboard import Config, Dashboard
+from lumen.dashboard import Dashboard
 from lumen.validation import ValidationError
 
 
 def test_config():
     spec = {'config': {'theme': 'dark', 'layout': 'column', 'template': 'bootstrap', 'loading_color': 'red'}}
     assert Dashboard.validate(spec) == spec
-    assert Config.validate(spec['config'], runtime=True) == {
-        'theme': DarkTheme, 'layout': Column, 'template': BootstrapTemplate, 'loading_color': 'red'
-    }
 
 def test_config_invalid_param_type():
     spec = {'config': {'loading_color': 3}}

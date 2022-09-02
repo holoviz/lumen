@@ -186,16 +186,14 @@ class Source(MultiTypeComponent):
         return spec
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None, runtime=False):
-        if runtime and isinstance(spec, cls):
-            return spec
-        elif isinstance(spec, str):
+    def validate(cls, spec, context=None, subcontext=None):
+        if isinstance(spec, str):
             if spec not in context['sources']:
                 msg = f'Referenced non-existent source {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
-        return super().validate(spec, context, subcontext, runtime)
+        return super().validate(spec, context, subcontext)
 
     @classmethod
     def from_spec(cls, spec):
@@ -221,7 +219,6 @@ class Source(MultiTypeComponent):
                 source = state.load_source(spec, state.spec['sources'][spec])
             return source
 
-        spec = cls.validate(spec, runtime=True)
         source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)

@@ -2,7 +2,6 @@ import pytest
 
 from lumen.dashboard import Dashboard
 from lumen.validation import ValidationError
-from lumen.variables import Variable
 
 
 def test_variables_validation():
@@ -13,8 +12,6 @@ def test_variables_validation():
         }
     }
     assert Dashboard.validate(spec) == spec
-    assert Variable.validate(spec['variables']['var1'], runtime=True) == spec['variables']['var1']
-    assert Variable.validate(spec['variables']['var2'], spec, runtime=True) == spec['variables']['var2']
 
 def test_variables_wrong_type():
     spec = {
