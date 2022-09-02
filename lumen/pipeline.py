@@ -157,18 +157,38 @@ class Pipeline(Component):
                 msg = match_suggestion_message(source_spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, source_spec)
             return source_spec
-        source_context = {}
-        Source.validate(source_spec, context, source_context)
-        src_cls = Source._get_type(source_spec['type'])
-        source_name = f'{src_cls.name}'
-        if 'sources' not in context:
-            context['sources'] = {}
-        context['sources'][source_name] = source_context
-        return source_name
+        subcontext['source'] = {}
+        return Source.validate(source_spec, context, subcontext['source'])
 
     @classmethod
     def _validate_filters(cls, filter_specs, spec, context, subcontext):
-        return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+        # Deprecation: Handles filter specs inlined into Source definition
+        # Warning is raised by Source._validate_filters
+        validated_specs = []
+        for filter_spec in filter_specs:
+            if not isinstance(filter_spec, str):
+                validated_specs.append(filter_spec)
+                continue
+            elif not isinstance(spec['source'], str):
+                raise ValidationError(
+                    'Pipeline may only reference filters by name if the Source has been '
+                    'defined by reference. Please simply move the filter definition from '
+                    'the Source to the Pipeline.', spec, filter_spec
+                )
+            source = context['sources'][spec['source']]
+            if 'filters' not in source:
+                raise ValidationError(
+                    f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source, '
+                    'the source does not define any filters. ', spec, filter_spec
+                )
+            elif filter_spec not in source['filters']:
+                msg = f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source.'
+                msg = match_suggestion_message(filter_spec, list(source['filters']), msg)
+                raise ValidationError(msg, spec, filter_spec)
+            validated_specs.append(source['filters'].pop(filter_spec))
+            if len(source['filters']) == 0:
+                del source['filters']
+        return cls._validate_list_subtypes('filters', Filter, validated_specs, spec, context, subcontext)
 
     @classmethod
     def _validate_transforms(cls, transform_specs, spec, context, subcontext):
@@ -179,28 +199,24 @@ class Pipeline(Component):
         return cls._validate_dict_or_list_subtypes('transforms', SQLTransform, transform_specs, spec, context, subcontext)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None, subcontext=None, runtime=False):
         if isinstance(spec, str):
             if spec not in context['pipelines']:
                 msg = f'Referenced non-existent pipeline {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['pipelines']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
-        return super().validate(spec, context, subcontext)
-
-    @classmethod
-    def _runtime_validate(cls, spec, source, source_filters):
-        spec = spec.copy()
-        if source is not None:
-            spec['source'] = source
-        return cls.validate(spec, {'sources': state.sources, 'pipelines': state.pipelines})
+        return super().validate(spec, context, subcontext, runtime)
 
     @classmethod
     def from_spec(
         cls, spec: Dict[str, Any], source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
-        spec = cls._runtime_validate(spec, source, source_filters)
+        spec = spec.copy()
+        if source is not None:
+            spec['source'] = source
+        spec = cls.validate(spec, runtime=True)
         params = dict(spec)
 
         # Resolve source

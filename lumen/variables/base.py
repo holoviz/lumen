@@ -109,6 +109,9 @@ class Variable(MultiTypeComponent):
 
     __abstract = True
 
+    _allowed_fields = 'params'
+    _validate_params = True
+
     def __init__(self, **params):
         if 'value' not in params and 'default' in params:
             params['value'] = params['default']

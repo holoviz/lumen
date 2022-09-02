@@ -173,15 +173,21 @@ class Source(MultiTypeComponent):
 
     @classmethod
     def _validate_filters(cls, filter_specs, spec, context, subcontext):
+        if isinstance(filter_specs, list):
+            raise ValidationError(
+                'Source filters key must be declared as a dictionary, not a list.',
+                spec, 'filters'
+            )
         warnings.warn(
             'Providing filters in a Source definition is deprecated, '
             'please declare filters as part of a Pipeline.', DeprecationWarning
         )
-        return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+        spec = cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+        return spec
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
-        if isinstance(spec, cls):
+    def validate(cls, spec, context=None, subcontext=None, runtime=False):
+        if runtime and isinstance(spec, cls):
             return spec
         elif isinstance(spec, str):
             if spec not in context['sources']:
@@ -189,12 +195,7 @@ class Source(MultiTypeComponent):
                 msg = match_suggestion_message(spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
-        return super().validate(spec, context, subcontext)
-
-    @classmethod
-    def _runtime_validate(cls, spec):
-        spec = spec.copy()
-        return cls.validate(spec, {'sources': state.sources})
+        return super().validate(spec, context, subcontext, runtime)
 
     @classmethod
     def from_spec(cls, spec):
@@ -220,7 +221,7 @@ class Source(MultiTypeComponent):
                 source = state.load_source(spec, state.spec['sources'][spec])
             return source
 
-        spec = cls._runtime_validate(spec)
+        spec = cls.validate(spec, runtime=True)
         source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)

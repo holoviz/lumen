@@ -60,6 +60,12 @@ class Filter(MultiTypeComponent):
         """
 
     @classmethod
+    def validate(cls, spec, context=None, subcontext=None, runtime=False):
+        if isinstance(spec, str):
+            return spec
+        return super().validate(spec, context, subcontext, runtime)
+
+    @classmethod
     def from_spec(cls, spec, source_schema, source_filters=None):
         """
         Resolves a Filter specification given the schema of the Source

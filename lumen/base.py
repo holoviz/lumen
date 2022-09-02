@@ -5,7 +5,7 @@ from functools import partial
 import param
 
 from .state import state
-from .util import resolve_module_reference
+from .util import is_ref, resolve_module_reference
 from .validation import (
     ValidationError, match_suggestion_message, reverse_match_suggestion,
     validate_parameters,
@@ -19,6 +19,9 @@ class Component(param.Parameterized):
     """
 
     __abstract = True
+
+    # Whether the component allows references
+    _allows_refs = True
 
     # Fields that are allowed to be declared
     _allowed_fields = []
@@ -53,16 +56,19 @@ class Component(param.Parameterized):
         return [v for k, v in self._refs.items() if v.startswith('$variables.')]
 
     @classmethod
+    def _allowed(cls):
+        return list(cls.param) if cls._allowed_fields == 'params' else cls._allowed_fields
+
+    @classmethod
     def _validate_allowed(cls, spec):
         if not cls._allowed_fields:
             return
+        allowed = cls._allowed()
         for field in spec:
-            if field in cls._allowed_fields:
+            if field in allowed:
                 continue
-            msg = f'{cls.__name__} specification contained unknown field {field!r}'
-            new_msg, attr = reverse_match_suggestion(field, spec, msg)
-            if attr not in spec:
-                msg = new_msg
+            msg = f'{cls.__name__} specification contained unknown field {field!r}.'
+            msg = match_suggestion_message(field, allowed, msg)
             raise ValidationError(msg, spec, field)
 
     @classmethod
@@ -79,7 +85,7 @@ class Component(param.Parameterized):
                 if any(f in spec for f in field):
                     continue
                 field_str = "', '".join(field[:-1]) + f" or '{field[-1]}"
-                msg = f'The {cls.__name__} component requires one of {field_str} to be defined.'
+                msg = f'{cls.__name__} component requires one of {field_str} to be defined.'
                 for f in field:
                     msg, attr = reverse_match_suggestion(f, spec, msg)
                     if attr:
@@ -88,6 +94,11 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_list_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext):
+        if not isinstance(subtype_specs, list):
+            raise ValidationError(
+                f'{cls.__name__} {key} field expected list type but got {type(subtype_specs)}.',
+                spec, key
+            )
         subcontext[key] = []
         subtypes = []
         for subtype_spec in subtype_specs:
@@ -98,6 +109,11 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_dict_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext):
+        if not isinstance(subtype_specs, dict):
+            raise ValidationError(
+                f'{cls.__name__} {key} field expected dict type but got {type(subtype_specs)}.',
+                spec, key
+            )
         subcontext[key] = {}
         subtypes = {}
         for subtype_name, subtype_spec in subtype_specs.items():
@@ -133,9 +149,10 @@ class Component(param.Parameterized):
         subcontext[key].update(update)
 
     @classmethod
-    def _validate_fields(cls, spec, context, subcontext):
+    def _validate_fields(cls, spec, context, subcontext, runtime):
         validated = {}
-        for field in (cls._allowed_fields or list(spec)):
+        allowed = cls._allowed()
+        for field in (allowed or list(spec)):
             if field not in spec:
                 continue
             val = spec[field]
@@ -143,12 +160,21 @@ class Component(param.Parameterized):
                 validated_val = getattr(cls, f'_validate_{field}')(val, spec, context, subcontext)
             else:
                 validated_val = val
-            if validated_val is None:
-                continue
             if field not in subcontext:
                 subcontext[field] = val
             val = validated_val
-            if field in cls.param and cls._validate_params:
+            if is_ref(val):
+                refs = val[1:].split('.')
+                if refs[0] == 'variables':
+                    if refs[1] not in context.get('variables', {}):
+                        msg = f'{cls.__name__} component {field!r} references undeclared variable {val!r}.'
+                        msg = match_suggestion_message(refs[1], list(context.get('variables', {})), msg)
+                        raise ValidationError(msg, spec, refs[1])
+                elif refs[0] not in context.get('sources', {}):
+                    msg = f'{cls.__name__} component {field!r} references undeclared source {val!r}.'
+                    msg = match_suggestion_message(refs[1], list(context.get('sources', {})), msg)
+                    raise ValidationError(msg, spec, refs[1])
+            elif field in cls.param and cls._validate_params:
                 if (isinstance(field, param.Selector) and not cls.param.check_on_set):
                     validated[field] = validated_val
                     continue
@@ -157,18 +183,18 @@ class Component(param.Parameterized):
                 try:
                     pobj._validate(validated_val)
                 except Exception as e:
-                    msg = f"The {cls.__name__}.{field!r} field failed validation: {str(e)}"
+                    msg = f"{cls.__name__} component {field!r} value failed validation: {str(e)}"
                     raise ValidationError(msg, spec, field)
-
             validated[field] = val
-        return validated
+        return validated if runtime else subcontext
 
     @classmethod
     def from_spec(cls, spec):
+        spec = cls.validate(spec, runtime=True)
         return cls(**spec)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None, subcontext=None, runtime=False):
         """
         Validates the component specification given the validation context.
 
@@ -179,16 +205,27 @@ class Component(param.Parameterized):
         context: dict
           Validation context contains the specification of all previously validated components,
           e.g. to allow resolving of references.
+        runtime: boolean
+          Whether to perform runtime validation and return concrete types
+          or keep type references.
 
         Returns
         --------
         Validated specification.
         """
-        context = {} if context is None else context
-        subcontext = context if subcontext is None else subcontext
+        if runtime and not context:
+            context = {
+                'variables': state.variables._vars,
+                'sources': state.sources,
+                'pipelines': state.pipelines
+            }
+            subcontext = {}
+        else:
+            context = {} if context is None else context
+            subcontext = context if subcontext is None else subcontext
         cls._validate_allowed(spec)
         cls._validate_required(spec)
-        return cls._validate_fields(spec, context, subcontext)
+        return cls._validate_fields(spec, context, subcontext, runtime)
 
 
 class MultiTypeComponent(Component):
@@ -197,6 +234,10 @@ class MultiTypeComponent(Component):
 
     @classmethod
     def _get_type(cls, component_type, spec=None):
+        for scls in cls.__mro__:
+            if hasattr(scls, f'{scls.__name__.lower()}_type'):
+                break
+        cls = scls
         clsname = cls.__name__
         clslower = clsname.lower()
         if component_type is None:
@@ -217,24 +258,31 @@ class MultiTypeComponent(Component):
             if cls_type == component_type:
                 return component
 
-        msg = f"The specification of a {clsname} component declared unknown type '{component_type}'."
+        msg = f"{clsname} component declared unknown type '{component_type}'."
         msg = match_suggestion_message(component_type, cls_types, msg)
         raise ValidationError(msg, spec=spec, attr=component_type)
 
     @classmethod
+    def _allowed(cls):
+        allowed = super()._allowed()
+        if allowed:
+            allowed.append('type')
+        return allowed
+
+    @classmethod
     def _missing_type(cls, spec):
-        msg = f'The specification of a {cls.__name__} component did not declare a type.'
+        msg = f'{cls.__name__} component specification did not declare a type.'
         msg, attr = reverse_match_suggestion('type', spec, msg)
         raise ValidationError(msg, spec=spec, attr=attr)
 
     @classmethod
     def from_spec(cls, spec):
-        spec = cls.validate(spec)
+        spec = cls.validate(spec, runtime=True)
         component_cls = cls._get_type(spec['type'], spec)
         return component_cls(**spec)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None, subcontext=None, runtime=False):
         """
         Validates the component specification given the validation context and the path.
 
@@ -245,17 +293,28 @@ class MultiTypeComponent(Component):
         context: dict
           Validation context contains the specification of all previously validated components,
           e.g. to allow resolving of references.
+        runtime: boolean
+          Whether to perform runtime validation and return concrete types
+          or keep type references.
 
         Returns
         --------
         Validated specification.
         """
-        context = {} if context is None else context
-        subcontext = context if subcontext is None else subcontext
+        if runtime and not context:
+            context = {
+                'variables': state.variables._vars,
+                'sources': state.sources,
+                'pipelines': state.pipelines
+            }
+            subcontext = {}
+        else:
+            context = {} if context is None else context
+            subcontext = context if subcontext is None else subcontext
         if 'type' not in spec:
             cls._missing_type(spec)
         component_cls = cls._get_type(spec['type'], spec)
         component_cls._validate_allowed(spec)
         component_cls._validate_required(spec)
-        component_cls._validate_fields(spec, context, subcontext)
+        component_cls._validate_fields(spec, context, subcontext, runtime)
         return spec

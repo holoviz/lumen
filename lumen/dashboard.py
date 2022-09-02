@@ -25,7 +25,7 @@ from .state import state
 from .target import Target
 from .transforms import Transform  # noqa
 from .util import expand_spec
-from .validation import ValidationError
+from .validation import ValidationError, match_suggestion_message
 from .variables import Variable, Variables
 from .views import View  # noqa
 
@@ -43,49 +43,52 @@ class Config(Component):
     High-level configuration options for the Dashboard.
     """
 
-    background_load = param.Boolean(default=False, doc="""
+    background_load = param.Boolean(default=False, constant=True, doc="""
         Whether to load any targets in the background.""")
 
-    editable = param.Boolean(default=False, doc="""
+    editable = param.Boolean(default=False, constant=True, doc="""
         Whether the dashboard specification is editable from within
         the deployed dashboard.""")
 
-    layout = param.Selector(default=_DEFAULT_LAYOUT, objects=_LAYOUTS, doc="""
+    layout = param.Selector(default=_DEFAULT_LAYOUT, constant=True, objects=_LAYOUTS, doc="""
         Overall layout of the dashboard.""")
 
-    loading_spinner = param.Selector(default='dots', objects=[
+    loading_spinner = param.Selector(default='dots', constant=True, objects=[
         'arc', 'arcs', 'bar', 'dots', 'petal'], doc="""
         Loading indicator to use when component loading parameter is set.""")
 
-    loading_color = param.Color(default='#00aa41', doc="""
+    loading_color = param.Color(default='#00aa41', constant=True, doc="""
         Color of the loading indicator.""")
 
-    logo = param.String(default=None, doc="""
+    logo = param.String(default=None, constant=True, doc="""
         A logo to add to the theme.""")
 
-    ncols = param.Integer(default=3, bounds=(1, None), doc="""
+    ncols = param.Integer(default=3, bounds=(1, None), constant=True, doc="""
         Number of columns to lay out targets in.""")
 
-    reloadable = param.Boolean(default=True, doc="""
+    reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data from source(s) using a button.""")
 
-    sync_with_url = param.Boolean(default=False, doc="""
+    sync_with_url = param.Boolean(default=False, constant=True, doc="""
         Whether to sync current state of the application.""")
 
-    title = param.String(default="Lumen Dashboard", doc="""
+    title = param.String(default="Lumen Dashboard", constant=True, doc="""
         The title of the dashboard.""")
 
-    template = param.Selector(default=_TEMPLATES['material'], objects=_TEMPLATES,
+    template = param.Selector(default=_TEMPLATES['material'], constant=True, objects=_TEMPLATES,
                               check_on_set=False, doc="""
         The Panel template to render the dashboard into.""")
 
-    theme = param.Selector(default=_THEMES['default'], objects=_THEMES, doc="""
+    theme = param.Selector(default=_THEMES['default'], objects=_THEMES, constant=True, doc="""
         The Panel template theme to style the dashboard with.""")
+
+    _allowed_fields = 'params'
+    _validate_params = True
 
     @classmethod
     def _validate_layout(cls, layout, spec, context, subcontext):
         if layout not in _LAYOUTS:
-            msg = f'Config layout {layout!r} could not be found.'
+            msg = f'Config layout {layout!r} could not be found. Layout must be one of {list(_LAYOUTS)}.'
             raise ValidationError(msg, spec, 'layout')
         return _LAYOUTS[layout]
 
@@ -95,8 +98,8 @@ class Config(Component):
             template_cls = _TEMPLATES[template]
         elif '.' not in template:
             raise ValidationError(
-                f'Template must be one of {list(_TEMPLATES)} or an absolute '
-                'import path.', spec, 'template'
+                f'Config template {template!r} not found. Template must be one '
+                'of {list(_TEMPLATES)} or an absolute import path.', spec, template
             )
         else:
             *paths, name = template.split('.')
@@ -105,18 +108,18 @@ class Config(Component):
                 module = importlib.import_module(path)
             except Exception as e:
                 raise ValidationError(
-                    f'Config template {path} module could not be imported '
-                    f'errored with: {e}.', spec, 'template'
+                    f'Config template {path!r} module could not be imported '
+                    f'errored with: {e}.', spec, path
                 )
             if not hasattr(module, name):
                 raise ValidationError(
-                    f'Config template {name} was not found in model {path}.',
-                    spec, 'template'
+                    f'Config template {name!r} was not found in {path!r} module.',
+                    spec, name
                 )
             template_cls = getattr(module, name)
             if not issubclass(template_cls, BasicTemplate):
                 raise ValidationError(
-                    f'Config template {path}.{name} is not a valid Panel template.',
+                    f'Config template \'{path}.{name}\' is not a valid Panel template.',
                     spec, 'template'
                 )
         return template_cls
@@ -124,7 +127,7 @@ class Config(Component):
     @classmethod
     def _validate_theme(cls, theme, spec, context, subcontext):
         if theme not in _THEMES:
-            msg = f'Config theme {theme!r} could not be found.'
+            msg = f'Config theme {theme!r} could not be found. Theme must be one of {list(_THEMES)}.'
             raise ValidationError(msg, spec, 'theme')
         return _THEMES[theme]
 
@@ -155,27 +158,78 @@ class Defaults(Component):
 
     views = param.List(doc="Defaults for View objects.", class_=dict)
 
+    _allowed_fields = 'params'
+    _validate_params = True
+
     @classmethod
-    def from_spec(cls, spec):
-        return cls(**spec)
+    def _validate_defaults(cls, defaults_type, defaults, spec):
+        highlight = f'{defaults_type.__name__.lower()}s'
+        if not isinstance(defaults, list):
+            raise ValidationError(
+                f'Defaults must be defined as a list not as {type(defaults)}.',
+                spec, highlight
+            )
+        for default in defaults:
+            if 'type' not in default:
+                raise ValidationError(
+                    'Defaults must declare the type the defaults apply to.',
+                    spec, highlight
+                )
+            default = dict(default)
+            dtype = default.pop('type')
+            obj_type = defaults_type._get_type(dtype)
+            for p in default:
+                if p in obj_type.param:
+                    pobj = obj_type.param[p]
+                    try:
+                        pobj._validate(default[p])
+                    except Exception as e:
+                        msg = f"The default for {obj_type.__name__} {p!r} parameter failed validation: {str(e)}"
+                        raise ValidationError(msg, default, p)
+                else:
+                    msg = (
+                        f'Default for {obj_type.__name__} {p!r} parameter cannot be set '
+                        'as there is no such parameter.'
+                    )
+                    msg = match_suggestion_message(p, list(obj_type.param), msg)
+                    raise ValidationError(msg, default, p)
+        return defaults
+
+    @classmethod
+    def _validate_filters(cls, filter_defaults, spec, context, subcontext):
+        return cls._validate_defaults(Filter, filter_defaults, spec)
+
+    @classmethod
+    def _validate_sources(cls, source_defaults, spec, context, subcontext):
+        return cls._validate_defaults(Source, source_defaults, spec)
+
+    @classmethod
+    def _validate_transforms(cls, transform_defaults, spec, context, subcontext):
+        return cls._validate_defaults(Transform, transform_defaults, spec)
+
+    @classmethod
+    def _validate_views(cls, view_defaults, spec, context, subcontext):
+        return cls._validate_defaults(View, view_defaults, spec)
 
     def apply(self):
         for obj, defaults in ((Filter, self.filters), (Source, self.sources),
                               (Transform, self.transforms), (View, self.views)):
             for default in defaults:
                 params = dict(default)
-                obj_type = obj._get_type(params.pop('type', None))
+                obj_type = obj._get_type(params['type'])
                 obj_type.param.set_param(**params)
 
 
 class Auth(Component):
 
-    case_sensitive = param.Boolean(default=False, doc="""
+    case_sensitive = param.Boolean(default=False, constant=True, doc="""
         Whether auth validation is case-sensitive or not.""")
 
-    spec = param.Dict({}, doc="""
+    spec = param.Dict({}, constant=True, doc="""
         Dictionary of keys and values to match the pn.state.user_info
         against.""")
+
+    _allows_refs = False
 
     @classmethod
     def from_spec(cls, spec):
@@ -226,7 +280,8 @@ class Dashboard(Component):
     targets = param.List(default=[], class_=Target, doc="""
         List of targets monitoring some source.""")
 
-    _allowed_fields = ['variables', 'auth', 'config', 'sources', 'pipelines', 'targets']
+    _allowed_fields = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'targets']
+    _allows_refs = False
 
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
@@ -273,8 +328,8 @@ class Dashboard(Component):
             self._render()
             self._main[:] = [self._layout]
         except Exception as e:
-            if self._debug:
-                raise e
+            #if self._debug:
+            raise e
             self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}')
             self._main.loading = False
             tb = html.escape(traceback.format_exc())
@@ -293,7 +348,8 @@ class Dashboard(Component):
                 self._yaml = f.read()
         elif self._edited:
             kwargs = {'getenv': False, 'getshell': False, 'getoauth': False}
-        state.spec = self.validate(load_yaml(self._yaml, **kwargs))
+        state.spec = {}
+        self.validate(load_yaml(self._yaml, **kwargs), state.spec)
         state.resolve_views()
 
     def _load_target(self, target_spec):
@@ -597,20 +653,25 @@ class Dashboard(Component):
         return Config.validate(config, context, subcontext['config'])
 
     @classmethod
-    def _validate_pipelines(cls, pipeline_specs, spec, context, subcontext):
-        return cls._validate_dict_subtypes('pipelines', Pipeline, pipeline_specs, spec, context, subcontext)
+    def _validate_defaults(cls, defaults, spec, context, subcontext):
+        subcontext['defaults'] = {}
+        return Defaults.validate(defaults, context, subcontext['defaults'])
 
     @classmethod
-    def _validate_sources(cls, source_specs, spec, context, subcontext):
-        return cls._validate_dict_subtypes('sources', Source, source_specs, spec, context, subcontext)
+    def _validate_pipelines(cls, *args, **kwargs):
+        return cls._validate_dict_subtypes('pipelines', Pipeline, *args, **kwargs)
 
     @classmethod
-    def _validate_targets(cls, target_specs, spec, context, subcontext):
-        return cls._validate_list_subtypes('targets', Target, target_specs, spec, context, subcontext)
+    def _validate_sources(cls, *args, **kwargs):
+        return cls._validate_dict_subtypes('sources', Source, *args, **kwargs)
 
     @classmethod
-    def _validate_variables(cls, variable_specs, spec, context, subcontext):
-        return cls._validate_dict_subtypes('variables', Variable, variable_specs, spec, context, subcontext)
+    def _validate_targets(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('targets', Target, *args, **kwargs)
+
+    @classmethod
+    def _validate_variables(cls, *args, **kwargs):
+        return cls._validate_dict_subtypes('variables', Variable, *args, **kwargs)
 
     ##################################################################
     # Public API

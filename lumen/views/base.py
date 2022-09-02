@@ -19,19 +19,19 @@ from panel.pane.perspective import (
 from panel.param import Param
 from panel.viewable import Viewable, Viewer
 
-from ..base import MultiTypeComponent
+from ..base import Component, MultiTypeComponent
 from ..config import _INDICATORS
 from ..filters import ParamFilter
 from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
-from ..transforms import Transform
+from ..transforms import SQLTransform, Transform
 from ..util import is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
 
-class Download(Viewer):
+class Download(Component, Viewer):
 
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
@@ -174,6 +174,27 @@ class View(MultiTypeComponent, Viewer):
 
     def _update_selection_expr(self, event):
         self.selection_expr = event.new
+
+    @classmethod
+    def _validate_download(cls, download_spec, spec, context, subcontext):
+        subcontext['download'] = {}
+        return Download.validate(download_spec, spec, context, subcontext['download'])
+
+    @classmethod
+    def _validate_filters(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('filters', Transform, *args, **kwargs)
+
+    @classmethod
+    def _validate_transforms(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('transforms', Transform, *args, **kwargs)
+
+    @classmethod
+    def _validate_sql_transforms(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('sql_transforms', SQLTransform, *args, **kwargs)
+
+    @classmethod
+    def _validate_pipeline(cls, *args, **kwargs):
+        return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
     @classmethod
     def from_spec(cls, spec, source=None, filters=None, pipeline=None):
