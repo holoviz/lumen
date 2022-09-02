@@ -5,6 +5,11 @@ import pytest
 
 from lumen.sources.base import DerivedSource
 
+from .utils import (
+    source_clear_cache, source_get_cache_no_query,
+    source_get_schema_update_cache, source_get_tables,
+)
+
 
 @pytest.fixture
 def original(make_filesource):
@@ -52,11 +57,22 @@ def tables_mode_spec():
     return spec
 
 
+@pytest.fixture
+def source(original, tables_mode_spec):
+    return DerivedSource.from_spec(tables_mode_spec)
+
+
+@pytest.fixture
+def source_tables():
+    return {'derived': pd._testing.makeMixedDataFrame()}
+
+
 def test_derived_source_resolve_module_type():
     assert DerivedSource._get_type('lumen.sources.base.DerivedSource') is DerivedSource
+    assert DerivedSource.source_type == 'derived'
 
 
-def test_derived_mirror_source(original, mirror_mode_spec):
+def test_derived_source_mirror_mode(original, mirror_mode_spec):
     derived = DerivedSource.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema() == original.get_schema()
@@ -68,7 +84,7 @@ def test_derived_mirror_source(original, mirror_mode_spec):
     ('transforms', [{'type': 'iloc', 'end': 3}]),
     ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
 ])
-def test_derived_mirror_source_apply(
+def test_derived_source_mirror_mode_apply(
         original, mirror_mode_spec, additional_spec, expected_table, expected_schema
 ):
     spec_key, spec_value = additional_spec
@@ -79,19 +95,11 @@ def test_derived_mirror_source_apply(
     pd.testing.assert_frame_equal(derived.get('test'), expected_table)
 
 
-def test_derived_tables_source(original, tables_mode_spec):
-    derived = DerivedSource.from_spec(tables_mode_spec)
-    assert derived.get_tables() == ['derived']
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(derived.get('derived'), df)
-    assert original.get_schema('test') == derived.get_schema('derived')
-
-
 @pytest.mark.parametrize("additional_spec", [
     ('transforms', [{'type': 'iloc', 'end': 3}]),
     ('filters', [{'type': 'constant', 'field': 'A', 'value': (0, 2)}]),
 ])
-def test_derived_tables_source_apply(
+def test_derived_source_tables_mode_apply(
         original, tables_mode_spec, additional_spec, expected_table, expected_schema
 ):
     spec_key, spec_value = additional_spec
@@ -102,19 +110,22 @@ def test_derived_tables_source_apply(
     assert derived.get_schema('derived') == expected_schema
 
 
-def test_derived_get_query_cache(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
-    df = derived.get('test')
-    cache_key = derived._get_key('test')
-    assert cache_key in derived._cache
-    cached_df = derived._cache[cache_key]
-    pd.testing.assert_frame_equal(cached_df, df)
+def test_derived_source_get_tables(source, source_tables):
+    assert source_get_tables(source, source_tables)
 
 
-def test_derived_clear_cache(original, mirror_mode_spec):
-    derived = DerivedSource.from_spec(mirror_mode_spec)
-    derived.get('test')
-    cache_key = derived._get_key('test')
-    assert cache_key in derived._cache
-    derived.clear_cache()
-    assert len(derived._cache) == 0
+@pytest.mark.parametrize("dask", [True, False])
+def test_derived_source_get_cache_no_query(source, dask, source_tables):
+    for table in source_tables:
+        expected_table = source_tables[table]
+        assert source_get_cache_no_query(
+            source, table, expected_table, dask, use_dask=False
+        )
+
+
+def test_derived_source_get_schema_update_cache(source):
+    assert source_get_schema_update_cache(source, table='derived')
+
+
+def test_derived_source_clear_cache(source):
+    assert source_clear_cache(source, table='derived')

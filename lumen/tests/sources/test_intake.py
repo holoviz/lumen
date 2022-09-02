@@ -7,46 +7,56 @@ import yaml
 
 from lumen.sources.intake import IntakeSource
 
+from .utils import (
+    source_filter, source_get_cache_no_query, source_get_schema_update_cache,
+    source_get_tables,
+)
+
 
 @pytest.fixture
 def source():
     root = os.path.dirname(__file__)
-    return IntakeSource(
-        uri=os.path.join(root, 'catalog.yml'), root=root
-    )
+    return IntakeSource(uri=os.path.join(root, 'catalog_intake.yml'), root=root)
 
 
 @pytest.fixture
 def source_tables():
-    df_test = pd._testing.makeMixedDataFrame()
-    df_test_sql = pd._testing.makeMixedDataFrame()
-    df_test_sql_none = pd._testing.makeMixedDataFrame()
-    df_test_sql_none['C'] = ['foo1', None, 'foo3', None, 'foo5']
-    tables = {
-        'test': df_test,
-        'test_sql': df_test_sql,
-        'test_sql_with_none': df_test_sql_none,
+    return {'test': pd._testing.makeMixedDataFrame()}
+
+
+@pytest.fixture
+def source_schemas():
+    schemas = {
+        'test': {
+            'A': {'inclusiveMaximum': 4.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
+            'B': {'inclusiveMaximum': 1.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
+            'C': {'enum': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5'], 'type': 'string'},
+            'D': {
+                'format': 'datetime',
+                'inclusiveMaximum': '2009-01-07T00:00:00',
+                'inclusiveMinimum': '2009-01-01T00:00:00',
+                'type': 'string'
+            }
+        }
     }
-    return tables
+    return schemas
 
 
-def test_intake_resolve_module_type():
+def test_intake_source_resolve_module_type():
     assert IntakeSource._get_type('lumen.sources.intake_sql.IntakeSource') is IntakeSource
     assert IntakeSource.source_type == 'intake'
 
 
-def test_intake_source_from_file(source):
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test'), df)
+def test_intake_source_from_file(source, source_tables):
+    assert source_get_tables(source, source_tables)
 
 
-def test_intake_source_from_dict():
+def test_intake_source_from_dict(source_tables):
     root = os.path.dirname(__file__)
-    with open(os.path.join(root, 'catalog.yml')) as f:
+    with open(os.path.join(root, 'catalog_intake.yml')) as f:
         catalog = yaml.load(f, Loader=yaml.Loader)
     source = IntakeSource(catalog=catalog, root=root)
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test'), df)
+    assert source_get_tables(source, source_tables)
 
 
 @pytest.mark.parametrize(
@@ -63,8 +73,21 @@ def test_intake_source_from_dict():
     ]
 )
 @pytest.mark.parametrize("dask", [True, False])
-def test_intake_filter(source, table_column_value_type, dask, expected_filtered_df):
-    table, column, value, _ = table_column_value_type
-    kwargs = {column: value}
-    filtered = source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df)
+def test_intake_source_filter(source, table_column_value_type, dask, expected_filtered_df):
+    assert source_filter(source, table_column_value_type, dask, expected_filtered_df)
+
+
+@pytest.mark.parametrize("dask", [True, False])
+def test_intake_source_get_cache_no_query(source, dask, source_tables):
+    for table in source_tables:
+        expected_table = source_tables[table]
+        assert source_get_cache_no_query(source, table, expected_table, dask, use_dask=True)
+
+
+def test_intake_source_get_schema(source, source_schemas):
+    assert source.get_schema('test') == source_schemas['test']
+
+
+def test_intake_source_get_schema_update_cache(source, source_tables):
+    for table in source_tables:
+        assert source_get_schema_update_cache(source, table)
