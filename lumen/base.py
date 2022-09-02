@@ -121,6 +121,7 @@ class Component(param.Parameterized):
             subtypes[subtype_name] = subtype.validate(subtype_spec, context, subtype_context)
         return subtypes
 
+    @classmethod
     def _validate_str_or_spec(cls, key, subtype, subtype_spec, spec, context, subcontext):
         if isinstance(subtype_spec, str):
             if subtype_spec not in context[f'{key}s']:

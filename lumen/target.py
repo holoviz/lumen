@@ -563,8 +563,8 @@ class Target(Component):
         return Facet.validate(facet, context, subcontext['facet'])
 
     @classmethod
-    def _validate_pipeline(cls, pipeline_spec, spec, context, subcontext):
-        return cls._validate_str_or_spec('pipeline', Pipeline, pipeline_spec, spec, context, subcontext)
+    def _validate_pipeline(cls, *args, **kwargs):
+        return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
     @classmethod
     def _validate_filters(cls, filter_specs, spec, context, subcontext):
