@@ -133,8 +133,7 @@ class Facet(Component):
     sort = param.ListSelector(default=[], objects=[], doc="""
         List of fields to sort by.""")
 
-    _allowed_fields = ['by', 'layout', 'reverse', 'sort']
-
+    _allowed_fields = 'params'
     _required_fields = ['by']
 
     def __init__(self, **params):
@@ -209,6 +208,8 @@ class Download(Component, pn.viewable.Viewer):
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
 
+    _validate_parameters = True
+
     def __init__(self, **params):
         super().__init__(**params)
         default_table = self.tables[0] if self.tables else None
@@ -232,6 +233,12 @@ class Download(Component, pn.viewable.Viewer):
         )
         if len(self.tables) > 1:
             self._layout.insert(1, self._select_download)
+
+    @classmethod
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            spec = {'format': spec}
+        return super().validate(spec, context)
 
     def __panel__(self):
         return self._layout
@@ -527,48 +534,36 @@ class Target(Component):
     ##################################################################
 
     @classmethod
-    def _validate_config(cls, config, spec, context, subcontext):
+    def _validate_config(cls, config, spec, context):
         msg = (
             "Passing 'config' to a Target is deprecated use the 'facet' key "
             "on the target instead."
         )
-        cls._deprecation(msg, 'facet', spec, subcontext, config)
+        return cls._deprecation(msg, 'facet', spec, config)
 
     @classmethod
-    def _validate_sort(cls, sort, spec, context, subcontext):
+    def _validate_sort(cls, sort, spec, context):
         msg = (
             "Passing 'sort' to a Target is deprecated use the 'facet' key "
             "on the target instead."
         )
-        cls._deprecation(msg, 'facet', spec, subcontext, {'sort': sort})
+        return cls._deprecation(msg, 'facet', spec, {'sort': sort})
 
     @classmethod
-    def _validate_facet_layout(cls, facet_layout, spec, context, subcontext):
+    def _validate_facet_layout(cls, facet_layout, spec, context):
         msg = (
             "Passing 'facet_layout' to a Target is deprecated use the 'facet' key "
             "on the target instead."
         )
-        cls._deprecation(msg, 'facet', spec, subcontext, {'facet_layout': facet_layout})
-
-    @classmethod
-    def _validate_download(cls, download, spec, context, subcontext):
-        if isinstance(download, str):
-            download = {'format': download}
-        subcontext['facet'] = {}
-        return Download.validate(download, context, subcontext['facet'])
-
-    @classmethod
-    def _validate_facet(cls, facet, spec, context, subcontext):
-        subcontext['facet'] = {}
-        return Facet.validate(facet, context, subcontext['facet'])
+        return cls._deprecation(msg, 'facet', spec, {'facet_layout': facet_layout})
 
     @classmethod
     def _validate_pipeline(cls, *args, **kwargs):
         return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
     @classmethod
-    def _validate_filters(cls, filter_specs, spec, context, subcontext):
-        filters = cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+    def _validate_filters(cls, filter_specs, spec, context):
+        filters = cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context)
         for filter_spec in filter_specs:
             if filter_spec['type'] == 'facet':
                 raise ValidationError(
@@ -583,7 +578,7 @@ class Target(Component):
         return filters
 
     @classmethod
-    def _validate_source(cls, source_spec, spec, context, subcontext):
+    def _validate_source(cls, source_spec, spec, context):
         if isinstance(source_spec, str):
             if source_spec not in context['sources']:
                 msg = f'Target specified non-existent source {source_spec!r}.'
@@ -595,21 +590,20 @@ class Target(Component):
             'Please ensure you declare all sources as part of the global \'sources\' '
             'field', DeprecationWarning
         )
-        source_context = {}
-        Source.validate(source_spec, context, source_context)
+        source_spec = Source.validate(source_spec, context)
         src_cls = Source._get_type(source_spec['type'])
-        source_name = f'{src_cls.name}'
+        source_name = f'{src_cls.name}' # NOTE: Create unique name
         if 'sources' not in context:
             context['sources'] = {}
         context['sources'][source_name] = source_spec
         return source_name
 
     @classmethod
-    def _validate_views(cls, view_specs, spec, context, subcontext):
-        views = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context, subcontext)
+    def _validate_views(cls, view_specs, spec, context):
+        view_specs = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context)
         if 'source' in spec or 'pipeline' in spec:
-            return views
-        pipelines = {view_spec['pipeline'] for view_spec in subcontext['views']}
+            return view_specs
+        pipelines = {view_spec['pipeline'] for view_spec in view_specs}
         if len(pipelines) > 1:
             raise ValidationError(
                 'Target views must all share the same pipeline', spec, 'views'
@@ -618,7 +612,7 @@ class Target(Component):
             raise ValidationError(
                 'Target (or its views) must declare a source or a pipeline.', spec
             )
-        return views
+        return view_specs
 
     ##################################################################
     # Public API

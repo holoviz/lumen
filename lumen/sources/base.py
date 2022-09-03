@@ -172,28 +172,22 @@ class Source(MultiTypeComponent):
         return resolved_spec, refs
 
     @classmethod
-    def _validate_filters(cls, filter_specs, spec, context, subcontext):
-        if isinstance(filter_specs, list):
-            raise ValidationError(
-                'Source filters key must be declared as a dictionary, not a list.',
-                spec, 'filters'
-            )
+    def _validate_filters(cls, filter_specs, spec, context):
         warnings.warn(
             'Providing filters in a Source definition is deprecated, '
             'please declare filters as part of a Pipeline.', DeprecationWarning
         )
-        spec = cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
-        return spec
+        return cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None):
         if isinstance(spec, str):
             if spec not in context['sources']:
                 msg = f'Referenced non-existent source {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
-        return super().validate(spec, context, subcontext)
+        return super().validate(spec, context)
 
     @classmethod
     def from_spec(cls, spec):
@@ -951,8 +945,8 @@ class DerivedSource(Source):
     source_type = 'derived'
 
     @classmethod
-    def _validate_filters(cls, filter_specs, spec, context, subcontext):
-        return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+    def _validate_filters(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
 
     def _get_source_table(self, table):
         if self.tables:

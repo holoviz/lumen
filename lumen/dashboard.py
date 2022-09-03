@@ -88,14 +88,14 @@ class Config(Component):
     _validate_params = True
 
     @classmethod
-    def _validate_layout(cls, layout, spec, context, subcontext):
+    def _validate_layout(cls, layout, spec, context):
         if layout not in _LAYOUTS:
             msg = f'Config layout {layout!r} could not be found. Layout must be one of {list(_LAYOUTS)}.'
             raise ValidationError(msg, spec, 'layout')
         return layout
 
     @classmethod
-    def _validate_template(cls, template, spec, context, subcontext):
+    def _validate_template(cls, template, spec, context):
         if template in _TEMPLATES:
             return template
         elif '.' not in template:
@@ -126,7 +126,7 @@ class Config(Component):
         return template
 
     @classmethod
-    def _validate_theme(cls, theme, spec, context, subcontext):
+    def _validate_theme(cls, theme, spec, context):
         if theme not in _THEMES:
             msg = f'Config theme {theme!r} could not be found. Theme must be one of {list(_THEMES)}.'
             raise ValidationError(msg, spec, 'theme')
@@ -212,19 +212,19 @@ class Defaults(Component):
         return defaults
 
     @classmethod
-    def _validate_filters(cls, filter_defaults, spec, context, subcontext):
+    def _validate_filters(cls, filter_defaults, spec, context):
         return cls._validate_defaults(Filter, filter_defaults, spec)
 
     @classmethod
-    def _validate_sources(cls, source_defaults, spec, context, subcontext):
+    def _validate_sources(cls, source_defaults, spec, context):
         return cls._validate_defaults(Source, source_defaults, spec)
 
     @classmethod
-    def _validate_transforms(cls, transform_defaults, spec, context, subcontext):
+    def _validate_transforms(cls, transform_defaults, spec, context):
         return cls._validate_defaults(Transform, transform_defaults, spec)
 
     @classmethod
-    def _validate_views(cls, view_defaults, spec, context, subcontext):
+    def _validate_views(cls, view_defaults, spec, context):
         return cls._validate_defaults(View, view_defaults, spec)
 
     def apply(self):
@@ -658,7 +658,7 @@ class Dashboard(Component):
     ##################################################################
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec):
         """
         Validates the component specification given the validation context.
 
@@ -666,48 +666,38 @@ class Dashboard(Component):
         -----------
         spec: dict
           The specification for the component being validated.
-        context: dict
-          Validation context contains the specification of all previously validated components,
-          e.g. to allow resolving of references.
 
         Returns
         --------
         Validated specification.
         """
-        context = {} if context is None else context
-        subcontext = context if subcontext is None else subcontext
-        return super().validate(spec, context, subcontext)
+        cls._validate_allowed(spec)
+        cls._validate_required(spec)
+        return cls._validate_fields(spec)
 
     @classmethod
-    def _validate_auth(cls, auth, spec, context, subcontext):
-        subcontext['auth'] = {}
-        return Auth.validate(auth, context, subcontext['auth'])
+    def _validate_pipelines(cls, pipeline_specs, spec, context):
+        if 'pipelines' not in context:
+            context['pipelines'] = {}
+        return cls._validate_dict_subtypes('pipelines', Pipeline, pipeline_specs, spec, context, context['pipelines'])
 
     @classmethod
-    def _validate_config(cls, config, spec, context, subcontext):
-        subcontext['config'] = {}
-        return Config.validate(config, context, subcontext['config'])
+    def _validate_sources(cls, source_specs, spec, context):
+        if 'sources' not in context:
+            context['sources'] = {}
+        return cls._validate_dict_subtypes('sources', Source, source_specs, spec, context, context['sources'])
 
     @classmethod
-    def _validate_defaults(cls, defaults, spec, context, subcontext):
-        subcontext['defaults'] = {}
-        return Defaults.validate(defaults, context, subcontext['defaults'])
+    def _validate_targets(cls, target_specs, spec, context):
+        if 'targets' not in context:
+            context['targets'] = []
+        return cls._validate_list_subtypes('targets', Target, target_specs, spec, context, context['targets'])
 
     @classmethod
-    def _validate_pipelines(cls, *args, **kwargs):
-        return cls._validate_dict_subtypes('pipelines', Pipeline, *args, **kwargs)
-
-    @classmethod
-    def _validate_sources(cls, *args, **kwargs):
-        return cls._validate_dict_subtypes('sources', Source, *args, **kwargs)
-
-    @classmethod
-    def _validate_targets(cls, *args, **kwargs):
-        return cls._validate_list_subtypes('targets', Target, *args, **kwargs)
-
-    @classmethod
-    def _validate_variables(cls, *args, **kwargs):
-        return cls._validate_dict_subtypes('variables', Variable, *args, **kwargs)
+    def _validate_variables(cls, variable_specs, spec, context):
+        if 'variables' not in context:
+            context['variables'] = {}
+        return cls._validate_dict_subtypes('variables', Variable, variable_specs, spec, context, context['variables'])
 
     ##################################################################
     # Public API

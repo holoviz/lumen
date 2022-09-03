@@ -21,7 +21,7 @@ from panel.viewable import Viewable, Viewer
 
 from ..base import Component, MultiTypeComponent
 from ..config import _INDICATORS
-from ..filters import ParamFilter
+from ..filters import Filter, ParamFilter
 from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
@@ -50,6 +50,8 @@ class Download(Component, Viewer):
       The size of the download button.""")
 
     view = param.Parameter(doc="Holds the current view.")
+
+    _validate_params = True
 
     @classmethod
     def from_spec(cls, spec):
@@ -176,13 +178,8 @@ class View(MultiTypeComponent, Viewer):
         self.selection_expr = event.new
 
     @classmethod
-    def _validate_download(cls, download_spec, spec, context, subcontext):
-        subcontext['download'] = {}
-        return Download.validate(download_spec, spec, context, subcontext['download'])
-
-    @classmethod
     def _validate_filters(cls, *args, **kwargs):
-        return cls._validate_list_subtypes('filters', Transform, *args, **kwargs)
+        return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
 
     @classmethod
     def _validate_transforms(cls, *args, **kwargs):

@@ -84,7 +84,7 @@ def clear_state():
     yield
     state.global_sources.clear()
     state.global_filters.clear()
-    state.spec.clear()
+    state._spec.clear()
     state._loading.clear()
     state._sources.clear()
     state._filters.clear()

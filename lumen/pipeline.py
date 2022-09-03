@@ -148,21 +148,18 @@ class Pipeline(Component):
         self.data = data
 
     @classmethod
-    def _validate_source(cls, source_spec, spec, context, subcontext):
-        if isinstance(source_spec, Source):
-            return source_spec
-        elif isinstance(source_spec, str):
+    def _validate_source(cls, source_spec, spec, context):
+        if isinstance(source_spec, str):
             if source_spec not in context['sources']:
                 msg = f'Pipeline specified non-existent source {source_spec!r}.'
                 msg = match_suggestion_message(source_spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, source_spec)
             return source_spec
-        subcontext['source'] = {}
-        return Source.validate(source_spec, context, subcontext['source'])
+        return Source.validate(source_spec, context)
 
     @classmethod
-    def _validate_filters(cls, filter_specs, spec, context, subcontext):
-        for filter_spec in filter_specs if isinstance(filter_specs, list) else filter_specs.values():
+    def _validate_filters(cls, filter_specs, spec, context):
+        for filter_spec in filter_specs:
             if not isinstance(filter_spec, str):
                 continue
             elif not isinstance(spec['source'], str):
@@ -181,26 +178,17 @@ class Pipeline(Component):
                 msg = f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source.'
                 msg = match_suggestion_message(filter_spec, list(source['filters']), msg)
                 raise ValidationError(msg, spec, filter_spec)
-        return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
+        return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context)
 
     @classmethod
-    def _validate_transforms(cls, transform_specs, spec, context, subcontext):
-        return cls._validate_dict_or_list_subtypes('transforms', Transform, transform_specs, spec, context, subcontext)
-
-    @classmethod
-    def _validate_sql_transforms(cls, transform_specs, spec, context, subcontext):
-        return cls._validate_dict_or_list_subtypes('transforms', SQLTransform, transform_specs, spec, context, subcontext)
-
-    @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None):
         if isinstance(spec, str):
             if spec not in context['pipelines']:
                 msg = f'Referenced non-existent pipeline {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['pipelines']), msg)
                 raise ValidationError(msg, spec, spec)
             return spec
-        ret = super().validate(spec, context, subcontext)
-        return ret
+        return super().validate(spec, context)
 
     @classmethod
     def from_spec(

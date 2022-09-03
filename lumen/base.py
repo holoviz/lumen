@@ -93,78 +93,77 @@ class Component(param.Parameterized):
                 raise ValidationError(msg, spec, attr)
 
     @classmethod
-    def _validate_list_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext):
+    def _validate_list_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext=None):
         if not isinstance(subtype_specs, list):
             raise ValidationError(
                 f'{cls.__name__} {key} field expected list type but got {type(subtype_specs)}.',
                 spec, key
             )
-        subcontext[key] = []
         subtypes = []
         for subtype_spec in subtype_specs:
-            subtype_context = {}
-            subcontext[key].append(subtype_context)
-            subtypes.append(subtype.validate(subtype_spec, context, subtype_context))
+            subtype_spec = subtype.validate(subtype_spec, context)
+            subtypes.append(subtype_spec)
+            if subcontext is not None:
+                subcontext.append(subtype_spec)
         return subtypes
 
     @classmethod
-    def _validate_dict_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext):
+    def _validate_dict_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext=None):
         if not isinstance(subtype_specs, dict):
             raise ValidationError(
                 f'{cls.__name__} {key} field expected dict type but got {type(subtype_specs)}.',
                 spec, key
             )
-        subcontext[key] = {}
         subtypes = {}
         for subtype_name, subtype_spec in subtype_specs.items():
-            subcontext[key][subtype_name] = subtype_context = {}
-            subtypes[subtype_name] = subtype.validate(subtype_spec, context, subtype_context)
+            subtypes[subtype_name] = subtype.validate(subtype_spec, context)
+            if subcontext is not None:
+                subcontext[subtype_name] = subtypes[subtype_name]
         return subtypes
 
     @classmethod
-    def _validate_str_or_spec(cls, key, subtype, subtype_spec, spec, context, subcontext):
+    def _validate_str_or_spec(cls, key, subtype, subtype_spec, spec, context):
         if isinstance(subtype_spec, str):
             if subtype_spec not in context[f'{key}s']:
                 msg = f'{cls.__name__} specified non-existent {key} {subtype_spec!r}.'
                 msg = match_suggestion_message(subtype_spec, list(context[key]), msg)
                 raise ValidationError(msg, spec, subtype_spec)
             return subtype_spec
-        subcontext[key] = {}
-        return subtype.validate(subtype_spec, context, subcontext[key])
+        return subtype.validate(subtype_spec, context)
 
     @classmethod
-    def _validate_dict_or_list_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext):
+    def _validate_dict_or_list_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext=None):
         if isinstance(subtype_specs, list):
             return cls._validate_list_subtypes(key, subtype, subtype_specs, spec, context, subcontext)
         else:
             return cls._validate_dict_subtypes(key, subtype, subtype_specs, spec, context, subcontext)
 
     @classmethod
-    def _deprecation(cls, msg, key, spec, subcontext, update):
+    def _deprecation(cls, msg, key, spec, update):
         warnings.warn(msg, DeprecationWarning)
         if key not in spec:
             spec[key] = {}
         spec[key].update(update)
-        if key not in subcontext:
-            subcontext[key] = {}
-        subcontext[key].update(update)
 
     @classmethod
-    def _validate_fields(cls, spec, context, subcontext):
+    def _validate_fields(cls, spec, context=None):
         validated = {}
+        if context is None:
+            context = validated
         allowed = cls._allowed()
         for field in (allowed or list(spec)):
             if field not in spec:
                 continue
             val = spec[field]
             if hasattr(cls, f'_validate_{field}'):
-                validated_val = getattr(cls, f'_validate_{field}')(val, spec, context, subcontext)
-            else:
-                validated_val = val
-            if field not in subcontext:
-                subcontext[field] = val
-            val = validated_val
-            if is_ref(val):
+                val = getattr(cls, f'_validate_{field}')(val, spec, context)
+            elif (field in cls.param and isinstance(cls.param[field], param.ClassSelector) and
+                  isinstance(cls.param[field].class_, type) and issubclass(cls.param[field].class_, Component)):
+                val = cls.param[field].class_.validate(val, context)
+            elif (field in cls.param and isinstance(cls.param[field], param.List) and
+                  isinstance(cls.param[field].item_type, type) and issubclass(cls.param[field].item_type, Component)):
+                val = cls._validate_list_subtypes(field, cls.param[field].item_type, val, spec, context)
+            elif is_ref(val):
                 refs = val[1:].split('.')
                 if refs[0] == 'variables':
                     if refs[1] not in context.get('variables', {}):
@@ -177,17 +176,16 @@ class Component(param.Parameterized):
                     raise ValidationError(msg, spec, refs[1])
             elif field in cls.param and cls._validate_params:
                 if (isinstance(field, param.Selector) and not cls.param.check_on_set):
-                    validated[field] = validated_val
+                    validated[field] = val
                     continue
-
                 pobj = cls.param[field]
                 try:
-                    pobj._validate(validated_val)
+                    pobj._validate(val)
                 except Exception as e:
                     msg = f"{cls.__name__} component {field!r} value failed validation: {str(e)}"
                     raise ValidationError(msg, spec, field)
             validated[field] = val
-        return subcontext
+        return validated
 
     @classmethod
     def from_spec(cls, spec):
@@ -207,7 +205,7 @@ class Component(param.Parameterized):
         return cls(**spec)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None):
         """
         Validates the component specification given the validation context.
 
@@ -224,10 +222,9 @@ class Component(param.Parameterized):
         Validated specification.
         """
         context = {} if context is None else context
-        subcontext = {} if subcontext is None else subcontext
         cls._validate_allowed(spec)
         cls._validate_required(spec)
-        return cls._validate_fields(spec, context, subcontext)
+        return cls._validate_fields(spec, context)
 
 
 class MultiTypeComponent(Component):
@@ -283,7 +280,7 @@ class MultiTypeComponent(Component):
         return component_cls(**spec)
 
     @classmethod
-    def validate(cls, spec, context=None, subcontext=None):
+    def validate(cls, spec, context=None):
         """
         Validates the component specification given the validation context and the path.
 
@@ -300,11 +297,11 @@ class MultiTypeComponent(Component):
         Validated specification.
         """
         context = {} if context is None else context
-        subcontext = {} if subcontext is None else subcontext
+        print(spec, context)
         if 'type' not in spec:
             cls._missing_type(spec)
         component_cls = cls._get_type(spec['type'], spec)
         component_cls._validate_allowed(spec)
         component_cls._validate_required(spec)
-        component_cls._validate_fields(spec, context, subcontext)
+        component_cls._validate_fields(spec, context)
         return spec
