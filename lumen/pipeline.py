@@ -162,17 +162,8 @@ class Pipeline(Component):
 
     @classmethod
     def _validate_filters(cls, filter_specs, spec, context, subcontext):
-        # Deprecation: Handles filter specs inlined into Source definition
-        # Warning is raised by Source._validate_filters
-        validated_specs = type(filter_specs)()
-        for filter_spec in filter_specs if isinstance(filter_specs, list) else filter_specs.items():
-            if isinstance(validated_specs, dict):
-                filter_key, filter_spec = filter_spec
+        for filter_spec in filter_specs if isinstance(filter_specs, list) else filter_specs.values():
             if not isinstance(filter_spec, str):
-                if isinstance(validated_specs, dict):
-                    validated_specs[filter_key] = filter_spec
-                else:
-                    validated_specs.append(filter_spec)
                 continue
             elif not isinstance(spec['source'], str):
                 raise ValidationError(
@@ -190,14 +181,7 @@ class Pipeline(Component):
                 msg = f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source.'
                 msg = match_suggestion_message(filter_spec, list(source['filters']), msg)
                 raise ValidationError(msg, spec, filter_spec)
-            filter_spec = source['filters'].pop(filter_spec)
-            if isinstance(validated_specs, dict):
-                validated_specs[filter_key] = filter_spec
-            else:
-                validated_specs.append(filter_spec)
-            if len(source['filters']) == 0:
-                del source['filters']
-        return cls._validate_dict_or_list_subtypes('filters', Filter, validated_specs, spec, context, subcontext)
+        return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context, subcontext)
 
     @classmethod
     def _validate_transforms(cls, transform_specs, spec, context, subcontext):
