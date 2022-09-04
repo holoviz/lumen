@@ -21,7 +21,7 @@ def test_variables_wrong_type():
     }
     with pytest.raises(ValidationError) as excinfo:
         Dashboard.validate(spec)
-    assert 'Dashboard variables field expected dict type but got' in str(excinfo.value)
+    assert 'Dashboard component \'variables\' key expected dict type but got' in str(excinfo.value)
 
 def test_variable_no_type():
     spec = {
@@ -51,7 +51,7 @@ def test_variable_unknown_type():
     }
     with pytest.raises(ValidationError) as excinfo:
         Dashboard.validate(spec)
-    assert 'Variable component declared unknown type \'foo\'.' in str(excinfo.value)
+    assert 'Variable component specification declared unknown type \'foo\'.' in str(excinfo.value)
 
 def test_variable_unknown_ref():
     spec = {

@@ -159,7 +159,7 @@ class Pipeline(Component):
 
     @classmethod
     def _validate_filters(cls, filter_specs, spec, context):
-        for filter_spec in filter_specs:
+        for filter_spec in (filter_specs if isinstance(filter_specs, list) else filter_specs.values()):
             if not isinstance(filter_spec, str):
                 continue
             elif not isinstance(spec['source'], str):
@@ -178,7 +178,7 @@ class Pipeline(Component):
                 msg = f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source.'
                 msg = match_suggestion_message(filter_spec, list(source['filters']), msg)
                 raise ValidationError(msg, spec, filter_spec)
-        return cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context)
+        return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context)
 
     @classmethod
     def validate(cls, spec, context=None):

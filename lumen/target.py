@@ -133,8 +133,8 @@ class Facet(Component):
     sort = param.ListSelector(default=[], objects=[], doc="""
         List of fields to sort by.""")
 
-    _allowed_fields = 'params'
-    _required_fields = ['by']
+    _valid_keys = 'params'
+    _required_keys = ['by']
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -327,11 +327,9 @@ class Target(Component):
 
     _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
-    _required_fields = [
-        'title', 'views'
-    ]
+    _required_keys = ['title', 'views']
 
-    _allowed_fields = [
+    _valid_keys = [
         'config', 'facet_layout', 'sort', # Deprecated
         'layout', 'refresh_rate', 'reloadable', 'show_title', 'title', 'tsformat', # Simple
         'views', 'source', 'filters', 'pipeline', 'facet', 'download' # Objects

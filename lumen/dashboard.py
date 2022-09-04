@@ -84,7 +84,7 @@ class Config(Component):
                            check_on_set=False, doc="""
         The Panel template theme to style the dashboard with.""")
 
-    _allowed_fields = 'params'
+    _valid_keys = 'params'
     _validate_params = True
 
     @classmethod
@@ -174,7 +174,7 @@ class Defaults(Component):
 
     views = param.List(doc="Defaults for View objects.", class_=dict)
 
-    _allowed_fields = 'params'
+    _valid_keys = 'params'
     _validate_params = True
 
     @classmethod
@@ -296,7 +296,7 @@ class Dashboard(Component):
     targets = param.List(default=[], class_=Target, doc="""
         List of targets monitoring some source.""")
 
-    _allowed_fields = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'targets']
+    _valid_keys = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'targets']
     _allows_refs = False
 
     def __init__(self, specification=None, **params):
@@ -658,24 +658,6 @@ class Dashboard(Component):
     ##################################################################
 
     @classmethod
-    def validate(cls, spec):
-        """
-        Validates the component specification given the validation context.
-
-        Arguments
-        -----------
-        spec: dict
-          The specification for the component being validated.
-
-        Returns
-        --------
-        Validated specification.
-        """
-        cls._validate_allowed(spec)
-        cls._validate_required(spec)
-        return cls._validate_fields(spec)
-
-    @classmethod
     def _validate_pipelines(cls, pipeline_specs, spec, context):
         if 'pipelines' not in context:
             context['pipelines'] = {}
@@ -702,6 +684,24 @@ class Dashboard(Component):
     ##################################################################
     # Public API
     ##################################################################
+
+    @classmethod
+    def validate(cls, spec):
+        """
+        Validates the component specification given the validation context.
+
+        Arguments
+        -----------
+        spec: dict
+          The specification for the component being validated.
+
+        Returns
+        --------
+        Validated specification.
+        """
+        cls._validate_keys(spec)
+        cls._validate_required(spec)
+        return cls._validate_spec(spec)
 
     def layout(self):
         """

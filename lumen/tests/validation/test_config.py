@@ -18,7 +18,7 @@ def test_config_misspell_theme():
     spec = {'config': {'them': 'dark'}}
     with pytest.raises(ValidationError) as excinfo:
         Dashboard.validate(spec)
-    assert "Config specification contained unknown field 'them'. Did you mean 'theme'?" in str(excinfo.value)
+    assert "Config component specification contained unknown key 'them'. Did you mean 'theme'?" in str(excinfo.value)
 
 def test_config_invalid_theme():
     spec = {'config': {'theme': 'purple'}}

@@ -21,7 +21,7 @@ def test_defaults_key_wrong():
     }}
     with pytest.raises(ValidationError) as excinfo:
         Dashboard.validate(spec)
-    assert "Defaults specification contained unknown field 'source'. Did you mean 'sources'?" in str(excinfo.value)
+    assert "Defaults component specification contained unknown key 'source'. Did you mean 'sources'?" in str(excinfo.value)
 
 def test_defaults_no_type():
     spec = {'defaults': {

@@ -10,6 +10,7 @@ import panel as pn
 import param
 
 from packaging.version import Version
+from panel.util import classproperty
 
 from ..base import MultiTypeComponent
 from ..schema import JSONSchema
@@ -43,27 +44,27 @@ class Filter(MultiTypeComponent):
 
     filter_type = None
 
-    _requires_field = True
-
-    _required_fields = ['field']
-
     __abstract = True
+
+    _requires_field = True
 
     def __init__(self, **params):
         super().__init__(**params)
         if state.app and state.app.config.sync_with_url and self.sync_with_url and pn.state.location:
             pn.state.location.sync(self, {'value': self.field}, on_error=self._url_sync_error)
 
+    @classproperty
+    def _required_keys(cls):
+        return ['field'] if cls._requires_field else []
+
     def _url_sync_error(self, values):
         """
         Called when URL syncing errors.
         """
 
-    @classmethod
-    def validate(cls, spec, context=None):
-        if isinstance(spec, str):
-            return spec
-        return super().validate(spec, context)
+    ##################################################################
+    # Public API
+    ##################################################################
 
     @classmethod
     def from_spec(cls, spec, source_schema, source_filters=None):
@@ -134,6 +135,12 @@ class Filter(MultiTypeComponent):
             The current filter query which will be used by the
             Source to filter the data.
         """
+
+    @classmethod
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            return spec
+        return super().validate(spec, context)
 
 
 class ConstantFilter(Filter):
@@ -481,8 +488,6 @@ class ParamFilter(Filter):
     filter_type = 'param'
 
     _requires_field = False
-
-    _required_fields = []
 
     def __init__(self, **params):
         super().__init__(**params)
