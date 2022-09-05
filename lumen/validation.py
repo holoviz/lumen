@@ -40,7 +40,7 @@ def reverse_match_suggestion(
     word: str,
     possibilities: list[str],
     msg: str | None
-) -> (str, str | None):
+) -> tuple[str, str | None]:
     match = get_close_matches(word, list(possibilities), n=1)
     if match:
         msg = f'{msg} Did you mean {word!r}?'
