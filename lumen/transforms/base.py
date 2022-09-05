@@ -85,7 +85,7 @@ class Transform(MultiTypeComponent):
                 else:
                     attr = 'options' if attr == 'objects' else attr
                     cls.param.warning(
-                        f"{transform_type.__name__} is of type {type(p).__name} "
+                        f"{transform_type.__name__} is of type {type(p).__name__} "
                         f"and has not attribute {attr!r}. Ensure the controls "
                         "parameter supports the provided options, e.g. if "
                         "you are declaring 'options' ensure that the parameter "

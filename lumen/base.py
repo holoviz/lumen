@@ -100,7 +100,8 @@ class Component(param.Parameterized):
     def _validate_list_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext=None):
         if not isinstance(subtype_specs, list):
             raise ValidationError(
-                f'{cls.__name__} component {key!r} key expected list type but got {type(subtype_specs)}.',
+                f'{cls.__name__} component {key!r} key expected list type but got {type(subtype_specs).__name__}. '
+                "This could be because of a missing dash in the yaml file.",
                 spec, key
             )
         subtypes = []
@@ -115,7 +116,7 @@ class Component(param.Parameterized):
     def _validate_dict_subtypes(cls, key, subtype, subtype_specs, spec, context, subcontext=None):
         if not isinstance(subtype_specs, dict):
             raise ValidationError(
-                f'{cls.__name__} component {key!r} key expected dict type but got {type(subtype_specs)}.',
+                f'{cls.__name__} component {key!r} key expected dict type but got {type(subtype_specs).__name__}.',
                 spec, key
             )
         subtypes = {}
