@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import textwrap
 
 from difflib import get_close_matches
@@ -58,7 +59,7 @@ class ValidationError(ValueError):
         if spec:
             snippet = yaml.dump(spec, sort_keys=False)
             if attr:
-                snippet = snippet.replace(attr, f'{BOLD}{attr}{END}')
+                snippet = re.sub(rf"\b{attr}\b", f'{BOLD}{attr}{END}', snippet)
             snippet = textwrap.indent(snippet, '    ')
             msg = f'{msg}\n\n{snippet}'
         super().__init__(msg)
