@@ -186,7 +186,7 @@ class Facet(Component):
         return product(*[filt.filters for filt in self.by])
 
 
-class Download(Component, pn.viewable.Viewer):
+class Download(Component, Viewer):
     """
     The Download object controls options to download the Source tables
     in a variety of formats via the Dashboard UI.
@@ -208,7 +208,7 @@ class Download(Component, pn.viewable.Viewer):
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
 
-    _validate_parameters = True
+    _required_keys = ["format"]
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -258,7 +258,7 @@ class Download(Component, pn.viewable.Viewer):
         else:
             io = BytesIO()
         table = self._select_download.value
-        data = self._pipelines[table].data
+        data = self.pipelines[table].data
         if self.format == 'csv':
             data.to_csv(io, **self.kwargs)
         elif self.format == 'json':
