@@ -344,8 +344,6 @@ class Dashboard(Component):
             self._render()
             self._main[:] = [self._layout]
         except Exception as e:
-            #if self._debug:
-            raise e
             self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}')
             self._main.loading = False
             tb = html.escape(traceback.format_exc())
