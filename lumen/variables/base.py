@@ -7,7 +7,7 @@ import param
 
 from panel.widgets import Widget as _PnWidget
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..state import state
 from ..util import is_ref, resolve_module_reference
 
@@ -75,7 +75,7 @@ class Variables(param.Parameterized):
         return column
 
 
-class Variable(Component):
+class Variable(MultiTypeComponent):
     """
     A Variable may declare a static or dynamic value that can be
     referenced from other components. The source of the Variable value
@@ -108,6 +108,9 @@ class Variable(Component):
     variable_type = None
 
     __abstract = True
+
+    _allowed_fields = 'params'
+    _validate_params = True
 
     def __init__(self, **params):
         if 'value' not in params and 'default' in params:

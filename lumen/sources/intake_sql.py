@@ -5,6 +5,7 @@ from ..transforms.sql import (
     SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
 from ..util import get_dataframe_schema
+from ..validation import ValidationError
 from .base import cached, cached_schema
 from .intake import IntakeBaseSource, IntakeSource
 
@@ -27,11 +28,11 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     def _get_source(self, table):
         try:
             source = self.cat[table]
-        except KeyError:
-            raise KeyError(
+        except KeyError as e:
+            raise ValidationError(
                 f"'{table}' table could not be found in Intake catalog. "
                 f"Available tables include: {list(self.cat)}."
-            )
+            ) from e
         return source
 
     @cached()

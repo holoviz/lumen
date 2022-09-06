@@ -69,8 +69,9 @@ class IntakeSource(IntakeBaseSource):
     def __init__(self, **params):
         super().__init__(**params)
         if self.uri and self.catalog:
-            raise ValueError("Either specify a Catalog uri or an "
-                             "inlined catalog, not both.")
+            raise ValueError(
+                "Either specify a Catalog uri or an inlined catalog, not both."
+            )
         elif self.uri:
             self.cat = intake.open_catalog(self.uri)
         elif self.catalog:

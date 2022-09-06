@@ -1,4 +1,5 @@
 import datetime as dt
+import warnings
 
 from functools import partial
 from io import BytesIO, StringIO
@@ -7,8 +8,9 @@ from itertools import product
 import panel as pn
 import param
 
-from panel.viewable import Viewer
+from panel.viewable import Layoutable, Viewer
 
+from .base import Component
 from .config import _LAYOUTS
 from .filters import FacetFilter, Filter
 from .panel import IconButton
@@ -16,6 +18,7 @@ from .pipeline import Pipeline
 from .sources import Source
 from .state import state
 from .util import extract_refs
+from .validation import ValidationError, match_suggestion_message
 from .views import DOWNLOAD_FORMATS, View
 
 
@@ -69,8 +72,9 @@ class Card(Viewer):
                         if matches:
                             view = matches[0]
                         else:
-                            raise KeyError("Target could not find named "
-                                           f"view '{index}'.")
+                            raise ValueError(
+                                f"Target could not find named view '{index}'."
+                            )
                     row.append(view.panel)
                 item.append(row)
         else:
@@ -115,7 +119,7 @@ class Card(Viewer):
         self._card[:] = [self._construct_layout()]
 
 
-class Facet(param.Parameterized):
+class Facet(Component):
 
     by = param.List(default=[], class_=FacetFilter, doc="""
         Fields to facet by.""")
@@ -128,6 +132,9 @@ class Facet(param.Parameterized):
 
     sort = param.ListSelector(default=[], objects=[], doc="""
         List of fields to sort by.""")
+
+    _valid_keys = 'params'
+    _required_keys = ['by']
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -179,7 +186,7 @@ class Facet(param.Parameterized):
         return product(*[filt.filters for filt in self.by])
 
 
-class Download(pn.viewable.Viewer):
+class Download(Component, Viewer):
     """
     The Download object controls options to download the Source tables
     in a variety of formats via the Dashboard UI.
@@ -200,6 +207,8 @@ class Download(pn.viewable.Viewer):
 
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
+
+    _required_keys = ["format"]
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -225,6 +234,12 @@ class Download(pn.viewable.Viewer):
         if len(self.tables) > 1:
             self._layout.insert(1, self._select_download)
 
+    @classmethod
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            spec = {'format': spec}
+        return super().validate(spec, context)
+
     def __panel__(self):
         return self._layout
 
@@ -243,7 +258,7 @@ class Download(pn.viewable.Viewer):
         else:
             io = BytesIO()
         table = self._select_download.value
-        data = self._pipelines[table].data
+        data = self.pipelines[table].data
         if self.format == 'csv':
             data.to_csv(io, **self.kwargs)
         elif self.format == 'json':
@@ -270,7 +285,7 @@ class Download(pn.viewable.Viewer):
         return cls(pipelines=pipelines, **spec)
 
 
-class Target(param.Parameterized):
+class Target(Component):
     """
     A Target renders the results of a Source query using the defined
     set of filters and views.
@@ -312,6 +327,14 @@ class Target(param.Parameterized):
 
     _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
+    _required_keys = ['title', 'views', ('pipeline', 'source')]
+
+    _valid_keys = [
+        'config', 'facet_layout', 'sort', # Deprecated
+        'layout', 'refresh_rate', 'reloadable', 'show_title', 'title', 'tsformat', # Simple
+        'views', 'source', 'filters', 'pipeline', 'facet', 'download' # Objects
+    ] + list(Layoutable.param)
+
     def __init__(self, **params):
         if 'facet' not in params:
             params['facet'] = Facet()
@@ -329,7 +352,8 @@ class Target(param.Parameterized):
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
         # Render content
-        self._construct_cards()
+        if self.views:
+            self._construct_cards()
         self._cards = self.get_cards()
 
         # Set up watchers
@@ -504,6 +528,91 @@ class Target(param.Parameterized):
             self._application._layout.loading = False
 
     ##################################################################
+    # Validation API
+    ##################################################################
+
+    @classmethod
+    def _validate_config(cls, config, spec, context):
+        msg = (
+            "Passing 'config' to a Target is deprecated use the 'facet' key "
+            "on the target instead."
+        )
+        return cls._deprecation(msg, 'facet', spec, config)
+
+    @classmethod
+    def _validate_sort(cls, sort, spec, context):
+        msg = (
+            "Passing 'sort' to a Target is deprecated use the 'facet' key "
+            "on the target instead."
+        )
+        return cls._deprecation(msg, 'facet', spec, {'sort': sort})
+
+    @classmethod
+    def _validate_facet_layout(cls, facet_layout, spec, context):
+        msg = (
+            "Passing 'facet_layout' to a Target is deprecated use the 'facet' key "
+            "on the target instead."
+        )
+        return cls._deprecation(msg, 'facet', spec, {'facet_layout': facet_layout})
+
+    @classmethod
+    def _validate_pipeline(cls, *args, **kwargs):
+        return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
+
+    @classmethod
+    def _validate_filters(cls, filter_specs, spec, context):
+        filters = cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context)
+        for filter_spec in filter_specs:
+            if filter_spec['type'] == 'facet':
+                raise ValidationError(
+                    'Target facetting must be declared via the facet field of the target specification, '
+                    'specifying filters of type \'facet\' is no longer supported.', spec, 'filters'
+                )
+        if 'pipeline' in spec:
+            raise ValidationError(
+                'Target may not declare filters AND a pipeline. Please declare the filters as '
+                'part of the pipeline. ', spec, 'filters'
+            )
+        return filters
+
+    @classmethod
+    def _validate_source(cls, source_spec, spec, context):
+        if isinstance(source_spec, str):
+            if source_spec not in context['sources']:
+                msg = f'Target specified non-existent source {source_spec!r}.'
+                msg = match_suggestion_message(source_spec, list(context['sources']), msg)
+                raise ValidationError(msg, spec, source_spec)
+            return source_spec
+        warnings.warn(
+            'Inlining source definitions in a target is no longer supported. '
+            'Please ensure you declare all sources as part of the global \'sources\' '
+            'field', DeprecationWarning
+        )
+        source_spec = Source.validate(source_spec, context)
+        src_cls = Source._get_type(source_spec['type'])
+        source_name = f'{src_cls.name}' # NOTE: Create unique name
+        if 'sources' not in context:
+            context['sources'] = {}
+        context['sources'][source_name] = source_spec
+        return source_name
+
+    @classmethod
+    def _validate_views(cls, view_specs, spec, context):
+        view_specs = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context)
+        if 'source' in spec or 'pipeline' in spec:
+            return view_specs
+        pipelines = {view_spec['pipeline'] for view_spec in view_specs}
+        if len(pipelines) > 1:
+            raise ValidationError(
+                'Target views must all share the same pipeline', spec, 'views'
+            )
+        elif not len(pipelines):
+            raise ValidationError(
+                'Target (or its views) must declare a source or a pipeline.', spec
+            )
+        return view_specs
+
+    ##################################################################
     # Public API
     ##################################################################
 
@@ -526,7 +635,8 @@ class Target(param.Parameterized):
         """
         # Resolve source
         spec = dict(spec)
-        views = spec.get('views', [])
+        views = spec['views']
+
         pipelines = {}
         source_filters = None
         filter_specs = spec.pop('filters', [])
@@ -537,22 +647,17 @@ class Target(param.Parameterized):
                 source = source_spec
             else:
                 source = Source.from_spec(source_spec)
-            if isinstance(source_spec, str):
-                source_filters = state.filters.get(source_spec)
+                if isinstance(source_spec, str):
+                    source_filters = state.filters.get(source_spec)
         else:
             if 'pipeline' in spec:
                 pspecs = [spec['pipeline']]
             else:
                 pspecs = [vspec.get('pipeline') for vspec in view_specs if 'pipeline' in vspec]
-            if len(set(pspecs)) > 1:
-                raise ValueError('Views on a target must share the same pipeline.')
-            elif not pspecs:
-                raise ValueError('Target must declare a source or a pipeline.')
             pipeline_spec = pspecs[0]
-
             if isinstance(pipeline_spec, str):
                 if pipeline_spec not in state.pipelines:
-                    raise KeyError(f'{pipeline_spec!r} not found in global pipelines.')
+                    raise ValueError(f'{pipeline_spec!r} not found in global pipelines.')
                 pipeline = state.pipelines[pipeline_spec]
             else:
                 pipeline = Pipeline.from_spec(pipeline_spec)
@@ -567,13 +672,9 @@ class Target(param.Parameterized):
             schema = source.get_schema()
         else:
             facet_spec, schema = {}, {}
+        spec['facet'] = Facet.from_spec(facet_spec, schema)
 
         # Backward compatibility
-        if any(fspec.get('type') == 'facet' for fspec in filter_specs):
-            raise ValueError(
-                "Facetting must be declared via the facet specification of a Target, "
-                "specifying filters of type 'facet' is no longer supported"
-            )
         for view_spec in view_specs:
             if 'pipeline' in view_spec or 'pipeline' in spec:
                 continue
@@ -582,40 +683,25 @@ class Target(param.Parameterized):
             elif len(tables) == 1:
                 table = tables[0]
             else:
-                raise ValueError("View spec did not declare unambiguous table reference.")
+                raise ValidationError(
+                    'View did not declare unambiguous table reference, '
+                    'since selected source declares multiple tables. '
+                    'Either declare a pipeline or explicitly declare the '
+                    'table that the View references.', view_spec
+                )
             pspec = {'table': table}
             if filter_specs:
                 pspec['filters'] = filter_specs
             pipelines[table] = Pipeline.from_spec(pspec, source, source_filters)
-        if facet_spec and 'sort' in spec:
-            param.main.warning(
-                "Cannot declare sort spec and provide a facet spec. "
-                "Declare the sort fields on the facet.sort key of "
-                "the target instead."
-            )
-        if 'config' in spec:
-            param.main.param.warning(
-                "Passing config to a target is deprecated use the "
-                "facet.layout key on the target instead."
-            )
-            facet_spec.update(spec.pop('config'))
-        if 'facet_layout' in spec:
-            param.main.param.warning(
-                "Passing facet_layout to a target is deprecated use "
-                "the facet.layout key on the target instead."
-            )
-            facet_spec['layout'] = spec.pop('facet_layout')
 
         # Resolve download options
         download_spec = spec.pop('download', {})
-        if isinstance(download_spec, str):
-            download_spec = {'format': download_spec}
         if 'tables' not in download_spec:
             download_spec['tables'] = list(tables)
         spec['download'] = Download.from_spec(download_spec, pipelines)
-        spec['facet'] = Facet.from_spec(facet_spec, schema)
+
         params = dict(kwargs, **spec)
-        return cls(source=source, pipelines=pipelines,  **params)
+        return cls(source=source, pipelines=pipelines, **params)
 
     @property
     def refs(self):

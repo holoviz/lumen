@@ -19,19 +19,19 @@ from panel.pane.perspective import (
 from panel.param import Param
 from panel.viewable import Viewable, Viewer
 
-from ..base import Component
+from ..base import Component, MultiTypeComponent
 from ..config import _INDICATORS
-from ..filters import ParamFilter
+from ..filters import Filter, ParamFilter
 from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
-from ..transforms import Transform
+from ..transforms import SQLTransform, Transform
 from ..util import is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
 
-class Download(Viewer):
+class Download(Component, Viewer):
 
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
@@ -51,9 +51,15 @@ class Download(Viewer):
 
     view = param.Parameter(doc="Holds the current view.")
 
+    _validate_params = True
+
+    _required_keys = ["format"]
+
     @classmethod
-    def from_spec(cls, spec):
-        return cls(**spec)
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            spec = {'format': spec}
+        return super().validate(spec, context)
 
     def __bool__(self):
         return self.format is not None
@@ -76,14 +82,14 @@ class Download(Viewer):
         return io
 
     def __panel__(self):
-        filename = f'{self.view.pipeline.table}_{self.view.name}_view.{self.format}'
+        filename = f'{self.view.pipeline.table}.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
             size=18, hide=self.hide
         )
 
 
-class View(Component, Viewer):
+class View(MultiTypeComponent, Viewer):
     """
     A View renders the data returned by a Source as a Viewable Panel
     object. The base class provides methods which query the Source for
@@ -174,6 +180,22 @@ class View(Component, Viewer):
 
     def _update_selection_expr(self, event):
         self.selection_expr = event.new
+
+    @classmethod
+    def _validate_filters(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
+
+    @classmethod
+    def _validate_transforms(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('transforms', Transform, *args, **kwargs)
+
+    @classmethod
+    def _validate_sql_transforms(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('sql_transforms', SQLTransform, *args, **kwargs)
+
+    @classmethod
+    def _validate_pipeline(cls, *args, **kwargs):
+        return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
     @classmethod
     def from_spec(cls, spec, source=None, filters=None, pipeline=None):
@@ -579,6 +601,8 @@ class hvPlotView(hvPlotBaseView):
 
     _field_params = ['x', 'y', 'by', 'groupby']
 
+    _ignore_kwargs = ['tables']
+
     _supports_selections = True
 
     def __init__(self, **params):
@@ -589,6 +613,8 @@ class hvPlotView(hvPlotBaseView):
     def get_plot(self, df):
         processed = {}
         for k, v in self.kwargs.items():
+            if k in self._ignore_kwargs:
+                continue
             if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
                 v = NumeralTickFormatter(format=v)
             processed[k] = v
@@ -695,34 +721,44 @@ class DownloadView(View):
     filename = param.String(default='data', doc="""
       Filename of the downloaded file.""")
 
-    filetype = param.Selector(default='csv', objects=['csv', 'xlsx'], doc="""
-      File type of the downloaded file.""")
+    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+      The format to download the data in.""")
 
-    save_kwargs = param.Dict(default={}, doc="""
-      Options for the to_csv or to_excel methods.""")
+    kwargs = param.Dict(default={}, doc="""
+      Keyword arguments passed to the serialization function, e.g.
+      data.to_csv(file_obj, **kwargs).""")
 
     view_type = 'download'
+
+    _required_keys = ["format"]
 
     def __bool__(self):
         return True
 
-    def _get_file_data(self):
-        df = self.get_data()
-        sio = StringIO()
-        if self.filetype == 'csv':
-            savefn = df.to_csv
-        elif self.filetype == 'xlsx':
-            savefn = df.to_excel
-        savefn(sio, **self.save_kwargs)
-        sio.seek(0)
-        return sio
+
+    def _table_data(self):
+        if self.format in ('json', 'csv'):
+            io = StringIO()
+        else:
+            io = BytesIO()
+        data = self.get_data()
+        if self.format == 'csv':
+            data.to_csv(io, **self.kwargs)
+        elif self.format == 'json':
+            data.to_json(io, **self.kwargs)
+        elif self.format == 'xlsx':
+            data.to_excel(io, **self.kwargs)
+        elif self.format == 'parquet':
+            data.to_parquet(io, **self.kwargs)
+        io.seek(0)
+        return io
 
     def get_panel(self):
         return pn.widgets.FileDownload(**self._get_params())
 
     def _get_params(self):
-        filename = f'{self.filename}.{self.filetype}'
-        return dict(filename=filename, callback=self._get_file_data, **self.kwargs)
+        filename = f'{self.filename}.{self.format}'
+        return dict(filename=filename, callback=self._table_data, **self.kwargs)
 
 
 

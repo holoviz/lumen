@@ -4,6 +4,7 @@ import re
 import shutil
 import sys
 import threading
+import warnings
 import weakref
 
 from concurrent import futures
@@ -19,11 +20,12 @@ import panel as pn
 import param
 import requests
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..filters import Filter
 from ..state import state
 from ..transforms import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..validation import ValidationError, match_suggestion_message
 
 
 def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
@@ -110,7 +112,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
-class Source(Component):
+class Source(MultiTypeComponent):
     """
     A Source provides a set of tables which declare their available
     fields. The Source must also be able to return a schema describing
@@ -170,6 +172,24 @@ class Source(Component):
         return resolved_spec, refs
 
     @classmethod
+    def _validate_filters(cls, filter_specs, spec, context):
+        warnings.warn(
+            'Providing filters in a Source definition is deprecated, '
+            'please declare filters as part of a Pipeline.', DeprecationWarning
+        )
+        return cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context)
+
+    @classmethod
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            if spec not in context['sources']:
+                msg = f'Referenced non-existent source {spec!r}.'
+                msg = match_suggestion_message(spec, list(context['sources']), msg)
+                raise ValidationError(msg, spec, spec)
+            return spec
+        return super().validate(spec, context)
+
+    @classmethod
     def from_spec(cls, spec):
         """
         Creates a Source object from a specification. If a Source
@@ -186,19 +206,14 @@ class Source(Component):
         -------
         Resolved and instantiated Source object
         """
-        if spec is None:
-            raise ValueError('Source specification empty.')
-        elif isinstance(spec, str):
+        if isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
             elif spec in state.spec.get('sources', {}):
                 source = state.load_source(spec, state.spec['sources'][spec])
-            else:
-                raise ValueError(f"Source with name '{spec}' was not found.")
             return source
 
-        spec = dict(spec)
-        source_type = Source._get_type(spec.pop('type'))
+        source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
 
@@ -356,12 +371,19 @@ class Source(Component):
             JSON schema(s) for one or all the tables.
         """
         schemas = {}
-        for name in self.get_tables():
+        names = list(self.get_tables())
+        for name in names:
             if table is not None and name != table:
                 continue
             df = self.get(name, __dask=True)
             schemas[name] = get_dataframe_schema(df)['items']['properties']
-        return schemas if table is None else schemas[table]
+
+        try:
+            return schemas if table is None else schemas[table]
+        except KeyError as e:
+            msg = f"{type(self).name} does not contain '{table}'"
+            msg = match_suggestion_message(table, names, msg)
+            raise ValidationError(msg) from e
 
     def get(self, table, **query):
         """
@@ -476,7 +498,7 @@ class FileSource(Source):
                     kwargs['orient'] = None
                 return dd.read_json, kwargs
         if ext not in self._pd_load_fns:
-            raise ValueError("File type '{ext}' not recognized and cannot be loaded.")
+            raise ValueError(f"File type '{ext}' not recognized and cannot be loaded.")
         return self._pd_load_fns[ext], kwargs
 
     def _set_cache(self, data, table, **query):
@@ -490,7 +512,7 @@ class FileSource(Source):
         if isinstance(self.tables, list):
             tables = {}
             for f in self.tables:
-                if f.startswith('http'):
+                if isinstance(f, str) and f.startswith('http'):
                     name = f
                 else:
                     name = '.'.join(basename(f).split('.')[:-1])
@@ -502,7 +524,7 @@ class FileSource(Source):
             if isinstance(table, (list, tuple)):
                 table, ext = table
             else:
-                if table.startswith('http'):
+                if isinstance(table, str) and table.startswith('http'):
                     file = basename(urlparse(table).path)
                 else:
                     file = basename(table)
@@ -922,13 +944,18 @@ class DerivedSource(Source):
 
     source_type = 'derived'
 
+    @classmethod
+    def _validate_filters(cls, *args, **kwargs):
+        return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
+
     def _get_source_table(self, table):
         if self.tables:
             spec = self.tables.get(table)
             if spec is None:
-                raise ValueError(f"Table '{table}' was not declared on the"
-                                 "DerivedSource. Available tables include "
-                                 f"{list(self.tables)}")
+                raise ValidationError(
+                    f"Table '{table}' was not declared on the DerivedSource. "
+                    f"Available tables include {list(self.tables)}."
+                )
             source, table = spec['source'], spec['table']
             filters = spec.get('filters', []) + self.filters
         else:

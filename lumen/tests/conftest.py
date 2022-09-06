@@ -84,7 +84,7 @@ def clear_state():
     yield
     state.global_sources.clear()
     state.global_filters.clear()
-    state.spec.clear()
+    state._spec.clear()
     state._loading.clear()
     state._sources.clear()
     state._filters.clear()
@@ -136,3 +136,19 @@ def expected_filtered_df(source_tables, table_column_value_type):
         df = df[(df[column] >= pd.to_datetime(begin)) & (df[column] <= pd.to_datetime(end))]
 
     return df
+
+@pytest.fixture
+def penguins_file(tmp_path):
+    # created with
+    # df = pd.read_csv(url).sample(5).reset_index(drop=True).to_csv()
+    fn = tmp_path / "penguins.csv"
+    penguins = """
+    ,species,island,bill_length_mm,bill_depth_mm,flipper_length_mm,body_mass_g,sex,year
+    0,Gentoo,Biscoe,46.7,15.3,219.0,5200.0,male,2007
+    1,Adelie,Dream,42.2,18.5,180.0,3550.0,female,2007
+    2,Gentoo,Biscoe,51.1,16.3,220.0,6000.0,male,2008
+    3,Adelie,Biscoe,45.6,20.3,191.0,4600.0,male,2009
+    4,Adelie,Torgersen,37.8,17.1,186.0,3300.0,,2007
+    """
+    fn.write_text(penguins)
+    return fn
