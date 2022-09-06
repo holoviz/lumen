@@ -53,9 +53,13 @@ class Download(Component, Viewer):
 
     _validate_params = True
 
+    _required_keys = ["format"]
+
     @classmethod
-    def from_spec(cls, spec):
-        return cls(**spec)
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            spec = {'format': spec}
+        return super().validate(spec, context)
 
     def __bool__(self):
         return self.format is not None
@@ -78,7 +82,7 @@ class Download(Component, Viewer):
         return io
 
     def __panel__(self):
-        filename = f'{self.view.pipeline.table}_{self.view.name}_view.{self.format}'
+        filename = f'{self.view.pipeline.table}.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
             size=18, hide=self.hide
@@ -717,34 +721,44 @@ class DownloadView(View):
     filename = param.String(default='data', doc="""
       Filename of the downloaded file.""")
 
-    filetype = param.Selector(default='csv', objects=['csv', 'xlsx'], doc="""
-      File type of the downloaded file.""")
+    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+      The format to download the data in.""")
 
-    save_kwargs = param.Dict(default={}, doc="""
-      Options for the to_csv or to_excel methods.""")
+    kwargs = param.Dict(default={}, doc="""
+      Keyword arguments passed to the serialization function, e.g.
+      data.to_csv(file_obj, **kwargs).""")
 
     view_type = 'download'
+
+    _required_keys = ["format"]
 
     def __bool__(self):
         return True
 
-    def _get_file_data(self):
-        df = self.get_data()
-        sio = StringIO()
-        if self.filetype == 'csv':
-            savefn = df.to_csv
-        elif self.filetype == 'xlsx':
-            savefn = df.to_excel
-        savefn(sio, **self.save_kwargs)
-        sio.seek(0)
-        return sio
+
+    def _table_data(self):
+        if self.format in ('json', 'csv'):
+            io = StringIO()
+        else:
+            io = BytesIO()
+        data = self.get_data()
+        if self.format == 'csv':
+            data.to_csv(io, **self.kwargs)
+        elif self.format == 'json':
+            data.to_json(io, **self.kwargs)
+        elif self.format == 'xlsx':
+            data.to_excel(io, **self.kwargs)
+        elif self.format == 'parquet':
+            data.to_parquet(io, **self.kwargs)
+        io.seek(0)
+        return io
 
     def get_panel(self):
         return pn.widgets.FileDownload(**self._get_params())
 
     def _get_params(self):
-        filename = f'{self.filename}.{self.filetype}'
-        return dict(filename=filename, callback=self._get_file_data, **self.kwargs)
+        filename = f'{self.filename}.{self.format}'
+        return dict(filename=filename, callback=self._table_data, **self.kwargs)
 
 
 
