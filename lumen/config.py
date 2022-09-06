@@ -10,7 +10,25 @@ from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
 from panel.widgets.indicators import Indicator
 
+from .validation import ValidationError, match_suggestion_message
+
+
+class ConfigDict(dict):
+    def __init__(self, name, **kwargs):
+        self.name = name
+        super().__init__(**kwargs)
+
+    def __getitem__(self, key):
+        try:
+            return super().__getitem__(key)
+        except KeyError as e:
+            msg = f"{self.name} with name '{key}' was not found."
+            msg = match_suggestion_message(key, list(self), msg)
+            raise ValidationError(msg) from e
+
+
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
+_INDICATORS = ConfigDict("Indicator", **_INDICATORS)
 
 _LAYOUTS = {
     'accordion': pn.Accordion,
@@ -25,12 +43,16 @@ try:
 except Exception:
     _DEFAULT_LAYOUT = pn.GridBox
 
+_LAYOUTS = ConfigDict("Layout", **_LAYOUTS)
+
+
 _TEMPLATES = {
     k[:-8].lower(): v for k, v in param.concrete_descendents(BasicTemplate).items()
 }
+_TEMPLATES = ConfigDict("Template", **_TEMPLATES)
 
 _THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
-
+_THEMES = ConfigDict("Theme", **_THEMES)
 
 
 class _config(param.Parameterized):

@@ -9,12 +9,12 @@ import pandas as pd
 import panel as pn
 import param
 
-from ..base import Component
+from ..base import MultiTypeComponent
 from ..state import state
 from ..util import is_ref
 
 
-class Transform(Component):
+class Transform(MultiTypeComponent):
     """
     A Transform provides the ability to transform a table supplied by
     a Source.
@@ -85,7 +85,7 @@ class Transform(Component):
                 else:
                     attr = 'options' if attr == 'objects' else attr
                     cls.param.warning(
-                        f"{transform_type.__name__} is of type {type(p).__name} "
+                        f"{transform_type.__name__} is of type {type(p).__name__} "
                         f"and has not attribute {attr!r}. Ensure the controls "
                         "parameter supports the provided options, e.g. if "
                         "you are declaring 'options' ensure that the parameter "

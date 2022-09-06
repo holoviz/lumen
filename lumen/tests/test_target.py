@@ -192,7 +192,7 @@ def test_transform_controls_facetted(set_root):
         ([[0], [1]], ValueError),
         ([[0], [1, 2]], ValueError),
         ([{"test": 0}], None),
-        ([{"test1": 0}], KeyError),
+        ([{"test1": 0}], ValueError),
     ]
 )
 def test_layout_view(set_root, layout, error):

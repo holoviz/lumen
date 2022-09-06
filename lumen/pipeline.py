@@ -7,11 +7,13 @@ from typing import (
 import panel as pn
 import param
 
+from .base import Component
 from .filters import Filter, ParamFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
 from .util import get_dataframe_schema
+from .validation import ValidationError, match_suggestion_message
 
 
 class DataFrame(param.DataFrame):
@@ -25,7 +27,7 @@ class DataFrame(param.DataFrame):
         return super().__get__(obj, objtype)
 
 
-class Pipeline(param.Parameterized):
+class Pipeline(Component):
     """
     A Pipeline represents a data Source along with any number of
     Filters and general purpose Transforms. A pipeline can be used
@@ -66,6 +68,8 @@ class Pipeline(param.Parameterized):
         doc="The name of the table driving this pipeline."
     )
 
+    _required_fields = ['source']
+
     def __init__(self, *, source, table, **params):
         if 'schema' not in params:
             params['schema'] = source.get_schema(table)
@@ -82,14 +86,11 @@ class Pipeline(param.Parameterized):
             for fp in transform._field_params:
                 if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = list(self.schema)
-        refs = {
-            var.split('.')[1] for var in self.refs
-            if var.startswith('$variables.')
-        }
-        if refs:
-            state.variables.param.watch(self._update_data, list(refs))
         if self.pipeline is not None:
             self.pipeline.param.watch(self._update_data, 'data')
+
+    def _update_refs(self, *events):
+        self._update_data()
 
     @property
     def refs(self):
@@ -118,7 +119,7 @@ class Pipeline(param.Parameterized):
             # Compute SQL transform expression
             if self.sql_transforms:
                 if not self.source._supports_sql:
-                    raise ValueError(
+                    raise ValidationError(
                         'Can only use sql transforms source that support them. '
                         f'Found source typed {self.source.source_type!r} instead.'
                     )
@@ -147,33 +148,86 @@ class Pipeline(param.Parameterized):
         self.data = data
 
     @classmethod
+    def _validate_source(cls, source_spec, spec, context):
+        if isinstance(source_spec, str):
+            if source_spec not in context['sources']:
+                msg = f'Pipeline specified non-existent source {source_spec!r}.'
+                msg = match_suggestion_message(source_spec, list(context['sources']), msg)
+                raise ValidationError(msg, spec, source_spec)
+            return source_spec
+        return Source.validate(source_spec, context)
+
+    @classmethod
+    def _validate_filters(cls, filter_specs, spec, context):
+        for filter_spec in (filter_specs if isinstance(filter_specs, list) else filter_specs.values()):
+            if not isinstance(filter_spec, str):
+                continue
+            elif not isinstance(spec['source'], str):
+                raise ValidationError(
+                    'Pipeline may only reference filters by name if the Source has been '
+                    'defined by reference. Please simply move the filter definition from '
+                    'the Source to the Pipeline.', spec, filter_spec
+                )
+            source = context['sources'][spec['source']]
+            if 'filters' not in source:
+                raise ValidationError(
+                    f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source, '
+                    'the source does not define any filters. ', spec, filter_spec
+                )
+            elif filter_spec not in source['filters']:
+                msg = f'Pipeline could not resolve {filter_spec!r} filter on {spec["source"]} source.'
+                msg = match_suggestion_message(filter_spec, list(source['filters']), msg)
+                raise ValidationError(msg, spec, filter_spec)
+        return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context)
+
+    @classmethod
+    def validate(cls, spec, context=None):
+        if isinstance(spec, str):
+            if spec not in context['pipelines']:
+                msg = f'Referenced non-existent pipeline {spec!r}.'
+                msg = match_suggestion_message(spec, list(context['pipelines']), msg)
+                raise ValidationError(msg, spec, spec)
+            return spec
+        return super().validate(spec, context)
+
+    @classmethod
     def from_spec(
         cls, spec: Dict[str, Any], source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
+        spec = spec.copy()
+        if source is not None:
+            spec['source'] = source
         params = dict(spec)
 
         # Resolve source
-        if 'source' in spec:
-            source = spec['source']
-            if isinstance(source, dict):
-                source = Source.from_spec(source)
-            elif isinstance(source, str):
-                if source in state.sources:
-                    source = state.sources[source]
-                else:
-                    source = state.load_source(source, state.spec['sources'][source])
+        source = spec['source']
+        if isinstance(source, dict):
+            source = Source.from_spec(source)
+        elif isinstance(source, str):
+            if source in state.sources:
+                source = state.sources[source]
+            else:
+                source = state.load_source(source, state.spec['sources'][source])
         params['source'] = source
+
+        # Validate table
         table = params.get('table')
+        tables = source.get_tables()
         if table is None:
-            tables = source.get_tables()
             if len(tables) > 1:
-                raise ValueError(
+                raise ValidationError(
                     "The Pipeline specification does not contain a table and the "
                     "supplied Source has multiple tables. Please specify one of the "
-                    f"following tables: {tables} in the pipeline specification."
+                    f"following tables: {tables} in the pipeline specification.",
+                    spec
                 )
             params['table'] = table = tables[0]
+        elif table not in tables:
+            raise ValidationError(
+                "The Pipeline specification references a table that is not "
+                "available on the specified source. ", spec
+            )
 
         # Resolve filters
         params['filters'] = filters = []

@@ -16,9 +16,11 @@ class _session_state:
 
     global_filters = {}
 
-    spec = {}
+    _specs = WeakKeyDictionary() if pn.state.curdoc else {}
 
-    _apps  = WeakKeyDictionary() if pn.state.curdoc else {}
+    _spec = {}
+
+    _apps = WeakKeyDictionary() if pn.state.curdoc else {}
 
     _loading = WeakKeyDictionary() if pn.state.curdoc else {}
 
@@ -33,6 +35,19 @@ class _session_state:
     @property
     def app(self):
         return self._apps.get(pn.state.curdoc)
+
+    @property
+    def spec(self):
+        if pn.state.curdoc is None:
+            return self._spec
+        return self._specs.get(pn.state.curdoc, {})
+
+    @spec.setter
+    def spec(self, spec):
+        if pn.state.curdoc is None:
+            self._spec = spec
+        if pn.state.curdoc not in self._specs:
+            self._specs[pn.state.curdoc] = spec
 
     @property
     def filters(self):
@@ -124,12 +139,17 @@ class _session_state:
                 self.global_sources[name] = source = Source.from_spec(source_spec)
             if source.cache_dir and clear_cache:
                 source.clear_cache()
-            if filter_specs:
-                schema = source.get_schema()
-                self.global_filters[name] = {
-                    fname: (filter_spec, schema)
-                    for fname, filter_spec in filter_specs.items()
-                }
+            if not filter_specs:
+                continue
+            tables = set(filter_spec.get('table') for filter_spec in filter_specs.values())
+            if None in tables:
+                schemas = source.get_schema()
+            else:
+                schemas = {table: source.get_schema(table) for table in tables}
+            self.global_filters[name] = {
+                fname: (filter_spec, schemas)
+                for fname, filter_spec in filter_specs.items()
+            }
 
     def load_pipelines(self):
         from .pipeline import Pipeline
@@ -155,11 +175,14 @@ class _session_state:
         if not filter_specs:
             return source
         self.filters[name] = filters = dict(self.filters.get(name, {}))
-        if filter_specs:
-            schema = source.get_schema()
-            for fname, filter_spec in filter_specs.items():
-                if fname not in filters:
-                    filters[fname] = Filter.from_spec(filter_spec, schema)
+        tables = set(filter_spec.get('table') for filter_spec in filter_specs.values())
+        if None in tables:
+            schemas = source.get_schema()
+        else:
+            schemas = {table: source.get_schema(table) for table in tables}
+        for fname, filter_spec in filter_specs.items():
+            if fname not in filters:
+                filters[fname] = Filter.from_spec(filter_spec, schemas)
         return source
 
     def resolve_views(self):
@@ -170,7 +193,7 @@ class _session_state:
             if isinstance(views, dict):
                 views = list(views.values())
             for view in views:
-                view_type = View._get_type(view.get('type'))
+                view_type = View._get_type(view.get('type', None))
                 if view_type and view_type._extension:
                     exts.append(view_type._extension)
         for ext in exts:
