@@ -1,6 +1,6 @@
 import pytest
 
-from lumen.target import Download, Facet
+from lumen.target import Download, Facet, Target
 from lumen.validation import ValidationError
 
 
@@ -64,3 +64,43 @@ def test_target_download(spec, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Download.validate(spec)
+
+
+@pytest.mark.parametrize(
+    "spec,msg",
+    (
+        (
+            {'title': 'Table', 'source': 'penguins', 'views': []},
+            None,
+        ),
+        (
+            {'title': 'Table', 'source': 'penguin', 'views': []},
+            "Target specified non-existent source 'penguin'",
+        ),
+        (
+            {'title': 'Table', 'source': 'penguins'},
+            "The Target component requires 'views' parameter to be defined",
+        ),
+        (
+            {'source': 'penguins', 'views': []},
+            "The Target component requires 'title' parameter to be defined",
+        ),
+        (
+            {'title': 'Table', 'views': []},
+            "Target component requires one of 'pipeline' or 'source' to be defined",
+        ),
+    ),
+    ids=["correct", "missing_source", "missing_views", "missing_title", "missing_pipeline_or_source"]
+)
+def test_target_target(spec, msg):
+    context = {
+        'sources': {'penguins': {}},
+        'targets': [],
+    }
+
+    if msg is None:
+        Target.validate(spec, context)
+
+    else:
+        with pytest.raises(ValidationError, match=msg):
+            Target.validate(spec, context)

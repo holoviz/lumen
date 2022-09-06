@@ -327,7 +327,7 @@ class Target(Component):
 
     _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
-    _required_keys = ['title', 'views']
+    _required_keys = ['title', 'views', ('pipeline', 'source')]
 
     _valid_keys = [
         'config', 'facet_layout', 'sort', # Deprecated

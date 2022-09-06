@@ -88,8 +88,9 @@ class Component(param.Parameterized):
             elif isinstance(key, tuple):
                 if any(f in spec for f in key):
                     continue
-                key_str = "', '".join(key[:-1]) + f" or '{key[-1]}"
-                msg = f'{cls.__name__} component requires one of {key_str} to be defined.'
+                skey = sorted(key)
+                key_str = "', '".join(skey[:-1]) + f"' or '{skey[-1]}"
+                msg = f"{cls.__name__} component requires one of '{key_str}' to be defined."
                 for f in key:
                     msg, attr = reverse_match_suggestion(f, spec, msg)
                     if attr:
