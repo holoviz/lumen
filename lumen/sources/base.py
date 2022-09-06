@@ -133,6 +133,8 @@ class Source(MultiTypeComponent):
 
     source_type = None
 
+    _internal_params = ['name', 'root']
+
     # Declare whether source supports SQL transforms
     _supports_sql = False
 
