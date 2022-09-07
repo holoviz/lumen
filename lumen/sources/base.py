@@ -216,6 +216,7 @@ class Source(MultiTypeComponent):
                 source = state.load_source(spec, state.spec['sources'][spec])
             return source
 
+        spec = dict(spec)
         source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
@@ -803,7 +804,7 @@ class JoinedSource(Source):
     table "foo".
     """
 
-    sources = param.Dict(default={}, doc="""
+    sources = param.ClassSelector(class_=(list, dict), doc="""
         A dictionary of sources indexed by their assigned name.""")
 
     tables = param.Dict(default={}, doc="""
