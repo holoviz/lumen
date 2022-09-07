@@ -750,7 +750,6 @@ class Target(Component):
 
     def to_spec(self, context=None):
         spec = super().to_spec(context=context)
-        print(len(self._pipelines), context)
         if len(self._pipelines) == 1:
             pipeline = list(self._pipelines.values())[0]
             if context:
