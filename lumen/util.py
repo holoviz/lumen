@@ -38,6 +38,9 @@ def get_dataframe_schema(df, columns=None):
         columns = list(df.columns)
 
     schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
+    if df.empty:
+        return schema
+
     properties = schema['items']['properties']
     for name in columns:
         dtype = df.dtypes[name]
