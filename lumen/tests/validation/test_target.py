@@ -24,9 +24,9 @@ from lumen.validation import ValidationError
             "Facet component 'by' key expected list type but got str",
         ),
     ),
-    ids=["correct", "unknown_key", "missing_required", "wrong_type"]
+    ids=["correct", "unknown_key", "missing_required", "wrong_type"],
 )
-def test_target_facet(spec, msg):
+def test_target_Facet(spec, msg):
     if msg is None:
         Facet.validate(spec)
 
@@ -43,23 +43,26 @@ def test_target_facet(spec, msg):
             None,
         ),
         (
-            {'format': 'csv'},
+            {"format": "csv"},
             None,
         ),
         (
-            {'formats': 'csv'},
+            {"formats": "csv"},
             "The Download component requires 'format' parameter to be defined",
         ),
         (
-            {'format': 'csvs'},
+            {"format": "csvs"},
             "Download component 'format' value failed validation: csvs",
-        )
+        ),
     ),
-    ids=["correct1", "correct2", "missing_required", "wrong_format"]
+    ids=["correct1", "correct2", "missing_required", "wrong_format"],
 )
-def test_target_download(spec, msg):
+def test_target_Download(spec, msg):
     if msg is None:
-        Download.validate(spec)
+        if isinstance(spec, str):
+            assert Download.validate(spec) == {"format": "csv"}
+        else:
+            assert Download.validate(spec) == spec
 
     else:
         with pytest.raises(ValidationError, match=msg):
@@ -70,36 +73,42 @@ def test_target_download(spec, msg):
     "spec,msg",
     (
         (
-            {'title': 'Table', 'source': 'penguins', 'views': []},
+            {"title": "Table", "source": "penguins", "views": []},
             None,
         ),
         (
-            {'title': 'Table', 'source': 'penguin', 'views': []},
+            {"title": "Table", "source": "penguin", "views": []},
             "Target specified non-existent source 'penguin'",
         ),
         (
-            {'title': 'Table', 'source': 'penguins'},
+            {"title": "Table", "source": "penguins"},
             "The Target component requires 'views' parameter to be defined",
         ),
         (
-            {'source': 'penguins', 'views': []},
+            {"source": "penguins", "views": []},
             "The Target component requires 'title' parameter to be defined",
         ),
         (
-            {'title': 'Table', 'views': []},
+            {"title": "Table", "views": []},
             "Target component requires one of 'pipeline' or 'source' to be defined",
         ),
     ),
-    ids=["correct", "missing_source", "missing_views", "missing_title", "missing_pipeline_or_source"]
+    ids=[
+        "correct",
+        "missing_source",
+        "missing_views",
+        "missing_title",
+        "missing_pipeline_or_source",
+    ],
 )
-def test_target_target(spec, msg):
+def test_target_Target(spec, msg):
     context = {
-        'sources': {'penguins': {}},
-        'targets': [],
+        "sources": {"penguins": {}},
+        "targets": [],
     }
 
     if msg is None:
-        Target.validate(spec, context)
+        assert Target.validate(spec.copy(), context) == spec
 
     else:
         with pytest.raises(ValidationError, match=msg):
