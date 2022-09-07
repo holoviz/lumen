@@ -744,9 +744,10 @@ class Target(Component):
         else:
             content = (
                 pn.pane.Alert(
-                    '**All views are empty since no data is available. '
+                    f'**All views are empty for {self.title!r} since no data is available. '
                     'Try relaxing the filter constraints.**',
-                    sizing_mode='stretch_width'
+                    sizing_mode='stretch_width',
+                    margin=(0, 0, 50, 0),
                 ),
             )
         return layout_type(*content, **kwargs)
