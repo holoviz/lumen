@@ -208,7 +208,8 @@ class Download(Component, Viewer):
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
 
-    _required_keys = ["format"]
+    _internal_params = ['name', 'pipelines']
+    _required_keys = ['format']
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -602,11 +603,7 @@ class Target(Component):
         if 'source' in spec or 'pipeline' in spec:
             return view_specs
         pipelines = {view_spec['pipeline'] for view_spec in view_specs}
-        if len(pipelines) > 1:
-            raise ValidationError(
-                'Target views must all share the same pipeline', spec, 'views'
-            )
-        elif not len(pipelines):
+        if not len(pipelines):
             raise ValidationError(
                 'Target (or its views) must declare a source or a pipeline.', spec
             )
@@ -625,9 +622,9 @@ class Target(Component):
         Parameters
         ----------
         spec : dict
-            Specification declared as a dictionary of parameter values.
+          Specification declared as a dictionary of parameter values.
         kwargs: dict
-            Additional kwargs to pass to the Target
+          Additional kwargs to pass to the Target
 
         Returns
         -------
@@ -750,6 +747,20 @@ class Target(Component):
                 ),
             )
         return layout_type(*content, **kwargs)
+
+    def to_spec(self, context=None):
+        spec = super().to_spec(context=context)
+        if len(self._pipelines) == 1:
+            pipeline = list(self._pipelines.values())[0]
+            if context:
+                if pipeline.name not in context.get('pipelines', {}):
+                    context['pipelines'][pipeline.name] = pipeline.to_spec(context=context)
+                spec['pipeline'] = pipeline.name
+            else:
+                spec['pipeline'] = pipeline.to_spec()
+        if 'source' in spec and 'pipeline' in spec:
+            del spec['source']
+        return spec
 
     @pn.depends('refresh_rate', watch=True)
     def start(self, event=None):

@@ -46,6 +46,8 @@ class Filter(MultiTypeComponent):
 
     __abstract = True
 
+    # Specification configuration
+    _internal_params = ['name', 'schema']
     _requires_field = True
 
     def __init__(self, **params):
@@ -245,6 +247,8 @@ class WidgetFilter(BaseWidgetFilter):
     widget = param.ClassSelector(class_=pn.widgets.Widget)
 
     filter_type = 'widget'
+
+    _internal_params = ['name', 'schema', 'widget']
 
     def __init__(self, **params):
         super().__init__(**params)

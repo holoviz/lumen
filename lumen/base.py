@@ -28,6 +28,10 @@ class Component(param.Parameterized):
     # Whether the component allows references
     _allows_refs = True
 
+    # Parameters that are computed internally and are not part of the
+    # component specification
+    _internal_params = ['name']
+
     # Keys that must be declared declared as a list of strings or
     # tuples of strings if one of multiple must be defined.
     _required_keys = []
@@ -63,7 +67,10 @@ class Component(param.Parameterized):
 
     @classproperty
     def _valid_keys_(cls):
-        return list(cls.param) if cls._valid_keys == 'params' else cls._valid_keys
+        if cls._valid_keys == 'params':
+            return [p for p in cls.param if p not in cls._internal_params]
+        else:
+            return cls._valid_keys
 
     @classmethod
     def _validate_keys(cls, spec):
@@ -250,22 +257,37 @@ class Component(param.Parameterized):
         """
         return cls(**spec)
 
-    def to_spec(self):
+    def to_spec(self, context=None):
         """
         Exports the full specification to reconstruct this component.
+
+        Parameters
+        ----------
+        context: Dict[str, Any]
+          Context contains the specification of all previously serialized components,
+          e.g. to allow resolving of references.
 
         Returns
         -------
         Declarative specification of this component.
         """
         spec = {}
-        for p, value in self.param.items():
-            if self._is_component_key(p):
-                value = value.to_spec()
+        for p, value in self.param.values().items():
+            if p in self._internal_params or value == self.param[p].default:
+                continue
+            elif self._is_component_key(p):
+                pspec = value.to_spec(context=context)
+                if not pspec:
+                    continue
+                value = pspec
             elif self._is_list_component_key(p):
-                value = [v.to_spec() for v in value]
+                value = [
+                    None if v is None else v.to_spec(context=context)
+                    for v in value
+                ]
             spec[p] = value
-        spec.update(self._refs)
+        if context is not None:
+            spec.update(self._refs)
         return spec
 
     @classmethod
@@ -368,7 +390,7 @@ class MultiTypeComponent(Component):
         component_cls = cls._get_type(spec['type'], spec)
         return component_cls(**spec)
 
-    def to_spec(self):
+    def to_spec(self, context=None):
         """
         Exports the full specification to reconstruct this component.
 
@@ -376,7 +398,7 @@ class MultiTypeComponent(Component):
         -------
         Resolved and instantiated Component object
         """
-        spec = super().to_spec()
+        spec = super().to_spec(context=context)
         spec['type'] = self._component_type
         return spec
 

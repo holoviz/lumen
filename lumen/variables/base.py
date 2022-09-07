@@ -109,7 +109,7 @@ class Variable(MultiTypeComponent):
 
     __abstract = True
 
-    _allowed_fields = 'params'
+    _valid_keys = 'params'
     _validate_params = True
 
     def __init__(self, **params):
