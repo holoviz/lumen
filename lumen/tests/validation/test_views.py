@@ -1,7 +1,7 @@
 import pytest
 
 from lumen.validation import ValidationError
-from lumen.views import Download, DownloadView
+from lumen.views import Download, View
 
 
 @pytest.mark.parametrize(
@@ -52,7 +52,7 @@ def test_target_download(spec, msg):
         ),
         (
             {'format': 'csv'},
-            "DownloadView component specification did not declare a type",
+            "View component specification did not declare a type",
         ),
         (
             {'type': 'downloads', 'format': 'csv'},
@@ -61,10 +61,10 @@ def test_target_download(spec, msg):
     ),
     ids=["correct", "missing_required", "wrong_format", "missing_type", "wrong_type"]
 )
-def test_target_downloadview(spec, msg):
+def test_target_view(spec, msg):
     if msg is None:
-        DownloadView.validate(spec)
+        View.validate(spec)
 
     else:
         with pytest.raises(ValidationError, match=msg):
-            DownloadView.validate(spec)
+            View.validate(spec)
