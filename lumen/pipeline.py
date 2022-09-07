@@ -193,9 +193,12 @@ class Pipeline(Component):
 
     @classmethod
     def from_spec(
-        cls, spec: Dict[str, Any], source: Optional[Source] = None,
+        cls, spec: Dict[str, Any] | str, source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
+        if isinstance(spec, str):
+            return state.pipelines[spec]
+
         spec = spec.copy()
         if source is not None:
             spec['source'] = source

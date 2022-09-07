@@ -9,6 +9,7 @@ import yaml
 from panel.reactive import ReactiveHTML
 
 from lumen.sources import Source
+from lumen.state import state as lm_state
 
 from .base import WizardItem
 from .fast import FastComponent
@@ -114,7 +115,7 @@ class SourceGalleryItem(GalleryItem):
       ${view}
     </div>
     <p style="height: 4em; max-width: 320px;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px; margin: 1em 0;" onclick="${_open_modal}">Edit</fast-button>
+    <fast-button id="edit-button" style="width: 320px; margin: 1em 0 0 0;" onclick="${_open_modal}">Edit</fast-button>
     """
 
     def __init__(self, **params):
@@ -128,9 +129,14 @@ class SourceGalleryItem(GalleryItem):
     def _add_spec(self):
         sources = state.spec['sources']
         if self.selected:
-            sources[self.name] = self.spec
+            spec = self.spec.copy()
+            spec.pop('metadata', None)
+            source = Source.from_spec(dict(spec, name=self.name))
+            lm_state.sources[self.name] = source
+            sources[self.name] = spec
         elif self.name in sources:
             del sources[self.name]
+            del lm_state.sources[self.name]
 
 
 class SourceGallery(WizardItem, Gallery):
@@ -199,6 +205,7 @@ class SourceGallery(WizardItem, Gallery):
                 name=name, spec=source.spec, margin=0, selected=True,
                 editor=source, thumbnail=source.thumbnail
             )
+            lm_state.sources[name] = Source.from_spec(dict(source.spec, name=name))
             self.items[name] = item
             self.sources[name] = source
         self.param.trigger('items')

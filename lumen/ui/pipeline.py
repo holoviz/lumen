@@ -5,7 +5,7 @@ import param
 
 from lumen.filters import Filter
 from lumen.pipeline import Pipeline
-from lumen.sources import Source
+from lumen.state import state as lm_state
 from lumen.transforms import Transform
 
 from .base import WizardItem
@@ -144,7 +144,6 @@ class PipelineEditor(FastComponent):
             self.preview.value = self._pipeline.data
 
     def _update_preview(self, event):
-        print('Update')
         self.preview.value = event.new
 
     def _update_spec(self, *events):
@@ -166,7 +165,7 @@ class PipelineEditor(FastComponent):
 
     def _add_filter(self, event):
         self.loading = True
-        source = Source.from_spec(state.spec['sources'][self.source])
+        source = lm_state.sources[self.source]
         schema = source.get_schema()
         table = list(schema)[0]
         filt = Filter.from_spec({
@@ -188,7 +187,7 @@ class PipelineEditor(FastComponent):
 
     def _add_transform(self, event):
         self.loading = True
-        source = Source.from_spec(state.spec['sources'][self.source])
+        source = lm_state.sources[self.source]
         schema = source.get_schema()
 
         transform = Transform.from_spec({'type': self.transform_type})
@@ -200,7 +199,6 @@ class PipelineEditor(FastComponent):
 
         self.transforms.append(transform)
         if self._pipeline:
-            print('Add transform')
             self._pipeline.add_transform(transform)
         self.param.trigger('transforms')
         self.transform_items.append(pn.panel(transform))
@@ -280,7 +278,6 @@ class PipelinesEditor(WizardItem):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._source = None
         state.sources.param.watch(self._update_sources, 'sources')
 
     @param.depends('source', watch=True)
@@ -288,8 +285,9 @@ class PipelinesEditor(WizardItem):
         source = state.sources.sources[self.source]
         spec = dict(source.spec, cache_dir=None)
         spec.pop('filters', None)
-        self._source = Source.from_spec(spec)
-        self.tables = self._source.get_tables()
+        spec.pop('metadata', None)
+        if self.source in lm_state.sources:
+            self.tables = lm_state.sources[self.source].get_tables()
 
     def _update_sources(self, event):
         self.sources = list(event.new)
@@ -331,7 +329,7 @@ class PipelineGalleryItem(GalleryItem):
       ${view}
     </div>
     <p style="height: 4em; max-width: 320px;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px; margin: 1em 0;" onclick="${_open_modal}">Edit</fast-button>
+    <fast-button id="edit-button" style="width: 320px; margin: 1em 0 0 0;" onclick="${_open_modal}">Edit</fast-button>
     """
 
     def __init__(self, **params):
@@ -347,8 +345,10 @@ class PipelineGalleryItem(GalleryItem):
         pipelines = state.spec['pipelines']
         if self.selected:
             pipelines[self.name] = self.spec
+            lm_state.pipelines[self.name] = Pipeline.from_spec(dict(self.spec, name=self.name))
         elif self.name in pipelines:
             del pipelines[self.name]
+            del lm_state.pipelines[self.name]
 
 
 class PipelineGallery(WizardItem, Gallery):
@@ -365,11 +365,11 @@ class PipelineGallery(WizardItem, Gallery):
     <fast-divider></fast-divider>
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
-    {% for item in items.values() %}
+      {% for item in items.values() %}
       <fast-card id="pipeline-container" style="width: 350px; height: 400px;">
         ${item}
       </fast-card>
-    {% endfor %}
+      {% endfor %}
       <fast-card id="pipelines-container-new" style="height: 400px; width: 350px; padding: 1em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Add new pipeline</span>
@@ -385,12 +385,16 @@ class PipelineGallery(WizardItem, Gallery):
 
     def __init__(self, **params):
         super().__init__(**params)
-        for name, item in self.items.items():
-            self.pipelines[name] = item.editor
+        self._items = self.items
         self._editor = PipelinesEditor(spec={}, margin=10)
         self._save_button = pn.widgets.Button(name='Save pipelines')
         self._save_button.on_click(self._save_pipelines)
         self._modal_content = [self._editor, self._save_button]
+        self._watchers = {}
+        state.sources.param.watch(self._update_items, 'items')
+        self._update_items()
+        for name, item in self._items.items():
+            self.pipelines[name] = item.editor
 
     @param.depends('spec', watch=True)
     def _update_params(self):
@@ -401,6 +405,19 @@ class PipelineGallery(WizardItem, Gallery):
                 thumbnail=editor.thumbnail
             )
         self.param.trigger('pipelines')
+        self.param.trigger('items')
+
+    def _update_items(self, *events):
+        for name, item in state.sources.items.items():
+            if name not in self._watchers:
+                self._watchers[name] = item.param.watch(self._update_items, 'selected')
+        for name, item in self.items():
+            if name not in self._items:
+                self._items[name] = item
+        self.items = {
+            name: item for name, item in self._items.items()
+            if item.spec['source'] in lm_state.sources
+        }
         self.param.trigger('items')
 
     def _add_pipeline(self, event):
@@ -414,6 +431,7 @@ class PipelineGallery(WizardItem, Gallery):
                 name=name, spec=pipeline.spec, margin=0, selected=True,
                 editor=pipeline, thumbnail=pipeline.thumbnail
             )
+            self._items[name] = item
             self.items[name] = item
             self.pipelines[name] = pipeline
         self.param.trigger('items')

@@ -4,7 +4,6 @@ import param
 from panel.reactive import ReactiveHTML
 
 from lumen.config import _LAYOUTS
-from lumen.state import state as lumen_state
 from lumen.views import View
 
 from .base import WizardItem
@@ -69,10 +68,9 @@ class TargetEditor(ReactiveHTML):
         self._views = {}
         self._populate_layout(self.layout)
         for name, view in state.views.items.items():
-            if self.source == view.editor.source:
-                self.views.append(name)
-                if name not in vsel.options:
-                    vsel.options.append(name)
+            self.views.append(name)
+            if name not in vsel.options:
+                vsel.options.append(name)
 
     def _construct_layout(self, layout_spec):
         layout_kwargs = {'sizing_mode': 'stretch_both'}
@@ -84,7 +82,6 @@ class TargetEditor(ReactiveHTML):
         return layout_spec, _LAYOUTS.get(layout_spec, pn.FlexBox)(**layout_kwargs)
 
     def _populate_layout(self, layout):
-        source = self.spec['source']
         views = self.spec['views']
         view_specs = views.items() if isinstance(views, dict) else views
         for i, view_spec in enumerate(view_specs):
@@ -96,9 +93,7 @@ class TargetEditor(ReactiveHTML):
             if name in self._views:
                 view = self._views[name]
             else:
-                source_spec = state.sources.sources[source].spec
-                source_obj = lumen_state.load_source(source, source_spec)
-                view = View.from_spec(view, source_obj, [])
+                view = View.from_spec(view)
                 name = name or view.name
                 self._views[name] = view
             if hasattr(layout, 'append'):
@@ -137,11 +132,8 @@ class TargetGalleryItem(GalleryItem):
 
     def __init__(self, **params):
         spec = params['spec']
-        source_name = spec['source']
         if 'description' not in params:
-            params['description'] = f"Contains {len(spec['views'])} views of the {source_name!r} source."
-        if 'thumbnail' not in params:
-            params['thumbnail'] = state.sources.sources[source_name].thumbnail
+            params['description'] = f"Contains {len(spec['views'])} views.."
         super().__init__(**params)
         self.view = pn.pane.PNG(self.thumbnail, height=200, align='center')
         self._modal_content = [self.editor]
@@ -215,29 +207,12 @@ class TargetsEditor(WizardItem):
     _template = """
     <span style="font-size: 2em">Layout editor</span>
     <p>{{ __doc__ }}</p>
+    <fast-button id="submit" appearance="accent" style="position: absolute; right: 5px;" onclick="${_add_target}">
+      <b style="font-size: 2em;">+</b>
+    </fast-button>
     <fast-divider></fast-divider>
+
     <div style="display: flex;">
-      <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
-        <div style="display: grid;">
-          <label for="target-title-${id}"><b>{{ param.title.label }}</b></label>
-          <fast-text-field id="target-title" placeholder="{{ param.title.doc }}" value="${title}">
-          </fast-text-field>
-        </div>
-        <div style="display: flex;">
-        <div style="display: grid; flex: auto;">
-          <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
-          <fast-select id="source" style="max-width: 250px; min-width: 150px;" value="${source}">
-          {% for src in sources %}
-            <fast-option value="{{ src }}">{{ src.title() }}</fast-option>
-          {% endfor %}
-          </fast-select>
-          <fast-tooltip anchor="sources-${id}">{{ param.sources.doc }}</fast-tooltip>
-        </div>
-        <fast-button id="submit" appearance="accent" style="margin-top: auto; margin-left: 1em; width: 20px;" onclick="${_add_target}">
-            <b style="font-size: 2em;">+</b>
-        </fast-button>
-        </div>
-      </form>
       <div style="flex: auto; overflow-y: auto; gap: 1em;">
         {% for target in targets %}
         <div id="target-container">${target}</div>
@@ -260,8 +235,8 @@ class TargetsEditor(WizardItem):
             self.source = self.sources[0]
 
     def _add_target(self, event):
-        spec = {'title': self.title, 'source': self.source}
-        editor = TargetEditor(spec=spec, **spec)
+        spec = {'title': self.title}
+        editor = TargetEditor(spec=spec, title=self.title)
         self.spec.append(spec)
         self.targets.append(editor)
         self.param.trigger('targets')

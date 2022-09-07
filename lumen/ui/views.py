@@ -3,6 +3,7 @@ import param
 
 from panel.reactive import ReactiveHTML
 
+from lumen.pipeline import Pipeline
 from lumen.views import View
 
 from .base import WizardItem
@@ -71,13 +72,12 @@ class ViewsEditor(WizardItem):
         self.param.view_type.objects = [
             view.view_type for view in views.values() if view.view_type
         ]
-        self._pipeline = None
         state.pipelines.param.watch(self._update_pipelines, 'pipelines')
 
     def _add_view(self, event):
+        pipeline = Pipeline.from_spec(state.spec['pipelines'][self.pipeline])
         editor = ViewEditor(
-            view_type=self.view_type, pipeline=self.pipeline,
-            pipeline_obj=self._pipeline,
+            view_type=self.view_type, pipeline=self.pipeline, pipeline_obj=pipeline,
             spec={'pipeline': self.pipeline, 'type': self.view_type}
         )
         editor.param.watch(self._remove_view, 'remove')
@@ -329,10 +329,10 @@ class hvPlotViewEditor(ViewEditor):
     def __init__(self, **params):
         import hvplot.pandas  # noqa
 
-        from hvplot.ui import hvPlotExplorer
+        from hvplot.ui import hvDataFrameExplorer
         super().__init__(**params)
         kwargs = dict(self.spec)
-        self.view = hvPlotExplorer(self.pipeline.data, **kwargs)
+        self.view = hvDataFrameExplorer(self.pipeline_obj.data, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
         self.view.axes.param.watch(self._update_spec, list(self.view.axes.param))
         self.view.operations.param.watch(self._update_spec, list(self.view.operations.param))

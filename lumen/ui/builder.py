@@ -82,7 +82,7 @@ class Builder(param.Parameterized):
 
         self.config = ConfigEditor(spec=self.spec['config'])
         self.variables = VariablesEditor(spec=self.spec['variables'], **var_params)
-        state.spec = self.spec
+        lm_state.spec = state.spec = self.spec
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.pipelines = self.pipelines = PipelineGallery(spec=self.spec['pipelines'], **pipeline_params)
         state.views = self.views = ViewGallery(**view_params)
@@ -137,10 +137,6 @@ class Builder(param.Parameterized):
                 spec = dict(source.spec)
                 spec['name'] = name
                 spec.pop('filters', None)
-            try:
-                lm_state.sources[name] = Source.from_spec(spec)
-            except Exception:
-                pass
 
         for name, pipeline in self.pipelines.pipelines.items():
             config.root = str(pathlib.Path(__file__).parent)
