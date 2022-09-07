@@ -26,9 +26,9 @@ from lumen.validation import ValidationError
     ),
     ids=["correct1", "missing_type", "missing_field_constant", "missing_field_widget"],
 )
-def test_filter_filter(spec, msg):
+def test_filter_Filter(spec, msg):
     if msg is None:
-        Filter.validate(spec)
+        assert Filter.validate(spec.copy()) == spec
 
     else:
         with pytest.raises(ValidationError, match=msg):

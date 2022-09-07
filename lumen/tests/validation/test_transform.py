@@ -22,9 +22,9 @@ from lumen.validation import ValidationError
     ),
     ids=["correct", "wrong_type", "missing_type"],
 )
-def test_transforms_transform(spec, msg):
+def test_transforms_Transform(spec, msg):
     if msg is None:
-        Transform.validate(spec)
+        assert Transform.validate(spec.copy()) == spec
 
     else:
         with pytest.raises(ValidationError, match=msg):

@@ -88,14 +88,14 @@ from lumen.validation import ValidationError
         "no_filters_transforms",
     ],
 )
-def test_pipeline_pipeline(source, filters, transforms, msg):
+def test_pipeline_Pipeline(source, filters, transforms, msg):
     spec = {
         "source": source,
         "filters": filters,
         "transforms": transforms,
     }
     if msg is None:
-        Pipeline.validate(spec)
+        assert Pipeline.validate(spec.copy()) == spec
 
     else:
         with pytest.raises(ValidationError, match=msg):
