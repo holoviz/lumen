@@ -154,7 +154,7 @@ class _session_state:
     def load_pipelines(self):
         from .pipeline import Pipeline
         pipelines = {
-            name: Pipeline.from_spec(source_spec)
+            name: Pipeline.from_spec(dict(source_spec, name=name))
             for name, source_spec in self.spec.get('pipelines', {}).items()
         }
         self._pipelines[pn.state.curdoc or None] = pipelines

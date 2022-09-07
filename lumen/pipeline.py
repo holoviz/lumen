@@ -68,6 +68,7 @@ class Pipeline(Component):
         doc="The name of the table driving this pipeline."
     )
 
+    _internal_params = ['data', 'name', 'schema']
     _required_fields = ['source']
 
     def __init__(self, *, source, table, **params):
