@@ -206,7 +206,6 @@ class Source(MultiTypeComponent):
         -------
         Resolved and instantiated Source object
         """
-        spec = dict(spec)
         if isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
@@ -214,6 +213,7 @@ class Source(MultiTypeComponent):
                 source = state.load_source(spec, state.spec['sources'][spec])
             return source
 
+        spec = dict(spec)
         source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
