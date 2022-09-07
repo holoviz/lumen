@@ -206,6 +206,7 @@ class Source(MultiTypeComponent):
         -------
         Resolved and instantiated Source object
         """
+        spec = dict(spec)
         if isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
