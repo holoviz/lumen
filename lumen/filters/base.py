@@ -46,8 +46,8 @@ class Filter(MultiTypeComponent):
 
     __abstract = True
 
+    # Specification configuration
     _internal_params = ['name', 'schema']
-
     _requires_field = True
 
     def __init__(self, **params):

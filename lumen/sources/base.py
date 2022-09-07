@@ -133,12 +133,13 @@ class Source(MultiTypeComponent):
 
     source_type = None
 
+    __abstract = True
+
+    # Specification configuration
     _internal_params = ['name', 'root']
 
     # Declare whether source supports SQL transforms
     _supports_sql = False
-
-    __abstract = True
 
     @property
     def _reload_params(self):

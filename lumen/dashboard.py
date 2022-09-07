@@ -147,6 +147,17 @@ class Config(Component):
             spec['layout'] = _LAYOUTS[spec['layout']]
         return cls(**spec)
 
+    def to_spec(self, context=None):
+        spec = super().to_spec(context=context)
+        if 'layout' in spec:
+            spec['layout'] = {v: k for k, v in _LAYOUTS.items()}[spec['layout']]
+        if 'template' in spec:
+            tmpl = spec['template']
+            spec['template'] = {v: k for k, v in _TEMPLATES.items()}.get(tmpl, f'{tmpl.__module__}.{tmpl.__name__}')
+        if 'theme' in spec:
+            spec['theme'] = {v: k for k, v in _THEMES.items()}[spec['theme']]
+        return spec
+
     def __init__(self, **params):
         super().__init__(**params)
         pn.config.param.update(
@@ -293,11 +304,13 @@ class Dashboard(Component):
     defaults = param.ClassSelector(default=Defaults(), class_=Defaults, doc="""
         Defaults to apply to component classes.""")
 
-    targets = param.List(default=[], class_=Target, doc="""
+    targets = param.List(default=[], item_type=Target, doc="""
         List of targets monitoring some source.""")
 
-    _valid_keys = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'targets']
+    # Specification configuration
     _allows_refs = False
+
+    _valid_keys = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'targets']
 
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
@@ -721,6 +734,34 @@ class Dashboard(Component):
                 self._layout
             )
         )
+
+    def to_spec(self):
+        """
+        Exports the full specification to reconstruct this component.
+
+        Returns
+        -------
+        Declarative specification of this component.
+        """
+        spec = {}
+        spec['variables'] = {
+            name: variable.to_spec(context=spec)
+            for name, variable in state.variables._vars.items()
+        }
+        spec['sources'] = {
+            name: source.to_spec(context=spec)
+            for name, source in state.sources.items()
+        }
+        spec['pipelines'] = {
+            name: pipeline.to_spec(context=spec)
+            for name, pipeline in state.pipelines.items()
+        }
+        spec.update(super().to_spec(context=spec))
+        spec['targets'] = [
+            tspec if target is None else target
+            for target, tspec in zip(spec['targets'], state.spec['targets'])
+        ]
+        return {k: v for k, v in spec.items() if v != {}}
 
     def show(self, **kwargs):
         """

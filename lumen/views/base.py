@@ -51,9 +51,10 @@ class Download(Component, Viewer):
 
     view = param.Parameter(doc="Holds the current view.")
 
+    # Specification configuration
+    _internal_params = ['view']
+    _required_keys = ['format']
     _validate_params = True
-
-    _required_keys = ["format"]
 
     @classmethod
     def validate(cls, spec, context=None):
@@ -220,7 +221,7 @@ class View(MultiTypeComponent, Viewer):
         -------
         The resolved View object.
         """
-        spec = dict(spec)
+        spec = spec.copy()
         resolved_spec, refs = {}, {}
 
         # Resolve pipeline
@@ -443,7 +444,7 @@ class Panel(View):
     def _resolve_spec(self, spec):
         if not isinstance(spec, dict) or 'type' not in spec:
             return spec
-        spec = dict(self.spec)
+        spec = self.spec.copy()
         ptype = resolve_module_reference(spec.pop('type'), Viewable)
         params = {}
         for p, v in spec.items():
