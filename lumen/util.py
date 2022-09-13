@@ -245,36 +245,47 @@ def extract_refs(spec, ref_type=None):
     return filtered
 
 
-def catch_and_notify(msg=None):
+def catch_and_notify(message=None):
     """Catch exception and notify user
 
     A decorator which catches all the exception of a function.
     When an error occurs a panel notification will be send to the
-    dashboard with the msg and logged the error and which method
+    dashboard with the message and logged the error and which method
     it arrived from.
-
 
     Parameters
     ----------
-    msg : str | None
+    message : str | None
         The notification message, by default None.
         None will give this "Error: {e}" where e is the
         exception message.
 
     """
-
     pn.extension(notifications=True)
-    if msg is None:
-        msg = "Error: {e}"
-    def function(func):
+
+    # This is to be able to call the decorator
+    # like this @catch_and_notify
+    function = None
+    if callable(message):
+        function = message
+        message = None
+
+    if message is None:
+        message = "Error: {e}"
+
+    def decorator(func):
         @wraps(func)
-        def decorator(*args, **kwargs):
+        def wrapper(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 log.error(
-                    f"{func.__qualname__!r} raised a {type(e).__name__}: {e}"
+                    f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
                 )
-                pn.state.notifications.error(msg.format(e=e))
-        return decorator
-    return function
+                pn.state.notifications.error(message.format(e=e))
+        return wrapper
+
+    if function:
+        return decorator(function)
+
+    return decorator
