@@ -289,6 +289,7 @@ class View(MultiTypeComponent, Viewer):
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
 
+    @catch_and_notify
     def _update_panel(self, *events):
         """
         Updates the cached Panel object and returns a boolean value

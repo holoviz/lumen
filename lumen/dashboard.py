@@ -24,7 +24,7 @@ from .sources import RESTSource, Source  # noqa
 from .state import state
 from .target import Target
 from .transforms import Transform  # noqa
-from .util import expand_spec, resolve_module_reference
+from .util import catch_and_notify, expand_spec, resolve_module_reference
 from .validation import ValidationError, match_suggestion_message
 from .variables import Variable, Variables
 from .views import View  # noqa
@@ -525,6 +525,7 @@ class Dashboard(Component):
     # Rendering API
     ##################################################################
 
+    @catch_and_notify
     def _activate_filters(self, event):
         target = self.targets[event.new]
         rendered = self._rendered[event.new]

@@ -4,6 +4,7 @@ import param
 from panel.reactive import ReactiveHTML
 
 from lumen.sources import Source
+from lumen.util import catch_and_notify
 from lumen.views import View
 
 from .base import WizardItem
@@ -88,6 +89,7 @@ class ViewsEditor(WizardItem):
         self._source = None
         state.sources.param.watch(self._update_sources, 'sources')
 
+    @catch_and_notify
     @param.depends('source', watch=True)
     def _update_tables(self):
         source = state.sources.sources[self.source]
