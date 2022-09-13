@@ -7,9 +7,16 @@ import re
 import subprocess
 import sys
 
+from functools import wraps
+from logging import getLogger
+
+import panel as pn
+
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
+
+log = getLogger(__name__)
 
 
 def get_dataframe_schema(df, columns=None):
@@ -236,3 +243,38 @@ def extract_refs(spec, ref_type=None):
         return refs
     filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
     return filtered
+
+
+def catch_and_notify(msg=None):
+    """Catch exception and notify user
+
+    A decorator which catches all the exception of a function.
+    When an error occurs a panel notification will be send to the
+    dashboard with the msg and logged the error and which method
+    it arrived from.
+
+
+    Parameters
+    ----------
+    msg : str | None
+        The notification message, by default None.
+        None will give this "Error: {e}" where e is the
+        exception message.
+
+    """
+
+    pn.extension(notifications=True)
+    if msg is None:
+        msg = "Error: {e}"
+    def function(func):
+        @wraps(func)
+        def decorator(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                log.error(
+                    f"{func.__qualname__!r} raised a {type(e).__name__}: {e}"
+                )
+                pn.state.notifications.error(msg.format(e=e))
+        return decorator
+    return function
