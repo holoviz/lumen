@@ -41,12 +41,12 @@ def get_dataframe_schema(df, columns=None):
     else:
         is_dask = False
 
+    schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
+    if df is None or df.empty:
+        return schema
+
     if columns is None:
         columns = list(df.columns)
-
-    schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
-    if df.empty:
-        return schema
 
     properties = schema['items']['properties']
     for name in columns:

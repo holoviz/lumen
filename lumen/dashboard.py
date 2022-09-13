@@ -408,7 +408,7 @@ class Dashboard(Component):
         for i, target_spec in enumerate(target_specs):
             if state.loading_msg:
                 state.loading_msg.object = (
-                    f"Loading target {target_spec['title']!r} ({i}/{ntargets})..."
+                    f"Loading target {target_spec['title']!r} ({i + 1}/{ntargets})..."
             )
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
                 if self.config.background_load:
