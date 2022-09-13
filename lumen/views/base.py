@@ -26,7 +26,7 @@ from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import SQLTransform, Transform
-from ..util import is_ref, resolve_module_reference
+from ..util import catch_and_notify, is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -736,7 +736,7 @@ class DownloadView(View):
     def __bool__(self):
         return True
 
-
+    @catch_and_notify("Download failed")
     def _table_data(self):
         if self.format in ('json', 'csv'):
             io = StringIO()

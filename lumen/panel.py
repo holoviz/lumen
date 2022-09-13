@@ -109,7 +109,7 @@ class DownloadButton(ReactiveHTML):
             params['object'] = object
         super().__init__(**params)
 
-    @catch_and_notify(msg="Download failed: {e}")
+    @catch_and_notify("Download failed")
     def _on_click(self, event=None):
         file_input = FileDownload(callback=self.callback, filename=self.filename)
         file_input._transfer()

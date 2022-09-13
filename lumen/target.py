@@ -17,7 +17,7 @@ from .panel import IconButton
 from .pipeline import Pipeline
 from .sources import Source
 from .state import state
-from .util import extract_refs
+from .util import catch_and_notify, extract_refs
 from .validation import ValidationError, match_suggestion_message
 from .views import DOWNLOAD_FORMATS, View
 
@@ -253,6 +253,7 @@ class Download(Component, Viewer):
     def __bool__(self):
         return self.format is not None
 
+    @catch_and_notify("Download failed")
     def _table_data(self):
         if self.format in ('json', 'csv'):
             io = StringIO()
