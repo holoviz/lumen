@@ -804,7 +804,7 @@ class JoinedSource(Source):
     table "foo".
     """
 
-    sources = param.Dict(default={}, doc="""
+    sources = param.ClassSelector(class_=(list, dict), doc="""
         A dictionary of sources indexed by their assigned name.""")
 
     tables = param.Dict(default={}, doc="""

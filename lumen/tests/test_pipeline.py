@@ -148,3 +148,13 @@ def test_pipeline_chained_with_sql_transform(mixed_df):
     transform.columns = ['B', 'C']
     expected = mixed_df.iloc[2:4][['B', 'C']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+
+def test_not_removing_type(penguins_file):
+    spec = {
+        "source": {"type": "file", "tables": {"penguins": penguins_file}},
+    }
+    spec_org = spec.copy()
+    Pipeline.from_spec(spec)
+    Pipeline.from_spec(spec)
+    assert spec == spec_org
