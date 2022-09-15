@@ -24,7 +24,7 @@ targets:
       - type: altair
         marker: rect
         chart:
-          title: 2010 Daily High Temperature (F) in Seattle, WA
+          title: 2012-2015 Daily High Temperature (F) in Seattle, WA
         x:
           shorthand: date(date):O
           title: Day

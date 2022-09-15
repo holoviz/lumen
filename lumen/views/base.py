@@ -26,7 +26,7 @@ from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import SQLTransform, Transform
-from ..util import is_ref, resolve_module_reference
+from ..util import catch_and_notify, is_ref, resolve_module_reference
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -289,6 +289,7 @@ class View(MultiTypeComponent, Viewer):
     def __bool__(self):
         return self._cache is not None and len(self._cache) > 0
 
+    @catch_and_notify
     def _update_panel(self, *events):
         """
         Updates the cached Panel object and returns a boolean value
@@ -736,7 +737,7 @@ class DownloadView(View):
     def __bool__(self):
         return True
 
-
+    @catch_and_notify("Download failed")
     def _table_data(self):
         if self.format in ('json', 'csv'):
             io = StringIO()
