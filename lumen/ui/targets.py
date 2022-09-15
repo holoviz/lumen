@@ -23,7 +23,8 @@ class TargetEditor(ReactiveHTML):
 
     layout = param.Parameter()
 
-    layout_type = param.Selector(default='column', objects=list(_LAYOUTS))
+    layout_type = param.Selector(default='flex', objects=list(_LAYOUTS), doc="""
+       Select how you want to lay out the selected views.""")
 
     views = param.List(default=[])
 
@@ -37,13 +38,13 @@ class TargetEditor(ReactiveHTML):
       <form role="form" style="flex: 25%; max-width: 300px; line-height: 2em;">
         <div id="view-select">${view_select}</div>
         <div style="display: grid; flex: auto;">
-          <label for="layout_type-${id}"><b>{{ param.layout_type.label }}</b></label>
-          <fast-select id="layout_type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
+          <label for="layout-type-${id}"><b>{{ param.layout_type.label }}</b></label>
+          <fast-select id="layout-type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
           {% for lt in param.layout_type.objects %}
-            <fast-option value="{{ lt }}" {% if lt == layout_type %}selected{% endif %}>{{ lt.title() }}</fast-option>
+            <fast-option value="{{ lt }}">{{ lt.title() }}</fast-option>
           {% endfor %}
           </fast-select>
-          <fast-tooltip anchor="layout_type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
+          <fast-tooltip anchor="layout-type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
         </div>
       </form>
       <div id="layout" style="flex: auto; margin-left: 1em;">${layout}</div>
@@ -53,7 +54,7 @@ class TargetEditor(ReactiveHTML):
     _scripts = {'relayout': 'setTimeout(() => view.invalidate_layout(), 100);'}
 
     def __init__(self, **params):
-        spec = params.get('spec')
+        spec = params.pop('spec', {})
         layout_spec = spec.get('layout', 'flex')
         layout_type, layout = self._construct_layout(layout_spec)
         params['layout_type'] = layout_type
@@ -62,16 +63,20 @@ class TargetEditor(ReactiveHTML):
             name='Select views', options=params.get('views', []),
             max_width=250, sizing_mode='stretch_width', margin=0
         )
+        params.update(**{
+            k: v for k, v in spec.items()
+            if k in self.param and k not in params and not self.param[k].readonly
+        })
         vsel.link(self, value='views')
-        super().__init__(**params)
+        super().__init__(spec=spec, **params)
         if 'views' not in self.spec:
             self.spec['views'] = {}
         self._views = {}
         self._populate_layout(self.layout)
-        for name, view in state.views.items.items():
-            self.views.append(name)
-            if name not in vsel.options:
-                vsel.options.append(name)
+        self._watchers = {}
+        state.views.param.watch(self._update_views, 'items')
+        self._update_views()
+        self.view_select.value = self.view_select.options
 
     @property
     def thumbnail(self):
@@ -86,12 +91,19 @@ class TargetEditor(ReactiveHTML):
             layout_spec = layout_spec.pop('type')
         return layout_spec, _LAYOUTS.get(layout_spec, pn.FlexBox)(**layout_kwargs)
 
+    def _update_views(self, *events):
+        for name, item in state.views.items.items():
+            if name not in self._watchers:
+                self._watchers[name] = item.param.watch(self._update_views, 'selected')
+        views = [name for name, item in state.views.items.items() if item.selected]
+        self.view_select.options = views
+
     def _populate_layout(self, layout):
         views = self.spec['views']
-        view_specs = views.items() if isinstance(views, dict) else views
-        for i, view_spec in enumerate(view_specs):
+        for i, view_spec in enumerate(views.items()):
             if isinstance(view_spec, tuple):
                 name, view = view_spec
+                view['name'] = name
             else:
                 view = view_spec
                 name = None

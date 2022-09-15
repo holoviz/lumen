@@ -80,6 +80,7 @@ class ViewsEditor(WizardItem):
             spec={'pipeline': self.pipeline, 'type': self.view_type}
         )
         editor.param.watch(self._remove_view, 'remove')
+        editor.render()
         self.views.append(editor)
         self.param.trigger('views')
 
@@ -95,15 +96,19 @@ class ViewsEditor(WizardItem):
 
 class ViewEditor(ReactiveHTML):
 
-    pipeline = param.Parameter(precedence=-1)
-
-    remove = param.Boolean(default=False)
+    # Specification parameters
 
     spec = param.Dict(default={})
 
     sizing_mode = param.String(default='stretch_both')
 
+    pipeline = param.Parameter(precedence=-1)
+
     view_type = param.String(default='None')
+
+    # Display parameters
+
+    remove = param.Boolean(default=False)
 
     view = param.Parameter()
 
@@ -130,6 +135,13 @@ class ViewEditor(ReactiveHTML):
                 return super().__new__(editor)
         return super().__new__(cls)
 
+    def __init__(self, **params):
+        spec = params.pop('spec', {})
+        params.update(**{
+            k: v for k, v in spec.items() if k in self.param and k not in params
+        })
+        super().__init__(spec=spec, **params)
+
     @property
     def description(self):
         return (
@@ -155,6 +167,7 @@ class ViewEditor(ReactiveHTML):
 class ViewGalleryItem(GalleryItem):
 
     editor = param.ClassSelector(class_=ViewEditor, precedence=-1)
+
     selected = param.Boolean(default=False, doc="""
         Whether the item has been selected.""")
 
@@ -170,15 +183,6 @@ class ViewGalleryItem(GalleryItem):
         super()._open_modal(event)
 
 
-    @param.depends('selected', watch=True)
-    def _add_spec(self):
-        views = state.spec['views']
-        if self.selected:
-            views[self.name] = self.spec
-        elif self.name in views:
-            del views[self.name]
-
-
 class ViewGallery(WizardItem, Gallery):
     """
     Select the views to add to your dashboard specification.
@@ -188,7 +192,8 @@ class ViewGallery(WizardItem, Gallery):
 
     spec = param.List()
 
-    views = param.List(default=[], doc="The list of views added to the dashboard.", precedence=-1)
+    views = param.List(default=[], precedence=-1, doc="""
+        The list of views added to the dashboard.""")
 
     _template = """
     <span style="font-size: 1.5em">Views</span>
@@ -239,7 +244,6 @@ class ViewGallery(WizardItem, Gallery):
         for name, item in self.items.items():
             if name not in self._items:
                 self._items[name] = item
-        print(lm_state.pipelines)
         self.items = {
             name: item for name, item in self._items.items()
             if item.spec['pipeline'] in lm_state.pipelines
@@ -350,6 +354,7 @@ class hvPlotViewEditor(ViewEditor):
     def render(self):
         from hvplot.ui import hvDataFrameExplorer
         kwargs = dict(self.spec)
+        del kwargs['type']
         pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
         self.view = hvDataFrameExplorer(pipeline.data, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
@@ -365,8 +370,8 @@ class hvPlotViewEditor(ViewEditor):
         return ASSETS_DIR / 'hvplot.png'
 
     def _update_spec(self, *events):
-        for event in events:
-            p = event.name
-            p = 'y' if p == 'y_multi' else p
-            if not isinstance(event.new, param.Parameterized):
-                self.spec[p] = event.new
+        pipeline = self.spec['pipeline']
+        self.spec.clear()
+        self.spec['type'] = self.view_type
+        self.spec['pipeline'] = pipeline
+        self.spec.update(self.view.settings())

@@ -26,7 +26,7 @@ class GalleryItem(ReactiveHTML):
 
     margin = param.Integer(default=0)
 
-    thumbnail = param.Filename()
+    thumbnail = param.Filename(precedence=-1)
 
     sizing_mode= param.String(default='stretch_both')
 
@@ -41,12 +41,6 @@ class GalleryItem(ReactiveHTML):
     <p style="height: 4em; max-width: 320px;">{{ description }}</p>
     <fast-button id="edit-button" style="width: 320px;" onclick="${_open_modal}">Edit</fast-button>
     """
-
-    def __init__(self, **params):
-        spec = params.get('spec', {})
-        if 'metadata' in spec:
-            params.update(spec['metadata'])
-        super().__init__(**params)
 
     def _open_modal(self, event):
         if state.modal.objects == self._modal_content:
@@ -86,13 +80,22 @@ class Gallery(ReactiveHTML):
                 spec = yaml.safe_load(expand_spec(yaml_spec))
             if not spec:
                 continue
-            name = '.'.join(source.name.split('.')[:-1])
-            thumbnail = '.'.join(str(source).split('.')[:-1]) + '.png'
+            metadata = spec.pop('metadata', {})
+            if 'name' in metadata:
+                name = metadata['name']
+            else:
+                name = '.'.join(source.name.split('.')[:-1])
+            if 'thumbnail' in metadata:
+                thumbnail = metadata['thumbnail']
+            else:
+                thumbnail = '.'.join(str(source).split('.')[:-1]) + '.png'
             kwargs = {'name': name, 'spec': spec}
             if os.path.isfile(thumbnail):
                 kwargs['thumbnail'] = thumbnail
             if self._editor_type:
-                kwargs['editor'] = self._editor_type(**dict(spec, **kwargs))
+                kwargs['editor'] = self._editor_type(**kwargs)
+            if 'description' in metadata:
+                kwargs['description'] = metadata['description']
             kwargs = self._preprocess_kwargs(kwargs)
             items[name] = item = self._gallery_item(**kwargs)
             item.param.watch(self._selected, ['selected'])

@@ -57,7 +57,7 @@ class SourceEditor(FastComponent):
     </div>
     """
 
-    thumbnail = ASSETS_DIR / 'source.png'
+    _default_thumbnail = ASSETS_DIR / 'source.png'
 
     def __new__(cls, **params):
         if cls is not SourceEditor:
@@ -70,7 +70,12 @@ class SourceEditor(FastComponent):
         return super().__new__(cls)
 
     def __init__(self, **params):
-        super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        spec = params.pop('spec', {})
+        params.update(**{
+            k: v for k, v in spec.items() if k in self.param and k not in params
+        })
+        self._thumbnail = params.pop('thumbnail', None)
+        super().__init__(spec=spec, **params)
         self.form = pn.Column(sizing_mode='stretch_width')
         theme = 'midnight' if getattr(pn.config, 'theme', 'default') == 'dark' else 'simple'
         self.preview = pn.widgets.Tabulator(
@@ -87,6 +92,12 @@ class SourceEditor(FastComponent):
             self.preview.value = self._source.get(self._select_table.value)
         self._load_table.on_click(load_table)
         self.form[:] = [self._select_table, self._load_table]
+
+    @property
+    def thumbnail(self):
+        if self._thumbnail:
+            return self._thumbnail
+        return self._default_thumbnail
 
     def _update_spec(self, *events):
         for event in events:
@@ -261,16 +272,14 @@ class IntakeSourceEditor(SourceEditor):
 
     _dom_events = {'cache_dir': ['keyup'], 'uri': ['keyup']}
 
+    _default_thumbnail = pathlib.Path(__file__).parent / 'assets' / 'intake.png'
+
     def __init__(self, **params):
         import lumen.sources.intake  # noqa
         params.pop('source_type', None)
         self.editor = pn.widgets.Ace(language='yaml', theme='dracula', margin=0, sizing_mode='stretch_width')
         self.upload = pn.widgets.FileInput(sizing_mode='stretch_width', margin=0)
         super().__init__(**params)
-
-    @property
-    def thumbnail(self):
-        return pathlib.Path(__file__).parent / 'assets' / 'intake.png'
 
     @param.depends('upload.value', watch=True)
     def _upload_catalog(self):
@@ -364,6 +373,8 @@ class IntakeDremioSourceEditor(SourceEditor):
 
     _dom_events = {'uri': ['keyup'], 'username': ['keyup'], 'password': ['keyup']}
 
+    _default_thumbnail = pathlib.Path(__file__).parent / 'assets' / 'intake.png'
+
     def __init__(self, **params):
         import lumen.sources.intake  # noqa
         super().__init__(**params)
@@ -373,9 +384,6 @@ class IntakeDremioSourceEditor(SourceEditor):
         for p in ('cert', 'load_schema', 'tls', 'uri', 'password', 'username'):
             self.spec[p] = getattr(self, p)
 
-    @property
-    def thumbnail(self):
-        return pathlib.Path(__file__).parent / 'assets' / 'intake.png'
 
 
 class FileSourceTable(ReactiveHTML):
@@ -417,7 +425,7 @@ class FileSourceEditor(SourceEditor):
 
     source_type = param.String(default='file', readonly=True)
 
-    tables = param.List()
+    table_editors = param.List()
 
     kwargs = param.Dict(default={})
 
@@ -430,7 +438,7 @@ class FileSourceEditor(SourceEditor):
         <b>+</b>
       </fast-button>
       <span style="font-size: 1.2em; margin: 1em 0;"><b>Tables</b></span>
-      ${tables}
+      ${table_editors}
     </div>
     <div style="display: flex; margin-top: 1em;">
       <div style="display: grid; margin-right: 1em;">
@@ -456,32 +464,29 @@ class FileSourceEditor(SourceEditor):
     _dom_events = {'cache_dir': ['keyup']}
 
     def __init__(self, **params):
-        if 'tables' in params:
-            tables = []
-            for name, table in params['tables'].items():
-                tables.append(FileSourceTable(name=name, uri=table))
-            params['tables'] = tables
-        params.pop('source_type', None)
         super().__init__(**params)
+        for name, table in self.spec.get('tables', {}).items():
+            self._add_table(name=name, uri=table)
 
     @property
     def thumbnail(self):
+        if self._thumbnail:
+            return self._thumbnail
         assets = pathlib.Path(__file__).parent / 'assets'
-        exts = {table.uri.split('.')[-1] for table in self.tables}
+        exts = {table.uri.split('.')[-1] for table in self.table_editors}
         if len(exts) == 1:
             filename = assets/ f'{list(exts)[0]}.png'
             if os.path.isfile(filename):
                 return filename
 
-    def _add_table(self, event=None):
-        table = FileSourceTable()
+    def _add_table(self, event=None, **kwargs):
+        table = FileSourceTable(**kwargs)
         table.param.watch(self._remove_table, 'remove')
-        self.tables += [table]
+        self.table_editors += [table]
 
     def _remove_table(self, event):
         self.tables.remove(event.obj)
-        self.param.trigger('tables')
-
+        self.param.trigger('table_editors')
 
 
 class SourcesEditor(WizardItem):

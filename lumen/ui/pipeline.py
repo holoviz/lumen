@@ -18,9 +18,9 @@ ASSETS_DIR = pathlib.Path(__file__).parent / 'assets'
 
 class PipelineEditor(FastComponent):
 
-    filter_type = param.Selector()
+    filter_type = param.Selector(doc="Select a Filter to add to this Pipeline.")
 
-    transform_type = param.Selector()
+    transform_type = param.Selector(doc="Select a Transform to add to this Pipeline.")
 
     filter_items = param.List()
 
@@ -71,10 +71,13 @@ class PipelineEditor(FastComponent):
         <b style="font-size: 2em;">+</b>
       </fast-button>
     </div>
-    <div id="filters" style="display: flex;">
+    <div id="filters" style="display: flex; flex-wrap: wrap;">
        {% for fitem in filter_items %}
-       <div id="filter-item" style="margin: 0.5em;">
+       <div id="filter-item" style="margin: 0.5em; width: 320px;">
          ${fitem}
+         <fast-button id="filt-remove-button-{{ loop.index0 }}" appearance="accent" onclick="${_remove_filter}" style="float: right; z-index: 100;">
+           <b style="font-size: 2em;">-</b>
+         </fast-button>
        </div>
        {% endfor %}
     </div>
@@ -94,10 +97,13 @@ class PipelineEditor(FastComponent):
         <b style="font-size: 2em;">+</b>
       </fast-button>
     </div>
-    <div id="transforms" style="display: flex;">
+    <div id="transforms" style="display: flex; flex-wrap: wrap;">
        {% for titem in transform_items %}
-       <div id="transform-item" style="margin: 0.5em;">
+       <div id="transform-item" style="margin: 0.5em; width: 320px;">
          ${titem}
+         <fast-button id="transform-remove-button-{{ loop.index0 }}" appearance="accent" onclick="${_remove_transform}" style="float: right; z-index: 100;">
+           <b style="font-size: 2em;">-</b>
+         </fast-button>
        </div>
        {% endfor %}
     </div>
@@ -118,7 +124,11 @@ class PipelineEditor(FastComponent):
     }
 
     def __init__(self, **params):
-        super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        spec = params.pop('spec', {})
+        params.update(**{
+            k: v for k, v in spec.items() if k in self.param and k not in params
+        })
+        super().__init__(spec=spec, **params)
         theme = 'midnight' #if getattr(pn.config, 'theme', 'default') == 'dark' else 'simple'
         self.preview = pn.widgets.Tabulator(
             sizing_mode='stretch_width', pagination='remote', page_size=12,
@@ -126,9 +136,11 @@ class PipelineEditor(FastComponent):
         )
         self._pipeline = None
         filters = param.concrete_descendents(Filter).values()
-        self.param.filter_type.objects = [f.filter_type for f in filters if f.filter_type]
+        self.param.filter_type.objects = ftypes = [f.filter_type for f in filters if f.filter_type]
+        self.filter_type = ftypes[0]
         transforms = param.concrete_descendents(Transform).values()
-        self.param.transform_type.objects = [t.transform_type for t in transforms if t.transform_type]
+        self.param.transform_type.objects = ttypes = [t.transform_type for t in transforms if t.transform_type]
+        self.transform_type = ttypes[0]
 
     @param.depends('_preview_display', watch=True)
     def _update_displayed(self):
@@ -162,6 +174,22 @@ class PipelineEditor(FastComponent):
     def _preview(self, event):
         self._preview_display = 'flex' if self._preview_display == 'none' else 'none'
         self.resize += 1
+
+    def _remove_filter(self, event):
+        index = int(event.node.split('-')[-1])
+        self.filters.pop(index)
+        self.filter_items.pop(index)
+        self.param.trigger('filters')
+        self.param.trigger('filter_items')
+        self._update_spec()
+
+    def _remove_transform(self, event):
+        index = int(event.node.split('-')[-1])
+        self.transforms.pop(index)
+        self.transform_items.pop(index)
+        self.param.trigger('transforms')
+        self.param.trigger('transform_items')
+        self._update_spec()
 
     def _add_filter(self, event):
         self.loading = True
@@ -222,11 +250,13 @@ class PipelinesEditor(WizardItem):
 
     pipelines = param.Dict(default={}, doc="The list of pipelines added to the dashboard.")
 
-    sources = param.List(label='Select a source')
+    sources = param.List(label='Select a source', doc="""
+        Select from list of sources (if None are defined ensure you select at least one Source
+        in the source gallery.""")
 
     source = param.String()
 
-    tables = param.List(label='Select a table')
+    tables = param.List(label='Select a table', doc="Selects the table driving the pipeline.")
 
     table = param.String()
 
@@ -278,19 +308,20 @@ class PipelinesEditor(WizardItem):
 
     def __init__(self, **params):
         super().__init__(**params)
-        state.sources.param.watch(self._update_sources, 'sources')
+        state.sources.param.watch(self._update_sources, 'items')
+        self._watchers = {}
+        self._update_sources()
 
     @param.depends('source', watch=True)
     def _update_tables(self):
-        source = state.sources.sources[self.source]
-        spec = dict(source.spec, cache_dir=None)
-        spec.pop('filters', None)
-        spec.pop('metadata', None)
         if self.source in lm_state.sources:
             self.tables = lm_state.sources[self.source].get_tables()
 
-    def _update_sources(self, event):
-        self.sources = list(event.new)
+    def _update_sources(self, *events):
+        for name, item in state.sources.items.items():
+            if name not in self._watchers:
+                self._watchers[name] = item.param.watch(self._update_sources, 'selected')
+        self.sources = [source for source, item in state.sources.items.items() if item.selected]
         if not self.source and self.sources:
             self.source = self.sources[0]
 
