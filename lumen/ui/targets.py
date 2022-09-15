@@ -8,6 +8,7 @@ from lumen.views import View
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
+from .sources import ASSETS_DIR
 from .state import state
 
 
@@ -72,6 +73,10 @@ class TargetEditor(ReactiveHTML):
             if name not in vsel.options:
                 vsel.options.append(name)
 
+    @property
+    def thumbnail(self):
+        return ASSETS_DIR / 'target.png'
+
     def _construct_layout(self, layout_spec):
         layout_kwargs = {'sizing_mode': 'stretch_both'}
         if isinstance(layout_spec, list):
@@ -120,16 +125,6 @@ class TargetGalleryItem(GalleryItem):
 
     sizing_mode = param.String(default="stretch_both", readonly=True)
 
-    _template = """
-    <span style="font-size: 1.2em; font-weight: bold;">{{ spec.title }}</p>
-    <fast-switch id="selected" checked=${selected} style="float: right"></fast-switch>
-    <div id="details" style="margin: 1em 0;">
-      ${view}
-    </div>
-    <p style="height: 4em;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px; position: absolute; bottom: 0px;" onclick="${_open_modal}">Edit</fast-button>
-    """
-
     def __init__(self, **params):
         spec = params['spec']
         if 'description' not in params:
@@ -176,7 +171,7 @@ class TargetGallery(WizardItem, Gallery):
         for target in self._editor.targets:
             item = TargetGalleryItem(
                 name=target.title, spec=target.spec, selected=True,
-                editor=target
+                editor=target, thumbnail=target.thumbnail
             )
             self.items[target.title] = item
             self.targets.append(target)
@@ -207,13 +202,12 @@ class TargetsEditor(WizardItem):
     _template = """
     <span style="font-size: 2em">Layout editor</span>
     <p>{{ __doc__ }}</p>
-    <fast-button id="submit" appearance="accent" style="position: absolute; right: 5px;" onclick="${_add_target}">
+    <fast-button id="submit" appearance="accent" style="position: absolute; top: 3em; right: 5px;" onclick="${_add_target}">
       <b style="font-size: 2em;">+</b>
     </fast-button>
     <fast-divider></fast-divider>
-
     <div style="display: flex;">
-      <div style="flex: auto; overflow-y: auto; gap: 1em;">
+      <div id="target-list" style="flex: auto; overflow-y: auto; gap: 1em;">
         {% for target in targets %}
         <div id="target-container">${target}</div>
         <fast-divider></faster-divider>

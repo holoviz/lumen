@@ -322,16 +322,6 @@ class PipelineGalleryItem(GalleryItem):
 
     thumbnail = param.Filename()
 
-    _template = """
-    <span style="font-size: 1.2em; font-weight: bold;">{{ name }}</p>
-    <fast-switch id="selected" checked=${selected} style="float: right;"></fast-switch>
-    <div id="details" style="margin: 1em 0; max-width: 320px;">
-      ${view}
-    </div>
-    <p style="height: 4em; max-width: 320px;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px; margin: 1em 0 0 0;" onclick="${_open_modal}">Edit</fast-button>
-    """
-
     def __init__(self, **params):
         if 'description' not in params:
             spec = params['editor'].spec
@@ -411,7 +401,7 @@ class PipelineGallery(WizardItem, Gallery):
         for name, item in state.sources.items.items():
             if name not in self._watchers:
                 self._watchers[name] = item.param.watch(self._update_items, 'selected')
-        for name, item in self.items():
+        for name, item in self.items.items():
             if name not in self._items:
                 self._items[name] = item
         self.items = {

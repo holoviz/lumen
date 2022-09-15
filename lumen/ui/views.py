@@ -3,7 +3,7 @@ import param
 
 from panel.reactive import ReactiveHTML
 
-from lumen.pipeline import Pipeline
+from lumen.state import state as lm_state
 from lumen.views import View
 
 from .base import WizardItem
@@ -57,7 +57,7 @@ class ViewsEditor(WizardItem):
           </fast-button>
         </div>
       </form>
-      <div style="flex: auto; margin-left: 2em;">
+      <div id="view-list" style="flex: auto; margin-left: 2em;">
         {% for view in views %}
         <div id="view-container">${view}</div>
         <fast-divider></faster-divider>
@@ -75,9 +75,8 @@ class ViewsEditor(WizardItem):
         state.pipelines.param.watch(self._update_pipelines, 'pipelines')
 
     def _add_view(self, event):
-        pipeline = Pipeline.from_spec(state.spec['pipelines'][self.pipeline])
         editor = ViewEditor(
-            view_type=self.view_type, pipeline=self.pipeline, pipeline_obj=pipeline,
+            view_type=self.view_type, pipeline=self.pipeline,
             spec={'pipeline': self.pipeline, 'type': self.view_type}
         )
         editor.param.watch(self._remove_view, 'remove')
@@ -97,8 +96,6 @@ class ViewsEditor(WizardItem):
 class ViewEditor(ReactiveHTML):
 
     pipeline = param.Parameter(precedence=-1)
-
-    pipeline_obj = param.Parameter(precedence=-1)
 
     remove = param.Boolean(default=False)
 
@@ -127,8 +124,9 @@ class ViewEditor(ReactiveHTML):
         if cls is not ViewEditor:
             return super().__new__(cls)
         editors = param.concrete_descendents(cls)
+        view_type = params.get('spec', {}).get('type')
         for editor in editors.values():
-            if editor.view_type == params['view_type']:
+            if editor.view_type == view_type:
                 return super().__new__(editor)
         return super().__new__(cls)
 
@@ -137,6 +135,9 @@ class ViewEditor(ReactiveHTML):
         return (
             f"A {self.view_type} view of the {self.spec['pipeline']!r} source."
         )
+
+    def render(self):
+        pass
 
     @property
     def thumbnail(self):
@@ -154,16 +155,8 @@ class ViewEditor(ReactiveHTML):
 class ViewGalleryItem(GalleryItem):
 
     editor = param.ClassSelector(class_=ViewEditor, precedence=-1)
-
-    _template = """
-    <span style="font-size: 1.2em; font-weight: bold;">{{ name }}</p>
-    <fast-switch id="selected" checked=${selected} style="float: right"></fast-switch>
-    <div id="details" style="margin: 1em 0;">
-      ${view}
-    </div>
-    <p style="height: 4em; max-width: 320px;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px;" onclick="${_open_modal}">Edit</fast-button>
-    """
+    selected = param.Boolean(default=False, doc="""
+        Whether the item has been selected.""")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -171,6 +164,11 @@ class ViewGalleryItem(GalleryItem):
         self.description = self.editor.description
         self.view = pn.pane.PNG(self.thumbnail, height=200, align='center')
         self._modal_content = [self.editor]
+
+    def _open_modal(self, event):
+        self.editor.render()
+        super()._open_modal(event)
+
 
     @param.depends('selected', watch=True)
     def _add_spec(self):
@@ -217,9 +215,13 @@ class ViewGallery(WizardItem, Gallery):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._items = self.items
         self._editor = ViewsEditor(spec=self.spec, margin=10)
         self._save_button = pn.widgets.Button(name='Save view')
         self._save_button.on_click(self._save_view)
+        self._watchers = {}
+        state.pipelines.param.watch(self._update_items, 'items')
+        self._update_items()
 
     def _create_new(self, event):
         if state.modal.objects == [self._editor, self._save_button]:
@@ -229,6 +231,20 @@ class ViewGallery(WizardItem, Gallery):
         state.template.open_modal()
         state.modal[:] = [self._editor, self._save_button]
         state.modal.loading = False
+
+    def _update_items(self, *events):
+        for name, item in state.pipelines.items.items():
+            if name not in self._watchers:
+                self._watchers[name] = item.param.watch(self._update_items, 'selected')
+        for name, item in self.items.items():
+            if name not in self._items:
+                self._items[name] = item
+        print(lm_state.pipelines)
+        self.items = {
+            name: item for name, item in self._items.items()
+            if item.spec['pipeline'] in lm_state.pipelines
+        }
+        self.param.trigger('items')
 
     def _save_view(self, event):
         for view in self._editor.views:
@@ -273,13 +289,13 @@ class TableViewEditor(ViewEditor):
 
     _dom_events = {'view-name': ['keyup']}
 
-    def __init__(self, **params):
-        super().__init__(**{k: v for k, v in params.items() if k in self.param})
+    def render(self):
         kwargs = dict(self.spec)
+        pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
         if 'sizing_mode' not in kwargs:
             kwargs['sizing_mode'] = 'stretch_width'
         self.tabulator = pn.widgets.Tabulator(
-            self.pipeline.data, pagination='remote', page_size=12, height=400, **kwargs
+            pipeline.data, pagination='remote', page_size=12, height=400, **kwargs
         )
         controls = ['theme', 'layout', 'page_size', 'pagination']
         control_widgets = self.tabulator.controls(
@@ -308,12 +324,13 @@ class PerspectiveViewEditor(ViewEditor):
     _defaults = dict(sizing_mode='stretch_both', min_height=500, theme='material-dark')
 
     def __init__(self, **params):
-        spec = params.get('spec', {})
-        spec['height'] = 500 # remove
-        params['view'] = view = pn.pane.Perspective(**dict(self._defaults, **spec))
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
-        view.object = self.pipeline_obj.data
-        view.param.watch(self._update_spec, list(view.param))
+
+    def render(self):
+        kwargs = dict(self.spec)
+        pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
+        self.view = pn.pane.Perspective(pipeline, **dict(self._defaults, **kwargs))
+        self.view.param.watch(self._update_spec, list(self.view.param))
 
     @property
     def thumbnail(self):
@@ -328,11 +345,13 @@ class hvPlotViewEditor(ViewEditor):
 
     def __init__(self, **params):
         import hvplot.pandas  # noqa
-
-        from hvplot.ui import hvDataFrameExplorer
         super().__init__(**params)
+
+    def render(self):
+        from hvplot.ui import hvDataFrameExplorer
         kwargs = dict(self.spec)
-        self.view = hvDataFrameExplorer(self.pipeline_obj.data, **kwargs)
+        pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
+        self.view = hvDataFrameExplorer(pipeline.data, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
         self.view.axes.param.watch(self._update_spec, list(self.view.axes.param))
         self.view.operations.param.watch(self._update_spec, list(self.view.operations.param))

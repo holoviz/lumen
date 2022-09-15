@@ -32,6 +32,16 @@ class GalleryItem(ReactiveHTML):
 
     __abstract = True
 
+    _template = """
+    <span style="font-size: 1.2em; font-weight: bold;">{{ name }}</p>
+    <fast-switch id="selected" checked=${selected} style="float: right"></fast-switch>
+    <div id="details" style="margin: 1em 0;">
+      ${view}
+    </div>
+    <p style="height: 4em; max-width: 320px;">{{ description }}</p>
+    <fast-button id="edit-button" style="width: 320px;" onclick="${_open_modal}">Edit</fast-button>
+    """
+
     def __init__(self, **params):
         spec = params.get('spec', {})
         if 'metadata' in spec:
