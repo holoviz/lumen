@@ -12,7 +12,7 @@ from .filters import Filter, ParamFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
-from .util import get_dataframe_schema
+from .util import catch_and_notify, get_dataframe_schema
 from .validation import ValidationError, match_suggestion_message
 
 
@@ -106,6 +106,7 @@ class Pipeline(Component):
                     refs.append(ref)
         return refs
 
+    @catch_and_notify
     def _update_data(self, *events: param.Event):
         query = {}
 

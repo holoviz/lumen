@@ -7,9 +7,16 @@ import re
 import subprocess
 import sys
 
+from functools import wraps
+from logging import getLogger
+
+import panel as pn
+
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
+
+log = getLogger(__name__)
 
 
 def get_dataframe_schema(df, columns=None):
@@ -34,12 +41,12 @@ def get_dataframe_schema(df, columns=None):
     else:
         is_dask = False
 
+    schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
+    if df is None or df.empty:
+        return schema
+
     if columns is None:
         columns = list(df.columns)
-
-    schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
-    if df.empty:
-        return schema
 
     properties = schema['items']['properties']
     for name in columns:
@@ -236,3 +243,49 @@ def extract_refs(spec, ref_type=None):
         return refs
     filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
     return filtered
+
+
+def catch_and_notify(message=None):
+    """Catch exception and notify user
+
+    A decorator which catches all the exception of a function.
+    When an error occurs a panel notification will be send to the
+    dashboard with the message and logged the error and which method
+    it arrived from.
+
+    Parameters
+    ----------
+    message : str | None
+        The notification message, by default None.
+        None will give this "Error: {e}" where e is the
+        exception message.
+
+    """
+    pn.config.notifications = True
+
+    # This is to be able to call the decorator
+    # like this @catch_and_notify
+    function = None
+    if callable(message):
+        function = message
+        message = None
+
+    if message is None:
+        message = "Error: {e}"
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                log.error(
+                    f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
+                )
+                pn.state.notifications.error(message.format(e=e))
+        return wrapper
+
+    if function:
+        return decorator(function)
+
+    return decorator
