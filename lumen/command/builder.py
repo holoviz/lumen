@@ -42,7 +42,7 @@ class Builder(Subcommand):
         # Set panel serve arguments
         args.glob = False
         args.args = []
-        args.files = [str(Path(__file__).parent / 'ui')]
+        args.files = [str(Path(__file__).parent.parent / 'ui')]
 
         # Set up UI state
         ui_state.launcher = resolve_module_reference(args.launcher, Launcher)

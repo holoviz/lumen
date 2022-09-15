@@ -216,7 +216,7 @@ class Source(MultiTypeComponent):
                 source = state.load_source(spec, state.spec['sources'][spec])
             return source
 
-        spec = dict(spec)
+        spec = spec.copy()
         source_type = Source._get_type(spec.pop('type', None))
         resolved_spec, refs = cls._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)

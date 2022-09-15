@@ -14,6 +14,7 @@ def main():
     params = {'component_dir': str(path)}
     (path / 'dashboards').mkdir(parents=True, exist_ok=True)
     (path / 'launchers').mkdir(parents=True, exist_ok=True)
+    (path / 'pipelines').mkdir(parents=True, exist_ok=True)
     (path / 'sources').mkdir(parents=True, exist_ok=True)
     (path / 'targets').mkdir(parents=True, exist_ok=True)
     (path / 'variables').mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,7 @@ from panel.layout.base import ListLike
 from panel.template.base import BasicTemplate
 
 from lumen.config import config
+from lumen.pipeline import Pipeline
 from lumen.sources import Source
 from lumen.state import state as lm_state
 
@@ -16,6 +17,7 @@ from .base import Wizard
 from .config import ConfigEditor
 from .dashboard import DashboardGallery
 from .launcher import LauncherGallery
+from .pipeline import PipelineGallery
 from .sources import SourceGallery
 from .state import state
 from .targets import TargetEditor, TargetGallery, TargetGalleryItem
@@ -59,17 +61,20 @@ class Builder(param.Parameterized):
 
     def __init__(self, **params):
         path = params['component_dir']
-        dash_params, launcher_params, source_params, target_params, var_params, view_params = (
-            {}, {}, {}, {}, {}, {}
+        dash_params, launcher_params, pipeline_params, source_params, target_params, var_params, view_params = (
+            {}, {}, {}, {}, {}, {}, {}
         )
         dash_params['path'] = os.path.join(path, 'dashboards')
         launcher_params['path'] = os.path.join(path, 'launchers')
+        pipeline_params['path'] = os.path.join(path, 'pipelines')
         source_params['path'] = os.path.join(path, 'sources')
         target_params['path'] = os.path.join(path, 'targets')
         var_params['path'] = os.path.join(path, 'variables')
         view_params['path'] = os.path.join(path, 'views')
 
         spec = params.pop('spec', {})
+        if 'pipelines' not in spec:
+            spec['pipelines'] = {}
         self.welcome = DashboardGallery(**dash_params)
         if 'launcher' in params:
             params['launcher'] = params['launcher'](spec=spec)
@@ -77,14 +82,15 @@ class Builder(param.Parameterized):
 
         self.config = ConfigEditor(spec=self.spec['config'])
         self.variables = VariablesEditor(spec=self.spec['variables'], **var_params)
-        state.spec = self.spec
+        lm_state.spec = state.spec = self.spec
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
+        state.pipelines = self.pipelines = PipelineGallery(spec=self.spec['pipelines'], **pipeline_params)
         state.views = self.views = ViewGallery(**view_params)
         state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
         self.launcher = LauncherGallery(builder=self, **launcher_params)
         self.wizard = Wizard(items=[
             self.welcome, self.config, self.variables, self.sources,
-            self.views, self.targets, self.launcher
+            self.pipelines, self.views, self.targets, self.launcher
         ], sizing_mode='stretch_both')
 
         preview = pn.widgets.Button(name='Preview', width=100)
@@ -131,22 +137,34 @@ class Builder(param.Parameterized):
                 spec = dict(source.spec)
                 spec['name'] = name
                 spec.pop('filters', None)
+
+        for name, pipeline in self.pipelines.pipelines.items():
+            config.root = str(pathlib.Path(__file__).parent)
+            spec = pipeline.spec
+            if isinstance(pipeline.spec, dict):
+                spec = dict(pipeline.spec)
+                spec['name'] = name
             try:
-                lm_state.sources[name] = Source.from_spec(spec)
+                lm_state.pipelines[name] = Pipeline.from_spec(spec)
             except Exception:
                 pass
 
         self.config.param.trigger('spec')
         self.sources.param.trigger('spec')
+        self.pipelines.param.trigger('spec')
 
         views, view_gallery = [], {}
         targets, target_items = [], {}
         for target in self.spec['targets']:
-            source_spec = target['source']
-            if isinstance(source_spec, dict):
-                source_spec = dict(source_spec, cache_dir=None)
-                source_spec.pop('filters', None)
-            source = Source.from_spec(source_spec)
+            if 'source' in target:
+                source_spec = target['source']
+                if isinstance(source_spec, dict):
+                    source_spec = dict(source_spec, cache_dir=None)
+                    source_spec.pop('filters', None)
+                source = Source.from_spec(source_spec)
+            elif 'pipeline' in target:
+                pipeline_spec = target['pipeline']
+                pipeline = Pipeline.from_spec(pipeline_spec)
             view_specs = target['views']
             if isinstance(view_specs, list):
                 view_specs = [(f"{view['type']}: {view['table']}", view) for view in view_specs]
@@ -158,7 +176,7 @@ class Builder(param.Parameterized):
                 view_type = view.pop('type')
                 view_editor = ViewEditor(
                     view_type=view_type, name=name, source_obj=source,
-                    spec=view
+                    spec=view, pipeline_obj=pipeline
                 )
                 view_gallery[name] = ViewGalleryItem(
                     editor=view_editor, name=name, selected=True

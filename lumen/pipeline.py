@@ -194,9 +194,12 @@ class Pipeline(Component):
 
     @classmethod
     def from_spec(
-        cls, spec: Dict[str, Any], source: Optional[Source] = None,
+        cls, spec: Dict[str, Any] | str, source: Optional[Source] = None,
         source_filters: Optional[List[Filter]] = None
     ):
+        if isinstance(spec, str):
+            return state.pipelines[spec]
+
         spec = spec.copy()
         if source is not None:
             spec['source'] = source
@@ -293,7 +296,7 @@ class Pipeline(Component):
         for fparam in transform._field_params:
             transform.param[fparam].objects = fields
             transform.param.update(**{fparam: kwargs.get(fparam, fields)})
-        transform.param.watch(self._update_data, transform.controls)
+        transform.param.watch(self._update_data, list(transform.param))
         self._update_data()
 
     def chain(
