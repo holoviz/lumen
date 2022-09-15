@@ -10,6 +10,7 @@ from panel.reactive import ReactiveHTML
 
 from lumen.sources import Source
 from lumen.state import state as lm_state
+from lumen.util import catch_and_notify
 
 from .base import WizardItem
 from .fast import FastComponent
@@ -289,6 +290,7 @@ class IntakeSourceEditor(SourceEditor):
     def _update_catalog(self):
         self.spec['catalog'] = yaml.safe_load(self.editor.value)
 
+    @catch_and_notify
     @param.depends('uri', watch=True)
     def _load_file(self):
         uri = os.path.expanduser(self.uri)

@@ -4,6 +4,7 @@ import param
 from panel.reactive import ReactiveHTML
 
 from lumen.state import state as lm_state
+from lumen.util import catch_and_notify
 from lumen.views import View
 
 from .base import WizardItem
@@ -84,6 +85,7 @@ class ViewsEditor(WizardItem):
         self.views.append(editor)
         self.param.trigger('views')
 
+    @catch_and_notify
     def _update_pipelines(self, event):
         self.pipelines = list(event.new)
         if not self.pipeline and self.pipelines:

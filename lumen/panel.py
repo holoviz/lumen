@@ -4,6 +4,8 @@ from panel import panel
 from panel.reactive import ReactiveHTML
 from panel.widgets import FileDownload
 
+from .util import catch_and_notify
+
 try:
     # Backward compatibility for panel 0.12.6
     import bokeh.core.properties as bp
@@ -107,6 +109,7 @@ class DownloadButton(ReactiveHTML):
             params['object'] = object
         super().__init__(**params)
 
+    @catch_and_notify("Download failed")
     def _on_click(self, event=None):
         file_input = FileDownload(callback=self.callback, filename=self.filename)
         file_input._transfer()
