@@ -82,6 +82,7 @@ class LauncherGallery(WizardItem, Gallery):
     _gallery_item = LauncherGalleryItem
 
     def __init__(self, **params):
+        self.builder = params.pop('builder')
         super().__init__(**params)
         if not self.items:
             self.items['local'] = LauncherGalleryItem(launcher=LocalLauncher)

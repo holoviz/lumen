@@ -11,6 +11,8 @@ from .state import state
 
 class DashboardGalleryItem(GalleryItem):
 
+    thumbnail = param.Filename(default=pathlib.Path(__file__).parent / 'assets' / 'dashboard.png', precedence=-1)
+
     _template = """
     <div id="dashboard-item" onclick="${_launch}">
       <span style="font-size: 1.25em; font-weight: bold;">{{ name }}</span>
@@ -21,14 +23,11 @@ class DashboardGalleryItem(GalleryItem):
     </div>
     """
 
-    _thumbnail = pathlib.Path(__file__).parent / 'assets' / 'dashboard.png'
-
     def __init__(self, **params):
         super().__init__(**params)
-        metadata = self.spec.get('metadata', {})
-        thumbnail = metadata.get('thumbnail', self._thumbnail)
-        self.description = metadata.get('description')
-        self.view = pn.pane.PNG(str(thumbnail), height=150, margin=0, align='center')
+        self.view = pn.pane.PNG(
+            str(self.thumbnail), height=150, margin=0, align='center'
+        )
 
     def _launch(self, event):
         self.selected = True
@@ -60,7 +59,7 @@ class DashboardGallery(WizardItem, Gallery):
       <fast-card id="dashboard-container-new" class="gallery-item" style="height: 290px; width: 350px; padding: 1em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Create new dashboard</span>
-          <i id="add-button" onclick="${_create_new}" class="fa fa-plus" style="font-size: 14em; margin: 0.2em auto;" aria-hidden="true"></i>
+          <i id="add-button" onclick="${_create_new}" class="fa fa-plus" style="font-size: 12em; margin: 0.2em auto;" aria-hidden="true"></i>
         </div>
       </fast-card>
     </div>

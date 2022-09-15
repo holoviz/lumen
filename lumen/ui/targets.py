@@ -4,11 +4,11 @@ import param
 from panel.reactive import ReactiveHTML
 
 from lumen.config import _LAYOUTS
-from lumen.state import state as lumen_state
 from lumen.views import View
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
+from .sources import ASSETS_DIR
 from .state import state
 
 
@@ -23,7 +23,8 @@ class TargetEditor(ReactiveHTML):
 
     layout = param.Parameter()
 
-    layout_type = param.Selector(default='column', objects=list(_LAYOUTS))
+    layout_type = param.Selector(default='flex', objects=list(_LAYOUTS), doc="""
+       Select how you want to lay out the selected views.""")
 
     views = param.List(default=[])
 
@@ -37,13 +38,13 @@ class TargetEditor(ReactiveHTML):
       <form role="form" style="flex: 25%; max-width: 300px; line-height: 2em;">
         <div id="view-select">${view_select}</div>
         <div style="display: grid; flex: auto;">
-          <label for="layout_type-${id}"><b>{{ param.layout_type.label }}</b></label>
-          <fast-select id="layout_type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
+          <label for="layout-type-${id}"><b>{{ param.layout_type.label }}</b></label>
+          <fast-select id="layout-type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
           {% for lt in param.layout_type.objects %}
-            <fast-option value="{{ lt }}" {% if lt == layout_type %}selected{% endif %}>{{ lt.title() }}</fast-option>
+            <fast-option value="{{ lt }}">{{ lt.title() }}</fast-option>
           {% endfor %}
           </fast-select>
-          <fast-tooltip anchor="layout_type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
+          <fast-tooltip anchor="layout-type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
         </div>
       </form>
       <div id="layout" style="flex: auto; margin-left: 1em;">${layout}</div>
@@ -53,7 +54,7 @@ class TargetEditor(ReactiveHTML):
     _scripts = {'relayout': 'setTimeout(() => view.invalidate_layout(), 100);'}
 
     def __init__(self, **params):
-        spec = params.get('spec')
+        spec = params.pop('spec', {})
         layout_spec = spec.get('layout', 'flex')
         layout_type, layout = self._construct_layout(layout_spec)
         params['layout_type'] = layout_type
@@ -62,17 +63,24 @@ class TargetEditor(ReactiveHTML):
             name='Select views', options=params.get('views', []),
             max_width=250, sizing_mode='stretch_width', margin=0
         )
+        params.update(**{
+            k: v for k, v in spec.items()
+            if k in self.param and k not in params and not self.param[k].readonly
+        })
         vsel.link(self, value='views')
-        super().__init__(**params)
+        super().__init__(spec=spec, **params)
         if 'views' not in self.spec:
             self.spec['views'] = {}
         self._views = {}
         self._populate_layout(self.layout)
-        for name, view in state.views.items.items():
-            if self.source == view.editor.source:
-                self.views.append(name)
-                if name not in vsel.options:
-                    vsel.options.append(name)
+        self._watchers = {}
+        state.views.param.watch(self._update_views, 'items')
+        self._update_views()
+        self.view_select.value = self.view_select.options
+
+    @property
+    def thumbnail(self):
+        return ASSETS_DIR / 'target.png'
 
     def _construct_layout(self, layout_spec):
         layout_kwargs = {'sizing_mode': 'stretch_both'}
@@ -83,22 +91,26 @@ class TargetEditor(ReactiveHTML):
             layout_spec = layout_spec.pop('type')
         return layout_spec, _LAYOUTS.get(layout_spec, pn.FlexBox)(**layout_kwargs)
 
+    def _update_views(self, *events):
+        for name, item in state.views.items.items():
+            if name not in self._watchers:
+                self._watchers[name] = item.param.watch(self._update_views, 'selected')
+        views = [name for name, item in state.views.items.items() if item.selected]
+        self.view_select.options = views
+
     def _populate_layout(self, layout):
-        source = self.spec['source']
         views = self.spec['views']
-        view_specs = views.items() if isinstance(views, dict) else views
-        for i, view_spec in enumerate(view_specs):
+        for i, view_spec in enumerate(views.items()):
             if isinstance(view_spec, tuple):
                 name, view = view_spec
+                view['name'] = name
             else:
                 view = view_spec
                 name = None
             if name in self._views:
                 view = self._views[name]
             else:
-                source_spec = state.sources.sources[source].spec
-                source_obj = lumen_state.load_source(source, source_spec)
-                view = View.from_spec(view, source_obj, [])
+                view = View.from_spec(view)
                 name = name or view.name
                 self._views[name] = view
             if hasattr(layout, 'append'):
@@ -125,23 +137,10 @@ class TargetGalleryItem(GalleryItem):
 
     sizing_mode = param.String(default="stretch_both", readonly=True)
 
-    _template = """
-    <span style="font-size: 1.2em; font-weight: bold;">{{ spec.title }}</p>
-    <fast-switch id="selected" checked=${selected} style="float: right"></fast-switch>
-    <div id="details" style="margin: 1em 0;">
-      ${view}
-    </div>
-    <p style="height: 4em;">{{ description }}</p>
-    <fast-button id="edit-button" style="width: 320px; position: absolute; bottom: 0px;" onclick="${_open_modal}">Edit</fast-button>
-    """
-
     def __init__(self, **params):
         spec = params['spec']
-        source_name = spec['source']
         if 'description' not in params:
-            params['description'] = f"Contains {len(spec['views'])} views of the {source_name!r} source."
-        if 'thumbnail' not in params:
-            params['thumbnail'] = state.sources.sources[source_name].thumbnail
+            params['description'] = f"Contains {len(spec['views'])} views.."
         super().__init__(**params)
         self.view = pn.pane.PNG(self.thumbnail, height=200, align='center')
         self._modal_content = [self.editor]
@@ -184,7 +183,7 @@ class TargetGallery(WizardItem, Gallery):
         for target in self._editor.targets:
             item = TargetGalleryItem(
                 name=target.title, spec=target.spec, selected=True,
-                editor=target
+                editor=target, thumbnail=target.thumbnail
             )
             self.items[target.title] = item
             self.targets.append(target)
@@ -215,30 +214,12 @@ class TargetsEditor(WizardItem):
     _template = """
     <span style="font-size: 2em">Layout editor</span>
     <p>{{ __doc__ }}</p>
+    <fast-button id="submit" appearance="accent" style="position: absolute; top: 3em; right: 5px;" onclick="${_add_target}">
+      <b style="font-size: 2em;">+</b>
+    </fast-button>
     <fast-divider></fast-divider>
     <div style="display: flex;">
-      <form role="form" style="flex: 20%; max-width: 250px; line-height: 2em;">
-        <div style="display: grid;">
-          <label for="target-title-${id}"><b>{{ param.title.label }}</b></label>
-          <fast-text-field id="target-title" placeholder="{{ param.title.doc }}" value="${title}">
-          </fast-text-field>
-        </div>
-        <div style="display: flex;">
-        <div style="display: grid; flex: auto;">
-          <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
-          <fast-select id="source" style="max-width: 250px; min-width: 150px;" value="${source}">
-          {% for src in sources %}
-            <fast-option value="{{ src }}">{{ src.title() }}</fast-option>
-          {% endfor %}
-          </fast-select>
-          <fast-tooltip anchor="sources-${id}">{{ param.sources.doc }}</fast-tooltip>
-        </div>
-        <fast-button id="submit" appearance="accent" style="margin-top: auto; margin-left: 1em; width: 20px;" onclick="${_add_target}">
-            <b style="font-size: 2em;">+</b>
-        </fast-button>
-        </div>
-      </form>
-      <div style="flex: auto; overflow-y: auto; gap: 1em;">
+      <div id="target-list" style="flex: auto; overflow-y: auto; gap: 1em;">
         {% for target in targets %}
         <div id="target-container">${target}</div>
         <fast-divider></faster-divider>
@@ -260,8 +241,8 @@ class TargetsEditor(WizardItem):
             self.source = self.sources[0]
 
     def _add_target(self, event):
-        spec = {'title': self.title, 'source': self.source}
-        editor = TargetEditor(spec=spec, **spec)
+        spec = {'title': self.title}
+        editor = TargetEditor(spec=spec, title=self.title)
         self.spec.append(spec)
         self.targets.append(editor)
         self.param.trigger('targets')

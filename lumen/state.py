@@ -40,13 +40,16 @@ class _session_state:
     def spec(self):
         if pn.state.curdoc is None:
             return self._spec
-        return self._specs.get(pn.state.curdoc, {})
+        if pn.state.curdoc not in self._specs:
+            self.spec = {}
+        spec = self._specs.get(pn.state.curdoc, {})
+        return spec
 
     @spec.setter
     def spec(self, spec):
         if pn.state.curdoc is None:
             self._spec = spec
-        if pn.state.curdoc not in self._specs:
+        else:
             self._specs[pn.state.curdoc] = spec
 
     @property

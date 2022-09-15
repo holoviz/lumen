@@ -233,7 +233,9 @@ class View(MultiTypeComponent, Viewer):
                 )
             pipeline = spec['pipeline']
             if isinstance(pipeline, str):
-                pipeline = state.pipelines[pipeline]
+                resolved_spec['pipeline'] = state.pipelines[pipeline]
+            else:
+                resolved_spec['pipeline'] = Pipeline.from_spec(pipeline)
         else:
             overrides = {
                 p: spec.pop(p) for p in Pipeline.param if p != 'name' and p in spec
@@ -254,7 +256,9 @@ class View(MultiTypeComponent, Viewer):
         # Resolve View parameters
         view_type = View._get_type(spec.pop('type', None))
         for p, value in spec.items():
-            if p not in view_type.param:
+            if p in resolved_spec:
+                continue
+            elif p not in view_type.param:
                 resolved_spec[p] = value
                 continue
             parameter = view_type.param[p]
