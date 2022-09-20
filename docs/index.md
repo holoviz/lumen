@@ -94,6 +94,7 @@ Try it out! Click on one of the examples below, copy the yaml specification and 
 hidden: true
 ---
 Home <self>
+How to <how_to/index>
 User Guide <user_guide/index>
 UI <ui/index>
 Gallery <gallery/index>
