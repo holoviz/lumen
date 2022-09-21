@@ -17,6 +17,8 @@
 
 # -- Project information -----------------------------------------------------
 
+from datetime import date
+
 import param
 
 param.parameterized.docstring_signature = False
@@ -28,7 +30,7 @@ from nbsite.util import base_version  # noqa
 import lumen
 
 project = 'Lumen'
-copyright = '2020-2022, HoloViz Developers'
+copyright = f'2020-{date.today().year}, HoloViz Developers'
 author = 'HoloViz Developers'
 
 # The full version, including alpha/beta/rc tags
@@ -55,7 +57,10 @@ templates_path = ['_templates']
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
-myst_enable_extensions = ["colon_fence"]
+myst_enable_extensions = [
+    "colon_fence",
+    "substitution",
+]
 
 html_css_files = [
     'custom.css',
@@ -83,7 +88,16 @@ html_theme_options = {
     "pygment_dark_style": "material"
 }
 
+html_context = {
+    "default_mode": "light",
+}
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+
+# Adding substitutions to the documentation
+myst_substitutions = {
+  "version": version,
+}
