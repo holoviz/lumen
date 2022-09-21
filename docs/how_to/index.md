@@ -16,4 +16,5 @@ Getting Started material and assume some knowledge of how Lumen works.
 :maxdepth: 2
 
 Deploy a dashboard <deploy>
+Build in Python  <ht_pipeline_python>
 ```

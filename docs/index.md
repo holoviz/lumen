@@ -99,4 +99,6 @@ User Guide <user_guide/index>
 UI <ui/index>
 Gallery <gallery/index>
 Architecture <architecture/index>
+Conceptual Guides <conceptual/index>
+Reference <reference/index>
 ```
