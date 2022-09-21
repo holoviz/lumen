@@ -1,4 +1,4 @@
-# Getting started
+# Getting Started
 
 This _Getting Started_ guide will go through the installation of Lumen, how to build an app, and describe the core concepts.
 
@@ -36,9 +36,6 @@ Get an overview of the core concepts of Lumen
 ---
 hidden: true
 ---
-:titlesonly:
-:hidden:
-:maxdepth: 2
 
 installation
 build_an_app
