@@ -13,13 +13,19 @@ This _Getting Started_ guide will go through the installation of Lumen, how to b
 Install Lumen in a few easy steps
 :::
 
+:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Lumen architecture
+:link: lumen_architecture
+:link-type: doc
+
+An explanation of the underlying architecture behind Lumen
+:::
+
 :::{grid-item-card} {octicon}`pencil;2em;sd-mr-1` Build an app
 :link: build_an_app
 :link-type: doc
 
-An explanation of the _lumen specification_ and how to build an app
+How to build a Lumen app
 :::
-
 
 :::{grid-item-card} {octicon}`cpu;2em;sd-mr-1` Core concepts
 :link: core_concepts
@@ -38,6 +44,7 @@ hidden: true
 ---
 
 installation
+lumen_architecture
 build_an_app
 core_concepts
 
