@@ -141,9 +141,9 @@ targets: This is the list of targets to monitor
         ...: Additional parameters for the View
     layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
     facet:
-    by: List of fields to facet by
-    sort: List of fields to sort by
-    reverse: Whether to reverse the sort order
+      by: List of fields to facet by
+      sort: List of fields to sort by
+      reverse: Whether to reverse the sort order
     refresh_rate: How frequently to poll for updates in milliseconds
     ...: Additional parameters passed to the Card layout(s), e.g. width or height
 ```
