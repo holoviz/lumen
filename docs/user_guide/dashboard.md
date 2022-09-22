@@ -72,7 +72,7 @@ variables:
     - type: url
   password:
     - type: env
-	  key: MY_PASSWORD_ENV_VAR
+      key: MY_PASSWORD_ENV_VAR
 ```
 
 Once declared variables can be referenced through the rest of your dashboard specification by using the reference syntax (`$`) described below.
@@ -141,10 +141,10 @@ targets: This is the list of targets to monitor
         ...: Additional parameters for the View
     layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
     facet:
-	  by: List of fields to facet by
-	  sort: List of fields to sort by
-	  reverse: Whether to reverse the sort order
-	refresh_rate: How frequently to poll for updates in milliseconds
+    by: List of fields to facet by
+    sort: List of fields to sort by
+    reverse: Whether to reverse the sort order
+    refresh_rate: How frequently to poll for updates in milliseconds
     ...: Additional parameters passed to the Card layout(s), e.g. width or height
 ```
 
@@ -193,8 +193,8 @@ Variables are powerful components that allow you to link settings across your en
 variables:
   url:
     type: widget
-	kind: TextInput
-	default: AAPL.csv
+  kind: TextInput
+  default: AAPL.csv
 ```
 
 Once declared you can reference this variable using the `$variables.` syntax:
@@ -203,8 +203,8 @@ Once declared you can reference this variable using the `$variables.` syntax:
 sources:
   stock_data:
     type: file
-	tables:
-	  ticker: $variables.url
+  tables:
+    ticker: $variables.url
 ```
 
 Whenever the `url` variable is updated the `Source` will be refreshed and any views attached to that `Source` will be updated.
