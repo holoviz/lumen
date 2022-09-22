@@ -1,16 +1,14 @@
 # Installation
 
-:::{admonition} What does this guide solve?
-:class: important
-This page will set you up to run the _Getting Started_ guide on your own computer.
-:::
-
 Lumen is a monitoring solution written in Python and built on [Panel](https://panel.holoviz.org/) and works on Linux, Windows, and Mac.
 The recommended way to install `lumen` is using the [conda](http://conda.pydata.org/docs/) command provided by [Anaconda](https://www.anaconda.com) or [Miniconda](http://conda.pydata.org/miniconda.html), but installing `lumen` from [Python.org](https://www.python.org/) with [PyPi](https://pypi.org/) is also an option.
 
 ## Installing Python
 
-_This step can be skipped if you already have Python installed._
+:::{note}
+This step can be skipped if you already have Python installed on your computer.
+:::
+
 
 1. Click the button below with your desired method for installing.
 2. Download the installer matching your operating system.
@@ -36,7 +34,7 @@ _This step can be skipped if you already have Python installed._
 ::::
 
 ## Installing Lumen
-1. Open up a terminal, Command Line, or Powershell based on your operating system.
+1. Open up a terminal, command prompt, or Powershell based on your operating system.
 2. Run the following command, which will install Lumen with all its dependencies.
 3. When the command finishes, run `lumen --version` in the terminal and check that the version is {{version}}.
     - If this is not the case, you are not running the latest version, which may cause problems running the following examples.
