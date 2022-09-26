@@ -203,8 +203,8 @@ Once declared you can reference this variable using the `$variables.` syntax:
 sources:
   stock_data:
     type: file
-  tables:
-    ticker: $variables.url
+    tables:
+      ticker: $variables.url
 ```
 
 Whenever the `url` variable is updated the `Source` will be refreshed and any views attached to that `Source` will be updated.
