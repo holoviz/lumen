@@ -66,7 +66,7 @@ pipeline.data
 
 Next, you can add `widgets` for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to `filter` the data. See the [Filter Reference](../architecture/filter) for all options.
 
-```python
+```python   
 # Filters
 pipeline.add_filter('widget', field='species')
 pipeline.add_filter('widget', field='island')
@@ -106,5 +106,5 @@ pn.Row(
 **TODO: ADD DASHBOARD PREVIEW HERE**
 
 Related Resources:
-* [Display data at different stages of the pipeline](ht_chain_python)
-* [Apply SQL transforms while loading from source](ht_sql_transform)
+* [Build branching pipelines in Python](ht_chain_python)
+* [Apply SQL transforms in Python](ht_sql_transform)
