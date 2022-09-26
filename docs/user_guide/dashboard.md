@@ -193,8 +193,8 @@ Variables are powerful components that allow you to link settings across your en
 variables:
   url:
     type: widget
-  kind: TextInput
-  default: AAPL.csv
+    kind: TextInput
+    default: AAPL.csv
 ```
 
 Once declared you can reference this variable using the `$variables.` syntax:
