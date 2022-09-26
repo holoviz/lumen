@@ -80,13 +80,12 @@ _The non-emphasized lines are only there to see the table when running `lumen se
 ``` {code-block} python
 from lumen.pipeline import Pipeline
 
-data_path = "local_table.csv"
+data_url = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv"
 pipeline = Pipeline.from_spec(
     {
-        "source": {"type": "file", "tables": {"local_table": data_path}},
+        "source": {"type": "file", "tables": {"remote_table": data_url}},
     }
 )
-
 pipeline.data
 ```
 :::
