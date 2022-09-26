@@ -52,8 +52,8 @@ View component specification declared unknown type 'hvplotqedq'. Did you mean 'h
     responsive: true
 ```
 
-### Uninstalled packages
-The validation will also catch the declaration of uninstalled packages. For example:
+### Package not installed
+The validation will also catch the declaration of packages not installed. For example:
 
 ```console
 Source component specification declared unknown type 'intake'.
