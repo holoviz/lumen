@@ -507,8 +507,8 @@ class FileSource(Source):
         return self._pd_load_fns[ext], kwargs
 
     def _set_cache(self, data, table, **query):
-        _, ext = self._named_files[table]
-        if ext in ('parq', 'parquet'):
+        file, ext = self._named_files[table]
+        if ext in ('parq', 'parquet') and Path(file).exists():
             query['write_to_file'] = False
         super()._set_cache(data, table, **query)
 
