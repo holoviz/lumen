@@ -582,9 +582,9 @@ class hvPlotUIView(hvPlotBaseView):
         return pn.bind(ui, self.param.rerender)
 
     def get_panel(self):
-        from hvplot.ui import hvPlotExplorer
+        from hvplot.ui import hvDataFrameExplorer
         args, kwargs = self._get_args()
-        return hvPlotExplorer(*args, **kwargs)
+        return hvDataFrameExplorer(*args, **kwargs)
 
 
 class hvPlotView(hvPlotBaseView):

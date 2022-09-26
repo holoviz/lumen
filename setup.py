@@ -40,7 +40,7 @@ extras_require = {
     ],
     'doc': [
         'sphinx',
-        'pydata-sphinx-theme',
+        'pydata-sphinx-theme <=0.10',
         'myst-parser',
         'myst-nb <0.14',
         'nbsite >=0.7.2rc8',

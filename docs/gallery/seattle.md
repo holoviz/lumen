@@ -2,7 +2,7 @@
 
 <img src="../_static/seattle.png" width="100%">
 
-```{literalinclude} ../../examples/seattle/seattle.yaml
+```{literalinclude} ../../examples/seattle/weather.yaml
 ---
 language: yaml
 ```
