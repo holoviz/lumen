@@ -60,7 +60,7 @@ At any point after defining the source in your pipeline, you can inspect the dat
 :::
 :::{dropdown} `pipeline.data`
 :animate: fade-in-slide-down
-![data preview](../_static/ht_pipeline_data.png)
+![data preview](../_static/pipeline_data.png)
 :::
 
 ### Add filter
@@ -106,7 +106,7 @@ pipeline.add_transform('columns', columns=columns)
 ```
 :::{dropdown} `pipeline.data`
 :animate: fade-in-slide-down
-![agg data preview](../_static/ht_pipeline_transform.png)
+![transform data preview](../_static/pipeline_transform.png)
 :::
 
 ### Display the dashboard
@@ -145,7 +145,7 @@ pn.Row(
     )
 )
 ```
-![dashboard preview](../_static/ht_pipeline_dash.png)
+![dashboard preview](../_static/pipeline_dash.png)
 
 Related Resources:
 * [Build branching pipelines in Python](ht_chain_python)

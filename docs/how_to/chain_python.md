@@ -6,7 +6,7 @@ When working with Lumen in Python, you can build branching pipelines that allow 
 :::
 
 ## Overview
-The primary tool to create a branch of a Lumen pipeline is to use the `pipeline.chain` method. By chaining the `Pipeline` we can apply new processing steps while retaining the shared computations up to that branching point.
+The primary tool to create a branch of a Lumen pipeline is to use the `pipeline.chain` method. By chaining the `Pipeline` we can apply new processing steps while retaining the shared computations up to that point.
 
 
 ## Initiating the pipeline
