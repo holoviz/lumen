@@ -147,5 +147,8 @@ pn.Row(
 ```
 ![dashboard preview](../_static/pipeline_dash.png)
 
+```{note} If querying data from the Source takes time use set `auto_update=False` on the Pipeline. This will require you to manually trigger an update by clicking a button.
+```
+
 Related Resources:
 * [Branch a pipeline in Python](chain_python)
