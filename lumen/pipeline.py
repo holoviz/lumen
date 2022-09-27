@@ -39,6 +39,12 @@ class Pipeline(Component):
 
     schema = param.Dict(doc="The schema of the input data.")
 
+    manual_update = param.Boolean(
+        default=False, constant=True, doc="""
+        Whether to require user to trigger update manually with a
+        button or by calling update."""
+    )
+
     source = param.ClassSelector(
         class_=Source, constant=True,
         doc="The Source this pipeline is fed by."
@@ -68,6 +74,10 @@ class Pipeline(Component):
         doc="The name of the table driving this pipeline."
     )
 
+    update = param.Event(
+        doc="Update event trigger (if manual update is set).", label='Apply update'
+    )
+
     _internal_params = ['data', 'name', 'schema']
     _required_fields = ['source']
 
@@ -91,7 +101,8 @@ class Pipeline(Component):
             self.pipeline.param.watch(self._update_data, 'data')
 
     def _update_refs(self, *events):
-        self._update_data()
+        if not self.manual_update:
+            self._update_data()
 
     @property
     def refs(self):
@@ -106,8 +117,12 @@ class Pipeline(Component):
                     refs.append(ref)
         return refs
 
+    @param.depends('update', watch=True)
     @catch_and_notify
     def _update_data(self, *events: param.Event):
+        if self.manual_update and events and not any(
+                e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
+            return
         query = {}
 
         # Compute Filter query
@@ -374,6 +389,8 @@ class Pipeline(Component):
         if transforms:
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Transforms</div>')
         col.extend(transforms)
+        if self.manual_update:
+            col.append(self.param['update'])
         return col
 
 

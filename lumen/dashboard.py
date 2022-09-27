@@ -64,6 +64,10 @@ class Config(Component):
     logo = param.String(default=None, constant=True, doc="""
         A logo to add to the theme.""")
 
+    manual_update = param.Boolean(default=False, doc="""
+        Whether all changes to filters and transforms have to be confirmed
+        with a manual button click.""")
+
     ncols = param.Integer(default=3, bounds=(1, None), constant=True, doc="""
         Number of columns to lay out targets in.""")
 
@@ -382,6 +386,8 @@ class Dashboard(Component):
         target_spec = dict(target_spec)
         if 'reloadable' not in target_spec:
             target_spec['reloadable'] = self.config.reloadable
+        if self.config.manual_update:
+            target_spec['manual_update'] = True
         target = Target.from_spec(target_spec, application=self)
         if isinstance(self._layout, pn.Tabs):
             target.show_title = False
@@ -396,7 +402,7 @@ class Dashboard(Component):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
         if force or self._load_global or not state.pipelines:
-            state.load_pipelines()
+            state.load_pipelines(manual_update=self.config.manual_update)
         if not self.auth.authorized:
             self.targets = []
             return
@@ -588,6 +594,16 @@ class Dashboard(Component):
                          filt.panel is not None) and filt.shared) and filt not in filters:
                         views.append(filt.panel)
                         filters.append(filt)
+        if self.config.manual_update:
+            button = pn.widgets.Button(name='Apply Update')
+            def update_pipelines(event):
+                for target in self.targets:
+                    if target is None or isinstance(target, Future):
+                        continue
+                    for pipeline in target._pipelines.values():
+                        pipeline.param.trigger('update')
+            button.on_click(update_pipelines)
+            views.append(button)
         if not views or len(self.targets) == 1:
             return None, None
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
@@ -597,6 +613,7 @@ class Dashboard(Component):
         filters = [] if global_panel is None else [global_panel]
         global_refs = [ref.split('.')[1] for ref in state.global_refs]
         self._variable_panel = self.variables.panel(global_refs)
+        apply_button = not self.config.manual_update or len(self.targets) == 1
         if self._variable_panel is not None:
             filters.append(self._variable_panel)
         for i, target in enumerate(self.targets):
@@ -606,7 +623,7 @@ class Dashboard(Component):
                 spec = state.spec['targets'][i]
                 panel = pn.Column(name=spec['title'])
             else:
-                panel = target.get_filter_panel(skip=self._global_filters)
+                panel = target.get_filter_panel(skip=self._global_filters, apply_button=apply_button)
             if panel is not None:
                 filters.append(panel)
         self._sidebar[:] = filters

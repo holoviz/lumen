@@ -308,6 +308,10 @@ class Target(Component):
         a Column of one row containing views 0 and 1 and a second Row
         containing view 2.""" )
 
+    manual_update = param.Boolean(default=False, doc="""
+        Whether all changes to filters and transforms have to be confirmed
+        with a manual button click.""")
+
     reloadable = param.Boolean(default=True, doc="""
         Whether to allow reloading data target's source using a button.""")
 
@@ -329,7 +333,7 @@ class Target(Component):
 
     _header_format = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
-    _required_keys = ['title', 'views', ('pipeline', 'source')]
+    _required_keys = ['title', 'views']
 
     _valid_keys = [
         'config', 'facet_layout', 'sort', # Deprecated
@@ -345,11 +349,12 @@ class Target(Component):
         self._cb = None
         self._scheduled = False
         self._updates = []
+        self._update_button = pn.widgets.Button(name='Apply update')
+        self._update_button.on_click(self._manual_update)
         self._timestamp = pn.pane.HTML(
             align='center', margin=(10, 0), sizing_mode='stretch_width'
         )
         self._pipelines = params.pop('pipelines', {})
-        self._pipeline_watchers = {}
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
 
@@ -365,6 +370,10 @@ class Target(Component):
 
     def _resort(self, *events):
         self._rerender(update_views=False)
+
+    def _manual_update(self, *events):
+        for p in self._pipelines.values():
+            p.param.trigger('update')
 
     def _sync_component(self, component, *events):
         component.param.set_param(**{event.name: event.new for event in events})
@@ -421,7 +430,7 @@ class Target(Component):
                 cards = cards[::-1]
         return [card for _, card in cards]
 
-    def get_filter_panel(self, skip=None):
+    def get_filter_panel(self, skip=None, apply_button=True):
         skip = list(skip or [])
         views = []
 
@@ -476,6 +485,10 @@ class Target(Component):
         # View controls
         if self._view_controls:
             views.append(self._view_controls)
+
+        # Add update button
+        if self.manual_update and apply_button:
+            views.append(self._update_button)
 
         # Reload buttons
         if self.reloadable:
@@ -603,8 +616,8 @@ class Target(Component):
         view_specs = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context)
         if 'source' in spec or 'pipeline' in spec:
             return view_specs
-        pipelines = {view_spec['pipeline'] for view_spec in view_specs}
-        if not len(pipelines):
+        view_specs = view_specs.values() if isinstance(view_specs, dict) else view_specs
+        if not all('pipeline' in spec for spec in view_specs):
             raise ValidationError(
                 'Target (or its views) must declare a source or a pipeline.', spec
             )
