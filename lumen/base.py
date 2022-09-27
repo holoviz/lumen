@@ -363,8 +363,13 @@ class MultiTypeComponent(Component):
             )
         if '.' in component_type:
             return resolve_module_reference(component_type, base_type)
+
         try:
-            __import__(f'lumen.{base_type.__name__.lower()}s.{component_type}')
+            import_name = f'lumen.{base_type.__name__.lower()}s.{component_type}'
+            __import__(import_name)
+        except ImportError as e:
+            if e.name != import_name:
+                raise e
         except Exception:
             pass
 
