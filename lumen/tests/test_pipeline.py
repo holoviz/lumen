@@ -47,6 +47,25 @@ def test_pipeline_with_filter(make_filesource, mixed_df):
     expected = mixed_df.iloc[0:3]
     pd.testing.assert_frame_equal(pipeline.data, expected)
 
+def test_pipeline_manual_with_filter(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    cfilter = ConstantFilter(field='A', value=(1, 2))
+    pipeline = Pipeline(source=source, filters=[cfilter], table='test', auto_update=False)
+    pipeline._update_data()
+
+    expected = mixed_df.iloc[1:3]
+    pd.testing.assert_frame_equal(pipeline.data, expected)
+
+    # Update filter
+    cfilter.value = (0, 2)
+    pd.testing.assert_frame_equal(pipeline.data, expected)
+
+    # Trigger pipeline update
+    pipeline.param.trigger('update')
+    expected = mixed_df.iloc[0:3]
+    pd.testing.assert_frame_equal(pipeline.data, expected)
+
 def test_pipeline_with_transform(make_filesource, mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = make_filesource(str(root))
@@ -60,6 +79,26 @@ def test_pipeline_with_transform(make_filesource, mixed_df):
 
     # Update
     transform.columns = ['B', 'C']
+    expected = mixed_df[['B', 'C']]
+    pd.testing.assert_frame_equal(pipeline.data, expected)
+
+def test_pipeline_manual_with_transform(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+
+    transform = Columns(columns=['A', 'B'])
+    pipeline = Pipeline(source=source, transforms=[transform], table='test', auto_update=False)
+    pipeline._update_data()
+
+    expected = mixed_df[['A', 'B']]
+    pd.testing.assert_frame_equal(pipeline.data, expected)
+
+    # Update transform
+    transform.columns = ['B', 'C']
+    pd.testing.assert_frame_equal(pipeline.data, expected)
+
+    # Trigger update
+    pipeline.param.trigger('update')
     expected = mixed_df[['B', 'C']]
     pd.testing.assert_frame_equal(pipeline.data, expected)
 
@@ -100,6 +139,38 @@ def test_pipeline_chained_with_filter(make_filesource, mixed_df):
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
     cfilter2.value = 0.0
+    expected = mixed_df.iloc[[2]]
+    pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+
+def test_pipeline_manual_chained_with_filter(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+
+    cfilter1 = ConstantFilter(field='A', value=(1, 3))
+    cfilter2 = ConstantFilter(field='B', value=1.0)
+    pipeline1 = Pipeline(source=source, filters=[cfilter1], table='test', auto_update=False)
+    pipeline2 = pipeline1.chain(filters=[cfilter2])
+    pipeline2._update_data()
+
+    expected = mixed_df.iloc[[1, 3]]
+    pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+    # Update filter
+    cfilter1.value = (2, 3)
+    pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+    # Trigger update
+    pipeline1.param.trigger('update')
+    expected = mixed_df.iloc[[3]]
+    pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+    # Update chained filter
+    cfilter2.value = 0.0
+    pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+    # Trigger update
+    pipeline2.param.trigger('update')
     expected = mixed_df.iloc[[2]]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
