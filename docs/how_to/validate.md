@@ -15,8 +15,8 @@ lumen validate <dashboard.yaml>
 ## Debug an invalid specification file
 When the validation fails, it will provide an error message indicating the type and location of the issue.
 
-### Indendation errors
-Indendation errors often show up as "`expected... but found...`"
+### Indentation errors
+Indentation errors often show up as "`expected... but found...`"
 
 ```console
 expected <block end>, but found '?'
@@ -56,10 +56,10 @@ View component specification declared unknown type 'hvplotqedq'. Did you mean 'h
 The validation will also catch the declaration of packages not installed. For example:
 
 ```console
-Source component specification declared unknown type 'intake'.
+ERROR: No module named 'intake'
 ```
 
-In this case, simply install the package into your enviornment, such as with:
+In this case, simply install the package into your environment, such as with:
 
 ```console
 conda install intake
