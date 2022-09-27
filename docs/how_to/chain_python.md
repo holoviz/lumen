@@ -1,4 +1,4 @@
-# Build branching pipelines in Python
+# Branch a pipeline in Python
 
 :::{admonition} What does this guide solve?
 :class: important
