@@ -9,7 +9,7 @@ This guide will guide you through the steps of how to build a Lumen app that wil
 ## Building the app
 This section will walk through the steps to creating the app.
 Create a file named `penguins.yaml`.
-The first thing which is needed is a source. Here we will add a penguin source from a file that contains a penguin's table.
+The first thing which is needed is a source. Here we will add file source that will fetch data about individual penguins of three different and various measurement about them (such as the length of their bill).
 
 Then launch the app with `lumen serve penguins.yaml --autoreload` in your terminal and open `http://localhost:5006` in your browser of choice.
 By using `--autoreload`, the dashboard automatically refreshes and updates the application whenever we make changes to the YAML file.
@@ -102,7 +102,7 @@ targets:
 
 
 This plot is a bit overwhelming, so instead of plotting everything in one plot, we can plot `bill_length_mm` on the x-axis and `bill_depth_mm` on the y-axis.
-Furthermore, we can color based on the specie and change the kind of the plot to scatter.
+Furthermore, we can color based on the species and change the kind of the plot to scatter.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -236,7 +236,7 @@ targets:
 ::::
 
 
-The layout of the views is in a column where we can't even see the last plot, and the dashboard is non-responsive.
+The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space and does not resize responsively.
 We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views, and by changing the `layout` and `height`, we can customize how the dashboard looks and feels.
 
 ::::{tab-set}
