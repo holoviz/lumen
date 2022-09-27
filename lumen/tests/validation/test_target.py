@@ -88,17 +88,12 @@ def test_target_Download(spec, msg):
             {"source": "penguins", "views": []},
             "The Target component requires 'title' parameter to be defined",
         ),
-        (
-            {"title": "Table", "views": []},
-            "Target component requires one of 'pipeline' or 'source' to be defined",
-        ),
     ),
     ids=[
         "correct",
         "missing_source",
         "missing_views",
         "missing_title",
-        "missing_pipeline_or_source",
     ],
 )
 def test_target_Target(spec, msg):

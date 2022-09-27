@@ -107,15 +107,19 @@ class Filter(MultiTypeComponent):
             spec['label'] = field.title()
         table = spec.get('table')
         schema = None
+        fields = []
         for key, table_schema in source_schema.items():
             if table is not None and key != table:
                 continue
             schema = table_schema.get(field)
+            fields.extend(list(table_schema))
             if schema is not None:
                 break
         if not schema:
-            raise ValueError("Source did not declare a schema for "
-                             f"'{field}' filter.")
+            raise ValueError(
+                f"Source did not declare a schema for {field!r} filter. "
+                f"Available fields include: {fields!r}."
+            )
         return filter_type(schema={field: schema}, **spec)
 
     @property

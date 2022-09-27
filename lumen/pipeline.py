@@ -39,33 +39,38 @@ class Pipeline(Component):
 
     schema = param.Dict(doc="The schema of the input data.")
 
-    source = param.ClassSelector(
-        class_=Source, constant=True,
-        doc="The Source this pipeline is fed by."
+    auto_update = param.Boolean(default=True, constant=True, doc="""
+        Whether changes in filters, transforms and references automatically
+        trigger updates in the data or whether an update has to be triggered
+        manually using the update event or the update button in the UI."""
     )
 
-    pipeline = param.ClassSelector(
-        class_=None,
-        doc="Optionally a pipeline may be chained to another pipeline."
+    source = param.ClassSelector(class_=Source, constant=True, doc="""
+        The Source this pipeline is fed by."""
     )
 
-    filters = param.List(
-        item_type=Filter,
-        doc="A list of Filters to apply to the source data."
+    pipeline = param.ClassSelector(class_=None, doc="""
+        Optionally a pipeline may be chained to another pipeline."""
     )
 
-    sql_transforms = param.List(
-        item_type=SQLTransform,
-        doc="A list of SQLTransforms to apply to the source data."
+    filters = param.List(item_type=Filter, doc="""
+        A list of Filters to apply to the source data."""
     )
 
-    transforms = param.List(
-        item_type=Transform,
-        doc="A list of Transforms to apply to the source data."
+    sql_transforms = param.List(item_type=SQLTransform, doc="""
+        A list of SQLTransforms to apply to the source data."""
     )
 
-    table = param.String(
-        doc="The name of the table driving this pipeline."
+    transforms = param.List(item_type=Transform, doc="""
+        A list of Transforms to apply to the source data."""
+    )
+
+    table = param.String(doc="""
+        The name of the table driving this pipeline."""
+    )
+
+    update = param.Event(label='Apply update', doc="""
+        Update event trigger (if manual update is set)."""
     )
 
     _internal_params = ['data', 'name', 'schema']
@@ -91,7 +96,8 @@ class Pipeline(Component):
             self.pipeline.param.watch(self._update_data, 'data')
 
     def _update_refs(self, *events):
-        self._update_data()
+        if self.auto_update:
+            self._update_data()
 
     @property
     def refs(self):
@@ -106,8 +112,12 @@ class Pipeline(Component):
                     refs.append(ref)
         return refs
 
+    @param.depends('update', watch=True)
     @catch_and_notify
     def _update_data(self, *events: param.Event):
+        if not self.auto_update and events and not any(
+                e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
+            return
         query = {}
 
         # Compute Filter query
@@ -374,6 +384,8 @@ class Pipeline(Component):
         if transforms:
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Transforms</div>')
         col.extend(transforms)
+        if not self.auto_update:
+            col.append(self.param['update'])
         return col
 
 
