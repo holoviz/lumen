@@ -1,5 +1,7 @@
 import param
 
+from panel.widgets import RangeSlider
+
 from lumen.filters import Filter
 
 
@@ -62,3 +64,33 @@ def test_widget_filter_link_throttled():
     wfilter.value = (2, 2)
 
     assert widget.value == (2, 2)
+
+
+def test_widget_filter_explicit_widget():
+    wfilter = Filter.from_spec(
+        {'type': 'widget', 'field': 'test', 'widget': 'panel.widgets.RangeSlider'},
+        {'example': {
+            'test': {
+                'type': 'integer',
+                'inclusiveMinimum': 1,
+                'inclusiveMaximum': 3
+            }
+        }}
+    )
+    assert isinstance(wfilter.widget, RangeSlider)
+    assert wfilter.widget.start == 1
+    assert wfilter.widget.end == 3
+
+
+def test_widget_filter_explicit_widget_to_spec():
+    wfilter = Filter.from_spec(
+        {'type': 'widget', 'field': 'test', 'widget': 'panel.widgets.RangeSlider'},
+        {'example': {
+            'test': {
+                'type': 'integer',
+                'inclusiveMinimum': 1,
+                'inclusiveMaximum': 3
+            }
+        }}
+    )
+    assert wfilter.to_spec() == {'type': 'widget', 'field': 'test', 'widget': 'panel.widgets.slider.RangeSlider'}
