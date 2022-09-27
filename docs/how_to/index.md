@@ -1,9 +1,7 @@
 # How to Guides
 
 
-Lumen's How to Guides provide step by step recipes for solving
-essential problems and tasks. They are more advanced than the 
-Getting Started material and assume some knowledge of how Lumen works.
+Lumen's How to Guides provide step by step recipes for solving essential problems and tasks. They are more advanced than the Getting Started material and assume some knowledge of how Lumen works.
 
 * **[Validate a specification file](validate)**
 * **[Deploy a dashboard](deploy)**

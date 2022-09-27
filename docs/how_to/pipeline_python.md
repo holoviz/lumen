@@ -29,7 +29,7 @@ pipeline = Pipeline.from_spec({
     'filters': [
         {'type': 'widget', 'field': 'species'},
         {'type': 'widget', 'field': 'island'},
-        {'type': 'widget', 'field': 'sex'}, 
+        {'type': 'widget', 'field': 'sex'},
         {'type': 'widget', 'field': 'year'}
     ],
     'transforms': [

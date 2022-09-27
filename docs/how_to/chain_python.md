@@ -30,7 +30,7 @@ pipeline.data
 ![data preview](../_static/pipeline_data.png)
 
 ## Branching the pipeline
-At this point, we will create a branch of our pipeline by using the `pipeline.chain` method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new `Pipeline` variable so that we can refer to it seperately from the original `pipeline`. 
+At this point, we will create a branch of our pipeline by using the `pipeline.chain` method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new `Pipeline` variable so that we can refer to it seperately from the original `pipeline`.
 
 ```python
 from lumen.transforms import Aggregate

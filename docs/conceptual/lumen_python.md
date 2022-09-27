@@ -1,3 +1,0 @@
-# Lumen in Python
-
-
