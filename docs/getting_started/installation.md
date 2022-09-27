@@ -1,4 +1,4 @@
-# Installation
+# {octicon}`desktop-download;2em;sd-mr-1` Installation
 
 Lumen is a monitoring solution written in Python and built on [Panel](https://panel.holoviz.org/) and works on Linux, Windows, and Mac.
 The recommended way to install `lumen` is using the [conda](http://conda.pydata.org/docs/) command provided by [Anaconda](https://www.anaconda.com) or [Miniconda](http://conda.pydata.org/miniconda.html), but installing `lumen` from [Python.org](https://www.python.org/) with [PyPi](https://pypi.org/) is also an option.
@@ -60,6 +60,7 @@ pip install lumen
 
 
 ## Running _Getting Started_
+
 To run the _Getting Started_ guide, some other dependencies are needed. These should be installed the same way as done in the previous section.
 
 ::::{tab-set}
