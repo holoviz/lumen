@@ -148,5 +148,4 @@ pn.Row(
 ![dashboard preview](../_static/pipeline_dash.png)
 
 Related Resources:
-* [Build branching pipelines in Python](ht_chain_python)
-* [Apply SQL transforms in Python](ht_sql_transform)
+* [Branch a pipeline in Python](chain_python)

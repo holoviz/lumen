@@ -27,7 +27,7 @@ pipeline.add_filter('widget', field='year')
 
 pipeline.data
 ```
-![data preview](../_static/ht_pipeline_data.png)
+![data preview](../_static/pipeline_data.png)
 
 ## Branching the pipeline
 At this point, we will create a branch of our pipeline by using the `pipeline.chain` method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new `Pipeline` variable so that we can refer to it seperately from the original `pipeline`. 
@@ -39,4 +39,4 @@ agg_pipeline = pipeline.chain(transforms=[Aggregate(method='mean', by=['species'
 
 agg_pipeline.data
 ```
-![data preview](../_static/ht_pipeline_data_agg.png)
+![data preview](../_static/pipeline_data_agg.png)
