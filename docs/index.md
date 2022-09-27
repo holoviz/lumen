@@ -78,8 +78,11 @@ hidden: true
 ---
 Home <self>
 Getting Started <getting_started/index>
+How to <how_to/index>
 User Guide <user_guide/index>
 UI <ui/index>
 Gallery <gallery/index>
 Architecture <architecture/index>
+Conceptual Guides <conceptual/index>
+Reference <reference/index>
 ```
