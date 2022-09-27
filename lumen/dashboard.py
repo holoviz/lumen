@@ -43,6 +43,12 @@ class Config(Component):
     High-level configuration options for the Dashboard.
     """
 
+    auto_update = param.Boolean(default=True, constant=True, doc="""
+        Whether changes in filters, transforms and references automatically
+        trigger updates in the data or whether an update has to be triggered
+        manually using the update event or the update button in the UI."""
+    )
+
     background_load = param.Boolean(default=False, constant=True, doc="""
         Whether to load any targets in the background.""")
 
@@ -63,10 +69,6 @@ class Config(Component):
 
     logo = param.String(default=None, constant=True, doc="""
         A logo to add to the theme.""")
-
-    manual_update = param.Boolean(default=False, doc="""
-        Whether all changes to filters and transforms have to be confirmed
-        with a manual button click.""")
 
     ncols = param.Integer(default=3, bounds=(1, None), constant=True, doc="""
         Number of columns to lay out targets in.""")
@@ -386,8 +388,8 @@ class Dashboard(Component):
         target_spec = dict(target_spec)
         if 'reloadable' not in target_spec:
             target_spec['reloadable'] = self.config.reloadable
-        if self.config.manual_update:
-            target_spec['manual_update'] = True
+        if 'auto_update' not in target_spec:
+            target_spec['auto_update'] = self.config.auto_update
         target = Target.from_spec(target_spec, application=self)
         if isinstance(self._layout, pn.Tabs):
             target.show_title = False
@@ -402,7 +404,7 @@ class Dashboard(Component):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
         if force or self._load_global or not state.pipelines:
-            state.load_pipelines(manual_update=self.config.manual_update)
+            state.load_pipelines(auto_update=self.config.auto_update)
         if not self.auth.authorized:
             self.targets = []
             return
@@ -594,7 +596,7 @@ class Dashboard(Component):
                          filt.panel is not None) and filt.shared) and filt not in filters:
                         views.append(filt.panel)
                         filters.append(filt)
-        if self.config.manual_update:
+        if not self.config.auto_update:
             button = pn.widgets.Button(name='Apply Update')
             def update_pipelines(event):
                 for target in self.targets:
@@ -613,7 +615,7 @@ class Dashboard(Component):
         filters = [] if global_panel is None else [global_panel]
         global_refs = [ref.split('.')[1] for ref in state.global_refs]
         self._variable_panel = self.variables.panel(global_refs)
-        apply_button = not self.config.manual_update or len(self.targets) == 1
+        apply_button = not self.config.auto_update or len(self.targets) == 1
         if self._variable_panel is not None:
             filters.append(self._variable_panel)
         for i, target in enumerate(self.targets):

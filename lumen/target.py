@@ -293,6 +293,12 @@ class Target(Component):
     set of filters and views.
     """
 
+    auto_update = param.Boolean(default=True, constant=True, doc="""
+        Whether changes in filters, transforms and references automatically
+        trigger updates in the data or whether an update has to be triggered
+        manually using the update event or the update button in the UI."""
+    )
+
     download = param.ClassSelector(class_=Download, default=Download(), doc="""
         The download objects determines whether and how the source tables
         can be downloaded.""")
@@ -307,10 +313,6 @@ class Target(Component):
         corresponding to the views, e.g. [[0, 1], [2]] will create
         a Column of one row containing views 0 and 1 and a second Row
         containing view 2.""" )
-
-    manual_update = param.Boolean(default=False, doc="""
-        Whether all changes to filters and transforms have to be confirmed
-        with a manual button click.""")
 
     reloadable = param.Boolean(default=True, doc="""
         Whether to allow reloading data target's source using a button.""")
@@ -487,7 +489,7 @@ class Target(Component):
             views.append(self._view_controls)
 
         # Add update button
-        if self.manual_update and apply_button:
+        if not self.auto_update and apply_button:
             views.append(self._update_button)
 
         # Reload buttons
