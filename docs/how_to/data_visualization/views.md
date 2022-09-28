@@ -2,16 +2,16 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-This guide will go through how to define views on your dashboard
+This guide will show you how to define views on your dashboard
 :::
 
-## Defining views
+## Overview
 A view is the final output of a dashboard.
-Views are located in the target area and can be a table or numerous kinds of plots by utilizing the [Holoviz ecosystem](https://holoviz.org/).
+Views are located in the `target` area and can take the form of various visual components. Lumen includes many [view types](../../reference/view/index.md), and is built so that you can easily use components from the [Holoviz ecosystem](https://holoviz.org/), such as a [scatter plot from hvPlot](https://hvplot.holoviz.org/reference/pandas/scatter.html) or an [indicator from Panel](https://panel.holoviz.org/reference/index.html#indicators).
 
 ![](../../_static/excalidraw/lumen_dashboard.png)
 
-Below is an example of two views a [hvplot](https://hvplot.holoviz.org/) and a table.
+Below is an example of two views of the same data - a scatter plot and a table.
 
 ::::{tab-set}
 :::{tab-item} Specification (YAML)
@@ -30,11 +30,11 @@ targets:
     views:
       - type: hvplot
         table: penguin_table
+        kind: scatter
+        color: species
       - type: table
         table: penguin_table
 ```
-_The non-emphasized lines are only there to see the table when running `lumen serve file.yaml`._
-
 :::
 
 :::{tab-item} Pipeline (Python)
@@ -56,11 +56,6 @@ pipeline = Pipeline.from_spec(
 
 pn.Column(hvPlotView(pipeline=pipeline), Table(pipeline=pipeline))
 ```
-_The non-emphasized lines are only there to have a table to cache when running the code_
+To arrange the Lumen dashboard views in Python, use [Panel](https://panel.holoviz.org/), as shown here.
 :::
 ::::
-
-
-:::{note}
-The different views of Lumen can be found [here](../../reference/view/index.md).
-:::
