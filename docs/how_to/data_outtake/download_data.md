@@ -11,7 +11,7 @@ This guide will show you three ways to do it.
 
 
 ::::{tab-set}
-:::{tab-item} Method 1
+:::{tab-item} Sidebar Download
 ``` {code-block} yaml
 :emphasize-lines: 10
 sources:
@@ -35,7 +35,7 @@ targets:
 ![](../../_static/how_to/data_outtake/download_data/1.png)
 :::
 
-:::{tab-item} Method 2
+:::{tab-item} View Download
 ``` {code-block} yaml
 :emphasize-lines: 12-13
 sources:
@@ -59,7 +59,7 @@ targets:
 ![](../../_static/how_to/data_outtake/download_data/2.png)
 :::
 
-:::{tab-item} Method 3
+:::{tab-item} Table Download
 ``` {code-block} yaml
 :emphasize-lines: 16
 sources:
