@@ -372,8 +372,7 @@ class MultiTypeComponent(Component):
                 msg = (
                     f"In order to use the {base_type.__name__.lower()} "
                     f"component '{component_type}', the '{e.name}' package "
-                    "must be installed. It can be installed with:"
-                    f"\n  conda install {e.name}"
+                    "must be installed."
                 )
                 raise ImportError(msg)
 
