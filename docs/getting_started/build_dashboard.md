@@ -29,6 +29,7 @@ By using `--autoreload`, the dashboard automatically refreshes and updates the a
 
 ::::{tab-set}
 :::{tab-item} YAML
+:sync: yaml
 ``` {code-block} yaml
 
 sources:
@@ -40,7 +41,7 @@ sources:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_00.png)
 :::
 ::::
@@ -51,6 +52,7 @@ The simplest view to add is a table with the penguin's table in it.
 
 ::::{tab-set}
 :::{tab-item} YAML
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 7-12
 
@@ -71,7 +73,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_01.png)
 :::
 ::::
@@ -82,6 +84,7 @@ This can be done with a [hvplot](https://hvplot.holoviz.org/) view and is as eas
 
 ::::{tab-set}
 :::{tab-item} YAML
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 11
 
@@ -101,7 +104,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_02.png)
 :::
 ::::
@@ -112,7 +115,7 @@ Furthermore, we can color based on the species and change the kind of the plot t
 
 ::::{tab-set}
 :::{tab-item} YAML
-
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 13-17
 sources:
@@ -135,7 +138,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_03.png)
 :::
 ::::
@@ -145,7 +148,7 @@ Let's now set up two filters based on sex and the island of the penguins, which 
 
 ::::{tab-set}
 :::{tab-item} YAML
-
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 7-18
 
@@ -181,7 +184,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_04.png)
 :::
 ::::
@@ -190,7 +193,7 @@ We can even expand the views with a histogram and table.
 
 ::::{tab-set}
 :::{tab-item} YAML
-
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 29-34
 
@@ -232,7 +235,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_05.png)
 :::
 ::::
@@ -243,7 +246,7 @@ We can get responsive plots by adding `sizing_mode` to the target and `responsiv
 
 ::::{tab-set}
 :::{tab-item} YAML
-
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 23-25, 32-33, 37-38, 43
 
@@ -292,7 +295,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_06.png)
 :::
 ::::
@@ -301,7 +304,7 @@ Using `config`, we can also give a more descriptive title and change the theme t
 
 ::::{tab-set}
 :::{tab-item} YAML
-
+:sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 1-3
 
@@ -355,7 +358,7 @@ targets:
 :::
 
 :::{tab-item} Preview
-
+:sync: preview
 ![](../_static/getting_started/build_app_07.png)
 :::
 ::::

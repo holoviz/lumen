@@ -111,6 +111,11 @@ ENV/
 doc/**/*.rst
 doc/**/*.ipynb
 doc/**/*.json
+
+docs/**/*.rst
+docs/**/*.ipynb
+docs/**/*.json
+
 # this dir contains the whole website and should not be checked in on master
 builtdocs/
 .doit.db
