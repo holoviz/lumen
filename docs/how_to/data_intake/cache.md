@@ -2,21 +2,22 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-This guide will go through how to cache large files for easier access.
+This guide will show you how to locally cache data to speed up reloading from a remote source.
 :::
 
 ## Caching file
-When working with large files, it can be very advantageous to cache it and therefore be able to save time when reloading the data.
-To cache a [source](../../reference/source) is done by using `cache_dir` followed by a directory.
+When working with large data in a non-optional file format, creating a local cache can be advantageous to save time when reloading the data.
+Caching a [source](../../reference/source) is done by using `cache_dir` followed by a directory.
 If the directory does not exist, it will be created.
-Below is an example of caching a 370 MB file, and the table consists of almost 12 million rows.
+The data will be saved as [parquet](https://www.databricks.com/glossary/what-is-parquet) files in the cache directory.
+Below is an example of caching a 370 MB file that consists of almost 12 million rows.
 
 :::{warning}
 The initial load can take a couple of minutes as the file needs to be downloaded and cached first.
 :::
 
 ::::{tab-set}
-:::{tab-item} Specification (YAML)
+:::{tab-item} YAML
 :sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 4
@@ -36,11 +37,9 @@ targets:
       - type: table
         table: large_table
 ```
-_The non-emphasized lines are only there to see the table when running `lumen serve file.yaml`._
-
 :::
 
-:::{tab-item} Pipeline (Python)
+:::{tab-item} Python
 :sync: python
 ``` {code-block} python
 :emphasize-lines: 8
@@ -59,11 +58,10 @@ pipeline = Pipeline.from_spec(
 )
 pipeline.data
 ```
-_The non-emphasized lines are only there to have a table to cache when running the code_
 :::
 ::::
 
 
 :::{note}
-Lumen's [cache]() can be added to all sources found [here](../../reference/source).
+Lumen's [cache]() can be added to all [source types](../../reference/source).
 :::
