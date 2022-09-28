@@ -530,6 +530,8 @@ class Target(Component):
         for card in cards:
             if any(view in self._updates for view in card.views):
                 card.rerender()
+        if self._application:
+            self._application._render_targets()
         self._updates = []
 
     def _rerender(self, update_views=True):
