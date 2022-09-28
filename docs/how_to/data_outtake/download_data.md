@@ -2,7 +2,7 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-This guide will go through how to let a user download data
+This guide will show you how to enable your dashboard's viewer to download data
 :::
 
 ## Download data
