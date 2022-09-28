@@ -369,9 +369,13 @@ class MultiTypeComponent(Component):
             __import__(import_name)
         except ImportError as e:
             if e.name != import_name:
-                raise e
-        except Exception:
-            pass
+                msg = (
+                    f"In order to use the {base_type.__name__.lower()} "
+                    f"component '{component_type}', the '{e.name}' package "
+                    "must be installed. It can be installed with:"
+                    f"\n  conda install {e.name}"
+                )
+                raise ImportError(msg)
 
         subcls_types = set()
         for subcls in param.concrete_descendents(cls).values():
