@@ -2,7 +2,7 @@
 
 :::{admonition} What is the purpose of this page?
 :class: important
-This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you acheived in the tutorial ([Build an App](build_an_app)). After this page you should start building your own dashboard. As you build, consult the relavant `How-to` guides or `Reference` pages, as needed.
+This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you acheived in the tutorial ([Build a dashboard](build_dashboard)). After this page you should start building your own dashboard. As you build, consult the relavant `How-to` guides or `Reference` pages, as needed.
 :::
 
 ## Overview
@@ -108,7 +108,7 @@ sources:
 The `pipelines` section is where you list all the ways that you want the data to be filtered or transformed. If you ever don't want the data to be manipulated, just exclude this section.
 
 ### Filters
-A filter allows you or your dashboard's viewers to drill down into just a subset of the data. 
+A filter allows you or your dashboard's viewers to drill down into just a subset of the data.
 
 ```{code-block} YAML
 pipelines:
@@ -173,7 +173,7 @@ The `targets` section defines how the dashboard is going to look. The essential 
 
 ```{code-block} YAML
 targets:
-  - title: Dashboard title 
+  - title: Dashboard title
     pipeline: The pipeline driving these views
     ...: Dashboard parameters
     views:
