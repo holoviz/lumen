@@ -2,15 +2,19 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-This guide will go through how to use local and remote files as sources for your dashboard and pipeline.
+This guide shows you how to use a local or remote file as a source for your dashboard.
 :::
+
+## Overview
+Lumen can read from multiple [data source types](../../reference/source).
+The [`FileSource`](../../reference/source/FileSource) type supports reading from either local or remote files of various formats: CSV, XLSX, XLS, Parquet, and JSON.
 
 ## Local files
 One of the easiest ways to get a source is by using local files, such as a CSV file.
 Below is an example of how to add a local file as a source.
 
 ::::{tab-set}
-:::{tab-item} Specification (YAML)
+:::{tab-item} YAML
 :sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 1-5
@@ -27,11 +31,9 @@ targets:
       - type: table
         table: local_table
 ```
-_The non-emphasized lines are only there to see the table when running `lumen serve file.yaml`._
-
 :::
 
-:::{tab-item} Pipeline (Python)
+:::{tab-item} Python
 :sync: python
 ``` {code-block} python
 from lumen.pipeline import Pipeline
@@ -42,7 +44,7 @@ pipeline = Pipeline.from_spec(
         "source": {"type": "file", "tables": {"local_table": data_path}},
     }
 )
-pipeline.data
+pipeline.data  # preview the data in a notebook
 
 ```
 :::
@@ -50,11 +52,12 @@ pipeline.data
 
 
 ## Remote files
-Another way to access a file is to use an URL.
+Alternatively, you can access a remote file using a URL.
 
 
 ::::{tab-set}
-:::{tab-item} Specification (YAML)
+:::{tab-item} YAML
+
 :sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 1-5
@@ -71,11 +74,9 @@ targets:
       - type: table
         table: remote_table
 ```
-_The non-emphasized lines are only there to see the table when running `lumen serve file.yaml`._
-
 :::
 
-:::{tab-item} Pipeline (Python)
+:::{tab-item} Python
 :sync: python
 ``` {code-block} python
 from lumen.pipeline import Pipeline
@@ -86,12 +87,7 @@ pipeline = Pipeline.from_spec(
         "source": {"type": "file", "tables": {"remote_table": data_url}},
     }
 )
-pipeline.data
+pipeline.data  # preview the data in a notebook
 ```
 :::
 ::::
-
-
-## File formats
-Lumen's [`FileSource`](../../reference/source/FileSource) support the following file formats: CSV, XLSX, XLS, Parquet, and JSON.
-Other sources can be found [here](../../reference/source).
