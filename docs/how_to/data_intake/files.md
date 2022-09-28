@@ -57,7 +57,6 @@ Alternatively, you can access a remote file using a URL.
 
 ::::{tab-set}
 :::{tab-item} YAML
-
 :sync: yaml
 ``` {code-block} yaml
 :emphasize-lines: 1-5
