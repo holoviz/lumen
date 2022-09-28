@@ -24,7 +24,7 @@ sources:
 Once you have saved your file, open a terminal and navigate to the location of this file.
 
 In the terminal, launch the file with:
-```console
+``` bash
 lumen serve penguins.yaml --show --autoreload
 ```
 

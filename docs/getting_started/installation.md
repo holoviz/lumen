@@ -31,7 +31,7 @@ pip install lumen
 ## Optional dependencies
 
 Lumen is very flexible and allows you to use components from various packages. Depending on what type of dashboard components you use, you may need to install additional packages. Error messages will help you determine if you are missing a package. For instance, if you see the following...
-```console
+``` bash
 Source component specification declared unknown type 'intake'.
 ```
 
