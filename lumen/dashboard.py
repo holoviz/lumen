@@ -249,7 +249,7 @@ class Defaults(Component):
                               (Transform, self.transforms), (View, self.views)):
             for default in defaults:
                 params = dict(default)
-                obj_type = obj._get_type(params['type'])
+                obj_type = obj._get_type(params.pop('type'))
                 obj_type.param.set_param(**params)
 
 
