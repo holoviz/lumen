@@ -5,27 +5,32 @@ This tutorial is meant to get your hands dirty with building a Lumen dashboard. 
 :::
 
 You will build a simple Lumen dashboard and deploy it in your browser. The result will look something like this:
+![](../_static/getting_started/build_app_07.png)
 
-:::::{grid} 1
+## 1. Create a YAML file
+Open your favorite text editor and create an empty file called `penguins.yaml`.
 
-::::{grid-item}
+## 2. Add a data source
+The first thing which is needed is a source of data. Insert and save the text below to add a remote file source. This will tell Lumen to fetch data about penguins.
+``` {code-block} yaml
 
-:::{card}
-:img-background: ../_static/getting_started/build_app_07.png
-:::
+sources:
+  penguin_source:
+    type: file
+    tables:
+      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+```
 
-::::
+Once you have saved your file, open a terminal and navigate to the location of this file.
 
-:::::
+In the terminal, launch the file with:
+```console
+lumen serve penguins.yaml --show --autoreload
+```
 
-## Building the dashboard
-This section will walk through the steps to creating the app.
-Create a file named `penguins.yaml`.
-The first thing which is needed is a source. Here we will add file source that will fetch data about individual penguins of three different and various measurement about them (such as the length of their bill).
-
-Then launch the app with `lumen serve penguins.yaml --autoreload` in your terminal and open `http://localhost:5006` in your browser of choice.
 By using `--autoreload`, the dashboard automatically refreshes and updates the application whenever we make changes to the YAML file.
 
+What you should see in your browser should now match what is on the `Preview` tab:
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -46,9 +51,10 @@ sources:
 :::
 ::::
 
-This returns an empty dashboard because we don't have a targeted view.
-The simplest view to add is a table with the penguin's table in it.
+So far, this returns an empty dashboard because we haven't yet specified a view - so let's add one!
 
+## 3. Specify a table view
+The simplest view to add is a table with the penguin's raw data in it. This gives us a good idea of what we are working with and the available fields.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -78,9 +84,9 @@ targets:
 :::
 ::::
 
-
-The table gives a good understanding of the data, but to really understand it, we have to visualize it.
-This can be done with a [hvplot](https://hvplot.holoviz.org/) view and is as easy as replacing the table type with a hvplot type.
+## 4. Create a plot view
+The table gives us a primer of the data source, but to start understanding patterns in the data, we have to visualize it.
+This can be done with an [hvplot](https://hvplot.holoviz.org/) view and it is as easy as replacing the `table` type with a `hvplot` type.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -109,7 +115,7 @@ targets:
 :::
 ::::
 
-
+## 5. Make a scatter plot
 This plot is a bit overwhelming, so instead of plotting everything in one plot, we can plot `bill_length_mm` on the x-axis and `bill_depth_mm` on the y-axis.
 Furthermore, we can color based on the species and change the kind of the plot to scatter.
 
@@ -143,8 +149,8 @@ targets:
 :::
 ::::
 
-
-Let's now set up two filters based on sex and the island of the penguins, which is done by adding a pipeline with these filters. Since we aren't using all of the data columns, let's also add a transform to select only a subset of the data.
+## 6. Manipulate the data
+Let's now set up two filter widgets based on two fields of the data - 'sex' and 'island'. Since we don't need all of the data columns, let's also add a transform to select only a subset of the data.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -189,7 +195,8 @@ targets:
 :::
 ::::
 
-We can even expand the views with a histogram and table.
+## 7. Expand the view types
+We can even expand the views with a histogram and a table.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -240,7 +247,7 @@ targets:
 :::
 ::::
 
-
+## 8. Customize the appearance and behavior
 The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space and does not resize responsively.
 We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views, and by changing the `layout` and `height`, we can customize how the dashboard looks and feels.
 
@@ -300,7 +307,8 @@ targets:
 :::
 ::::
 
-Using `config`, we can also give a more descriptive title and change the theme to dark.
+## 9. Add a title and theme
+Final step - let's give our dashboard a more descriptive title and change the theme to dark.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -364,6 +372,8 @@ targets:
 ::::
 
 
+Congratulations! You have created your first Lumen dashboard and know a bit more about penguins!
+
 :::{note}
-This is just a simple example of how to build a dashboard with Lumen. The next step is to review the core concepts of what we just acheived!
+This is just a simple example of how to build a dashboard with Lumen. The next step is to review the core concepts of what we just achieved so you can generalize these steps to create your own dashboard.
 :::
