@@ -11,7 +11,7 @@ You will build a simple Lumen dashboard and deploy it in your browser. The resul
 Open your favorite text editor and create an empty file called `penguins.yaml`.
 
 ## 2. Add a data source
-The first thing which is needed is a source of data. Insert and save the text below to add a remote file source. This will tell Lumen to fetch data about penguins.
+The first thing that is needed is a source of data. Insert and save the text below to add a remote file source. This will tell Lumen to fetch data about penguins.
 ``` {code-block} yaml
 
 sources:
@@ -28,7 +28,7 @@ In the terminal, launch the file with:
 lumen serve penguins.yaml --show --autoreload
 ```
 
-By using `--autoreload`, the dashboard automatically refreshes and updates the application whenever we make changes to the YAML file.
+By using `--autoreload`, the dashboard automatically updates the application whenever we make changes to the YAML file.
 
 What you should see in your browser should now match what is on the `Preview` tab:
 
@@ -54,7 +54,7 @@ sources:
 So far, this returns an empty dashboard because we haven't yet specified a view - so let's add one!
 
 ## 3. Specify a table view
-The simplest view to add is a table with the penguin's raw data in it. This gives us a good idea of what we are working with and the available fields.
+The simplest view to add is a table with the raw data. This gives us a good idea of what we are working with and the available fields.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -248,8 +248,8 @@ targets:
 ::::
 
 ## 8. Customize the appearance and behavior
-The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space and does not resize responsively.
-We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views, and by changing the `layout` and `height`, we can customize how the dashboard looks and feels.
+The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space, and does not resize responsively.
+We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views. By changing the `layout` and `height`, we can customize how the dashboard looks.
 
 ::::{tab-set}
 :::{tab-item} YAML
