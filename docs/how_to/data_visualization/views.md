@@ -6,18 +6,22 @@ This guide will show you how to define views on your dashboard
 :::
 
 ## Overview
-A view is the final output of a dashboard.
-Views are located in the `target` area and can take the form of various visual components. Lumen includes many [view types](../../reference/view/index.md), and is built so that you can easily use components from the [Holoviz ecosystem](https://holoviz.org/), such as a [scatter plot from hvPlot](https://hvplot.holoviz.org/reference/pandas/scatter.html) or an [indicator from Panel](https://panel.holoviz.org/reference/index.html#indicators).
+A view is the final output of a dashboard, but to be able to create a view, at least one data [source](../../reference/source/index.md) is needed.
+The following example source is a table containing data about individual penguins with various measurements.
+This source could have been [filtered](../../reference/filter/index.md) or [transformed](../../reference/transform/index.md) but is omitted to keep the example simple.
+
+The views are located in the `targets` area and can take the form of various visual components.
+Lumen includes many [view types](../../reference/view/index.md) and is built so that you can easily use components from the [Holoviz ecosystem](https://holoviz.org/), such as a [scatter plot from hvPlot](https://hvplot.holoviz.org/reference/pandas/scatter.html) or an [indicator from Panel](https://panel.holoviz.org/reference/index.html#indicators).
 
 ![](../../_static/excalidraw/lumen_dashboard.png)
 
 Below is an example of two views of the same data - a scatter plot and a table.
 
 ::::{tab-set}
-:::{tab-item} Specification (YAML)
+:::{tab-item} YAML
 :sync: yaml
 ``` {code-block} yaml
-:emphasize-lines: 10-14
+:emphasize-lines: 10-16
 sources:
   penguin_source:
     type: file
@@ -37,7 +41,7 @@ targets:
 ```
 :::
 
-:::{tab-item} Pipeline (Python)
+:::{tab-item} Python
 :sync: python
 ``` {code-block} python
 :emphasize-lines: 14
