@@ -8,7 +8,7 @@ This guide shows you how to validate the `YAML file` that specifies a Lumen dash
 ## Run the specification routine
 Use the `lumen validate` command line tool to run the validation. Insert the path to your specification file in place of `<dashboard.yml>` below.
 
-```console
+```bash
 lumen validate <dashboard.yaml>
 ```
 
@@ -18,7 +18,7 @@ When the validation fails, it will provide an error message indicating the type 
 ### Indentation errors
 Indentation errors often show up as "`expected... but found...`"
 
-```console
+```python-traceback
 expected <block end>, but found '?'
   in "<unicode string>", line 28, column 3:
       facet:
@@ -26,7 +26,7 @@ expected <block end>, but found '?'
 ```
 
 They may also appear as messages about certain values not being allowed in this hierarchy level:
-```console
+```python-traceback
 ERROR: mapping values are not allowed here
   in "<unicode string>", line 6, column 11:
         shared: true
@@ -37,7 +37,7 @@ ERROR: mapping values are not allowed here
 
 For constrained key and value fields, invalid entries will get caught, and a recommendation may be provided:
 
-```console
+```python-traceback
 View component specification declared unknown type 'hvplotqedq'. Did you mean 'hvplot or 'hvplot_ui'?
 
     table: southern_rockies
@@ -55,12 +55,13 @@ View component specification declared unknown type 'hvplotqedq'. Did you mean 'h
 ### Package not installed
 The validation will also catch the declaration of packages not installed. For example:
 
-```console
-ERROR: No module named 'intake'
+```bash
+ERROR: In order to use the source component 'intake', the 'intake' package must be installed. It can be installed with:
+  conda install intake
 ```
 
-In this case, simply install the package into your environment, such as with:
+In this case, simply follow the instruction and install the package into your environment, such as with:
 
-```console
+```bash
 conda install intake
 ```
