@@ -17,6 +17,19 @@ def test_dashboard_with_local_view(set_root):
     view = View.from_spec(target.views[0], target.source, [])
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 
+def test_dashboard_reload_target(set_root):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'dashboard.yml'))
+    dashboard._render_dashboard()
+
+    reload_button, ts = dashboard._sidebar[-1][-1]
+    old_timestamp = ts.object
+    old_objects = dashboard._layout.objects
+    reload_button._button_click()
+    assert ts.object is not old_timestamp
+    assert dashboard._layout.objects is not old_objects
+
 def test_dashboard_with_url_sync(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))

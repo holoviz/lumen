@@ -15,6 +15,8 @@ from panel.util import classproperty
 from ..base import MultiTypeComponent
 from ..schema import JSONSchema
 from ..state import state
+from ..util import resolve_module_reference
+from ..validation import ValidationError
 
 
 class Filter(MultiTypeComponent):
@@ -121,6 +123,12 @@ class Filter(MultiTypeComponent):
                 f"Available fields include: {fields!r}."
             )
         return filter_type(schema={field: schema}, **spec)
+
+    def to_spec(self, context=None):
+        spec = super().to_spec(context=context)
+        if spec['label'].lower() == spec['field']:
+            del spec['label']
+        return spec
 
     @property
     def panel(self):
@@ -252,12 +260,15 @@ class WidgetFilter(BaseWidgetFilter):
 
     filter_type = 'widget'
 
-    _internal_params = ['name', 'schema', 'widget']
+    _internal_params = ['name', 'schema']
 
     def __init__(self, **params):
+        wtype = params.pop('widget', None)
+        self._inferred_widget = wtype is None
         super().__init__(**params)
         self.widget = JSONSchema(
-            schema=self.schema, sizing_mode='stretch_width', multi=self.multi
+            schema=self.schema, sizing_mode='stretch_width', multi=self.multi,
+            widgets={self.field: wtype} if wtype else {}
         )._widgets[self.field]
         if isinstance(self.widget, pn.widgets.Select) and self.empty_select:
             if self.widget.options[0] != ' ':
@@ -269,6 +280,27 @@ class WidgetFilter(BaseWidgetFilter):
         self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
         if self.default is not None:
             self.widget.value = self.default
+
+    @classmethod
+    def _validate_widget(cls, widget, spec, context):
+        try:
+            resolve_module_reference(widget, pn.widgets.Widget)
+        except Exception:
+            raise ValidationError(
+                f'{cls.__name__} could not resolve widget module reference {widget!r}.', spec
+            )
+        else:
+            return widget
+
+    def to_spec(self, context=None):
+        spec = super().to_spec(context=context)
+        print(self._inferred_widget)
+        if self._inferred_widget:
+            del spec['widget']
+        else:
+            wtype = type(spec['widget'])
+            spec['widget'] = f'{wtype.__module__}.{wtype.__name__}'
+        return spec
 
     @property
     def query(self):

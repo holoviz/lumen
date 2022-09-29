@@ -2,6 +2,8 @@ import pandas as pd
 import panel as pn
 import param
 
+from .util import resolve_module_reference
+
 
 class JSONSchema(pn.pane.PaneBase):
 
@@ -165,7 +167,11 @@ class JSONSchema(pn.pane.PaneBase):
                 else:
                     wtype = self._widget_type(prop, schema)
             else:
+                _, kwargs = self._widget_type(prop, schema)
                 wtype = self.widgets[p]
+
+            if isinstance(wtype, str):
+                wtype = resolve_module_reference(wtype, pn.widgets.Widget)
 
             if isinstance(wtype, pn.widgets.Widget):
                 widget = wtype

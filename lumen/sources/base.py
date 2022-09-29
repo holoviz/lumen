@@ -2,7 +2,6 @@ import hashlib
 import json
 import re
 import shutil
-import sys
 import threading
 import warnings
 import weakref
@@ -26,6 +25,11 @@ from ..state import state
 from ..transforms import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
+
+try:
+    import dask.dataframe as dd
+except ImportError:
+    dd = None
 
 
 def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
@@ -291,12 +295,10 @@ class Source(MultiTypeComponent):
             path = self.root / self.cache_dir / filename
             if path.is_file():
                 return pd.read_parquet(path), not bool(query)
-            if 'dask.dataframe' in sys.modules and path.is_dir():
-                import dask.dataframe as dd
+            if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
             path = path.with_suffix('')
-            if 'dask.dataframe' in sys.modules and path.is_dir():
-                import dask.dataframe as dd
+            if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
         return None, not bool(query)
 
@@ -312,8 +314,7 @@ class Source(MultiTypeComponent):
             else:
                 filename = f'{table}.parq'
             filepath = path / filename
-            if 'dask.dataframe' in sys.modules:
-                import dask.dataframe as dd
+            if dd:
                 if isinstance(data, dd.DataFrame):
                     filepath = filepath.with_suffix('')
             try:
@@ -506,8 +507,8 @@ class FileSource(Source):
         return self._pd_load_fns[ext], kwargs
 
     def _set_cache(self, data, table, **query):
-        _, ext = self._named_files[table]
-        if ext in ('parq', 'parquet'):
+        file, ext = self._named_files[table]
+        if ext in ('parq', 'parquet') and Path(file).exists():
             query['write_to_file'] = False
         super()._set_cache(data, table, **query)
 

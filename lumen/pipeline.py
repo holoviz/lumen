@@ -7,8 +7,10 @@ from typing import (
 import panel as pn
 import param
 
+from panel.widgets import Widget
+
 from .base import Component
-from .filters import Filter, ParamFilter
+from .filters import Filter, ParamFilter, WidgetFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
@@ -264,7 +266,7 @@ class Pipeline(Component):
         params['sql_transforms'] = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
         return cls(**params)
 
-    def add_filter(self, filt: Union[Filter, Type[Filter]], field: Optional[str] = None, **kwargs):
+    def add_filter(self, filt: Union[Filter, Type[Filter], Widget], field: Optional[str] = None, **kwargs):
         """
         Add a filter to the pipeline.
 
@@ -277,6 +279,11 @@ class Pipeline(Component):
         """
         if isinstance(filt, str):
             filt = Filter._get_type(filt)
+        elif isinstance(filt, Widget):
+            filt = WidgetFilter(
+                widget=filt, field=field, table=self.table,
+                schema={self.table: self.schema}
+            )
         if not isinstance(filt, Filter):
             tspec = f'{filt.__module__}.{filt.__name__}'
             filt = Filter.from_spec(
