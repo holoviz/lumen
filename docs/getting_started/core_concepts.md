@@ -185,6 +185,29 @@ targets:
       - type: View type
         ...: View parameters
 ```
+:::{dropdown} Expand this dropdown for a more complex example structure of `targets`
+:animate: fade-in-slide-down
+```{code-block} yaml
+targets:
+  - title: The title of the monitoring endpoint
+    download:
+      format: When specified adds a section to the sidebar allowing users to download the filtered dataset
+      kwargs: Additional keyword arguments to pass to the pandas/dask to_<format> method
+      tables: Allows declaring a subset of tables to download
+    pipeline: The pipeline driving the views of this target. Each View can independently declare a pipeline or all use the shared pipeline defined at the target level
+    views: A list of metrics to monitor and display on the endpoint
+      - pipeline: The Pipeline driving the View
+        type: The type of View to use for rendering the table
+        ...: Additional parameters for the View
+    layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
+    facet:
+      by: List of fields to facet by
+      sort: List of fields to sort by
+      reverse: Whether to reverse the sort order
+    refresh_rate: How frequently to poll for updates in milliseconds
+    ...: Additional parameters passed to the Card layout(s), e.g. width or height
+```
+:::
 
 Each view can be of a different type, but a good starting point is the `hvPlotView`. This view type allows you to produce [many different types of plots](https://hvplot.holoviz.org/reference/index.html) available from the [hvPlot](https://hvplot.holoviz.org/) library, just by specifying the `kind` parameter.
 
