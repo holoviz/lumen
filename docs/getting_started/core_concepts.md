@@ -85,7 +85,7 @@ config:
   theme: dark
 ```
 
-To see all the possible config parameters, see the `Config Reference`. TODO
+To see all the possible config parameters, see the `Config Reference`.
 
 ## Sources
 The `sources` section defines the source of your data. Depending on your source type, the specification may look a bit different, but in general it will follow this pattern:
@@ -250,7 +250,7 @@ defaults:
       multi: false
 ```
 
-For more on `Defaults`, check out the `How to specify defaults` guide. TODO
+For more on `Defaults`, check out the `How to override parameter defaults` guide.
 
 ### Variables
 The `variables` sections allow you to link settings across your entire application. Once a variable has been declared in the `variables` section, you can reference it throughout your specification using the `$variables.<variable_name>` syntax.
@@ -279,7 +279,7 @@ sources:
       ticker: $variables.ticker
 ```
 
-For more on Variables, check out the `How to create variables` guide. TODO
+For more on variables, check out the `How to use variables and references` guide.
 
 ### Sources as variables
 In addition to the `variables` section, in which you can create arbitrary types of variables, you can also refer to sources with a similar syntax. In some scenarios you might want to refer to a `Source`, a table on a `Source` or a field on a table from elsewhere in the yaml specification.
@@ -298,21 +298,9 @@ sources:
 
 The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the `WebsiteSource`.
 
-### Authentication
-The `auth` field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
+For more on referring to sources, check out the `How to use variables and references` guide.
 
-As an example the GitHub OAuth provider returns the login of the user that is visiting the dashboard. If we add the following field to the yaml:
-
-```yaml
-auth:
-  login: [philippjfr]
-```
-
-Lumen will check the current user `login` against all user logins listed here. For a more generic Auth mechanism many Auth providers, such as Okta, make it possible to configure a list of groups a user belongs to in which case you could list the allowed groups in the auth field.
-
-For more on Authentication, check out the `How to setup authentication` guide. TODO
-
-### Using external variables (templating)
+### External variables (templating)
 In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command, a CLI argument, a HTTP request header or cookie, or a OAuth token variable. This can be achieved using the following templating syntax:
 
 - `{{env("USER")}}`: look in the set environment variables for the named variable
@@ -327,7 +315,21 @@ In many cases you do not want to hardcode variables inside the yaml specificatio
 
 - `{{USER}}`: Arguments passed in using `--template-vars="{'USER': 'lumen_user'}"` when using `lumen serve` on the commandline.
 
-For more on templating, check out the `How to use external variables` guide. TODO
+For more on templating, check out the `How to use variables and references` guide.
+
+### Authentication
+The `auth` field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
+
+As an example the GitHub OAuth provider returns the login of the user that is visiting the dashboard. If we add the following field to the yaml:
+
+```yaml
+auth:
+  login: [philippjfr]
+```
+
+Lumen will check the current user `login` against all user logins listed here. For a more generic Auth mechanism many Auth providers, such as Okta, make it possible to configure a list of groups a user belongs to in which case you could list the allowed groups in the auth field.
+
+For more on Authentication, check out the `How to set up authentication` guide.
 
 ## Where to go from here?
 As mentioned at top of this page, you should now start building your own dashboards. As you build, consult the relevant `How-to` guides or `Reference` pages, as needed. At any point, if you want deeper discussion of Lumen to solidify your understanding, take a look at the `Background` section.
