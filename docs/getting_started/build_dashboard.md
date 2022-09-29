@@ -308,13 +308,13 @@ targets:
 ::::
 
 ## 9. Add a title and theme
-Final step - let's give our dashboard a more descriptive title and change the theme to dark.
+Final step - let's use a `config` section to give our dashboard a more descriptive title and change the overall theme to dark. Note that we can also set our table to dark by adding a new *theme* parameter at the bottom.
 
 ::::{tab-set}
 :::{tab-item} YAML
 :sync: yaml
 ``` {code-block} yaml
-:emphasize-lines: 1-3
+:emphasize-lines: 1-3, 46
 
 config:
   title: Palmer Penguins
@@ -361,6 +361,7 @@ targets:
       - type: table
         show_index: false
         height: 300
+        theme: midnight
 
 ```
 :::
