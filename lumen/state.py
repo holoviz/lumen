@@ -283,5 +283,14 @@ class _session_state:
             return value
         return self._resolve_source_ref(refs)
 
+    def reset(self):
+        self._filters.clear()
+        self._sources.clear()
+        self._pipelines.clear()
+        self._specs.clear()
+        self._spec.clear()
+        self._variables.clear()
+
+
 
 state = _session_state()
