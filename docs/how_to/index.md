@@ -8,7 +8,6 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 * [Override parameter defaults]()
 * [Use variables and references]()
 * [Set up authentication]()
-* [Use local components]()
 
 **Data intake**
 * [Cache data](data_intake/cache)
@@ -23,6 +22,7 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 * [Download data from dashboard](data_outtake/download_data)
 
 **Build custom components**
+* [Use custom components](local_components)
 
 **Lumen in Python**
 * [Build a dashboard in Python](pipeline_python)
@@ -40,4 +40,5 @@ Build a dashboard in Python<pipeline_python>
 Branch a pipeline in Python<chain_python>
 Download data from dashboard<data_outtake/download_data>
 Cache data<data_intake/cache>
+Use custom components<local_components>
 ```
