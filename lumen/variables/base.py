@@ -196,6 +196,8 @@ class Widget(Variable):
 
     variable_type = 'widget'
 
+    _valid_keys = ['kind', 'params']
+
     def __init__(self, **params):
         default = params.pop('default', None)
         refs = params.pop('refs', {})
