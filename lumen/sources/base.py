@@ -658,6 +658,8 @@ class WebsiteSource(Source):
 
     source_type = 'live'
 
+    threads = param.Boolean(False, doc="Check the URLS asynchronous")
+
     @cached_schema
     def get_schema(self, table=None):
         schema = {
@@ -673,16 +675,27 @@ class WebsiteSource(Source):
 
     @cached(with_query=False)
     def get(self, table, **query):
+        data = self._async_check() if self.threads else self._sync_check()
+        return pd.DataFrame(data)
+
+    def _check_live(self, url):
+        try:
+            return requests.get(url, timeout=10).ok
+        except Exception:
+            return False
+
+    def _sync_check(self):
         data = []
-        for url in self.urls:
-            try:
-                r = requests.get(url)
-                live = r.status_code == 200
-            except Exception:
-                live = False
+        for url in self.urls.copy():
+            live = self._check_live(url)
             data.append({"live": live, "url": url})
-        df = pd.DataFrame(data)
-        return df
+        return data
+
+    def _async_check(self):
+        urls = self.urls.copy()
+        with futures.ThreadPoolExecutor() as ex:
+            lives = ex.map(self._check_live, urls)
+        return [{"live": l, "url": u} for u, l in zip(urls, lives)]
 
 
 class PanelSessionSource(Source):
