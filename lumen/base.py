@@ -340,10 +340,10 @@ class MultiTypeComponent(Component):
         elif cls._valid_keys == 'params':
             valid = list(cls.param)
         elif 'params' in cls._valid_keys:
-            valid = cls._valid_keys
+            valid = cls._valid_keys.copy()
             valid.extend(list(cls.param))
         else:
-            valid = cls._valid_keys
+            valid = cls._valid_keys.copy()
 
         if valid and 'type' not in valid:
             valid.append('type')
