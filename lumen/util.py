@@ -4,11 +4,11 @@ import datetime as dt
 import importlib
 import os
 import re
-import subprocess
 import sys
 
 from functools import wraps
 from logging import getLogger
+from subprocess import check_output
 
 import panel as pn
 
@@ -114,7 +114,7 @@ def _j_getshell(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
     try:
-        return subprocess.check_output(x).decode()
+        return check_output(x, shell=True).decode()
     except (IOError, OSError):
         return ""
 
