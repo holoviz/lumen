@@ -2,7 +2,7 @@
 
 :::{admonition} What is the purpose of this page?
 :class: important
-This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you achieved in the tutorial ([Build a dashboard](build_dashboard)). After this page you should start building your own dashboard. As you build, consult the relevant `How-to` guides or `Reference` pages, as needed.
+This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you achieved in the tutorial ([Build a dashboard](build_dashboard)). After this page you should start building your own dashboard. As you build, consult the relevant [How-to](../how_to/) guides or [Reference](../reference/) pages, as needed.
 :::
 
 ## Overview
@@ -107,7 +107,7 @@ sources:
       table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 ```
 
- See the [Source Reference](lumen.sources.Source) for other source `types` and for the relevant `parameters`.
+ See the [Source Reference](lumen.sources.Source) for other source types and for the relevant parameters.
 
 ## Pipelines (data manipulation)
 The `pipelines` section is where you list all the ways that you want the data to be **filtered** or **transformed**. If you don't need the data to be manipulated, you can just exclude this section.
@@ -138,7 +138,7 @@ pipelines:
         field: island
 ```
 
-See the [Filter Reference](../architecture/filter) for other filter `types` and for the relevant `parameters`.
+See the [Filter Reference](../architecture/filter) for other filter types and for the relevant parameters.
 
 ### Transforms
 Within the pipeline section, you can also apply a `transform` to the data, such as selecting only certain columns of the data.
@@ -170,7 +170,7 @@ pipelines:
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 ```
 
-See the [Transform Reference](../architecture/transform) for other transform `types` and for the relevant `parameters`.
+See the [Transform Reference](../architecture/transform) for other transform types and for the relevant parameters.
 
 ## Targets (views)
 
@@ -240,7 +240,7 @@ targets:
         height: 350
 ```
 
-See the [View Reference](../architecture/view) for other view `types` and for the relevant `parameters`.
+See the [View Reference](../architecture/view) for other view types and for the relevant parameters.
 
 ## Advanced Functionality
 The following sections are meant to introduce you some of Lumen's advanced functionality. If you want to implement some of these features, explore their associated [How to](../how_to/index) guides for complete recipes.
