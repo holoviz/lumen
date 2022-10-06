@@ -100,8 +100,10 @@ class Card(Viewer):
             if isinstance(view_specs, dict):
                 view_spec = dict(view_specs[view], name=view)
             else:
-                view_spec = view
-            if 'table' in view_spec and view_spec['table'] in pipelines:
+                view_spec = view.copy()
+            if 'pipeline' in view_spec:
+                pipeline = Pipeline.from_spec(view_spec.pop('pipeline'))
+            elif 'table' in view_spec and view_spec['table'] in pipelines:
                 pipeline = pipelines[view_spec['table']]
             elif len(pipelines) == 1:
                 pipeline = list(pipelines.values())[0]
