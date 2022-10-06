@@ -261,8 +261,6 @@ def catch_and_notify(message=None):
         exception message.
 
     """
-    pn.config.notifications = True
-
     # This is to be able to call the decorator
     # like this @catch_and_notify
     function = None

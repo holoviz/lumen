@@ -2,11 +2,38 @@ from pathlib import Path
 
 import panel as pn
 
+from panel.io.resources import CSS_URLS
 from panel.template import FastListTemplate
 
 from lumen.ui.builder import Builder
 from lumen.ui.state import state
 
+CSS_RAW = """
+i.fa.fa-plus:hover {
+  color: var(--neutral-fill-color) !important;
+}
+
+.gallery-item:hover {
+  box-shadow: 0 1px 5px;
+}
+
+.gallery-item {
+  cursor: pointer;
+}
+
+.card-margin {
+  height: calc(100% - 40px);
+}
+
+.bk-root {
+  height: 100% !important;
+}
+"""
+
+pn.extension(
+    'ace', 'perspective', 'tabulator', raw_css=[CSS_RAW],
+    css_files=[CSS_URLS['font-awesome']]
+)
 
 def main():
     path = Path(state.components)
