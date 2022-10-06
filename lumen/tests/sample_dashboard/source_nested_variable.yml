@@ -1,0 +1,18 @@
+variables:
+  ticker:
+    type: widget
+    kind: TextInput
+    default: '../sources/test.csv'
+sources:
+  stock_data:
+    type: file
+    tables:
+      ticker: $variables.ticker
+    kwargs:
+      parse_dates: ['D']
+targets:
+- title: Table
+  source: stock_data
+  views:
+    - type: table
+      table: ticker

@@ -88,6 +88,7 @@ def clear_state():
     state._loading.clear()
     state._sources.clear()
     state._filters.clear()
+    state._pipelines.clear()
     state._variables.clear()
 
 @pytest.fixture
