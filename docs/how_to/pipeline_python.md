@@ -111,9 +111,11 @@ pipeline.add_transform('columns', columns=columns)
 
 ### Display the dashboard
 
-Once your pipeline has been specified, you can use the `Panel` package to define the layout of your widgets and views, and then you can serve your dashboard within a notebook or from a Python script. See Panel's [Documentation](https://panel.holoviz.org/getting_started/index) to learn more about Panel components and deployment.
+Once your pipeline has been specified, you can use the `Panel` package to define the layout of your widgets and views, and then you can serve your dashboard within a notebook or from a Python script. See Panel's [Documentation](https://panel.holoviz.org/getting_started/index) to learn more about Panel components.
 
 The simplest approach is to render the widgets with the `pipeline.control_panel` property alongside Lumen view components (e.g. `Table`, `hvPlotView`).
+
+#### Notebook environment
 
 ```{code-block} python
 :emphasize-lines: 17-27
@@ -147,8 +149,39 @@ pn.Row(
 ```
 ![dashboard preview](../_static/pipeline_dash.png)
 
-```{note} If querying data from the Source takes time use set `auto_update=False` on the Pipeline. This will require you to manually trigger an update by clicking a button.
+#### Python script
+If you are in a Python script, add `.servable()` to the viewable components, then deploy using `lumen serve` (see How to on [deploying a Lumen dashboard](deploy))
+
+```{code-block} python
+:emphasize-lines: 22, 26
+from lumen.pipeline import Pipeline
+from lumen.sources import FileSource
+
+data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
+
+pipeline = Pipeline(source=FileSource(tables={'penguins': data_url}), table='penguins')
+
+# Filters
+pipeline.add_filter('widget', field='species')
+pipeline.add_filter('widget', field='island')
+pipeline.add_filter('widget', field='sex')
+pipeline.add_filter('widget', field='year')
+
+columns=['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
+pipeline.add_transform('columns', columns=columns)
+
+from lumen.views import Table, hvPlotView
+import panel as pn
+pn.extension('tabulator', template='fast')
+
+pn.Row(
+    pipeline.control_panel.servable(),
+    pn.Tabs(
+        ('Plot', hvPlotView(pipeline=pipeline, kind='scatter', x='bill_length_mm', y='bill_depth_mm', color='species')),
+        ('Table', Table(pipeline=pipeline))
+    ).servable()
+)
 ```
 
-Related Resources:
+## Related Resources:
 * [Branch a pipeline in Python](chain_python)

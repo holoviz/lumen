@@ -10,7 +10,7 @@ The primary tool to create a branch of a Lumen pipeline is to use the `pipeline.
 
 
 ## Initiating the pipeline
-Let's start by creating a pipeline up to a branching point. See the [Build a dashboard in Python](ht_pipeline_python) how-to guide for a walkthrough of these initial steps.
+Let's start by creating a pipeline up to a branching point. See the [Build a dashboard in Python](ht_pipeline_python) how-to guide for a walk-through of these initial steps.
 
 ```python
 from lumen.pipeline import Pipeline
@@ -29,7 +29,7 @@ pipeline.data
 ```
 
 ## Branching the pipeline
-At this point, we will create a branch of our pipeline by using the `pipeline.chain` method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new `Pipeline` variable so that we can refer to it seperately from the original `pipeline`.
+At this point, we will create a branch of our pipeline by using the `pipeline.chain` method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new `Pipeline` variable so that we can refer to it separately from the original `pipeline`.
 
 ```python
 from lumen.transforms import Aggregate
