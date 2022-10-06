@@ -161,6 +161,7 @@ class _session_state:
             pipelines[name] = Pipeline.from_spec(
                 dict(source_spec, name=name, **kwargs)
             )
+        return pipelines
 
     def load_source(self, name, source_spec):
         from .filters import Filter
