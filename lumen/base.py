@@ -363,10 +363,18 @@ class MultiTypeComponent(Component):
             )
         if '.' in component_type:
             return resolve_module_reference(component_type, base_type)
+
         try:
-            __import__(f'lumen.{base_type.__name__.lower()}s.{component_type}')
-        except Exception:
-            pass
+            import_name = f'lumen.{base_type.__name__.lower()}s.{component_type}'
+            __import__(import_name)
+        except ImportError as e:
+            if e.name != import_name:
+                msg = (
+                    f"In order to use the {base_type.__name__.lower()} "
+                    f"component '{component_type}', the '{e.name}' package "
+                    "must be installed."
+                )
+                raise ImportError(msg)
 
         subcls_types = set()
         for subcls in param.concrete_descendents(cls).values():
