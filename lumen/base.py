@@ -59,7 +59,16 @@ class Component(param.Parameterized):
         Component should implement appropriate downstream events
         following a change in a variable.
         """
-        self.param.update({pname: event.new})
+        if '.' in pname:
+            pname, *keys = pname.split('.')
+            old = getattr(self, pname)
+            current = new = old.copy()
+            for k in keys[:-1]:
+                current = current[k]
+            current[keys[-1]] = event.new
+        else:
+            new = event.new
+        self.param.update({pname: new})
 
     ##################################################################
     # Validation API
