@@ -103,6 +103,22 @@ def test_dashboard_with_source_variable(set_root, document):
 
     pd.testing.assert_frame_equal(table.value, expected.iloc[::-1].reset_index(drop=True))
 
+def test_dashboard_with_nested_source_variable(set_root, document):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'source_nested_variable.yml'))
+    dashboard._render_dashboard()
+    target = dashboard.targets[0]
+    target.update()
+
+    table = target._cards[0]._card[0][0]
+    expected = pd._testing.makeMixedDataFrame()
+    pd.testing.assert_frame_equal(table.value, expected)
+
+    state.variables.ticker = '../sources/test2.csv'
+
+    pd.testing.assert_frame_equal(table.value, expected.iloc[::-1].reset_index(drop=True))
+
 def test_dashboard_with_view_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))

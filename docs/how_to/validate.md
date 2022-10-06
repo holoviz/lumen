@@ -55,12 +55,12 @@ View component specification declared unknown type 'hvplotqedq'. Did you mean 'h
 ### Package not installed
 The validation will also catch the declaration of packages not installed. For example:
 
-```console
-Source component specification declared unknown type 'intake'.
+```bash
+ERROR: In order to use the source component 'intake', the 'intake' package must be installed.
 ```
 
-In this case, simply install the package into your enviornment, such as with:
+In this case, simply install the package into your environment, such as with:
 
-```console
+```bash
 conda install intake
 ```
