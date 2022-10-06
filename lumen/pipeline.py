@@ -76,7 +76,7 @@ class Pipeline(Component):
     )
 
     _internal_params = ['data', 'name', 'schema']
-    _required_fields = ['source']
+    _required_fields = [('source', 'pipeline')]
 
     def __init__(self, *, source, table, **params):
         if 'schema' not in params:
@@ -172,6 +172,16 @@ class Pipeline(Component):
         return Source.validate(source_spec, context)
 
     @classmethod
+    def _validate_pipeline(cls, pipeline_spec, spec, context):
+        if isinstance(pipeline_spec, str):
+            if pipeline_spec not in context['pipelines']:
+                msg = f'Pipeline specified non-existent pipeline {pipeline_spec!r}.'
+                msg = match_suggestion_message(pipeline_spec, list(context['pipelines']), msg)
+                raise ValidationError(msg, spec, pipeline_spec)
+            return pipeline_spec
+        return Pipeline.validate(pipeline_spec, context)
+
+    @classmethod
     def _validate_filters(cls, filter_specs, spec, context):
         for filter_spec in (filter_specs if isinstance(filter_specs, list) else filter_specs.values()):
             if not isinstance(filter_spec, str):
@@ -218,15 +228,27 @@ class Pipeline(Component):
         params = dict(spec)
 
         # Resolve source
-        source = spec['source']
-        if isinstance(source, dict):
-            source = Source.from_spec(source)
-        elif isinstance(source, str):
-            if source in state.sources:
-                source = state.sources[source]
+        if 'source' in spec:
+            source = spec['source']
+            if isinstance(source, dict):
+                source = Source.from_spec(source)
+            elif isinstance(source, str):
+                if source in state.sources:
+                    source = state.sources[source]
+                else:
+                    source = state.load_source(source, state.spec['sources'][source])
+            params['source'] = source
+        elif 'pipeline' in spec:
+            pipeline = spec['pipeline']
+            if isinstance(pipeline, dict):
+                pipeline = Pipeline.from_spec(pipeline)
+            elif isinstance(pipeline, str) and pipeline in state.pipelines:
+                pipeline = state.pipelines[pipeline]
             else:
-                source = state.load_source(source, state.spec['sources'][source])
-        params['source'] = source
+                raise ValidationError('Pipeline {pipeline!r} could not be resolved.', spec)
+            params['pipeline'] = pipeline
+            params['source'] = source = pipeline.source
+            params['table'] = pipeline.table
 
         # Validate table
         table = params.get('table')
