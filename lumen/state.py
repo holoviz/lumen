@@ -156,11 +156,11 @@ class _session_state:
 
     def load_pipelines(self, **kwargs):
         from .pipeline import Pipeline
-        pipelines = {
-            name: Pipeline.from_spec(dict(source_spec, name=name, **kwargs))
-            for name, source_spec in self.spec.get('pipelines', {}).items()
-        }
-        self._pipelines[pn.state.curdoc or None] = pipelines
+        self._pipelines[pn.state.curdoc or None] = pipelines = {}
+        for name, source_spec in self.spec.get('pipelines', {}).items():
+            pipelines[name] = Pipeline.from_spec(
+                dict(source_spec, name=name, **kwargs)
+            )
 
     def load_source(self, name, source_spec):
         from .filters import Filter
