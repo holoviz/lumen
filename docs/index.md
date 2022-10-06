@@ -5,7 +5,7 @@
 The Lumen project provides a framework for visual analytics, which allows users to build data-driven dashboards from a simple yaml specification. The power of Lumen comes from the ability to leverage the powerful data intake, data processing and data visualization libraries available in the PyData ecosystem.
 
 - **Data Intake**: A flexible system for declaring data sources with strong integration with [Intake](https://intake.readthedocs.io/en/latest/), allows Lumen to query data from a wide range of sources including many file formats such as CSV or Parquet but also SQL and many others.
-- **Data Proccessing**: Internally Lumen stores data as DataFrame objects, allowing users to leverage familiar APIs for filtering and transforming data using [Pandas](https://pandas.pydata.org/) while also providing the ability to scale these transformations out to a cluster thanks to [Dask](https://dask.org/).
+- **Data Processing**: Internally Lumen stores data as DataFrame objects, allowing users to leverage familiar APIs for filtering and transforming data using [Pandas](https://pandas.pydata.org/) while also providing the ability to scale these transformations out to a cluster thanks to [Dask](https://dask.org/).
 - **Data Visualization**: Since Lumen is built on [Panel](https://panel.holoviz.org) all the most popular plotting libraries and many other components such as powerful datagrids and BI indicators are supported.
 
 The core strengths of Lumen include:
@@ -79,10 +79,7 @@ hidden: true
 Home <self>
 Getting Started <getting_started/index>
 How to <how_to/index>
-User Guide <user_guide/index>
-UI <ui/index>
-Gallery <gallery/index>
-Architecture <architecture/index>
-Conceptual Guides <conceptual/index>
 Reference <reference/index>
+Background <background/index>
+Gallery <gallery/index>
 ```

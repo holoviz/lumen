@@ -5,6 +5,7 @@ import pandas as pd
 from lumen.filters import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
+from lumen.state import state
 from lumen.transforms import Columns
 from lumen.transforms.sql import SQLColumns
 
@@ -220,7 +221,6 @@ def test_pipeline_chained_with_sql_transform(mixed_df):
     expected = mixed_df.iloc[2:4][['B', 'C']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
-
 def test_not_removing_type(penguins_file):
     spec = {
         "source": {"type": "file", "tables": {"penguins": penguins_file}},
@@ -229,3 +229,23 @@ def test_not_removing_type(penguins_file):
     Pipeline.from_spec(spec)
     Pipeline.from_spec(spec)
     assert spec == spec_org
+
+def test_load_chained_pipeline(penguins_file):
+    spec = {
+        "pipelines": {
+            "penguins": {
+                "source": {
+                    "type": "file",
+                    "tables": {"penguins": penguins_file}
+                }
+            },
+            "penguins_chained": {
+                "pipeline": "penguins"
+            }
+        }
+    }
+    state.spec = spec
+    pipelines = state.load_pipelines()
+    assert 'penguins' in pipelines
+    assert 'penguins_chained' in pipelines
+    assert pipelines['penguins_chained'].pipeline is pipelines['penguins']

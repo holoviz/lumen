@@ -1,19 +1,36 @@
-# Build an App
-This guide will guide you through the steps of how to build a Lumen app that will look like this:
+# {octicon}`tools;2em;sd-mr-1` Build a dashboard
+:::{admonition} What is the purpose of this page?
+:class: important
+This tutorial is meant to get your hands dirty with building a Lumen dashboard. Don't worry about understanding everything just yet - your only obligation is to complete the steps as directed.
+:::
 
+You will build a simple Lumen dashboard and deploy it in your browser. The result will look something like this:
 ![](../_static/getting_started/build_app_07.png)
 
+## 1. Create a YAML file
+Open your favorite text editor and create an empty file called `penguins.yaml`.
 
+## 2. Add a data source
+The first thing that is needed is a source of data. Insert and save the text below to add a remote file source. This will tell Lumen to fetch data about penguins.
+``` {code-block} yaml
 
+sources:
+  penguin_source:
+    type: file
+    tables:
+      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+```
 
-## Building the app
-This section will walk through the steps to creating the app.
-Create a file named `penguins.yaml`.
-The first thing which is needed is a source. Here we will add file source that will fetch data about individual penguins of three different and various measurement about them (such as the length of their bill).
+Once you have saved your file, open a terminal and navigate to the location of this file.
 
-Then launch the app with `lumen serve penguins.yaml --autoreload` in your terminal and open `http://localhost:5006` in your browser of choice.
-By using `--autoreload`, the dashboard automatically refreshes and updates the application whenever we make changes to the YAML file.
+In the terminal, launch the file with:
+``` bash
+lumen serve penguins.yaml --show --autoreload
+```
 
+By using `--autoreload`, the dashboard automatically updates the application whenever we make changes to the YAML file.
+
+What you should see in your browser should now match what is on the `Preview` tab:
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -24,20 +41,20 @@ sources:
   penguin_source:
     type: file
     tables:
-      table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 ```
 :::
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_00.png)
 :::
 ::::
 
-This returns an empty dashboard because we don't have a targeted view.
-The simplest view to add is a table with the penguin's table in it.
+So far, this returns an empty dashboard because we haven't yet specified a view - so let's add one!
 
+## 3. Specify a table view
+The simplest view to add is a table with the raw data. This gives us a good idea of what we are working with and the available fields.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -49,7 +66,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
 targets:
   - title: Penguins
@@ -63,14 +80,13 @@ targets:
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_01.png)
 :::
 ::::
 
-
-The table gives a good understanding of the data, but to really understand it, we have to visualize it.
-This can be done with a [hvplot](https://hvplot.holoviz.org/) view and is as easy as replacing the table type with a hvplot type.
+## 4. Create a plot view
+The table gives us a primer of the data source, but to start understanding patterns in the data, we have to visualize it.
+This can be done with an [hvplot](https://hvplot.holoviz.org/) view and it is as easy as replacing the `table` type with a `hvplot` type.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -82,7 +98,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
 targets:
   - title: Penguins
@@ -95,26 +111,24 @@ targets:
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_02.png)
 :::
 ::::
 
-
+## 5. Make a scatter plot
 This plot is a bit overwhelming, so instead of plotting everything in one plot, we can plot `bill_length_mm` on the x-axis and `bill_depth_mm` on the y-axis.
 Furthermore, we can color based on the species and change the kind of the plot to scatter.
 
 ::::{tab-set}
 :::{tab-item} YAML
 :sync: yaml
-
 ``` {code-block} yaml
 :emphasize-lines: 13-17
 sources:
   penguin_source:
     type: file
     tables:
-      table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
 targets:
   - title: Penguins
@@ -131,20 +145,18 @@ targets:
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_03.png)
 :::
 ::::
 
-
-Let's now set up two filters based on sex and the island of the penguins, which is done by adding a pipeline with these filters.
+## 6. Manipulate the data
+Let's now set up two filter widgets based on two fields of the data - 'sex' and 'island'. Since we don't need all of the data columns, let's also add a transform to select only a subset of the data.
 
 ::::{tab-set}
 :::{tab-item} YAML
 :sync: yaml
-
 ``` {code-block} yaml
-:emphasize-lines: 7-15
+:emphasize-lines: 7-18
 
 sources:
   penguin_source:
@@ -161,6 +173,9 @@ pipelines:
         field: sex
       - type: widget
         field: island
+    transforms:
+      - type: columns
+        columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
 targets:
   - title: Penguins
@@ -176,19 +191,18 @@ targets:
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_04.png)
 :::
 ::::
 
-We can even expand the views with more plots like histograms of some of the penguin's features.
+## 7. Expand the view types
+We can even expand the views with a histogram and a table.
 
 ::::{tab-set}
 :::{tab-item} YAML
 :sync: yaml
-
 ``` {code-block} yaml
-:emphasize-lines: 26-34
+:emphasize-lines: 29-34
 
 sources:
   penguin_source:
@@ -205,6 +219,9 @@ pipelines:
         field: sex
       - type: widget
         field: island
+    transforms:
+      - type: columns
+        columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
 targets:
   - title: Penguins
@@ -218,33 +235,27 @@ targets:
       - type: hvplot
         kind: hist
         y: bill_length_mm
-      - type: hvplot
-        kind: hist
-        y: bill_depth_mm
-      - type: hvplot
-        kind: hist
-        y: body_mass_g
+      - type: table
+        show_index: false
 
 ```
 :::
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_05.png)
 :::
 ::::
 
-
-The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space and does not resize responsively.
-We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views, and by changing the `layout` and `height`, we can customize how the dashboard looks and feels.
+## 8. Customize the appearance and behavior
+The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space, and does not resize responsively.
+We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views. By changing the `layout` and `height`, we can customize how the dashboard looks.
 
 ::::{tab-set}
 :::{tab-item} YAML
 :sync: yaml
-
 ``` {code-block} yaml
-:emphasize-lines: 20-22, 29-30, 34-35, 39-40, 44-45
+:emphasize-lines: 23-25, 32-33, 37-38, 43
 
 sources:
   penguin_source:
@@ -261,11 +272,14 @@ pipelines:
         field: sex
       - type: widget
         field: island
+    transforms:
+      - type: columns
+        columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
 targets:
   - title: Penguins
     pipeline: penguin_pipeline
-    layout: [[0], [1, 2, 3]]
+    layout: [[0], [1, 2]]
     sizing_mode: stretch_width
     height: 800
     views:
@@ -275,40 +289,32 @@ targets:
         kind: scatter
         color: species
         responsive: true
-        height: 450
+        height: 400
       - type: hvplot
         kind: hist
         y: bill_length_mm
         responsive: true
-        height: 350
-      - type: hvplot
-        kind: hist
-        y: bill_depth_mm
-        responsive: true
-        height: 350
-      - type: hvplot
-        kind: hist
-        y: body_mass_g
-        responsive: true
-        height: 350
+        height: 300
+      - type: table
+        show_index: false
+        height: 300
 ```
 :::
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_06.png)
 :::
 ::::
 
-Using `config`, we can also give a more descriptive title and change the theme to dark.
+## 9. Add a title and theme
+Final step - let's use a `config` section to give our dashboard a more descriptive title and change the overall theme to dark. Note that we can also set our table to dark by adding a new *theme* parameter at the bottom.
 
 ::::{tab-set}
 :::{tab-item} YAML
 :sync: yaml
-
 ``` {code-block} yaml
-:emphasize-lines: 1-3
+:emphasize-lines: 1-3, 46
 
 config:
   title: Palmer Penguins
@@ -329,11 +335,14 @@ pipelines:
         field: sex
       - type: widget
         field: island
+    transforms:
+      - type: columns
+        columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
 targets:
   - title: Penguins
     pipeline: penguin_pipeline
-    layout: [[0], [1, 2, 3]]
+    layout: [[0], [1, 2]]
     sizing_mode: stretch_width
     height: 800
     views:
@@ -343,36 +352,29 @@ targets:
         kind: scatter
         color: species
         responsive: true
-        height: 450
+        height: 400
       - type: hvplot
         kind: hist
         y: bill_length_mm
         responsive: true
-        height: 350
-      - type: hvplot
-        kind: hist
-        y: bill_depth_mm
-        responsive: true
-        height: 350
-      - type: hvplot
-        kind: hist
-        y: body_mass_g
-        responsive: true
-        height: 350
+        height: 300
+      - type: table
+        show_index: false
+        height: 300
+        theme: midnight
 
 ```
 :::
 
 :::{tab-item} Preview
 :sync: preview
-
 ![](../_static/getting_started/build_app_07.png)
 :::
 ::::
 
 
-:::{note}
-This is just a small example of how to build an app with Lumen and illuminate your data.
+Congratulations! You have created your first Lumen dashboard and know a bit more about penguins!
 
-To continue building this app, look at the [Penguins example](../gallery/penguins) or other examples in the [Gallery](../gallery/index).
+:::{note}
+This is just a simple example of how to build a dashboard with Lumen. The next step is to review the core concepts of what we just achieved so you can generalize these steps to create your own dashboard.
 :::
