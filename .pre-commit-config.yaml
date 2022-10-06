@@ -14,7 +14,7 @@ repos:
     -   id: check-toml
     -   id: detect-private-key
     -   id: end-of-file-fixer
-        exclude: \.csv$
+        exclude: \.(csv|excalidraw)$
     -   id: trailing-whitespace
 -   repo: https://github.com/PyCQA/flake8
     rev: 4.0.1

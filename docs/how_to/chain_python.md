@@ -2,11 +2,11 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-When working with Lumen in Python, you can build branching pipelines that allow you have different processing steps and views on the same source data. For instance, you may want to display a table of filtered data alongside a view of aggregated data.
+This guide will show you how to branch a pipeline in Python so that you can have different processing steps and views on the same source data.
 :::
 
 ## Overview
-The primary tool to create a branch of a Lumen pipeline is to use the `pipeline.chain` method. By chaining the `Pipeline` we can apply new processing steps while retaining the shared computations up to that point.
+The primary tool to create a branch of a Lumen pipeline is to use the `pipeline.chain` method. By chaining the `Pipeline` we can apply new processing steps while retaining the shared computations up to that point. For instance, you may want to display a table of filtered data alongside a view of aggregated data.
 
 
 ## Initiating the pipeline

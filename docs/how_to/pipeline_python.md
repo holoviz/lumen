@@ -2,7 +2,7 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-Although the primary interface for building a Lumen dashboard is the `YAML specification file`, this guide shows you an alternate approaches for building with Python. To learn more, visit the [Lumen in Python](../conceptual/lumen_python) Conceptual Guide.
+Although the primary interface for building a Lumen dashboard is the YAML specification file, this guide shows you an alternate approaches for building with Python. To learn more, visit the [Lumen in Python](../conceptual/lumen_python) Conceptual Guide.
 :::
 
 
@@ -64,7 +64,7 @@ At any point after defining the source in your pipeline, you can inspect the dat
 :::
 
 ### Add filter
-Next, you can add `widgets` for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to `filter` the data. See the [Filter Reference](../architecture/filter) for all options.
+Next, you can add `widgets` for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to filter the data. See the [Filter Reference](../architecture/filter) for all options.
 
 ```{code-block} python
 :emphasize-lines: 9-12
@@ -104,7 +104,7 @@ columns=['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 pipeline.add_transform('columns', columns=columns)
 
 ```
-:::{dropdown} `pipeline.data`
+:::{dropdown} **pipeline.data**
 :animate: fade-in-slide-down
 ![transform data preview](../_static/pipeline_transform.png)
 :::
@@ -182,6 +182,9 @@ pn.Row(
     ).servable()
 )
 ```
-
+:::{admonition} Manually update dashboard
+:class: note
+By default, every interaction will update the dashboard. If this behavior is unwanted, for instance, if you want to select multiple filter widgets and not have the dashboard update after every individual selection, set `auto_update=False` on the Pipeline. This will require you to manually trigger an update by clicking a button.
+:::
 ## Related Resources:
 * [Branch a pipeline in Python](chain_python)
