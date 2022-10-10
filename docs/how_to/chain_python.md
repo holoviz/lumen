@@ -6,11 +6,12 @@ This guide will show you how to branch a pipeline in Python so that you can have
 :::
 
 ## Overview
-The primary tool to create a branch of a Lumen pipeline is to use the `pipeline.chain` method. By chaining the `Pipeline` we can apply new processing steps while retaining the shared computations up to that point. For instance, you may want to display a table of filtered data alongside a view of aggregated data.
+See the Background page on [Pipeline Branching](../background/pipeline_branching.md).
 
+As we will see below, the primary tool to create a branch of a Lumen pipeline in Python is to use the `pipeline.chain` method.
 
 ## Initiating the pipeline
-Let's start by creating a pipeline up to a branching point. See the [Build a dashboard in Python](ht_pipeline_python) how-to guide for a walk-through of these initial steps.
+Let's start by creating a pipeline up to a branching point. See the How to guide - [Build a dashboard in Python](ht_pipeline_python) - for a walk-through of these initial steps.
 
 ```python
 from lumen.pipeline import Pipeline
