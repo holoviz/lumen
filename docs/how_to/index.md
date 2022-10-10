@@ -3,8 +3,8 @@
 Lumen's How to Guides provide step by step recipes for solving essential problems and tasks. They are more advanced than the Getting Started material and assume some knowledge of how Lumen works.
 
 **[General](general/index)**
-* [Validate a specification file](validate)
-* [Build a dashboard in Python](pipeline_python)
+* [Validate a specification file](general/validate)
+* [Build a dashboard in Python](general/pipeline_python)
 * [Override parameter defaults]() (under construction)
 * [Use variables and references]() (under construction)
 * [Set up authentication]() (under construction)
