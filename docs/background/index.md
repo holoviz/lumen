@@ -2,7 +2,8 @@
 
 Lumen's Background pages discuss key topics at a high level and provide useful context for design decisions.
 
-* **[Lumen in Python](lumen_in_python)**
+* [Lumen in Python](lumen_in_python)
+* [Pipeline branching](pipeline_branching)
 
 ```{toctree}
 :titlesonly:
@@ -10,4 +11,5 @@ Lumen's Background pages discuss key topics at a high level and provide useful c
 :maxdepth: 2
 
 Lumen in Python<lumen_in_python>
+Pipeline branching<pipeline_branching>
 ```

@@ -1,8 +1,8 @@
-# Reference custom components
+# Access custom components
 
 :::{admonition} What does this guide solve?
 :class: important
-This guide will show you how to reference local files that build custom components.
+This guide will show you how to access local files that build custom components.
 :::
 
 ## Overview
