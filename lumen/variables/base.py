@@ -211,7 +211,7 @@ class Widget(Variable):
         kind = params.pop('kind', None)
         super().__init__(
             default=default, refs=refs, name=params.get('name'), label=label,
-            throttled=throttled, kind=kind, value=params.get('value'),
+            throttled=throttled, kind=kind,
         )
         if '.' in self.kind:
             widget_type = resolve_module_reference(self.kind, _PnWidget)
@@ -234,6 +234,7 @@ class Widget(Variable):
             self._widget.link(self, value_throttled='value')
             self.param.watch(lambda e: self._widget.param.update({'value': e.new}), 'value')
         else:
+            self.value = self._widget.value
             self._widget.link(self, value='value', bidirectional=True)
 
     @property
