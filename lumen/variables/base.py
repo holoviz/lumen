@@ -199,7 +199,9 @@ class Widget(Variable):
 
     variable_type = 'widget'
 
-    _valid_keys = ['kind', 'params']
+    _valid_keys = None
+
+    _required_keys = ["kind"]
 
     def __init__(self, **params):
         default = params.pop('default', None)
@@ -209,7 +211,7 @@ class Widget(Variable):
         kind = params.pop('kind', None)
         super().__init__(
             default=default, refs=refs, name=params.get('name'), label=label,
-            throttled=throttled, kind=kind
+            throttled=throttled, kind=kind, value=params.get('value'),
         )
         if '.' in self.kind:
             widget_type = resolve_module_reference(self.kind, _PnWidget)

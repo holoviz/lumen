@@ -47,13 +47,13 @@ class Transform(MultiTypeComponent):
         transform_type = Transform._get_type(spec.pop('type', None))
         new_spec, refs = {}, {}
         for k, v in spec.items():
+            if is_ref(v):
+                refs[k] = v
+                v = state.resolve_reference(v)
             if (k in transform_type.param and
                 isinstance(transform_type.param[k], param.ListSelector) and
                 not isinstance(v, list)):
                 v = [v]
-            if is_ref(v):
-                refs[k] = v
-                v = state.resolve_reference(v)
             new_spec[k] = v
 
         # Resolve any specs for the controls
