@@ -12,8 +12,68 @@ This guide will give you an overview of three different types of variables and h
 As a rule of thumb, internal variables are referenced with a starting dollar sign `$`, whereas external references use double curly brackets before and after `{{ }}`.
 
 ## Variables
+Variables give Lumen components a lot of flexibility.
+Variables can be defined in multiple ways.
+The simplest way to define a variable is in the variables block.
+When a variable is defined, it can be referenced throughout the rest of the specification.
+This is done by using `$variables.NAME`, where `NAME` is the unique name of the variable.
+
+The data source is a remote dataset containing a `volume` column many magnitudes greater than the rest, making it impossible to see the other time series in the data.
+Removing `Volume` from the `columns` variable makes the other time series visible.
 
 
+::::{tab-set}
+:::{tab-item} YAML
+
+``` {code-block} yaml
+:emphasize-lines: 1-7, 24
+
+variables:
+  columns:
+    type: widget
+    kind: MultiSelect
+    value: [Open,High,Low,Close,Volume,Adj Close]
+    options: [Open,High,Low,Close,Volume,Adj Close]
+    size: 7
+
+sources:
+  stock_data:
+    type: file
+    tables:
+      ticker: https://raw.githubusercontent.com/matplotlib/sample_data/master/aapl.csv
+    kwargs:
+      index_col: Date
+      parse_dates: [Date]
+
+pipelines:
+  ticker_pipe:
+    source: stock_data
+    table: ticker
+    transforms:
+      - type: columns
+        columns: $variables.columns
+
+targets:
+- title: Plot
+  pipeline: ticker_pipe
+  views:
+    - type: hvplot
+      table: ticker
+```
+
+:::
+
+:::{tab-item} Preview - All columns
+
+![](../_static/how_to/variables/variable_all.png)
+
+:::
+:::{tab-item} Preview - Selected columns
+
+![](../_static/how_to/variables/variable_selected.png)
+
+:::
+::::
 
 
 ## Sources as variables
