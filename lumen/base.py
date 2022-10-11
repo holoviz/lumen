@@ -59,7 +59,16 @@ class Component(param.Parameterized):
         Component should implement appropriate downstream events
         following a change in a variable.
         """
-        self.param.update({pname: event.new})
+        if '.' in pname:
+            pname, *keys = pname.split('.')
+            old = getattr(self, pname)
+            current = new = old.copy()
+            for k in keys[:-1]:
+                current = current[k]
+            current[keys[-1]] = event.new
+        else:
+            new = event.new
+        self.param.update({pname: new})
 
     ##################################################################
     # Validation API
@@ -372,10 +381,18 @@ class MultiTypeComponent(Component):
             )
         if '.' in component_type:
             return resolve_module_reference(component_type, base_type)
+
         try:
-            __import__(f'lumen.{base_type.__name__.lower()}s.{component_type}')
-        except Exception:
-            pass
+            import_name = f'lumen.{base_type.__name__.lower()}s.{component_type}'
+            __import__(import_name)
+        except ImportError as e:
+            if e.name != import_name:
+                msg = (
+                    f"In order to use the {base_type.__name__.lower()} "
+                    f"component '{component_type}', the '{e.name}' package "
+                    "must be installed."
+                )
+                raise ImportError(msg)
 
         subcls_types = set()
         for subcls in param.concrete_descendents(cls).values():

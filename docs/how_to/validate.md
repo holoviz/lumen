@@ -2,23 +2,23 @@
 
 :::{admonition} What does this guide solve?
 :class: important
-This guide shows you how to validate the `YAML file` that specifies a Lumen dashboard.
+This guide shows you how to validate the YAML file that specifies a Lumen dashboard.
 :::
 
 ## Run the specification routine
 Use the `lumen validate` command line tool to run the validation. Insert the path to your specification file in place of `<dashboard.yml>` below.
 
-```console
+``` bash
 lumen validate <dashboard.yaml>
 ```
 
 ## Debug an invalid specification file
 When the validation fails, it will provide an error message indicating the type and location of the issue.
 
-### Indendation errors
-Indendation errors often show up as "`expected... but found...`"
+### Indentation errors
+Indentation errors often show up as "expected... but found..."
 
-```console
+``` bash
 expected <block end>, but found '?'
   in "<unicode string>", line 28, column 3:
       facet:
@@ -26,7 +26,7 @@ expected <block end>, but found '?'
 ```
 
 They may also appear as messages about certain values not being allowed in this hierarchy level:
-```console
+``` bash
 ERROR: mapping values are not allowed here
   in "<unicode string>", line 6, column 11:
         shared: true
@@ -37,7 +37,7 @@ ERROR: mapping values are not allowed here
 
 For constrained key and value fields, invalid entries will get caught, and a recommendation may be provided:
 
-```console
+``` bash
 View component specification declared unknown type 'hvplotqedq'. Did you mean 'hvplot or 'hvplot_ui'?
 
     table: southern_rockies
@@ -55,12 +55,12 @@ View component specification declared unknown type 'hvplotqedq'. Did you mean 'h
 ### Package not installed
 The validation will also catch the declaration of packages not installed. For example:
 
-```console
-Source component specification declared unknown type 'intake'.
+```bash
+ERROR: In order to use the source component 'intake', the 'intake' package must be installed.
 ```
 
-In this case, simply install the package into your enviornment, such as with:
+In this case, simply install the package into your environment, such as with:
 
-```console
+```bash
 conda install intake
 ```

@@ -189,6 +189,9 @@ class Widget(Variable):
     A Widget variable that updates when the widget value changes.
     """
 
+    kind = param.String(default=None, doc="""
+       The type of widget to instantiate.""")
+
     throttled = param.Boolean(default=True, doc="""
        If the widget has a value_throttled parameter use that instead,
        ensuring that no intermediate events are generated, e.g. when
@@ -203,16 +206,15 @@ class Widget(Variable):
         refs = params.pop('refs', {})
         throttled = params.pop('throttled', True)
         label = params.pop('label', None)
-        super().__init__(
-            default=default, refs=refs, name=params.get('name'), label=label, throttled=throttled
-        )
         kind = params.pop('kind', None)
-        if kind is None:
-            raise ValueError("A Widget Variable type must declare the kind of widget.")
-        if '.' in kind:
-            widget_type = resolve_module_reference(kind, _PnWidget)
+        super().__init__(
+            default=default, refs=refs, name=params.get('name'), label=label,
+            throttled=throttled, kind=kind
+        )
+        if '.' in self.kind:
+            widget_type = resolve_module_reference(self.kind, _PnWidget)
         else:
-            widget_type = getattr(pn.widgets, kind)
+            widget_type = getattr(pn.widgets, self.kind)
         if 'value' not in params and default is not None:
             params['value'] = default
         if self.label:

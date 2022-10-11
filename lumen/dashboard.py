@@ -10,6 +10,7 @@ import panel as pn
 import param
 import yaml
 
+from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
 
 from .auth import AuthPlugin
@@ -29,9 +30,6 @@ from .validation import ValidationError, match_suggestion_message
 from .variables import Variable, Variables
 from .views import View  # noqa
 
-pn.config.css_files.append(
-    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css'
-)
 
 def load_yaml(yaml_spec, **kwargs):
     expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
@@ -325,6 +323,7 @@ class Dashboard(Component):
         self._edited = False
         self._debug = params.pop('debug', False)
         super().__init__(**params)
+        self._init_config()
 
         # Initialize from spec
         config.load_local_modules()
@@ -352,6 +351,11 @@ class Dashboard(Component):
 
         state._apps[pn.state.curdoc] = self
         pn.state.onload(self._render_dashboard)
+
+    def _init_config(self):
+        pn.config.notifications = True
+        if CSS_URLS['font-awesome'] not in pn.config.css_files:
+            pn.config.css_files.append(CSS_URLS['font-awesome'])
 
     ##################################################################
     # Load specification

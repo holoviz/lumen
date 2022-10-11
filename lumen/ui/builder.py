@@ -24,30 +24,6 @@ from .targets import TargetEditor, TargetGallery, TargetGalleryItem
 from .variables import VariablesEditor
 from .views import ViewEditor, ViewGallery, ViewGalleryItem
 
-CSS_RAW = """
-i.fa.fa-plus:hover {
-  color: var(--neutral-fill-color) !important;
-}
-
-.gallery-item:hover {
-  box-shadow: 0 1px 5px;
-}
-
-.gallery-item {
-  cursor: pointer;
-}
-
-.card-margin {
-  height: calc(100% - 40px);
-}
-
-.bk-root {
-  height: 100% !important;
-}
-"""
-
-pn.extension('ace', 'perspective', 'tabulator', raw_css=[CSS_RAW])
-
 
 class Builder(param.Parameterized):
 

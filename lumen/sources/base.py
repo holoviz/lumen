@@ -166,10 +166,8 @@ class Source(MultiTypeComponent):
                 v = state.resolve_reference(v)
             elif isinstance(v, dict):
                 v, subrefs = cls._recursive_resolve(v, source_type)
-                if subrefs:
-                    cls.param.warning(
-                        "Resolving nested variable references currently not supported."
-                        )
+                for sk, sv in subrefs.items():
+                    refs[f'{k}.{sk}'] = sv
             if k == 'filters' and 'source' in resolved_spec:
                 source_schema = resolved_spec['source'].get_schema()
                 v = [Filter.from_spec(fspec, source_schema) for fspec in v]
