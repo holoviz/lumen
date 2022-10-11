@@ -9,8 +9,6 @@ This guide shows you how to use one of the advanced features of Lumen: Variables
 Variables are one of the most powerful features of Lumen.
 This guide will give you an overview of three different types of variables and how to reference them in the YAML specification.
 
-As a rule of thumb, internal variables are referenced with a starting dollar sign `$`, whereas external references use double curly brackets before and after `{{ }}`.
-
 ## Variables
 Variables give Lumen components a lot of flexibility.
 Variables can be defined in multiple ways.
@@ -77,7 +75,7 @@ targets:
 
 
 ## Sources as variables
-Below is a small example of using a source as a variable.
+Sources can also be used as a variable, below is a small example of this.
 The example consists of two sources:
 The first is a CSV file with a single column containing different website URLs.
 The second is a live source that checks whether the URLs from the first source are alive or dead.
@@ -110,9 +108,7 @@ targets:
 
 :::
 
-:::{tab-item} CSV
-
-_Save in the same folder as the YAML specification file and name it `websites.csv`._
+:::{tab-item} websites.csv
 
 ``` {code-block} csv
 url
@@ -125,12 +121,11 @@ not-alive
 :::
 ::::
 
-The reference to the variable is built up as follows:
+The reference to the variable is built up as:
 1) The name of the source to reference, `csv` in this case.
 2) The table's name `websites`, which is the filename without an extension.
 3) Which column of the table to look at `url`.
-
-These three parts are combined into the following variable `$csv.websites.url`.
+4= Combine the last three parts, and you get the following variable `$csv.websites.url`.
 
 
 ## External variables (templating)
@@ -192,7 +187,7 @@ Ran with `lumen serve cli_example.yml`
 
 The shell command is done by `{{ shell(COMMAND) }}` and then uses the output of the command.
 It is worth noting that the output will be trimmed of any trailing whitespace.
-As a very simple example `echo` can be used as the shell command.
+As a simple example, `echo` can be used as the shell command.
 
 ::::{tab-set}
 :::{tab-item} YAML
@@ -221,3 +216,11 @@ targets:
 :::
 
 ::::
+
+
+:::{admonition} Should I use `$` or `{{ }}` for reference?
+:class: tip
+
+As a rule of thumb, internal variables are referenced with a starting dollar sign `$`, whereas external references use double curly brackets before and after `{{ }}`.
+
+:::
