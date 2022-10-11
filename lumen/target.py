@@ -581,6 +581,12 @@ class Target(Component):
         return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
     @classmethod
+    def validate(cls, spec, context=None):
+        if "source" in spec and "pipeline" in spec:
+            raise ValueError(f"{cls.name} should either have a source or a pipeline.")
+        return super().validate(spec, context)
+
+    @classmethod
     def _validate_filters(cls, filter_specs, spec, context):
         filters = cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context)
         for filter_spec in filter_specs:
