@@ -1,44 +1,40 @@
 # How to Guides
 
-
 Lumen's How to Guides provide step by step recipes for solving essential problems and tasks. They are more advanced than the Getting Started material and assume some knowledge of how Lumen works.
 
-**General/API**
-* [Validate a specification file](validate)
-* [Override parameter defaults]()
-* [Use variables and references]()
-* [Set up authentication]()
+**[General](general/index)**
+* [Validate a specification file](general/validate)
+* [Build a dashboard in Python](general/pipeline_python)
+* [Override parameter defaults]() (under construction)
+* [Use variables and references]() (under construction)
+* [Set up authentication]() (under construction)
 
-**Data intake**
+**[Data intake](data_intake/index)**
 * [Cache data](data_intake/cache)
-* [Access local files]()
+* [Access local files]() (under construction)
 
-**Data processing**
+**[Data processing](data_processing/index)**
+* [Branch a pipeline](data_processing/branch_pipelinel)
 
-**Data visualization**
-* [Deploy a dashboard](deploy)
+**[Data visualization](data_visualization/index)**
+* [Deploy a dashboard](data_visualization/deploy)
+* [Define views](data_visualization/views)
 
-**Data output**
-* [Download data from dashboard](data_outtake/download_data)
+**[Data output](data_output/index)**
+* [Download data from dashboard](data_output/download_data)
 
-**Build custom components**
-* [Reference custom components](local_components)
-
-**Lumen in Python**
-* [Build a dashboard in Python](pipeline_python)
-* [Branch a pipeline in Python](chain_python)
-
+**[Custom components](custom_components/index)**
+* [Access custom components](custom_components/local_components)
 
 ```{toctree}
 :titlesonly:
 :hidden:
 :maxdepth: 2
 
-Validate a specification file<validate>
-Deploy a dashboard<deploy>
-Build a dashboard in Python<pipeline_python>
-Branch a pipeline in Python<chain_python>
-Download data from dashboard<data_outtake/download_data>
-Cache data<data_intake/cache>
-Reference custom components<local_components>
+General<general/index>
+Data intake<data_intake/index>
+Data processing<data_processing/index>
+Data visualization<data_visualization/index>
+Data output<data_output/index>
+Custom components<custom_components/index>
 ```
