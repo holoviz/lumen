@@ -52,15 +52,47 @@ class _session_state:
         else:
             self._specs[pn.state.curdoc] = spec
 
-    def to_spec(self, pipelines={}):
-        context = {
-            'variables': {
+    def to_spec(
+        self, auth=None, config=None, defaults=None,
+        pipelines={}, sources={}, variables=None
+    ):
+        """
+        Exports the full specification of the supplied components including
+        the variable definitions.
+
+        Parameters
+        ----------
+        auth: lumen.dashboard.Auth
+        config: lumen.dashboard.Config
+        defaults: lumen.dashboard.Defaults
+        variables: lumen.variables.Variables
+        pipelines: Dict[str, Pipeline]
+        sources: Dict[str, Source]
+
+        Returns
+        -------
+        Declarative specification of all the supplied components.
+        """
+        variables = variables or self.variables
+        context = {}
+        if auth:
+            context['auth'] = auth.to_spec()
+        if config:
+            context['config'] = config.to_spec()
+        if defaults:
+            context['defaults'] = defaults.to_spec()
+        if self.variables._vars:
+            context['variables'] = {
                 k: v.to_spec() for k, v in self.variables._vars.items()
-            },
-            'pipelines': {}
-        }
+            }
+        if sources:
+            context['sources'] = {}
         for k, pipeline in pipelines.items():
-            context['pipelines'][k] = pipeline.to_spec(context)
+            context['sources'][k] = source.to_spec(context=context)
+        if pipelines:
+            context['pipelines'] = {}
+        for k, pipeline in pipelines.items():
+            context['pipelines'][k] = pipeline.to_spec(context=context)
         return context
 
     @property

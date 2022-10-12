@@ -65,7 +65,7 @@ class Component(param.Parameterized):
                     params[pname] = getattr(pval.owner, pval.name)
                     var_type = Parameter
             if isinstance(pval, pn.widgets.Widget):
-                params[pname] = pval.value
+                processed[pname] = pval.value
                 var_type = Widget
                 var_kwargs = dict(
                     kind=f'{pval.__module__}.{type(pval).__name__}',
