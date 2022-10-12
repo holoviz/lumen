@@ -141,7 +141,7 @@ class Builder(param.Parameterized):
                 view = dict(view)
                 view_type = view.get('type')
                 view_editor = ViewEditor(
-                    view_type=view_type, name=name, spec=view
+                    view_type=view_type, name=name, spec=view, pipeline=target.get('pipeline')
                 )
                 view_gallery[name] = ViewGalleryItem(
                     editor=view_editor, name=name, selected=True, spec=view

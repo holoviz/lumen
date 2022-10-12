@@ -74,8 +74,8 @@ class Gallery(ReactiveHTML):
         path = params.get('path', self.path)
         components = pathlib.Path(path).glob(self._glob_pattern)
         params['items'] = items = {}
-        for source in components:
-            with open(source, encoding='utf-8') as f:
+        for component in components:
+            with open(component, encoding='utf-8') as f:
                 yaml_spec = f.read()
                 spec = yaml.safe_load(expand_spec(yaml_spec))
             if not spec:
@@ -84,11 +84,13 @@ class Gallery(ReactiveHTML):
             if 'name' in metadata:
                 name = metadata['name']
             else:
-                name = '.'.join(source.name.split('.')[:-1])
+                name = '.'.join(component.name.split('.')[:-1])
             if 'thumbnail' in metadata:
                 thumbnail = metadata['thumbnail']
+                if not pathlib.Path(thumbnail).is_absolute():
+                    thumbnail = path / pathlib.Path(thumbnail)
             else:
-                thumbnail = '.'.join(str(source).split('.')[:-1]) + '.png'
+                thumbnail = '.'.join(str(component).split('.')[:-1]) + '.png'
             kwargs = {'name': name, 'spec': spec}
             if os.path.isfile(thumbnail):
                 kwargs['thumbnail'] = thumbnail

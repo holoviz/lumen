@@ -150,7 +150,7 @@ class ViewEditor(ReactiveHTML):
     def description(self):
         if 'table' in self.spec:
             source = f"{self.spec['table']!r} table"
-        elif 'pipline' in self.spec:
+        elif 'pipeline' in self.spec:
             source = f"{self.spec['pipeline']!r} pipeline"
         else:
             source = 'target source.'
@@ -303,7 +303,7 @@ class TableViewEditor(ViewEditor):
 
     def render(self):
         kwargs = dict(self.spec)
-        pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
+        pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]
         if 'sizing_mode' not in kwargs:
             kwargs['sizing_mode'] = 'stretch_width'
         self.tabulator = pn.widgets.Tabulator(
@@ -340,7 +340,7 @@ class PerspectiveViewEditor(ViewEditor):
 
     def render(self):
         kwargs = dict(self.spec)
-        pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
+        pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]
         self.view = pn.pane.Perspective(pipeline, **dict(self._defaults, **kwargs))
         self.view.param.watch(self._update_spec, list(self.view.param))
 
@@ -363,7 +363,7 @@ class hvPlotViewEditor(ViewEditor):
         from hvplot.ui import hvDataFrameExplorer
         kwargs = dict(self.spec)
         del kwargs['type']
-        pipeline = lm_state.pipelines[kwargs.pop('pipeline')]
+        pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]
         self.view = hvDataFrameExplorer(pipeline.data, **kwargs)
         self.view.param.watch(self._update_spec, list(self.view.param))
         self.view.axes.param.watch(self._update_spec, list(self.view.axes.param))
