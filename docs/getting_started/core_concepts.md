@@ -302,7 +302,7 @@ sources:
       ticker: $variables.ticker
 ```
 
-For more on variables, check out the `How to use variables and references` guide.
+For more on variables, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
 
 ### Sources as variables
 In addition to the `variables` section, in which you can create arbitrary types of variables, you can also refer to sources with a similar syntax. In some scenarios you might want to refer to a `Source`, a table on a `Source` or a field on a table from elsewhere in the yaml specification.
@@ -321,7 +321,7 @@ sources:
 
 The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the `WebsiteSource`.
 
-For more on referring to sources, check out the `How to use variables and references` guide.
+For more on referring to sources, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
 
 ### External variables (templating)
 In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command, a CLI argument, a HTTP request header or cookie, or a OAuth token variable. This can be achieved using the following templating syntax:
@@ -338,7 +338,7 @@ In many cases you do not want to hardcode variables inside the yaml specificatio
 
 - `{{USER}}`: Arguments passed in using `--template-vars="{'USER': 'lumen_user'}"` when using `lumen serve` on the commandline.
 
-For more on templating, check out the `How to use variables and references` guide.
+For more on templating, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
 
 ### Authentication
 The `auth` field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).

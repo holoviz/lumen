@@ -344,8 +344,17 @@ class MultiTypeComponent(Component):
 
     @classproperty
     def _valid_keys_(cls):
-        valid = list(cls.param) if cls._valid_keys == 'params' else cls._valid_keys
-        if valid:
+        if cls._valid_keys is None:
+            valid = None
+        elif cls._valid_keys == 'params':
+            valid = list(cls.param)
+        elif 'params' in cls._valid_keys:
+            valid = cls._valid_keys.copy()
+            valid.extend(list(cls.param))
+        else:
+            valid = cls._valid_keys.copy()
+
+        if valid and 'type' not in valid:
             valid.append('type')
         return valid
 

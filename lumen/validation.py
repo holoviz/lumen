@@ -61,5 +61,6 @@ class ValidationError(ValueError):
             if attr:
                 snippet = re.sub(rf"\b{attr}\b", f'{BOLD}{attr}{END}', snippet)
             snippet = textwrap.indent(snippet, '    ')
-            msg = f'{msg}\n\n{snippet}'
+            if not '!!python' in snippet:
+                msg = f'{msg}\n\n{snippet}'
         super().__init__(msg)

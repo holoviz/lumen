@@ -175,7 +175,7 @@ def test_dashboard_Defaults(defaults, msg):
         (
             {
                 "var1": {"type": "constant", "value": "foo"},
-                "var2": {"type": "widget", "value": "$variables.var1"},
+                "var2": {"type": "widget", "value": "$variables.var1", "kind": "TextInput"},
             },
             None,
         ),
@@ -188,7 +188,7 @@ def test_dashboard_Defaults(defaults, msg):
             "Variable component specification did not declare a type",
         ),
         (
-            {"var1": {"type": "widget", "value": "foo", "throttled": "True"}},
+            {"var1": {"type": "widget", "value": "foo", "throttled": "True", "kind": "TextInput"}},
             "Widget component 'throttled' value failed validation",
         ),
         (
