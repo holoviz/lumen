@@ -29,6 +29,7 @@ class Variables(param.Parameterized):
     def __init__(self, **params):
         super().__init__(**params)
         self._vars = {}
+        self._watchers = {}
 
     @classmethod
     def from_spec(cls, spec):
@@ -50,9 +51,12 @@ class Variables(param.Parameterized):
         Adds a new variable to the Variables instance and sets up
         a parameter that can be watched.
         """
+        if var.name in self._vars:
+            variable = self._vars.pop(var.name)
+            variable.param.unwatch(self._watchers.pop(var.name))
         self._vars[var.name] = var
         self.param.add_parameter(var.name, param.Parameter(default=var.value))
-        var.param.watch(partial(self._update_value, var.name), 'value')
+        self._watchers[var.name] = var.param.watch(partial(self._update_value, var.name), 'value')
 
     def _update_value(self, name, event):
         self.param.update({name: event.new})
@@ -209,6 +213,7 @@ class Widget(Variable):
         throttled = params.pop('throttled', True)
         label = params.pop('label', None)
         kind = params.pop('kind', None)
+        widget = params.pop('widget', None)
         super().__init__(
             default=default, refs=refs, name=params.get('name'), label=label,
             throttled=throttled, kind=kind,
@@ -229,7 +234,10 @@ class Widget(Variable):
                 except Exception:
                     pass
             deserialized[k] = v
-        self._widget = widget_type(**deserialized)
+        if widget:
+            self._widget = widget
+        else:
+            self._widget = widget_type(**deserialized)
         if self.throttled and 'value_throttled' in self._widget.param:
             self._widget.link(self, value_throttled='value')
             self.param.watch(lambda e: self._widget.param.update({'value': e.new}), 'value')
@@ -240,6 +248,15 @@ class Widget(Variable):
     @property
     def panel(self):
         return self._widget
+
+
+class Parameter(Variable):
+
+    parameter = param.Parameter()
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.param.parameter.owner.watch(lambda e: self.param.update(value=e.new), self.param.parameter.name)
 
 
 class URLQuery(Variable):
