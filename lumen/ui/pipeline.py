@@ -24,7 +24,7 @@ class PipelineEditor(FastComponent):
 
     filter_items = param.List()
 
-    filters = param.List(precedence=-1)
+    filters = param.ClassSelector(class_=(list, dict), precedence=-1)
 
     transform_items = param.List()
 
@@ -128,32 +128,49 @@ class PipelineEditor(FastComponent):
         params.update(**{
             k: v for k, v in spec.items() if k in self.param and k not in params
         })
-        super().__init__(spec=spec, **params)
+        filters = params.pop('filters', [])
+        transforms = params.pop('transforms', [])
+        super().__init__(spec=spec, filters=[], transforms=[], **params)
         theme = 'midnight' #if getattr(pn.config, 'theme', 'default') == 'dark' else 'simple'
         self.preview = pn.widgets.Tabulator(
             sizing_mode='stretch_width', pagination='remote', page_size=12,
             theme=theme, height=400
         )
         self._pipeline = None
+        self._populate_selectors()
+        for filt in (filters.values() if isinstance(filters, dict) else filters):
+            self._add_filter(spec=filt)
+        for trans in transforms:
+            self._add_transform(spec=trans)
+
+    def _populate_selectors(self):
         filters = param.concrete_descendents(Filter).values()
         self.param.filter_type.objects = ftypes = [f.filter_type for f in filters if f.filter_type]
         self.filter_type = ftypes[0]
         transforms = param.concrete_descendents(Transform).values()
-        self.param.transform_type.objects = ttypes = [t.transform_type for t in transforms if t.transform_type]
+        self.param.transform_type.objects = ttypes = [
+            t.transform_type for t in transforms if t.transform_type
+        ]
         self.transform_type = ttypes[0]
 
     @param.depends('_preview_display', watch=True)
     def _update_displayed(self):
-        if self._preview_display != 'none' and self._pipeline is None:
-            self._pipeline = Pipeline.from_spec({
-                k: v for k, v in self.spec.items() if k not in ('filters', 'transforms')
-            })
-            for filt in self.filters:
-                self._pipeline.add_filter(filt)
-            for trans in self.transforms:
-                self._pipeline.add_transform(trans)
-            self._pipeline.param.watch(self._update_preview, ['data'])
-            self.preview.value = self._pipeline.data
+        if self._preview_display == 'none' or self._pipeline is not None:
+            return
+        self._pipeline = Pipeline.from_spec({
+            k: v for k, v in self.spec.items() if k not in ('filters', 'transforms')
+        })
+        filters = self.filters.values() if isinstance(self.filters, dict) else self.filters
+        for filt in filters or []:
+            if not isinstance(filt, Filter):
+                filt = Filter.from_spec(filt, {self._pipeline.table: self._pipeline.schema})
+            self._pipeline.add_filter(filt)
+        for trans in self.transforms or []:
+            if not isinstance(trans, Filter):
+                trans = Transform.from_spec(trans)
+            self._pipeline.add_transform(trans)
+        self._pipeline.param.watch(self._update_preview, ['data'])
+        self.preview.value = self._pipeline.data
 
     def _update_preview(self, event):
         self.preview.value = event.new
@@ -161,14 +178,11 @@ class PipelineEditor(FastComponent):
     def _update_spec(self, *events):
         self.spec['filters'] = []
         for filt in self.filters:
-            filt_spec = dict(type=filt.filter_type, **filt.param.values())
-            del filt_spec['name']
-            del filt_spec['schema']
+            filt_spec = filt.to_spec()
             self.spec['filters'].append(filt_spec)
         self.spec['transforms'] = []
         for transform in self.transforms:
-            transform_spec = dict(type=transform.transform_type, **transform.param.values())
-            del transform_spec['name']
+            transform_spec = transform.to_spec()
             self.spec['transforms'].append(transform_spec)
 
     def _preview(self, event):
@@ -191,16 +205,18 @@ class PipelineEditor(FastComponent):
         self.param.trigger('transform_items')
         self._update_spec()
 
-    def _add_filter(self, event):
+    def _add_filter(self, event=None, spec=None):
         self.loading = True
         source = lm_state.sources[self.source]
         schema = source.get_schema()
         table = list(schema)[0]
-        filt = Filter.from_spec({
-            'type': self.filter_type,
-            'table': table,
-            'field': list(schema[table])[0]
-        }, schema)
+        if spec is None:
+            spec = {
+                'type': self.filter_type,
+                'table': table,
+                'field': list(schema[table])[0]
+            }
+        filt = Filter.from_spec(spec, schema)
         filt.param.watch(self._update_spec, list(filt.param))
         if self._pipeline:
             self._pipeline.add_filter(filt)
@@ -213,12 +229,14 @@ class PipelineEditor(FastComponent):
         self._update_spec()
         self.loading = False
 
-    def _add_transform(self, event):
+    def _add_transform(self, event=None, spec=None):
         self.loading = True
         source = lm_state.sources[self.source]
         schema = source.get_schema()
+        if spec is None:
+            spec = {'type': self.transform_type}
 
-        transform = Transform.from_spec({'type': self.transform_type})
+        transform = Transform.from_spec(spec)
         transform.param.watch(self._update_spec, list(transform.param))
 
         fields = [f for t in schema.values() for f in t]

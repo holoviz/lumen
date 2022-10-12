@@ -244,6 +244,8 @@ class View(MultiTypeComponent, Viewer):
                 if ts in overrides:
                     overrides[ts] = [Transform.from_spec(t) for t in overrides[ts]]
             if pipeline is None:
+                if isinstance(source, str):
+                    source = state.sources[source]
                 pipeline = Pipeline(source=source, **overrides)
             elif overrides:
                 pipeline = pipeline.chain(

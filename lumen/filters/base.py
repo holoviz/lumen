@@ -126,7 +126,7 @@ class Filter(MultiTypeComponent):
 
     def to_spec(self, context=None):
         spec = super().to_spec(context=context)
-        if spec['label'].lower() == spec['field']:
+        if spec.get('label', '').lower() == spec.get('field'):
             del spec['label']
         return spec
 
