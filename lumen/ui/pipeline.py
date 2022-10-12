@@ -24,7 +24,7 @@ class PipelineEditor(FastComponent):
 
     filter_items = param.List()
 
-    filters = param.List(precedence=-1)
+    filters = param.ClassSelector(class_=(list, dict), precedence=-1)
 
     transform_items = param.List()
 
@@ -144,16 +144,22 @@ class PipelineEditor(FastComponent):
 
     @param.depends('_preview_display', watch=True)
     def _update_displayed(self):
-        if self._preview_display != 'none' and self._pipeline is None:
-            self._pipeline = Pipeline.from_spec({
-                k: v for k, v in self.spec.items() if k not in ('filters', 'transforms')
-            })
-            for filt in self.filters:
-                self._pipeline.add_filter(filt)
-            for trans in self.transforms:
-                self._pipeline.add_transform(trans)
-            self._pipeline.param.watch(self._update_preview, ['data'])
-            self.preview.value = self._pipeline.data
+        if self._preview_display == 'none' or self._pipeline is not None:
+            return
+        self._pipeline = Pipeline.from_spec({
+            k: v for k, v in self.spec.items() if k not in ('filters', 'transforms')
+        })
+        filters = self.filters.values() if isinstance(self.filters, dict) else self.filters
+        for filt in filters or []:
+            if not isinstance(filt, Filter):
+                filt = Filter.from_spec(filt, {self._pipeline.table: self._pipeline.schema})
+            self._pipeline.add_filter(filt)
+        for trans in self.transforms or []:
+            if not isinstance(trans, Filter):
+                trans = Transform.from_spec(trans)
+            self._pipeline.add_transform(trans)
+        self._pipeline.param.watch(self._update_preview, ['data'])
+        self.preview.value = self._pipeline.data
 
     def _update_preview(self, event):
         self.preview.value = event.new

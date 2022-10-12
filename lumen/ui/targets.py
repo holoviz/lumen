@@ -4,6 +4,7 @@ import param
 from panel.reactive import ReactiveHTML
 
 from lumen.config import _LAYOUTS
+from lumen.state import state as lm_state
 from lumen.views import View
 
 from .base import WizardItem
@@ -41,7 +42,9 @@ class TargetEditor(ReactiveHTML):
           <label for="layout-type-${id}"><b>{{ param.layout_type.label }}</b></label>
           <fast-select id="layout-type" style="max-width: 250px; min-width: 150px; z-index: 100;" value="${layout_type}">
           {% for lt in param.layout_type.objects %}
-            <fast-option value="{{ lt }}">{{ lt.title() }}</fast-option>
+            <fast-option value="{{ lt }}" {% if lt == layout_type %}selected{% endif %}>
+              {{ lt.title() }}
+            </fast-option>
           {% endfor %}
           </fast-select>
           <fast-tooltip anchor="layout-type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
@@ -50,8 +53,6 @@ class TargetEditor(ReactiveHTML):
       <div id="layout" style="flex: auto; margin-left: 1em;">${layout}</div>
     </div>
     """
-
-    _scripts = {'relayout': 'setTimeout(() => view.invalidate_layout(), 100);'}
 
     def __init__(self, **params):
         spec = params.pop('spec', {})
@@ -72,7 +73,6 @@ class TargetEditor(ReactiveHTML):
         if 'views' not in self.spec:
             self.spec['views'] = {}
         self._views = {}
-        self._populate_layout(self.layout)
         self._watchers = {}
         state.views.param.watch(self._update_views, 'items')
         self._update_views()
@@ -100,17 +100,30 @@ class TargetEditor(ReactiveHTML):
 
     def _populate_layout(self, layout):
         views = self.spec['views']
-        for i, view_spec in enumerate(views.items()):
+        for i, view_spec in enumerate(views.items() if isinstance(views, dict) else views):
             if isinstance(view_spec, tuple):
                 name, view = view_spec
                 view['name'] = name
             else:
                 view = view_spec
                 name = None
+            view = dict(view)
+            kwargs = {}
+            if 'source' not in view and 'pipeline' not in view:
+                if 'pipeline' in self.spec:
+                    pipeline = self.spec['pipeline']
+                    if isinstance(pipeline, str):
+                        pipeline = lm_state.pipelines[pipeline]
+                    kwargs['pipeline'] = pipeline
+                elif 'source' in self.spec:
+                    source = self.spec['source']
+                    if isinstance(source, str):
+                        source = lm_state.sources[source]
+                    kwargs['source'] = source
             if name in self._views:
                 view = self._views[name]
             else:
-                view = View.from_spec(view)
+                view = View.from_spec(view, **kwargs)
                 name = name or view.name
                 self._views[name] = view
             if hasattr(layout, 'append'):
@@ -144,6 +157,10 @@ class TargetGalleryItem(GalleryItem):
         super().__init__(**params)
         self.view = pn.pane.PNG(self.thumbnail, height=200, align='center')
         self._modal_content = [self.editor]
+
+    def _open_modal(self, event):
+        self.editor._populate_layout(self.editor.layout)
+        super()._open_modal(event)
 
 
 class TargetGallery(WizardItem, Gallery):

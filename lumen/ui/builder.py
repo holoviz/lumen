@@ -10,7 +10,6 @@ from panel.template.base import BasicTemplate
 
 from lumen.config import config
 from lumen.pipeline import Pipeline
-from lumen.sources import Source
 from lumen.state import state as lm_state
 
 from .base import Wizard
@@ -132,15 +131,6 @@ class Builder(param.Parameterized):
         views, view_gallery = [], {}
         targets, target_items = [], {}
         for target in self.spec['targets']:
-            if 'source' in target:
-                source_spec = target['source']
-                if isinstance(source_spec, dict):
-                    source_spec = dict(source_spec, cache_dir=None)
-                    source_spec.pop('filters', None)
-                source = Source.from_spec(source_spec)
-            elif 'pipeline' in target:
-                pipeline_spec = target['pipeline']
-                pipeline = Pipeline.from_spec(pipeline_spec)
             view_specs = target['views']
             if isinstance(view_specs, list):
                 view_specs = [(f"{view['type']}: {view['table']}", view) for view in view_specs]
@@ -149,13 +139,12 @@ class Builder(param.Parameterized):
             target_views = []
             for name, view in view_specs:
                 view = dict(view)
-                view_type = view.pop('type')
+                view_type = view.get('type')
                 view_editor = ViewEditor(
-                    view_type=view_type, name=name, source_obj=source,
-                    spec=view, pipeline_obj=pipeline
+                    view_type=view_type, name=name, spec=view
                 )
                 view_gallery[name] = ViewGalleryItem(
-                    editor=view_editor, name=name, selected=True
+                    editor=view_editor, name=name, selected=True, spec=view
                 )
                 views.append(view_editor)
                 target_views.append(name)

@@ -38,7 +38,9 @@ class ViewsEditor(WizardItem):
           <label for="view-select-${id}"><b>{{ param.view_type.label }}</b></label>
           <fast-select id="view-select" style="min-width: 150px;" value="${view_type}">
           {% for vtype in param.view_type.objects %}
-            <fast-option value="{{ vtype }}">{{ vtype.title() }}</fast-option>
+            <fast-option value="{{ vtype }}"  {% if vtype == view_type %}selected{% endif %}>
+             {{ vtype.title() }}
+            </fast-option>
           {% endfor %}
           </fast-select>
           <fast-tooltip anchor="view-select-${id}">{{ param.view_type.doc }}</fast-tooltip>
@@ -146,9 +148,13 @@ class ViewEditor(ReactiveHTML):
 
     @property
     def description(self):
-        return (
-            f"A {self.view_type} view of the {self.spec['pipeline']!r} source."
-        )
+        if 'table' in self.spec:
+            source = f"{self.spec['table']!r} table"
+        elif 'pipline' in self.spec:
+            source = f"{self.spec['pipeline']!r} pipeline"
+        else:
+            source = 'target source.'
+        return f"A {self.view_type} view of the {source}."
 
     def render(self):
         pass
