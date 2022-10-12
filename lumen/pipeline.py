@@ -24,7 +24,7 @@ class DataFrame(param.DataFrame):
     """
 
     def __get__(self, obj, objtype):
-        if obj is not None and obj.__dict__.get(self._internal_name) is None:
+        if obj is not None and obj.__dict__.get(self._internal_name) is None or obj._stale:
             obj._update_data()
         return super().__get__(obj, objtype)
 
@@ -75,6 +75,10 @@ class Pipeline(Component):
         Update event trigger (if manual update is set)."""
     )
 
+    _stale = param.Boolean(default=False, precedence=-1, doc="""
+        Whether the pipeline is stale."""
+    )
+
     _internal_params = ['data', 'name', 'schema']
     _required_fields = [('source', 'pipeline')]
 
@@ -82,7 +86,12 @@ class Pipeline(Component):
         if 'schema' not in params:
             params['schema'] = source.get_schema(table)
         super().__init__(source=source, table=table, **params)
+        self._update_widget = pn.Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
         self._init_callbacks()
+
+    @param.depends('_stale', watch=True)
+    def _handle_stale(self):
+        self._update_widget.button_type = 'warning' if self._stale else 'success'
 
     def _init_callbacks(self):
         self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table'])
@@ -119,7 +128,9 @@ class Pipeline(Component):
     def _update_data(self, *events: param.Event):
         if not self.auto_update and events and not any(
                 e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
+            self._stale = True
             return
+        self._update_widget.loading = True
         query = {}
 
         # Compute Filter query
@@ -160,6 +171,8 @@ class Pipeline(Component):
             data = transform.apply(data)
 
         self.data = data
+        self._stale = False
+        self._update_widget.loading = False
 
     @classmethod
     def _validate_source(cls, source_spec, spec, context):
@@ -314,7 +327,7 @@ class Pipeline(Component):
             )
         self.filters.append(filt)
         filt.param.watch(self._update_data, ['value'])
-        self._update_data()
+        self._stale = True
 
     def add_transform(self, transform: Transform, **kwargs):
         """
@@ -336,7 +349,7 @@ class Pipeline(Component):
             transform.param[fparam].objects = fields
             transform.param.update(**{fparam: kwargs.get(fparam, fields)})
         transform.param.watch(self._update_data, list(transform.param))
-        self._update_data()
+        self._stale = True
 
     def chain(
         self,
@@ -414,7 +427,7 @@ class Pipeline(Component):
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Transforms</div>')
         col.extend(transforms)
         if not self.auto_update:
-            col.append(self.param['update'])
+            col.append(self._update_widget)
         return col
 
 

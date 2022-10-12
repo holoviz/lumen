@@ -237,6 +237,15 @@ class Widget(Variable):
         return self._widget
 
 
+class Parameter(Variable):
+
+    parameter = param.Parameter()
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.param.parameter.owner.watch(lambda e: self.param.update(value=e.new), self.param.parameter.name)
+
+
 class URLQuery(Variable):
     """
     A variable obtained from the URL query parameters.

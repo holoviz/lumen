@@ -2,6 +2,7 @@ import warnings
 
 from functools import partial
 
+import panel as pn
 import param
 
 from panel.util import classproperty
@@ -46,6 +47,7 @@ class Component(param.Parameterized):
         self._refs = params.pop('refs', {})
         expected = list(self.param.params())
         validate_parameters(params, expected, type(self).name)
+        params = self._extract_refs(params)
         super().__init__(**params)
         for p, ref in self._refs.items():
             if isinstance(state.variables, dict):
@@ -53,6 +55,30 @@ class Component(param.Parameterized):
             elif isinstance(ref, str) and ref.startswith('$variables.'):
                 ref = ref.split('$variables.')[1]
                 state.variables.param.watch(partial(self._update_ref, p), ref)
+
+    def _extract_refs(self, params):
+        from .variables import Parameter, Widget
+        processed = {}
+        for pname, pval in params.items():
+            if isinstance(pval, param.Parameter):
+                if not isinstance(pval.owner, pn.widgets.Widget) and pval.name == 'value':
+                    params[pname] = getattr(pval.owner, pval.name)
+                    var_type = Parameter
+            if isinstance(pval, pn.widgets.Widget):
+                params[pname] = pval.value
+                var_type = Widget
+                var_kwargs = dict(
+                    kind=f'{pval.__module__}.{pval.__name__}',
+                    **{k: v for k, v in pval.param.values().items() if k != 'name'}
+                )
+            else:
+                processed[pname] = pval
+                var_type = None
+            if var_type:
+                self._refs[pname] = f'$variables.{pname}'
+                var = var_type(name=pname, **var_kwargs)
+                state.variables.add_variable(var)
+        return processed
 
     def _update_ref(self, pname, event):
         """
