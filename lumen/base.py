@@ -68,9 +68,10 @@ class Component(param.Parameterized):
                 params[pname] = pval.value
                 var_type = Widget
                 var_kwargs = dict(
-                    kind=f'{pval.__module__}.{pval.__name__}',
+                    kind=f'{pval.__module__}.{type(pval).__name__}',
                     **{k: v for k, v in pval.param.values().items() if k != 'name'}
                 )
+                var_kwargs['widget'] = pval
             else:
                 processed[pname] = pval
                 var_type = None

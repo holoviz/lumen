@@ -294,7 +294,6 @@ class WidgetFilter(BaseWidgetFilter):
 
     def to_spec(self, context=None):
         spec = super().to_spec(context=context)
-        print(self._inferred_widget)
         if self._inferred_widget:
             del spec['widget']
         else:

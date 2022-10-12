@@ -52,6 +52,17 @@ class _session_state:
         else:
             self._specs[pn.state.curdoc] = spec
 
+    def to_spec(self, pipelines={}):
+        context = {
+            'variables': {
+                k: v.to_spec() for k, v in self.variables._vars.items()
+            },
+            'pipelines': {}
+        }
+        for k, pipeline in pipelines.items():
+            context['pipelines'][k] = pipeline.to_spec(context)
+        return context
+
     @property
     def filters(self):
         from .filters import Filter
@@ -79,10 +90,10 @@ class _session_state:
 
     @property
     def variables(self):
-        if pn.state.curdoc in self._variables:
-            return self._variables[pn.state.curdoc]
-        from .variables import Variables
-        return Variables()
+        if pn.state.curdoc not in self._variables:
+            from .variables import Variables
+            self._variables[pn.state.curdoc] = Variables()
+        return self._variables[pn.state.curdoc]
 
     @property
     def global_refs(self):

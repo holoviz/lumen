@@ -205,6 +205,7 @@ class Widget(Variable):
         throttled = params.pop('throttled', True)
         label = params.pop('label', None)
         kind = params.pop('kind', None)
+        widget = params.pop('widget', None)
         super().__init__(
             default=default, refs=refs, name=params.get('name'), label=label,
             throttled=throttled, kind=kind
@@ -225,7 +226,10 @@ class Widget(Variable):
                 except Exception:
                     pass
             deserialized[k] = v
-        self._widget = widget_type(**deserialized)
+        if widget:
+            self._widget = widget
+        else:
+            self._widget = widget_type(**deserialized)
         if self.throttled and 'value_throttled' in self._widget.param:
             self._widget.link(self, value_throttled='value')
             self.param.watch(lambda e: self._widget.param.update({'value': e.new}), 'value')

@@ -110,6 +110,23 @@ class Pipeline(Component):
         if self.auto_update:
             self._update_data()
 
+    def to_spec(self, context=None):
+        spec = super().to_spec(context=context)
+        if context is None:
+            return spec
+        for type_name in ('pipeline', 'source'):
+            if type_name not in spec:
+                continue
+            obj = spec.pop(type_name)
+            plural = f'{type_name}s'
+            obj_name = getattr(self, type_name).name
+            if plural not in context:
+                context[plural] = {}
+            context[plural][obj_name] = obj
+            spec[type_name] = obj_name
+            break
+        return spec
+
     @property
     def refs(self):
         refs = self.source.refs.copy()
