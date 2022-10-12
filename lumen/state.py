@@ -87,7 +87,7 @@ class _session_state:
             }
         if sources:
             context['sources'] = {}
-        for k, pipeline in pipelines.items():
+        for k, source in sources.items():
             context['sources'][k] = source.to_spec(context=context)
         if pipelines:
             context['pipelines'] = {}
