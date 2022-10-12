@@ -178,14 +178,11 @@ class PipelineEditor(FastComponent):
     def _update_spec(self, *events):
         self.spec['filters'] = []
         for filt in self.filters:
-            filt_spec = dict(type=filt.filter_type, **filt.param.values())
-            del filt_spec['name']
-            del filt_spec['schema']
+            filt_spec = filt.to_spec()
             self.spec['filters'].append(filt_spec)
         self.spec['transforms'] = []
         for transform in self.transforms:
-            transform_spec = dict(type=transform.transform_type, **transform.param.values())
-            del transform_spec['name']
+            transform_spec = transform.to_spec()
             self.spec['transforms'].append(transform_spec)
 
     def _preview(self, event):
