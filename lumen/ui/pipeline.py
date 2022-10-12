@@ -128,18 +128,29 @@ class PipelineEditor(FastComponent):
         params.update(**{
             k: v for k, v in spec.items() if k in self.param and k not in params
         })
-        super().__init__(spec=spec, **params)
+        filters = params.pop('filters', [])
+        transforms = params.pop('transforms', [])
+        super().__init__(spec=spec, filters=[], transforms=[], **params)
         theme = 'midnight' #if getattr(pn.config, 'theme', 'default') == 'dark' else 'simple'
         self.preview = pn.widgets.Tabulator(
             sizing_mode='stretch_width', pagination='remote', page_size=12,
             theme=theme, height=400
         )
         self._pipeline = None
+        self._populate_selectors()
+        for filt in (filters.values() if isinstance(filters, dict) else filters):
+            self._add_filter(spec=filt)
+        for trans in transforms:
+            self._add_transform(spec=trans)
+
+    def _populate_selectors(self):
         filters = param.concrete_descendents(Filter).values()
         self.param.filter_type.objects = ftypes = [f.filter_type for f in filters if f.filter_type]
         self.filter_type = ftypes[0]
         transforms = param.concrete_descendents(Transform).values()
-        self.param.transform_type.objects = ttypes = [t.transform_type for t in transforms if t.transform_type]
+        self.param.transform_type.objects = ttypes = [
+            t.transform_type for t in transforms if t.transform_type
+        ]
         self.transform_type = ttypes[0]
 
     @param.depends('_preview_display', watch=True)
@@ -197,16 +208,18 @@ class PipelineEditor(FastComponent):
         self.param.trigger('transform_items')
         self._update_spec()
 
-    def _add_filter(self, event):
+    def _add_filter(self, event=None, spec=None):
         self.loading = True
         source = lm_state.sources[self.source]
         schema = source.get_schema()
         table = list(schema)[0]
-        filt = Filter.from_spec({
-            'type': self.filter_type,
-            'table': table,
-            'field': list(schema[table])[0]
-        }, schema)
+        if spec is None:
+            spec = {
+                'type': self.filter_type,
+                'table': table,
+                'field': list(schema[table])[0]
+            }
+        filt = Filter.from_spec(spec, schema)
         filt.param.watch(self._update_spec, list(filt.param))
         if self._pipeline:
             self._pipeline.add_filter(filt)
@@ -219,12 +232,14 @@ class PipelineEditor(FastComponent):
         self._update_spec()
         self.loading = False
 
-    def _add_transform(self, event):
+    def _add_transform(self, event=None, spec=None):
         self.loading = True
         source = lm_state.sources[self.source]
         schema = source.get_schema()
+        if spec is None:
+            spec = {'type': self.transform_type}
 
-        transform = Transform.from_spec({'type': self.transform_type})
+        transform = Transform.from_spec(spec)
         transform.param.watch(self._update_spec, list(transform.param))
 
         fields = [f for t in schema.values() for f in t]
