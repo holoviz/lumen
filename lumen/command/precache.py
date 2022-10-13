@@ -38,6 +38,4 @@ class Precache(Subcommand):
             for name, source_spec in state.spec['sources'].items():
                 state.load_source(name, source_spec)
             state.load_pipelines(auto_update=False)
-            for pipeline in state.pipelines.values():
-                pipeline.populate_precache()
             state.reset()

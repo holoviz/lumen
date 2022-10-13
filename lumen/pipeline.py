@@ -332,7 +332,12 @@ class Pipeline(Component):
         params['transforms'] = [Transform.from_spec(tspec) for tspec in transform_specs]
         sql_transform_specs = spec.pop('sql_transforms', [])
         params['sql_transforms'] = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
-        return cls(**params)
+
+        # Instantiate and populate pre-cache
+        precache = params.pop('precache')
+        obj = cls(**params)
+        obj.precache(precache)
+        return obj
 
     def add_filter(self, filt: Union[Filter, Type[Filter], Widget], field: Optional[str] = None, **kwargs):
         """
