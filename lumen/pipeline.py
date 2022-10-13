@@ -30,6 +30,18 @@ class DataFrame(param.DataFrame):
         return super().__get__(obj, objtype)
 
 
+def expand_queries(values, groups=('filters', 'variables')):
+    spec_groups = []
+    for group in groups:
+        if group in values:
+            var_names, var_values = zip(*values[group].items())
+            variable_space = (dict(zip(var_names, vs)) for vs in product(*var_values))
+        else:
+            variable_space = [{}]
+        spec_groups.append(list(variable_space))
+    return [dict(zip(groups, group)) for group in product(*spec_groups)]
+
+
 class Pipeline(Component):
     """
     A Pipeline represents a data Source along with any number of
@@ -41,11 +53,6 @@ class Pipeline(Component):
     data = DataFrame(doc="The current data on this source.")
 
     schema = param.Dict(doc="The schema of the input data.")
-
-    precache = param.ClassSelector(class_=(list, dict), doc="""
-        Defines a precaching specification that can be used to pre-populate
-        the cache before the dashboard is executed."""
-    )
 
     auto_update = param.Boolean(default=True, constant=True, doc="""
         Whether changes in filters, transforms and references automatically
@@ -424,39 +431,63 @@ class Pipeline(Component):
         return type(self)(**dict({p: v for p, v in self.param.values().items()
                                   if p != 'name'}, **params))
 
-    def populate_precache(self):
+    def precache(self, queries: Dict[str, Dict[str, []]] | List[Dict[str, Dict[str, Any]]]) -> None:
         """
-        Populates the Source cache with the precached query declared on the pipeline.
+        Populates the cache of the Source with the provided queries.
+
+        Queries can be provided in two formats:
+
+          - A dictionary containing 'filters' and 'variables'
+            dictionaries each containing lists of values to compute
+            a cross-product for, e.g.
+
+              {
+                'filters': {
+                  <filter>': ['a', 'b', 'c', ...],
+                  ...
+                },
+                'variables': {
+                  <variable>: [0, 2, 4, ...],
+                  ...
+                }
+              }
+          - A list containing dictionaries of explicit values
+            for each filter and variables.
+
+              [{
+                 'filters': {<filter>: 'a'},
+                 'variables': {<variable>: 0}
+               },
+               {
+                 'filters': {<filter>: 'a'},
+                 'variables': {<variable>: 1}
+               },
+               ...
+              ]
         """
         if not self.source.cache_dir or not self.precache:
             return
 
-        if isinstance(self.precache, list):
-            query_specs = self.precache
-        else:
-            precache = self.precache.copy()
-            if 'variables' in self.precache:
-                var_names, var_values = zip(*precache.pop['variables'].items())
-                variable_space = (dict(zip(var_names, vs)) for vs in product(*var_values))
-            else:
-                variable_space = [{}]
-            filter_names, filter_values = zip(*precache.items())
-            filter_space = (dict(zip(filter_names, vs)) for vs in product(*filter_values))
-            query_specs = []
-            for fspec, vspec in product(filter_space, variable_space):
-                qspec = dict(fspec)
-                if vspec:
-                    qspec['variables'] = vspec
-                query_specs.append(qspec)
+        if not isinstance(queries, list):
+            queries = expand_queries(queries)
+
+        old_auto = self.auto_update
+        self.auto_update = False
+        for qspec in queries:
+            try:
+                self._set_spec(qspec)
+            except Exception:
+                pass
+        self.auto_update = old_auto
+
+    def _set_spec(self, spec):
         filters = self.traverse('filters')
-        for qspec in query_specs:
-            for var_name, var_val in qspec.pop('variables', {}).items():
-                state.variables[var_name] = var_val
-            for filt in filters:
-                if filt.field in qspec:
-                    print(filt, qspec[filt.field])
-                    filt.value = qspec[filt.field]
-            self.param.trigger('update')
+        for var_name, var_val in spec.get('variables', {}).items():
+            state.variables[var_name] = var_val
+        filt_spec = spec.get('filters', {})
+        for filt in filters:
+            if filt.field in filt_spec:
+                filt.value = filt_spec[filt.field]
 
     def traverse(self, type) -> List[Transform] | List[Filter]:
         """
