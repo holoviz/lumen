@@ -19,6 +19,8 @@ import panel as pn
 import param
 import requests
 
+from panel.io.cache import _generate_hash
+
 from ..base import MultiTypeComponent
 from ..filters import Filter
 from ..state import state
@@ -234,12 +236,9 @@ class Source(MultiTypeComponent):
     def _get_key(self, table, **query):
         sha = hashlib.sha256()
         sha.update(table.encode('utf-8'))
-        for k, v in sorted(query.items()):
-            if isinstance(v, list):
-                v = tuple(v)
-            sha.update(k.encode('utf-8'))
-            vhash = hash(v)
-            sha.update(vhash.to_bytes((vhash.bit_length() + 8) // 8, "little", signed=True))
+        if 'sql_transforms' in query:
+            sha.update(_generate_hash([hash(t) for t in query.pop('sql_transforms')]))
+        sha.update(_generate_hash(query))
         return sha.hexdigest()
 
     def _get_schema_cache(self):

@@ -57,27 +57,39 @@ class Component(param.Parameterized):
                 state.variables.param.watch(partial(self._update_ref, p), ref)
 
     def _extract_refs(self, params):
-        from .variables import Parameter, Widget
+        from .variables import Parameter, Variable, Widget
         processed = {}
         for pname, pval in params.items():
-            if isinstance(pval, param.Parameter):
-                if not isinstance(pval.owner, pn.widgets.Widget) and pval.name == 'value':
-                    params[pname] = getattr(pval.owner, pval.name)
+            if isinstance(pval, Variable):
+                processed[pname] = pval.value
+                self._refs[pname] = f'$variable.{pval.name}'
+                state.add_variable(pval)
+                continue
+            elif isinstance(pval, param.Parameter):
+                if isinstance(pval.owner, pn.widgets.Widget) and pval.name == 'value':
+                    pval = pval.owner
+                else:
+                    processed[pname] = getattr(pval.owner, pval.name)
                     var_type = Parameter
+                    var_name = pval.name
+            else:
+                var_type = None
+
             if isinstance(pval, pn.widgets.Widget):
                 processed[pname] = pval.value
+                var_name = pval.name
                 var_type = Widget
                 var_kwargs = dict(
                     kind=f'{pval.__module__}.{type(pval).__name__}',
                     **{k: v for k, v in pval.param.values().items() if k != 'name'}
                 )
                 var_kwargs['widget'] = pval
-            else:
+
+            if var_type is None:
                 processed[pname] = pval
-                var_type = None
-            if var_type:
-                self._refs[pname] = f'$variables.{pname}'
-                var = var_type(name=pname, **var_kwargs)
+            else:
+                self._refs[pname] = f'$variables.{var_name}'
+                var = var_type(name=var_name, **var_kwargs)
                 state.variables.add_variable(var)
         return processed
 
