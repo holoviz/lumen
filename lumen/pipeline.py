@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from itertools import product
 from typing import (
     Any, Dict, List, Optional, Type, Union,
@@ -7,6 +9,7 @@ from typing import (
 
 import panel as pn
 import param
+import tqdm
 
 from panel.widgets import Widget
 
@@ -155,8 +158,8 @@ class Pipeline(Component):
 
     @param.depends('update', watch=True)
     @catch_and_notify
-    def _update_data(self, *events: param.Event):
-        if not self.auto_update and events and not any(
+    def _update_data(self, *events: param.Event, force: bool = False):
+        if not force and not self.auto_update and events and not any(
                 e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
             self._stale = True
             return
@@ -473,21 +476,33 @@ class Pipeline(Component):
 
         old_auto = self.auto_update
         self.auto_update = False
-        for qspec in queries:
+        restore = None
+        for qspec in tqdm.tqdm(queries, leave=True, file=sys.stdout):
             try:
-                self._set_spec(qspec)
-            except Exception:
-                pass
+                previous = self._set_spec(qspec)
+                if restore is None:
+                    restore = previous
+                self._update_data(force=True)
+            except Exception as e:
+                raise e
+        if restore:
+            self._set_spec(restore)
+            self._update_data(force=True)
         self.auto_update = old_auto
 
     def _set_spec(self, spec):
+        previous = {'variables': {}, 'filters': {}}
         filters = self.traverse('filters')
         for var_name, var_val in spec.get('variables', {}).items():
-            state.variables[var_name] = var_val
+            variable = state.variables._vars[var_name]
+            previous['variables'][var_name] = variable.value
+            variable.value = var_val
         filt_spec = spec.get('filters', {})
         for filt in filters:
             if filt.field in filt_spec:
+                previous['filters'][filt.field] = filt.value
                 filt.value = filt_spec[filt.field]
+        return previous
 
     def traverse(self, type) -> List[Transform] | List[Filter]:
         """
@@ -506,14 +521,29 @@ class Pipeline(Component):
     @property
     def control_panel(self) -> pn.Column:
         col = pn.Column()
-        filters = [filt.panel for filt in self.filters]
+        filters = [filt.panel for filt in self.traverse('filters')]
         if any(filters):
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Filters</div>')
         col.extend([filt for filt in filters if filt is not None])
-        transforms = [t.control_panel for t in self.transforms+self.sql_transforms if t.controls]
-        if transforms:
+        transforms = self.traverse('transforms')+self.traverse('sql_transforms')
+        controls = [t.control_panel for t in transforms if t.controls]
+        if controls:
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Transforms</div>')
-        col.extend(transforms)
+        col.extend(controls)
+        variables, variable_controls = [], []
+        for transform in transforms:
+            for ref in transform.refs:
+                if ref.startswith('$variable'):
+                    variable = state.variables._vars[ref.split('$variables.')[1]]
+                    if variable not in variables:
+                        variables.append(variable)
+        for variable in variables:
+            vpanel = variable.panel
+            if vpanel is not None:
+                variable_controls.append(vpanel)
+        if variable_controls:
+            col.append('<div style="font-size: 1.5em; font-weight: bold;">Variables</div>')
+        col.extend(variable_controls)
         if not self.auto_update:
             col.append(self._update_widget)
         return col

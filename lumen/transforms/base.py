@@ -3,6 +3,7 @@ The Transform components allow transforming tables in arbitrary ways.
 """
 
 import datetime as dt
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -107,6 +108,29 @@ class Transform(MultiTypeComponent):
         A DataFrame with the results of the transformation.
         """
         return cls(**kwargs).apply(table)
+
+    def __hash__(self):
+        """
+        Implements hashing to allow a Source to compute a hash key.
+        """
+        sha = hashlib.sha256()
+        sha.update(type(self).__name__.encode('utf-8'))
+        hash_vals = tuple(sorted([
+            (k, v) for k, v in self.param.values().items()
+            if k not in Transform.param
+        ]))
+        for k, v in hash_vals:
+            if isinstance(v, list):
+                v = tuple(v)
+            sha.update(k.encode('utf-8'))
+            if v is None:
+                vhash = -10000000001
+            elif isinstance(v, str):
+                sha.update(v.encode('utf-8'))
+            else:
+                vhash = hash(v)
+                sha.update(vhash.to_bytes((vhash.bit_length() + 8) // 8, "little", signed=True))
+        return int(sha.hexdigest(), base=16)
 
     def apply(self, table):
         """

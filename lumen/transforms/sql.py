@@ -31,17 +31,6 @@ class SQLTransform(Transform):
         """
         return cls(**kwargs).apply(sql_in)
 
-    def __hash__(self):
-        """
-        Implements hashing to allow a Source to compute a hash key.
-        """
-        hash_vals = (type(self).__name__,)
-        hash_vals += tuple(sorted([
-            (k, v) for k, v in self.param.values().items()
-            if k not in Transform.param
-        ]))
-        return hash(str(hash_vals))
-
     def apply(self, sql_in):
         """
         Given an SQL statement, manipulate it, and return a new SQL statement.
