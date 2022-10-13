@@ -17,6 +17,7 @@ from ..config import config
 from ..dashboard import Defaults, load_yaml
 from ..state import state
 from .builder import Builder
+from .precache import Precache
 from .validate import Validate
 
 
@@ -86,7 +87,7 @@ def main(args=None):
         sys.argv = sys.argv[:start] + sys.argv[end+1:]
         config.template_vars = ast.literal_eval(template_vars)
 
-    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'builder', 'validate'):
+    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'builder', 'validate', 'precache'):
         _pn_main()
         return
 
@@ -106,6 +107,10 @@ def main(args=None):
     validate_parser = subs.add_parser(Validate.name, help=Validate.help)
     validate_command = Validate(parser=validate_parser)
     validate_parser.set_defaults(invoke=validate_command.invoke)
+
+    precache_parser = subs.add_parser(Precache.name, help=Precache.help)
+    precache_command = Precache(parser=precache_parser)
+    precache_parser.set_defaults(invoke=precache_command.invoke)
 
     subparser = subs.add_parser(Builder.name, help=Builder.help)
     subcommand = Builder(parser=subparser, serve=serve_command)

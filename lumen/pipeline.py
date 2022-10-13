@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import sys
+
+from itertools import product
 from typing import (
     Any, Dict, List, Optional, Type, Union,
 )
 
 import panel as pn
 import param
+import tqdm
 
 from panel.widgets import Widget
 
@@ -27,6 +31,18 @@ class DataFrame(param.DataFrame):
         if (obj is not None and obj.__dict__.get(self._internal_name) is None) or (obj._stale and obj.auto_update):
             obj._update_data()
         return super().__get__(obj, objtype)
+
+
+def expand_queries(values, groups=('filters', 'variables')):
+    spec_groups = []
+    for group in groups:
+        if group in values:
+            var_names, var_values = zip(*values[group].items())
+            variable_space = (dict(zip(var_names, vs)) for vs in product(*var_values))
+        else:
+            variable_space = [{}]
+        spec_groups.append(list(variable_space))
+    return [dict(zip(groups, group)) for group in product(*spec_groups)]
 
 
 class Pipeline(Component):
@@ -142,8 +158,8 @@ class Pipeline(Component):
 
     @param.depends('update', watch=True)
     @catch_and_notify
-    def _update_data(self, *events: param.Event):
-        if not self.auto_update and events and not any(
+    def _update_data(self, *events: param.Event, force: bool = False):
+        if not force and not self.auto_update and events and not any(
                 e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
             self._stale = True
             return
@@ -316,7 +332,13 @@ class Pipeline(Component):
         params['transforms'] = [Transform.from_spec(tspec) for tspec in transform_specs]
         sql_transform_specs = spec.pop('sql_transforms', [])
         params['sql_transforms'] = [Transform.from_spec(tspec) for tspec in sql_transform_specs]
-        return cls(**params)
+
+        # Instantiate and populate pre-cache
+        precache = params.pop('precache', None)
+        obj = cls(**params)
+        if precache:
+            obj.precache(precache)
+        return obj
 
     def add_filter(self, filt: Union[Filter, Type[Filter], Widget], field: Optional[str] = None, **kwargs):
         """
@@ -418,6 +440,76 @@ class Pipeline(Component):
         return type(self)(**dict({p: v for p, v in self.param.values().items()
                                   if p != 'name'}, **params))
 
+    def precache(self, queries: Dict[str, Dict[str, []]] | List[Dict[str, Dict[str, Any]]]) -> None:
+        """
+        Populates the cache of the Source with the provided queries.
+
+        Queries can be provided in two formats:
+
+          - A dictionary containing 'filters' and 'variables'
+            dictionaries each containing lists of values to compute
+            a cross-product for, e.g.
+
+              {
+                'filters': {
+                  <filter>': ['a', 'b', 'c', ...],
+                  ...
+                },
+                'variables': {
+                  <variable>: [0, 2, 4, ...],
+                  ...
+                }
+              }
+          - A list containing dictionaries of explicit values
+            for each filter and variables.
+
+              [{
+                 'filters': {<filter>: 'a'},
+                 'variables': {<variable>: 0}
+               },
+               {
+                 'filters': {<filter>: 'a'},
+                 'variables': {<variable>: 1}
+               },
+               ...
+              ]
+        """
+        if not self.source.cache_dir or not self.precache:
+            return
+
+        if not isinstance(queries, list):
+            queries = expand_queries(queries)
+
+        old_auto = self.auto_update
+        self.auto_update = False
+        restore = None
+        for qspec in tqdm.tqdm(queries, leave=True, file=sys.stdout):
+            try:
+                previous = self._set_spec(qspec)
+                if restore is None:
+                    restore = previous
+                self._update_data(force=True)
+            except Exception as e:
+                raise e
+        if restore:
+            self._set_spec(restore)
+            self._update_data(force=True)
+        self.auto_update = old_auto
+
+    def _set_spec(self, spec):
+        previous = {'variables': {}, 'filters': {}}
+        filters = self.traverse('filters')
+        for var_name, var_val in spec.get('variables', {}).items():
+            variable = state.variables._vars[var_name]
+            previous['variables'][var_name] = variable.value
+            variable.value = var_val
+        filt_spec = spec.get('filters', {})
+        for filt in filters:
+            if filt.field in filt_spec:
+                previous['filters'][filt.field] = filt.value
+                filt.value = filt_spec[filt.field]
+        return previous
+
     def traverse(self, type) -> List[Transform] | List[Filter]:
         """
         Returns all Filter or Transform objects in a potentially chained
@@ -435,14 +527,29 @@ class Pipeline(Component):
     @property
     def control_panel(self) -> pn.Column:
         col = pn.Column()
-        filters = [filt.panel for filt in self.filters]
+        filters = [filt.panel for filt in self.traverse('filters')]
         if any(filters):
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Filters</div>')
         col.extend([filt for filt in filters if filt is not None])
-        transforms = [t.control_panel for t in self.transforms+self.sql_transforms if t.controls]
-        if transforms:
+        transforms = self.traverse('transforms')+self.traverse('sql_transforms')
+        controls = [t.control_panel for t in transforms if t.controls]
+        if controls:
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Transforms</div>')
-        col.extend(transforms)
+        col.extend(controls)
+        variables, variable_controls = [], []
+        for transform in transforms:
+            for ref in transform.refs:
+                if ref.startswith('$variable'):
+                    variable = state.variables._vars[ref.split('$variables.')[1]]
+                    if variable not in variables:
+                        variables.append(variable)
+        for variable in variables:
+            vpanel = variable.panel
+            if vpanel is not None:
+                variable_controls.append(vpanel)
+        if variable_controls:
+            col.append('<div style="font-size: 1.5em; font-weight: bold;">Variables</div>')
+        col.extend(variable_controls)
         if not self.auto_update:
             col.append(self._update_widget)
         return col
