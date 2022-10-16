@@ -23,7 +23,7 @@ jobs:
       MPLBACKEND: "Agg"
       PYCTDEV_SELF_CHANNEL: "pyviz/label/dev"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Fetch unshallow
         run: git fetch --prune --tags --unshallow -f
       - uses: actions/setup-python@v2
@@ -65,7 +65,7 @@ jobs:
       PYPI: "https://upload.pypi.org/legacy/"
       PYCTDEV_SELF_CHANNEL: "pyviz/label/dev"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Fetch unshallow
         run: git fetch --prune --tags --unshallow -f
       - uses: actions/setup-python@v2
