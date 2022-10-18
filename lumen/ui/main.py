@@ -32,7 +32,7 @@ i.fa.fa-plus:hover {
 
 pn.extension(
     'ace', 'perspective', 'tabulator', raw_css=[CSS_RAW],
-    css_files=[CSS_URLS['font-awesome']]
+    css_files=[CSS_URLS['font-awesome']], notifications=True
 )
 
 def main():

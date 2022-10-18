@@ -520,7 +520,7 @@ class FileSource(Source):
                     name = '.'.join(basename(f).split('.')[:-1])
                 tables[name] = f
         else:
-            tables = self.tables
+            tables = self.tables or {}
         files = {}
         for name, table in tables.items():
             if isinstance(table, (list, tuple)):
