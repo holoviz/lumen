@@ -133,9 +133,17 @@ class Builder(param.Parameterized):
         for target in self.spec['targets']:
             view_specs = target['views']
             if isinstance(view_specs, list):
-                view_specs = [(f"{view['type']}: {view['table']}", view) for view in view_specs]
-            else:
-                view_specs = view_specs.items()
+                specs = {}
+                for view in view_specs:
+                    name = f"{view['type']}: {view['table']}"
+                    while name in specs:
+                        if name[-2] == ' ' and name[-1].isdigit():
+                            name = f'{name[:-2]} {int(name[-1])+1}'
+                        else:
+                            name = f'{name} 2'
+                    specs[name] = view
+                view_specs = specs
+            view_specs = view_specs.items()
             target_views = []
             for name, view in view_specs:
                 view = dict(view)

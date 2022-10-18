@@ -89,11 +89,11 @@ class SourceEditor(FastComponent):
         self._load_table = pn.widgets.Button(
             name='Load table', sizing_mode='stretch_width', margin=(15, 0)
         )
-        self._load_table.on_click(self._load_table)
+        self._load_table.on_click(self._load_table_data)
         self.form[:] = [self._select_table, self._load_table]
 
     @catch_and_notify
-    def _load_table(self, event):
+    def _load_table_data(self, event):
         self.preview.value = self._source.get(self._select_table.value)
 
     @property
@@ -135,7 +135,7 @@ class SourceGalleryItem(GalleryItem):
         self.view = pn.pane.PNG(self.thumbnail, height=200, max_width=300, align='center')
         self._modal_content = [self.editor]
 
-    @param.depends('selected', watch=True)
+    @param.depends('selected', on_init=True, watch=True)
     def _add_spec(self):
         sources = state.spec['sources']
         if self.selected:
