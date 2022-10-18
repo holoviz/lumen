@@ -189,6 +189,8 @@ class AE5Source(Source):
         deployments = self._session.deployment_list(
             k8s=True, format='dataframe', collaborators=bool(user)
         ).apply(self._process_deployment, axis=1)
+        if not len(deployments):
+            return pd.DataFrame(columns=self._deployment_columns)
         if user is None or self._is_admin:
             return deployments[self._deployment_columns]
         return deployments[
@@ -209,12 +211,16 @@ class AE5Source(Source):
 
     def _get_sessions(self):
         sessions = self._session.session_list(format='dataframe', k8s=True)
+        if not len(sessions):
+            return pd.DataFrame(columns=self._session_columns)
         if self._user and not self._is_admin:
             sessions = sessions[sessions.owner==self._user]
         return sessions[self._session_columns]
 
     def _get_jobs(self):
         jobs = self._session.job_list(format='dataframe')
+        if not len(jobs):
+            return pd.DataFrame(columns=self._job_columns)
         if self._user and not self._is_admin:
             jobs = jobs[jobs.owner==self._user]
         return jobs[self._job_columns]
