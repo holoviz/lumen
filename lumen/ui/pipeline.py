@@ -330,10 +330,12 @@ class PipelinesEditor(WizardItem):
         self._watchers = {}
         self._update_sources()
 
-    @param.depends('source', watch=True)
+    @param.depends('source', watch=True, on_init=True)
     def _update_tables(self):
         if self.source in lm_state.sources:
             self.tables = lm_state.sources[self.source].get_tables()
+            if not self.table and self.tables:
+                self.table = self.tables[0]
 
     def _update_sources(self, *events):
         for name, item in state.sources.items.items():
@@ -343,9 +345,9 @@ class PipelinesEditor(WizardItem):
         if not self.source and self.sources:
             self.source = self.sources[0]
 
-    @param.depends('pipeline_name', watch=True)
+    @param.depends('pipeline_name', 'table', watch=True)
     def _enable_add(self):
-        self.disabled = not bool(self.pipeline_name)
+        self.disabled = not bool(self.pipeline_name and self.table)
 
     def _add_pipeline(self, event):
         self.spec[self.pipeline_name] = spec = {
@@ -379,7 +381,7 @@ class PipelineGalleryItem(GalleryItem):
         self.view = pn.pane.PNG(self.thumbnail, height=200, max_width=300, align='center')
         self._modal_content = [self.editor]
 
-    @param.depends('selected', watch=True)
+    @param.depends('selected', watch=True, on_init=True)
     def _add_spec(self):
         pipelines = state.spec['pipelines']
         if self.selected:
@@ -455,12 +457,14 @@ class PipelineGallery(WizardItem, Gallery):
                 self._items[name] = item
         self.items = {
             name: item for name, item in self._items.items()
-            if item.spec['source'] in lm_state.sources
+            if (item.spec.get('source') in lm_state.sources or
+                item.spec.get('pipeline') in lm_state.pipelines)
         }
         self.param.trigger('items')
 
     def _add_pipeline(self, event):
         state.modal[:] = self._modal_content
+        self._editor._update_tables()
         state.template.open_modal()
 
     def _save_pipelines(self, event):
