@@ -52,7 +52,7 @@ class SourceEditor(FastComponent):
 
     _template = """
     <span style="font-size: 2em"><b>{{ name }} - {{ source_type }}</b></span>
-    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 2em;">
       <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em; margin-top">${form}</form>
       <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
     </div>
@@ -89,10 +89,12 @@ class SourceEditor(FastComponent):
         self._load_table = pn.widgets.Button(
             name='Load table', sizing_mode='stretch_width', margin=(15, 0)
         )
-        def load_table(event):
-            self.preview.value = self._source.get(self._select_table.value)
-        self._load_table.on_click(load_table)
+        self._load_table.on_click(self._load_table)
         self.form[:] = [self._select_table, self._load_table]
+
+    @catch_and_notify
+    def _load_table(self, event):
+        self.preview.value = self._source.get(self._select_table.value)
 
     @property
     def thumbnail(self):
@@ -104,10 +106,16 @@ class SourceEditor(FastComponent):
         for event in events:
             self.spec[event.name] = event.new
 
-    def _preview(self, event):
-        self._preview_display = 'flex' if self._preview_display == 'none' else 'none'
+    @param.depends('spec', watch=True)
+    def _update_preview(self):
+        if self._preview_display == 'none':
+            return
         self._source = Source.from_spec(self.spec)
         self._select_table.options = self._source.get_tables()
+
+    def _preview(self, event):
+        self._preview_display = 'flex' if self._preview_display == 'none' else 'none'
+        self._update_preview()
         self.resize += 1
 
     def _save(self):
@@ -261,11 +269,10 @@ class IntakeSourceEditor(SourceEditor):
         </div>
       </div>
     </form>
-    <fast-button id="preview-button" onclick="${_preview}" style="position: absolute; right: 5px; margin-top: 1.5em; z-index: 100;">
-      Preview
-    </fast-button>
-    <fast-divider></fast-divider>
-    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+    <div style="display: flex; justify-content:flex-end; margin-right: 2em;">
+      <fast-button id="preview-button" onclick="${_preview}">Preview</fast-button>
+    </div>
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 2em;">
       <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em;">${form}</form>
       <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
     </div>
@@ -363,11 +370,10 @@ class IntakeDremioSourceEditor(SourceEditor):
         </div>
       </div>
     </form>
-    <fast-button id="preview-button" onclick="${_preview}" style="position: absolute; right: 5px; margin-top: 1.5em; z-index: 100;">
-      Preview
-    </fast-button>
-    <fast-divider></fast-divider>
-    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+    <div style="display: flex; justify-content:flex-end; margin-right: 2em;">
+      <fast-button id="preview-button" onclick="${_preview}">Preview</fast-button>
+    </div>
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 2em;">
       <form id="form" role="form" style="flex: 30%; max-width: 250px; line-height: 2em;">${form}</form>
       <div id="preview" style="flex: auto; margin-left: 1em; overflow-y: auto;">${preview}</div>
     </div>
@@ -436,7 +442,7 @@ class FileSourceEditor(SourceEditor):
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
     <div id="tables">
-      <fast-button id="add-table" onclick="${_add_table}" appearance="outline" style="float: right">
+      <fast-button id="add-table" onclick="${_add_table}" appearance="outline" style="float: right; margin-right: 2em;">
         <b>+</b>
       </fast-button>
       <span style="font-size: 1.2em; margin: 1em 0;"><b>Tables</b></span>
@@ -453,11 +459,10 @@ class FileSourceEditor(SourceEditor):
         <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
       </div>
     </div>
-    <fast-button id="preview-button" onclick="${_preview}" style="position: absolute; right: 5px; margin-top: 1.5em; z-index: 100;">
-      Preview
-    </fast-button>
-    <fast-divider></fast-divider>
-    <div id="preview-area" style="display: ${_preview_display}; margin-top: 4.5em;">
+    <div style="display: flex; justify-content:flex-end; margin-right: 2em;">
+      <fast-button id="preview-button" onclick="${_preview}">Preview</fast-button>
+    </div>
+    <div id="preview-area" style="display: ${_preview_display}; margin-top: 2em;">
       <form id="form" role="form" style="flex: 30%; max-width: 300px; line-height: 2em;">${form}</form>
       <div id="preview" style="flex: auto; margin-left: 2em; overflow-y: auto;">${preview}</div>
     </div>
@@ -467,6 +472,7 @@ class FileSourceEditor(SourceEditor):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._table_watchers = {}
         for name, table in self.spec.get('tables', {}).items():
             self._add_table(name=name, uri=table)
 
@@ -481,14 +487,29 @@ class FileSourceEditor(SourceEditor):
             if os.path.isfile(filename):
                 return filename
 
+    @param.depends('table_editors', watch=True)
+    @catch_and_notify
+    def _update_spec(self, *events):
+        self.spec['tables'] = {t.name: t.uri for t in self.table_editors}
+        self.param.trigger('spec')
+
+    @catch_and_notify
     def _add_table(self, event=None, **kwargs):
         table = FileSourceTable(**kwargs)
-        table.param.watch(self._remove_table, 'remove')
+        remove = table.param.watch(self._remove_table, 'remove')
+        update = table.param.watch(self._update_spec, 'uri')
+        self._table_watchers[table.name] = (remove, update)
         self.table_editors += [table]
+        self.resize += 1
 
+    @catch_and_notify
     def _remove_table(self, event):
-        self.tables.remove(event.obj)
+        self.table_editors.remove(event.obj)
+        watchers = self._table_watchers[event.obj.name]
+        for w in watchers:
+            event.obj.param.unwatch(w)
         self.param.trigger('table_editors')
+        self.resize -= 1
 
 
 class SourcesEditor(WizardItem):
@@ -504,6 +525,8 @@ class SourcesEditor(WizardItem):
     source_name = param.String(doc="Enter a name for the source")
 
     source_type = param.Selector(doc="Select the type of source")
+
+    resize = param.Integer(default=0)
 
     _template = """
     <span style="font-size: 2em">Source Editor</span>
@@ -533,7 +556,7 @@ class SourcesEditor(WizardItem):
           </fast-button>
         </div>
       </form>
-      <div id="sources" style="flex: 75%; margin-left: 1em;">
+      <div id="sources" style="flex: 75%; margin-left: 1em; margin-right: 1em;">
         {% for source in sources.values() %}
         <div id="source-container">${source}</div>
         <fast-divider></faster-divider>
@@ -543,6 +566,10 @@ class SourcesEditor(WizardItem):
     """
 
     _dom_events = {'source-name': ['keyup']}
+
+    _scripts = {
+        'resize': ['window.dispatchEvent(new Event("resize"))']
+    }
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -558,6 +585,7 @@ class SourcesEditor(WizardItem):
     def _enable_add(self):
         self.disabled = not bool(self.source_name)
 
+    @catch_and_notify
     def _add_source(self, event):
         self.spec[self.source_name] = spec = {'type': self.source_type}
         editor = SourceEditor(
@@ -568,3 +596,4 @@ class SourcesEditor(WizardItem):
         self.param.trigger('sources')
         self.source_name = ''
         self.ready = True
+        self.resize += 1

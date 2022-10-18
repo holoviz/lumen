@@ -73,7 +73,7 @@ class PipelineEditor(FastComponent):
     </div>
     <div id="filters" style="display: flex; flex-wrap: wrap;">
        {% for fitem in filter_items %}
-       <div id="filter-item" style="margin: 0.5em; width: 320px;">
+       <div id="filter-item" style="margin: 0.5em; width: 335px; border: var(--accent-fill-rest) 1px solid; border-radius: 0.5em;">
          ${fitem}
          <fast-button id="filt-remove-button-{{ loop.index0 }}" appearance="accent" onclick="${_remove_filter}" style="float: right; z-index: 100;">
            <b style="font-size: 2em;">-</b>
@@ -99,7 +99,7 @@ class PipelineEditor(FastComponent):
     </div>
     <div id="transforms" style="display: flex; flex-wrap: wrap;">
        {% for titem in transform_items %}
-       <div id="transform-item" style="margin: 0.5em; width: 320px;">
+       <div id="transform-item" style="margin: 0.5em; width: 335px; border: var(--accent-fill-rest) 1px solid; border-radius: 0.5em;">
          ${titem}
          <fast-button id="transform-remove-button-{{ loop.index0 }}" appearance="accent" onclick="${_remove_transform}" style="float: right; z-index: 100;">
            <b style="font-size: 2em;">-</b>
@@ -223,7 +223,7 @@ class PipelineEditor(FastComponent):
 
         self.filters.append(filt)
         self.param.trigger('filters')
-        params = [p for p in filt.param if p not in ('name', 'schema', 'table')]
+        params = [p for p in filt.param if p not in ('name', 'schema', 'table', 'widget')]
         self.filter_items.append(pn.Param(filt, parameters=params))
         self.param.trigger('filter_items')
         self._update_spec()
