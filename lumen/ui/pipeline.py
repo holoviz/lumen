@@ -283,7 +283,7 @@ class PipelinesEditor(WizardItem):
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
     <div style="display: flex;">
-      <form role="form" style="flex: 30%; max-width: 300px; line-height: 2em;">
+      <form role="form" style="flex: 30%; max-width: 450px; line-height: 2em;">
         <div style="display: grid;">
           <label for="pipeline-name-${id}"><b>{{ param.pipeline_name.label }}</b></label>
           <fast-text-field id="pipeline-name" placeholder="{{ param.pipeline_name.doc }}" value="${pipeline_name}">
@@ -291,7 +291,7 @@ class PipelinesEditor(WizardItem):
         </div>
         <div style="display: grid;">
           <label for="sources-${id}"><b>{{ param.sources.label }}</b></label>
-          <fast-select id="sources" style="max-width: 300px; min-width: 150px;" value="${source}">
+          <fast-select id="sources" style="max-width: 450px; min-width: 150px;" value="${source}">
           {% for src in sources %}
             <fast-option value="{{ src }}">{{ src.title() }}</fast-option>
           {% endfor %}
@@ -301,7 +301,7 @@ class PipelinesEditor(WizardItem):
         <div style="display: flex;">
           <div style="display: grid;">
             <label for="tables-${id}"><b>{{ param.tables.label }}</b></label>
-            <fast-select id="tables" style="max-width: 300px; min-width: 150px;" value="${table}">
+            <fast-select id="tables" style="max-width: 450px; min-width: 150px;" value="${table}">
             {% for tbl in tables %}
               <fast-option value="{{ tbl|tojson }}">{{ tbl }}</fast-option>
             {% endfor %}
