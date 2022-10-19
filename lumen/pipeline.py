@@ -309,10 +309,15 @@ class Pipeline(Component):
                 )
             params['table'] = table = tables[0]
         elif table not in tables:
-            raise ValidationError(
-                "The Pipeline specification references a table that is not "
-                "available on the specified source. ", spec
-            )
+            if hasattr(source, '_get_source'):
+                # Certain sources perform fuzzy matching so we use the
+                # internal API to see if the table has a match
+                source._get_source(table)
+            else:
+                raise ValidationError(
+                    "The Pipeline specification references a table that is not "
+                    "available on the specified source. ", spec
+                )
 
         # Resolve filters
         params['filters'] = filters = []
