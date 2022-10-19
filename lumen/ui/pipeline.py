@@ -208,15 +208,15 @@ class PipelineEditor(FastComponent):
     def _add_filter(self, event=None, spec=None):
         self.loading = True
         source = lm_state.sources[self.source]
-        schema = source.get_schema()
-        table = list(schema)[0]
+        schema = source.get_schema(self.table)
         if spec is None:
             spec = {
                 'type': self.filter_type,
-                'table': table,
-                'field': list(schema[table])[0]
+                'table': self.table
             }
-        filt = Filter.from_spec(spec, schema)
+            if schema:
+                spec['field'] = list(schema)[0]
+        filt = Filter.from_spec(spec, {self.table: schema})
         filt.param.watch(self._update_spec, list(filt.param))
         if self._pipeline:
             self._pipeline.add_filter(filt)
