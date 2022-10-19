@@ -232,16 +232,15 @@ class PipelineEditor(FastComponent):
     def _add_transform(self, event=None, spec=None):
         self.loading = True
         source = lm_state.sources[self.source]
-        schema = source.get_schema()
+        schema = source.get_schema(self.table)
         if spec is None:
             spec = {'type': self.transform_type}
 
         transform = Transform.from_spec(spec)
         transform.param.watch(self._update_spec, list(transform.param))
 
-        fields = [f for t in schema.values() for f in t]
         for p in transform._field_params:
-            transform.param[p].objects = fields
+            transform.param[p].objects = list(schema)
 
         self.transforms.append(transform)
         if self._pipeline:
