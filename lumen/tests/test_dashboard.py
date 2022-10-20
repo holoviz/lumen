@@ -2,10 +2,12 @@ import pathlib
 
 import pandas as pd
 import panel as pn
+import pytest
 
 from lumen.config import config
 from lumen.dashboard import Dashboard
 from lumen.state import state
+from lumen.validation import ValidationError
 from lumen.views import View
 
 
@@ -35,6 +37,10 @@ def test_dashboard_from_spec(set_root):
     target = dashboard.targets[0]
     view = View.from_spec(target.views[0], target.source, [])
     assert view.view_type == 'table'
+
+def test_dashboard_from_spec_invalid():
+    with pytest.raises(ValidationError):
+        Dashboard({'foo': 'bar'})
 
 def test_dashboard_reload_target(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'

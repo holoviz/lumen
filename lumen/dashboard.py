@@ -319,7 +319,7 @@ class Dashboard(Component):
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
         if isinstance(specification, dict):
-            state.spec = specification
+            state.spec = self.validate(specification)
             self._yaml = yaml.dump(specification)
             self._yaml_file = 'local'
         else:
