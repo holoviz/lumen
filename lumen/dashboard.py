@@ -329,6 +329,7 @@ class Dashboard(Component):
         self._root = config.root = root
         self._edited = False
         self._debug = params.pop('debug', False)
+        self._rerender_watchers = {}
         super().__init__(**params)
         self._init_config()
 
@@ -407,7 +408,9 @@ class Dashboard(Component):
         if 'auto_update' not in target_spec:
             target_spec['auto_update'] = self.config.auto_update
         target = Target.from_spec(target_spec)
-        target.param.watch(self._render_targets, 'rerender')
+        self._rerender_watchers[target] = target.param.watch(
+            self._render_targets, 'rerender'
+        )
         if isinstance(self._layout, pn.Tabs):
             target.show_title = False
         target.start()
@@ -425,6 +428,13 @@ class Dashboard(Component):
         if not self.auth.authorized:
             self.targets = []
             return
+
+        # Clean up old targets
+        for target in self.targets:
+            if isinstance(target, Target) and target in self._rerender_watchers:
+                target.param.unwatch(self._rerender_watchers[target])
+                del self._rerender_watchers[target]
+
         targets = []
         target_specs = state.spec.get('targets', [])
         ntargets = len(target_specs)

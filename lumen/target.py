@@ -540,10 +540,14 @@ class Target(Component, Viewer):
     def _rerender(self, update_views=True):
         self._scheduled = False
         cards = self.get_cards()
+        rerender = False
         if update_views:
             self._rerender_cards(cards)
+            rerender = True
         if cards != self._cards:
             self._cards[:] = cards
+            rerender = True
+        if rerender:
             self.param.trigger('rerender')
 
     ##################################################################
