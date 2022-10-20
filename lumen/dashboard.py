@@ -318,8 +318,15 @@ class Dashboard(Component):
 
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
-        self._yaml_file = specification
-        self._root = config.root = os.path.abspath(os.path.dirname(self._yaml_file))
+        if isinstance(specification, dict):
+            state.spec = self.validate(specification)
+            self._yaml = yaml.dump(specification)
+            self._yaml_file = 'local'
+            root = params.pop('root', os.getcwd())
+        else:
+            self._yaml_file = specification
+            root = os.path.abspath(os.path.dirname(self._yaml_file))
+        self._root = config.root = root
         self._edited = False
         self._debug = params.pop('debug', False)
         super().__init__(**params)
@@ -327,7 +334,10 @@ class Dashboard(Component):
 
         # Initialize from spec
         config.load_local_modules()
-        self._load_specification(from_file=True)
+        if isinstance(specification, dict):
+            state.resolve_views()
+        else:
+            self._load_specification(from_file=True)
         self._apps = {}
 
         # Set up background loading
@@ -379,6 +389,8 @@ class Dashboard(Component):
             pn.state.location.sync(self._layout, {'active': 'target'})
 
     def _load_specification(self, from_file=False):
+        if self._yaml_file == 'local':
+            return
         kwargs = {}
         if from_file or self._yaml is None:
             with open(self._yaml_file) as f:
