@@ -289,10 +289,9 @@ class Download(Component, Viewer):
         return cls(pipelines=pipelines, **spec)
 
 
-class Target(Component):
+class Target(Component, Viewer):
     """
-    A Target renders the results of a Source query using the defined
-    set of filters and views.
+    A Target renders multiple Views into a layout.
     """
 
     auto_update = param.Boolean(default=True, constant=True, doc="""
@@ -327,6 +326,9 @@ class Target(Component):
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
 
+    rerender = param.Event(default=False, doc="""
+        An event that is triggered whenever the View requests a re-render.""")
+
     source = param.ClassSelector(class_=Source, doc="""
         The Source queries the data from some data source.""")
 
@@ -348,7 +350,6 @@ class Target(Component):
     def __init__(self, **params):
         if 'facet' not in params:
             params['facet'] = Facet()
-        self._application = params.pop('application', None)
         self._cache = {}
         self._cb = None
         self._scheduled = False
@@ -371,6 +372,10 @@ class Target(Component):
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
         for view in list(self._cache.values())[0].views:
             view.param.watch(self._schedule_rerender, 'rerender')
+
+    @param.depends('rerender')
+    def __panel__(self):
+        return self.panels
 
     def _resort(self, *events):
         self._rerender(update_views=False)
@@ -527,26 +532,23 @@ class Target(Component):
             self._rerender()
 
     def _rerender_cards(self, cards):
-        if self._application:
-            self._application._set_loading(self.title)
         for card in cards:
             if any(view in self._updates for view in card.views):
                 card.rerender()
-        if self._application:
-            self._application._render_targets()
         self._updates = []
 
     def _rerender(self, update_views=True):
         self._scheduled = False
         cards = self.get_cards()
+        rerender = False
         if update_views:
             self._rerender_cards(cards)
+            rerender = True
         if cards != self._cards:
             self._cards[:] = cards
-            if self._application:
-                self._application._render()
-        if self._application:
-            self._application._layout.loading = False
+            rerender = True
+        if rerender:
+            self.param.trigger('rerender')
 
     ##################################################################
     # Validation API
