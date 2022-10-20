@@ -322,9 +322,11 @@ class Dashboard(Component):
             state.spec = self.validate(specification)
             self._yaml = yaml.dump(specification)
             self._yaml_file = 'local'
+            root = os.getcwd()
         else:
             self._yaml_file = specification
-            self._root = config.root = os.path.abspath(os.path.dirname(self._yaml_file))
+            root = os.path.abspath(os.path.dirname(self._yaml_file))
+        self._root = config.root = root
         self._edited = False
         self._debug = params.pop('debug', False)
         super().__init__(**params)
@@ -387,6 +389,8 @@ class Dashboard(Component):
             pn.state.location.sync(self._layout, {'active': 'target'})
 
     def _load_specification(self, from_file=False):
+        if self._yaml_file == 'local':
+            return
         kwargs = {}
         if from_file or self._yaml is None:
             with open(self._yaml_file) as f:
