@@ -19,7 +19,7 @@ def test_dashboard_with_local_view(set_root):
     view = View.from_spec(target.views[0], target.source, [])
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 
-def test_dashboard_from_spec(set_root):
+def test_dashboard_from_spec():
     spec = {
         'sources': {
             'test': {'type': 'file', 'files': ['./sources/test.csv']}
@@ -30,8 +30,7 @@ def test_dashboard_from_spec(set_root):
             'views': [{'table': 'test', 'type': 'table'}],
         }]
     }
-    set_root(str(pathlib.Path(__file__).parent))
-    dashboard = Dashboard(spec)
+    dashboard = Dashboard(spec, root=str(pathlib.Path(__file__).parent))
     dashboard._render_dashboard()
     assert state.spec == spec
     target = dashboard.targets[0]
