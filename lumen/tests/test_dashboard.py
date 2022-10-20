@@ -17,6 +17,25 @@ def test_dashboard_with_local_view(set_root):
     view = View.from_spec(target.views[0], target.source, [])
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 
+def test_dashboard_from_spec(set_root):
+    spec = {
+        'sources': {
+            'test': {'type': 'file', 'files': ['./sources/test.csv']}
+        },
+        'targets': [{
+            'title': 'Test',
+            'source': 'test',
+            'views': [{'table': 'test', 'type': 'table'}],
+        }]
+    }
+    set_root(str(pathlib.Path(__file__).parent))
+    dashboard = Dashboard(spec)
+    dashboard._render_dashboard()
+    assert state.spec == spec
+    target = dashboard.targets[0]
+    view = View.from_spec(target.views[0], target.source, [])
+    assert view.view_type == 'table'
+
 def test_dashboard_reload_target(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
