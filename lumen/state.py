@@ -54,7 +54,7 @@ class _session_state:
 
     def to_spec(
         self, auth=None, config=None, defaults=None,
-        pipelines={}, sources={}, variables=None
+        pipelines={}, sources={}, targets=[], variables=None
     ):
         """
         Exports the full specification of the supplied components including
@@ -68,6 +68,7 @@ class _session_state:
         variables: lumen.variables.Variables
         pipelines: Dict[str, Pipeline]
         sources: Dict[str, Source]
+        targets: list[Target]
 
         Returns
         -------
@@ -93,6 +94,7 @@ class _session_state:
             context['pipelines'] = {}
         for k, pipeline in pipelines.items():
             context['pipelines'][k] = pipeline.to_spec(context=context)
+        context['targets'] = [target.to_spec(context) for target in targets]
         return context
 
     @property
@@ -200,9 +202,9 @@ class _session_state:
     def load_pipelines(self, **kwargs):
         from .pipeline import Pipeline
         self._pipelines[pn.state.curdoc or None] = pipelines = {}
-        for name, source_spec in self.spec.get('pipelines', {}).items():
+        for name, pipeline_spec in self.spec.get('pipelines', {}).items():
             pipelines[name] = Pipeline.from_spec(
-                dict(source_spec, name=name, **kwargs)
+                dict(pipeline_spec, name=name, **kwargs)
             )
         return pipelines
 

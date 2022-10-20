@@ -128,6 +128,8 @@ class Pipeline(Component):
 
     def to_spec(self, context=None):
         spec = super().to_spec(context=context)
+        if 'pipeline' in spec and 'source' in spec:
+            del spec['source']
         if context is None:
             return spec
         for type_name in ('pipeline', 'source'):

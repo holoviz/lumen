@@ -8,7 +8,9 @@ from itertools import product
 import panel as pn
 import param
 
+from panel.util import PARAM_NAME_PATTERN
 from panel.viewable import Layoutable, Viewer
+from param import edit_constant
 
 from .base import Component
 from .config import _LAYOUTS
@@ -98,9 +100,21 @@ class Card(Viewer):
         spec['views'] = views = []
         for view in view_specs:
             if isinstance(view_specs, dict):
-                view_spec = dict(view_specs[view], name=view)
+                name = view
+                view = view_specs[view]
             else:
-                view_spec = view.copy()
+                name = None
+
+            if isinstance(view, View):
+                if PARAM_NAME_PATTERN.match(view.name) and name:
+                    with edit_constant(view):
+                        view.name = name
+                views.append(view)
+                continue
+
+            view_spec = view.copy()
+            if 'name' not in view_spec and name:
+                view_spec[name] = name
             if 'pipeline' in view_spec:
                 pipeline = Pipeline.from_spec(view_spec.pop('pipeline'))
             elif 'table' in view_spec and view_spec['table'] in pipelines:
@@ -789,6 +803,16 @@ class Target(Component, Viewer):
                 spec['pipeline'] = pipeline.to_spec()
         if 'source' in spec and 'pipeline' in spec:
             del spec['source']
+        if isinstance(spec['views'], dict):
+            spec['views'] = {
+                name: view.to_spec(context) if isinstance(view, View) else view
+                for name, view in spec['views'].items()
+            }
+        else:
+            spec['views'] = [
+                view.to_spec(context) if isinstance(view, View) else view
+                for view in spec['views']
+            ]
         return spec
 
     @pn.depends('refresh_rate', watch=True)

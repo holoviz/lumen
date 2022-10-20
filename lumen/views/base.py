@@ -374,6 +374,33 @@ class View(MultiTypeComponent, Viewer):
         """
         return pn.panel(self.get_data())
 
+    def to_spec(self, context=None):
+        """
+        Exports the full specification to reconstruct this component.
+
+        Parameters
+        ----------
+        context: Dict[str, Any]
+          Context contains the specification of all previously serialized components,
+          e.g. to allow resolving of references.
+
+        Returns
+        -------
+        Declarative specification of this component.
+        """
+        spec = super().to_spec(context)
+        if context is None:
+            return
+        for name, pipeline in context.get('pipelines', {}).items():
+            if spec.get('pipeline') == pipeline:
+                spec['pipeline'] = name
+                return spec
+        if 'pipeline' in spec:
+            if 'pipelines' not in context:
+                context['pipelines'] = {}
+            context['pipelines'][self.pipeline.name] = spec['pipeline']
+        return spec
+
     def update(self, *events, invalidate_cache=True):
         """
         Triggers an update in the View.
