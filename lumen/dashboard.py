@@ -322,7 +322,7 @@ class Dashboard(Component):
             state.spec = self.validate(specification)
             self._yaml = yaml.dump(specification)
             self._yaml_file = 'local'
-            root = os.getcwd()
+            root = params.pop('root', os.getcwd())
         else:
             self._yaml_file = specification
             root = os.path.abspath(os.path.dirname(self._yaml_file))
