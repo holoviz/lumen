@@ -189,10 +189,10 @@ def test_transform_controls_facetted(set_root):
     "layout,error",
     [
         ([[0]], None),
-        ([[0], [1]], ValueError),
-        ([[0], [1, 2]], ValueError),
-        ([{"test": 0}], None),
-        ([{"test1": 0}], ValueError),
+        ([[0], [1]], IndexError),
+        ([[0], [1, 2]], IndexError),
+        ([['test']], None),
+        ([['test1']], KeyError),
     ]
 )
 def test_layout_view(set_root, layout, error):
@@ -202,7 +202,7 @@ def test_layout_view(set_root, layout, error):
     views = {
         'test': {
             'type': 'table',
-            'table': 'test',
+            'table': 'test'
         },
     }
     spec = {

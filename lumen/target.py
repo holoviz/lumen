@@ -62,11 +62,24 @@ class Card(Viewer):
                 row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
                     if isinstance(index, int):
-                        if index >= view_size:
-                            raise ValueError(
-                                f"Layout specification for '{self.title}' target references "
-                                f"out-of-bounds index ({index}) even though the maximum "
-                                f"available index is {view_size - 1}."
+                        if isinstance(self.views, dict):
+                            raise KeyError(
+                                f'Layout specification for {self.title!r} target used '
+                                f'integer index ({index}) but views were declared as a '
+                                'dictionary.'
+                            )
+                        elif index >= view_size:
+                            raise IndexError(
+                                f'Layout specification for {self.title!r} target references '
+                                f'out-of-bounds index ({index}) even though the maximum '
+                                f'available index is {view_size - 1}.'
+                            )
+                        view = self.views[index]
+                    elif isinstance(self.views, dict):
+                        if index not in self.views:
+                            raise KeyError(
+                                f'Layout specification for {self.title} target references '
+                                'unknown view {index!r}.'
                             )
                         view = self.views[index]
                     else:
@@ -74,7 +87,7 @@ class Card(Viewer):
                         if matches:
                             view = matches[0]
                         else:
-                            raise ValueError(
+                            raise KeyError(
                                 f"Target could not find named view '{index}'."
                             )
                     row.append(view.panel)
@@ -114,7 +127,7 @@ class Card(Viewer):
 
             view_spec = view.copy()
             if 'name' not in view_spec and name:
-                view_spec[name] = name
+                view_spec['name'] = name
             if 'pipeline' in view_spec:
                 pipeline = Pipeline.from_spec(view_spec.pop('pipeline'))
             elif 'table' in view_spec and view_spec['table'] in pipelines:
