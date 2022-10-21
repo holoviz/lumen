@@ -657,8 +657,8 @@ class Target(Component, Viewer):
         view_specs = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context)
         if 'source' in spec or 'pipeline' in spec:
             return view_specs
-        view_specs = view_specs.values() if isinstance(view_specs, dict) else view_specs
-        if not all('pipeline' in spec for spec in view_specs):
+        views = list(view_specs.values()) if isinstance(view_specs, dict) else view_specs
+        if not all('pipeline' in spec for spec in views):
             raise ValidationError(
                 'Target (or its views) must declare a source or a pipeline.', spec
             )

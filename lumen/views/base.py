@@ -52,7 +52,7 @@ class Download(Component, Viewer):
     view = param.Parameter(doc="Holds the current view.")
 
     # Specification configuration
-    _internal_params = ['view']
+    _internal_params = ['view', 'name']
     _required_keys = ['format']
     _validate_params = True
 
@@ -165,8 +165,8 @@ class View(MultiTypeComponent, Viewer):
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
     def _init_link_selections(self):
-        doc = pn.state.curdoc
-        if self._ls is not None or doc is None:
+        doc = pn.state.curdoc or self.pipeline
+        if self._ls is not None:
             return
         if doc not in View._selections and self.selection_group:
             View._selections[doc] = {}
@@ -389,6 +389,7 @@ class View(MultiTypeComponent, Viewer):
         Declarative specification of this component.
         """
         spec = super().to_spec(context)
+        spec.update(self.kwargs)
         if context is None:
             return
         for name, pipeline in context.get('pipelines', {}).items():
@@ -399,6 +400,7 @@ class View(MultiTypeComponent, Viewer):
             if 'pipelines' not in context:
                 context['pipelines'] = {}
             context['pipelines'][self.pipeline.name] = spec['pipeline']
+            spec['pipeline'] = self.pipeline.name
         return spec
 
     def update(self, *events, invalidate_cache=True):
