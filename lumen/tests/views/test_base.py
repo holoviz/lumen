@@ -92,3 +92,109 @@ def test_view_hvplot_download(set_root):
 
     button._on_click()
     assert button.data.startswith('data:text/plain;charset=UTF-8;base64')
+
+def test_view_to_spec(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': 'table',
+        'table': 'test',
+    }
+
+    view = View.from_spec(view, source, [])
+    assert view.to_spec() == {
+        'pipeline': {
+            'source': {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+            'table': 'test'
+        },
+        'type': 'table',
+    }
+
+def test_view_to_spec_with_context(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': 'table',
+        'table': 'test',
+    }
+
+    view = View.from_spec(view, source, [])
+    context = {}
+    spec = view.to_spec(context=context)
+    assert context == {
+        'sources': {
+            source.name: {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+        },
+        'pipelines': {
+            view.pipeline.name: {
+                'source': source.name,
+                'table': 'test'
+            }
+        },
+    }
+    assert spec == {
+        'pipeline': view.pipeline.name,
+        'type': 'table'
+    }
+
+def test_view_to_spec_with_context_existing_context(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': 'table',
+        'table': 'test',
+    }
+
+    view = View.from_spec(view, source, [])
+    context = {}
+    view.pipeline.to_spec(context=context)
+    assert context == {
+        'sources': {
+            source.name: {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+        },
+        'pipelines': {
+            view.pipeline.name: {
+                'source': source.name,
+                'table': 'test'
+            }
+        },
+    }
+    spec = view.to_spec(context=context)
+    assert spec == {
+        'pipeline': view.pipeline.name,
+        'type': 'table'
+    }
+
+def test_hvplot_view_to_spec(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': 'hvplot',
+        'table': 'test',
+        'x': 'A',
+        'y': 'B',
+        'alpha': 0.3
+    }
+    view = View.from_spec(view, source, [])
+    assert view.to_spec() == {
+        'pipeline': {
+            'source': {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+            'table': 'test'
+        },
+        'type': 'hvplot',
+        'x': 'A',
+        'y': 'B',
+        'alpha': 0.3
+    }

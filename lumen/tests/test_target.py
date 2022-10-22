@@ -6,12 +6,17 @@ import pytest
 
 from bokeh.document import Document
 from panel.io.server import set_curdoc
+from panel.layout import Card, Column, Row
+from panel.pane import HoloViews
 from panel.param import Param
+from panel.widgets import Tabulator
 
+from lumen.pipeline import Pipeline
 from lumen.sources import DerivedSource, FileSource
 from lumen.state import state
 from lumen.target import Target
 from lumen.transforms import Astype
+from lumen.views import View
 
 
 def test_view_controls(set_root):
@@ -189,10 +194,10 @@ def test_transform_controls_facetted(set_root):
     "layout,error",
     [
         ([[0]], None),
-        ([[0], [1]], ValueError),
-        ([[0], [1, 2]], ValueError),
-        ([{"test": 0}], None),
-        ([{"test1": 0}], ValueError),
+        ([[0], [1]], IndexError),
+        ([[0], [1, 2]], IndexError),
+        ([['test']], None),
+        ([['test1']], KeyError),
     ]
 )
 def test_layout_view(set_root, layout, error):
@@ -202,7 +207,7 @@ def test_layout_view(set_root, layout, error):
     views = {
         'test': {
             'type': 'table',
-            'table': 'test',
+            'table': 'test'
         },
     }
     spec = {
@@ -220,3 +225,139 @@ def test_layout_view(set_root, layout, error):
                 Target.from_spec(spec, sources={'test': derived})
         else:
             Target.from_spec(spec, sources={'test': derived})
+
+
+def test_target_constructor_with_views_instance_list(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view1 = View.from_spec({
+        'type': 'hvplot', 'table': 'test',
+        'x': 'A', 'y': 'B', 'kind': 'scatter'
+    }, source=source)
+    view2 = View.from_spec({
+        'type': 'table', 'table': 'test'
+    }, source=source)
+    target = Target(views=[view1, view2])
+    layout = target.panels
+
+    assert isinstance(layout, Column)
+    assert len(layout) == 1
+    assert isinstance(layout[0], Card)
+    assert len(layout[0]) == 1
+    assert isinstance(layout[0][0], Column)
+    assert len(layout[0][0]) == 2
+    assert isinstance(layout[0][0][0], HoloViews)
+    assert isinstance(layout[0][0][1], Tabulator)
+
+def test_target_constructor_with_views_instance_dict(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view1 = View.from_spec({
+        'type': 'hvplot', 'table': 'test',
+        'x': 'A', 'y': 'B', 'kind': 'scatter'
+    }, source=source)
+    view2 = View.from_spec({
+        'type': 'table', 'table': 'test'
+    }, source=source)
+    target = Target(views={'hv': view1, 'table': view2}, layout=[['hv'], ['table']])
+    layout = target.panels
+
+    assert isinstance(layout, Column)
+    assert len(layout) == 1
+    assert isinstance(layout[0], Card)
+    assert len(layout[0]) == 1
+    assert isinstance(layout[0][0], Column)
+    assert len(layout[0][0]) == 2
+    assert isinstance(layout[0][0][0], Row)
+    assert isinstance(layout[0][0][0][0], HoloViews)
+    assert isinstance(layout[0][0][1], Row)
+    assert isinstance(layout[0][0][1][0], Tabulator)
+
+def test_target_to_spec_view_list(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    pipeline = Pipeline(source=source, table='test')
+    view1 = View.from_spec({
+        'type': 'hvplot', 'x': 'A', 'y': 'B', 'kind': 'scatter'
+    }, pipeline=pipeline)
+    view2 = View.from_spec({'type': 'table'}, pipeline=pipeline)
+    target = Target(views=[view1, view2], title='Plots')
+
+    context = {}
+    spec = target.to_spec(context)
+    assert context == {
+        'sources': {
+            source.name: {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+        },
+        'pipelines': {
+            pipeline.name: {
+                'source': source.name,
+                'table': 'test'
+            }
+        },
+    }
+    assert spec == {
+        'title': 'Plots',
+        'views': [{
+            'kind': 'scatter',
+            'pipeline': pipeline.name,
+            'type': 'hvplot',
+            'x': 'A',
+            'y': 'B'
+        },
+        {
+            'pipeline': pipeline.name,
+            'type': 'table'
+        }],
+    }
+
+
+def test_target_to_spec_with_views_instance_dict(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    pipeline = Pipeline(source=source, table='test')
+    view1 = View.from_spec({'type': 'hvplot', 'x': 'A', 'y': 'B', 'kind': 'scatter'}, pipeline=pipeline)
+    view2 = View.from_spec({'type': 'table'}, pipeline=pipeline)
+    target = Target(
+        views={'hv': view1, 'table': view2},
+        layout=[['hv'], ['table']],
+        title="Test"
+    )
+    assert view1.pipeline is view2.pipeline
+
+    context = {}
+    spec = target.to_spec(context)
+    assert context == {
+        'sources': {
+            source.name: {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+        },
+        'pipelines': {
+            pipeline.name: {
+                'source': source.name,
+                'table': 'test'
+            }
+        },
+    }
+    assert spec == {
+        'title': 'Test',
+        'layout': [['hv'], ['table']],
+        'views': {
+            'hv': {
+                'kind': 'scatter',
+                'pipeline': pipeline.name,
+                'type': 'hvplot',
+                'x': 'A',
+                'y': 'B'
+            },
+            'table': {
+                'pipeline': pipeline.name,
+                'type': 'table'
+            }
+        }
+    }

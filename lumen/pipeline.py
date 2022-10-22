@@ -127,9 +127,27 @@ class Pipeline(Component):
             self._update_data()
 
     def to_spec(self, context=None):
+        """
+        Exports the full specification to reconstruct this component.
+
+        Parameters
+        ----------
+        context: Dict[str, Any]
+          Context contains the specification of all previously
+          serialized components, e.g. to allow resolving of
+          references.
+
+        Returns
+        -------
+        Declarative specification of this component.
+        """
         spec = super().to_spec(context=context)
+        if 'pipeline' in spec and 'source' in spec:
+            del spec['source']
         if context is None:
             return spec
+        if 'pipelines' not in context:
+            context['pipelines'] = {}
         for type_name in ('pipeline', 'source'):
             if type_name not in spec:
                 continue
@@ -141,6 +159,7 @@ class Pipeline(Component):
             context[plural][obj_name] = obj
             spec[type_name] = obj_name
             break
+        context['pipelines'][self.name] = spec
         return spec
 
     @property

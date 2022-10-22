@@ -27,6 +27,7 @@ from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import SQLTransform, Transform
 from ..util import catch_and_notify, is_ref, resolve_module_reference
+from ..validation import ValidationError
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -52,7 +53,7 @@ class Download(Component, Viewer):
     view = param.Parameter(doc="Holds the current view.")
 
     # Specification configuration
-    _internal_params = ['view']
+    _internal_params = ['view', 'name']
     _required_keys = ['format']
     _validate_params = True
 
@@ -165,8 +166,8 @@ class View(MultiTypeComponent, Viewer):
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
     def _init_link_selections(self):
-        doc = pn.state.curdoc
-        if self._ls is not None or doc is None:
+        doc = pn.state.curdoc or self.pipeline
+        if self._ls is not None:
             return
         if doc not in View._selections and self.selection_group:
             View._selections[doc] = {}
@@ -247,6 +248,12 @@ class View(MultiTypeComponent, Viewer):
                 if isinstance(source, str):
                     source = state.sources[source]
                 pipeline = Pipeline(source=source, **overrides)
+            elif 'table' in overrides and len(overrides) == 1:
+                if pipeline.table != overrides['table']:
+                    raise ValidationError(
+                        'Table declared on view does not match table declared '
+                        'on pipeline.', spec, 'table'
+                    )
             elif overrides:
                 pipeline = pipeline.chain(
                     filters=overrides.get('filters', []),
@@ -373,6 +380,35 @@ class View(MultiTypeComponent, Viewer):
             representation of the queried table.
         """
         return pn.panel(self.get_data())
+
+    def to_spec(self, context=None):
+        """
+        Exports the full specification to reconstruct this component.
+
+        Parameters
+        ----------
+        context: Dict[str, Any]
+          Context contains the specification of all previously serialized components,
+          e.g. to allow resolving of references.
+
+        Returns
+        -------
+        Declarative specification of this component.
+        """
+        spec = super().to_spec(context)
+        spec.update(self.kwargs)
+        if context is None:
+            return spec
+        for name, pipeline in context.get('pipelines', {}).items():
+            if spec.get('pipeline') == pipeline:
+                spec['pipeline'] = name
+                return spec
+        if 'pipeline' in spec:
+            if 'pipelines' not in context:
+                context['pipelines'] = {}
+            context['pipelines'][self.pipeline.name] = spec['pipeline']
+            spec['pipeline'] = self.pipeline.name
+        return spec
 
     def update(self, *events, invalidate_cache=True):
         """
