@@ -77,11 +77,23 @@ class _session_state:
         variables = variables or self.variables
         context = {}
         if auth:
-            context['auth'] = auth.to_spec()
+            from .dashboard import Auth
+            if isinstance(auth, dict):
+                context['auth'] = Auth.validate(auth)
+            else:
+                context['auth'] = auth.to_spec()
         if config:
-            context['config'] = config.to_spec()
+            from .dashboard import Config
+            if isinstance(config, dict):
+                context['config'] = Config.validate(config)
+            else:
+                context['config'] = config.to_spec()
         if defaults:
-            context['defaults'] = defaults.to_spec()
+            from .dashboard import Defaults
+            if isinstance(defaults, dict):
+                context['defaults'] = Defaults.validate(defaults)
+            else:
+                context['defaults'] = defaults.to_spec()
         if self.variables._vars:
             context['variables'] = {
                 k: v.to_spec() for k, v in self.variables._vars.items()
@@ -94,7 +106,10 @@ class _session_state:
             context['pipelines'] = {}
         for k, pipeline in pipelines.items():
             context['pipelines'][k] = pipeline.to_spec(context=context)
-        context['targets'] = [target.to_spec(context) for target in targets]
+        if targets:
+            context['targets'] = [
+                target.to_spec(context) for target in targets
+            ]
         return context
 
     @property

@@ -391,7 +391,7 @@ class View(MultiTypeComponent, Viewer):
         spec = super().to_spec(context)
         spec.update(self.kwargs)
         if context is None:
-            return
+            return spec
         for name, pipeline in context.get('pipelines', {}).items():
             if spec.get('pipeline') == pipeline:
                 spec['pipeline'] = name
