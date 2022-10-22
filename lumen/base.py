@@ -88,6 +88,7 @@ class Component(param.Parameterized):
             if var_type is None:
                 processed[pname] = pval
             else:
+                var_name = var_name.replace(' ', '_')
                 self._refs[pname] = f'$variables.{var_name}'
                 var = var_type(name=var_name, **var_kwargs)
                 state.variables.add_variable(var)

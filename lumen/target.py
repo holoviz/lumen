@@ -8,7 +8,9 @@ from itertools import product
 import panel as pn
 import param
 
+from panel.util import PARAM_NAME_PATTERN
 from panel.viewable import Layoutable, Viewer
+from param import edit_constant
 
 from .base import Component
 from .config import _LAYOUTS
@@ -60,11 +62,24 @@ class Card(Viewer):
                 row = pn.Row(sizing_mode='stretch_width')
                 for index in row_spec:
                     if isinstance(index, int):
-                        if index >= view_size:
-                            raise ValueError(
-                                f"Layout specification for '{self.title}' target references "
-                                f"out-of-bounds index ({index}) even though the maximum "
-                                f"available index is {view_size - 1}."
+                        if isinstance(self.views, dict):
+                            raise KeyError(
+                                f'Layout specification for {self.title!r} target used '
+                                f'integer index ({index}) but views were declared as a '
+                                'dictionary.'
+                            )
+                        elif index >= view_size:
+                            raise IndexError(
+                                f'Layout specification for {self.title!r} target references '
+                                f'out-of-bounds index ({index}) even though the maximum '
+                                f'available index is {view_size - 1}.'
+                            )
+                        view = self.views[index]
+                    elif isinstance(self.views, dict):
+                        if index not in self.views:
+                            raise KeyError(
+                                f'Layout specification for {self.title} target references '
+                                'unknown view {index!r}.'
                             )
                         view = self.views[index]
                     else:
@@ -72,7 +87,7 @@ class Card(Viewer):
                         if matches:
                             view = matches[0]
                         else:
-                            raise ValueError(
+                            raise KeyError(
                                 f"Target could not find named view '{index}'."
                             )
                     row.append(view.panel)
@@ -98,9 +113,21 @@ class Card(Viewer):
         spec['views'] = views = []
         for view in view_specs:
             if isinstance(view_specs, dict):
-                view_spec = dict(view_specs[view], name=view)
+                name = view
+                view = view_specs[view]
             else:
-                view_spec = view.copy()
+                name = None
+
+            if isinstance(view, View):
+                if PARAM_NAME_PATTERN.match(view.name) and name:
+                    with edit_constant(view):
+                        view.name = name
+                views.append(view)
+                continue
+
+            view_spec = view.copy()
+            if 'name' not in view_spec and name:
+                view_spec['name'] = name
             if 'pipeline' in view_spec:
                 pipeline = Pipeline.from_spec(view_spec.pop('pipeline'))
             elif 'table' in view_spec and view_spec['table'] in pipelines:
@@ -362,6 +389,8 @@ class Target(Component, Viewer):
         self._pipelines = params.pop('pipelines', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        if not self.title:
+            self.title = self.name
 
         # Render content
         if self.views:
@@ -630,8 +659,8 @@ class Target(Component, Viewer):
         view_specs = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context)
         if 'source' in spec or 'pipeline' in spec:
             return view_specs
-        view_specs = view_specs.values() if isinstance(view_specs, dict) else view_specs
-        if not all('pipeline' in spec for spec in view_specs):
+        views = list(view_specs.values()) if isinstance(view_specs, dict) else view_specs
+        if not all('pipeline' in spec for spec in views):
             raise ValidationError(
                 'Target (or its views) must declare a source or a pipeline.', spec
             )
@@ -789,6 +818,16 @@ class Target(Component, Viewer):
                 spec['pipeline'] = pipeline.to_spec()
         if 'source' in spec and 'pipeline' in spec:
             del spec['source']
+        if isinstance(spec['views'], dict):
+            spec['views'] = {
+                name: view.to_spec(context) if isinstance(view, View) else view
+                for name, view in spec['views'].items()
+            }
+        else:
+            spec['views'] = [
+                view.to_spec(context) if isinstance(view, View) else view
+                for view in spec['views']
+            ]
         return spec
 
     @pn.depends('refresh_rate', watch=True)

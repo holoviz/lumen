@@ -75,6 +75,7 @@ class SourceEditor(FastComponent):
         params.update(**{
             k: v for k, v in spec.items() if k in self.param and k not in params
         })
+        self._source = None
         self._thumbnail = params.pop('thumbnail', None)
         super().__init__(spec=spec, **params)
         self.form = pn.Column(sizing_mode='stretch_width')
@@ -94,6 +95,8 @@ class SourceEditor(FastComponent):
 
     @catch_and_notify
     def _load_table_data(self, event):
+        if self._source is None:
+            self._update_preview()
         self.preview.value = self._source.get(self._select_table.value)
 
     @property
