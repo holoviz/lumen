@@ -11,6 +11,7 @@ from panel.pane import HoloViews
 from panel.param import Param
 from panel.widgets import Tabulator
 
+from lumen.pipeline import Pipeline
 from lumen.sources import DerivedSource, FileSource
 from lumen.state import state
 from lumen.target import Target
@@ -271,3 +272,92 @@ def test_target_constructor_with_views_instance_dict(set_root):
     assert isinstance(layout[0][0][0][0], HoloViews)
     assert isinstance(layout[0][0][1], Row)
     assert isinstance(layout[0][0][1][0], Tabulator)
+
+def test_target_to_spec_view_list(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    pipeline = Pipeline(source=source, table='test')
+    view1 = View.from_spec({
+        'type': 'hvplot', 'x': 'A', 'y': 'B', 'kind': 'scatter'
+    }, pipeline=pipeline)
+    view2 = View.from_spec({'type': 'table'}, pipeline=pipeline)
+    target = Target(views=[view1, view2], title='Plots')
+
+    context = {}
+    spec = target.to_spec(context)
+    assert context == {
+        'sources': {
+            source.name: {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+        },
+        'pipelines': {
+            pipeline.name: {
+                'source': source.name,
+                'table': 'test'
+            }
+        },
+    }
+    assert spec == {
+        'title': 'Plots',
+        'views': [{
+            'kind': 'scatter',
+            'pipeline': pipeline.name,
+            'type': 'hvplot',
+            'x': 'A',
+            'y': 'B'
+        },
+        {
+            'pipeline': pipeline.name,
+            'type': 'table'
+        }],
+    }
+
+
+def test_target_to_spec_with_views_instance_dict(set_root):
+    set_root(str(Path(__file__).parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    pipeline = Pipeline(source=source, table='test')
+    view1 = View.from_spec({'type': 'hvplot', 'x': 'A', 'y': 'B', 'kind': 'scatter'}, pipeline=pipeline)
+    view2 = View.from_spec({'type': 'table'}, pipeline=pipeline)
+    target = Target(
+        views={'hv': view1, 'table': view2},
+        layout=[['hv'], ['table']],
+        title="Test"
+    )
+    assert view1.pipeline is view2.pipeline
+
+    context = {}
+    spec = target.to_spec(context)
+    assert context == {
+        'sources': {
+            source.name: {
+                'tables': {'test': 'sources/test.csv'},
+                'type': 'file'
+            },
+        },
+        'pipelines': {
+            pipeline.name: {
+                'source': source.name,
+                'table': 'test'
+            }
+        },
+    }
+    assert spec == {
+        'title': 'Test',
+        'layout': [['hv'], ['table']],
+        'views': {
+            'hv': {
+                'kind': 'scatter',
+                'pipeline': pipeline.name,
+                'type': 'hvplot',
+                'x': 'A',
+                'y': 'B'
+            },
+            'table': {
+                'pipeline': pipeline.name,
+                'type': 'table'
+            }
+        }
+    }

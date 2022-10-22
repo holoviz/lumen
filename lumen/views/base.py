@@ -27,6 +27,7 @@ from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import SQLTransform, Transform
 from ..util import catch_and_notify, is_ref, resolve_module_reference
+from ..validation import ValidationError
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -247,6 +248,12 @@ class View(MultiTypeComponent, Viewer):
                 if isinstance(source, str):
                     source = state.sources[source]
                 pipeline = Pipeline(source=source, **overrides)
+            elif 'table' in overrides and len(overrides) == 1:
+                if pipeline.table != overrides['table']:
+                    raise ValidationError(
+                        'Table declared on view does not match table declared '
+                        'on pipeline.', spec, 'table'
+                    )
             elif overrides:
                 pipeline = pipeline.chain(
                     filters=overrides.get('filters', []),

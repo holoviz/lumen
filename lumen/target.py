@@ -389,6 +389,8 @@ class Target(Component, Viewer):
         self._pipelines = params.pop('pipelines', {})
         self.kwargs = {k: v for k, v in params.items() if k not in self.param}
         super().__init__(**{k: v for k, v in params.items() if k in self.param})
+        if not self.title:
+            self.title = self.name
 
         # Render content
         if self.views:
