@@ -11,13 +11,21 @@ from .base import Source, cached, cached_schema
 
 class DuckDBSource(Source):
 
-    filter_in_sql = param.Boolean(default=True, doc="Whether to apply filters in SQL or in-memory.")
+    filter_in_sql = param.Boolean(default=True, doc="""
+        Whether to apply filters in SQL or in-memory.""")
 
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     uri = param.String(doc="The URI of the DuckDB database")
 
-    sql_expr = param.String(default='SELECT * FROM {table}', doc="The SQL expression to execute.")
+    sql_expr = param.String(default='SELECT * FROM {table}', doc="""
+        The SQL expression to execute.""")
+
+    tables = param.ClassSelector(class_=(list, dict), doc="""
+        List or dictionary of tables.""")
+
+    initializers = param.List(default=[], doc="""
+        SQL statements to run to initialize the connection.""")
 
     source_type = 'duckdb'
 
@@ -26,12 +34,18 @@ class DuckDBSource(Source):
     def __init__(self, **params):
         super().__init__(**params)
         self._connection = duckdb.connect(self.uri)
+        for init in self.initializers:
+            self._connection.execute(init)
 
     def get_tables(self):
+        if isinstance(self.tables, (dict, list)):
+            return list(self.tables)
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 
     @cached()
     def get(self, table, **query):
+        if isinstance(self.tables, dict):
+            table = self.tables[table]
         sql_expr = self.sql_expr.format(table=table)
         sql_transforms = query.pop('sql_transforms', [])
         conditions = list(query.items())
@@ -49,6 +63,8 @@ class DuckDBSource(Source):
         if table is None:
             tables = self.get_tables()
         else:
+            if isinstance(self.tables, dict):
+                table = self.tables[table]
             tables = [table]
 
         schemas = {}
