@@ -1,10 +1,9 @@
 # Lumen's Architecture
 
-The specification file used by `lumen` is a [YAML](https://en.wikipedia.org/wiki/YAML) file.
-The specification can be divided into sections of data exploration and dashboard settings.
-As a rule of thumb, the data exploration sections are required for the dashboard, and dashboard settings are optional.
+The specification file used by `lumen` is a [YAML](https://en.wikipedia.org/wiki/YAML) file. The specification can be divided into sections of data exploration and dashboard settings. As a rule of thumb, the data exploration sections are required for the dashboard, and dashboard settings are optional.
 
 ### Data Exploration
+
 ::::{grid} 2
 :gutter: 3
 
@@ -33,6 +32,7 @@ The presentation of the manipulated data with `views`.
 
 
 ### Dashboard Settings
+
 ::::{grid} 2
 :gutter: 3
 

@@ -1,9 +1,11 @@
 # Deploy a dashboard
 
-:::{admonition} What does this guide solve?
-:class: important
+```{admonition} What does this guide solve?
+---
+class: important
+---
 Whether you are still developing or have already completed your specification file, deployment creates a visual instantiation of your dashboard.
-:::
+```
 
 Run the code below to start a Lumen server that displays your dashboard in a browser window. Change `<dashboard.yaml>` to the path of your YAML specification file.
 

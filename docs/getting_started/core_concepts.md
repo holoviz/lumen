@@ -1,17 +1,20 @@
 # {octicon}`mortar-board;2em;sd-mr-1` Core Concepts
 
-:::{admonition} What is the purpose of this page?
+```{admonition} What is the purpose of this page?
 :class: important
 This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you achieved in the tutorial ([Build a dashboard](build_dashboard)). After this page you should start building your own dashboard. As you build, consult the relevant [How-to](../how_to/) guides or [Reference](../reference/) pages, as needed.
-:::
+```
 
 ## Overview
+
 Lumen is a framework for easily building powerful data-driven dashboards. The *ease* of Lumen comes from the primary interface being a simple **YAML** file, which reads like a cooking recipe. The *power* of Lumen comes from the ability to leverage different data intake, data processing, and data visualization libraries that are available in the Python data science ecosystem, but without having to code!
 
 ## YAML specification
+
 The YAML file is a simple and human readable recipe for building a dashboard. Briefly, YAML uses consistent whitespace to denote structure, and most lines either create an association (with **key: value**), or a list (with a leading hyphen **-**). For more on YAML, we recommend this [quick YAML guide](https://learnxinyminutes.com/docs/yaml/).
 
 The four primary sections of a Lumen specification file are:
+
 ::::{grid} 1
 :gutter: 3
 
@@ -33,7 +36,7 @@ To list your data sources
 ::::{grid} 1
 :gutter: 3
 
-:::{grid-item-card} `pipeline`
+:::{grid-item-card} `pipelines`
 To specify how you want the data to be manipulated (filtered and transformed)
 :::
 
@@ -67,7 +70,9 @@ targets:
 In addition to these core sections, there is plenty of advanced functionality that we will preview towards the bottom of this page.
 
 ## Config
+
 The config section provides general settings which apply to the whole dashboard. The structure is very simple:
+
 ```{code-block} YAML
 config:
   title: The title of the overall application
@@ -77,6 +82,7 @@ config:
   template: The template to use for the monitoring application
   ncols: The number of columns to use in the grid of cards
 ```
+
 You might remember an implementation of this from what you created in the [Build a dashboard](build_dashboard) tutorial. Your config section was used to add a title and dark theme to your dashboard:
 
 ```{code-block} YAML
@@ -88,6 +94,7 @@ config:
 To see all the possible config parameters, see the `Config Reference`.
 
 ## Sources
+
 The `sources` section defines the source of your data. Depending on your source type, the specification may look a bit different, but in general it will follow this pattern:
 
 ```{code-block} YAML
@@ -110,9 +117,11 @@ sources:
  See the [Source Reference](lumen.sources.Source) for other source types and for the relevant parameters.
 
 ## Pipelines (data manipulation)
+
 The `pipelines` section is where you list all the ways that you want the data to be **filtered** or **transformed**. If you don't need the data to be manipulated, you can just exclude this section.
 
 ### Filters
+
 A filter allows you or your dashboard's viewers to drill down into just a subset of the data.
 
 ```{code-block} YAML
@@ -141,6 +150,7 @@ pipelines:
 See the [Filter Reference](../architecture/filter) for other filter types and for the relevant parameters.
 
 ### Transforms
+
 Within the pipeline section, you can also apply a `transform` to the data, such as selecting only certain columns of the data.
 
 ```{code-block} YAML
@@ -185,6 +195,7 @@ targets:
       - type: View type
         ...: View parameters
 ```
+
 :::{dropdown} Expand this dropdown for a more complex example structure of `targets`
 :animate: fade-in-slide-down
 ```{code-block} yaml
@@ -243,9 +254,11 @@ targets:
 See the [View Reference](../architecture/view) for other view types and for the relevant parameters.
 
 ## Advanced Functionality
+
 The following sections are meant to introduce you some of Lumen's advanced functionality. If you want to implement some of these features, explore their associated [How to](../how_to/index) guides for complete recipes.
 
 ### Defaults
+
 The `defaults` section allows overriding parameter defaults on the [Filter](lumen.filters.Filter), [Source](lumen.sources.Source), [Transform](lumen.transforms.Transform) and [View](lumen.views.View) objects.
 
 ```{code-block} YAML
@@ -273,9 +286,10 @@ defaults:
       multi: false
 ```
 
-For more on `Defaults`, check out the `How to override parameter defaults` guide.
+For more on `defaults`, check out the `How to override parameter defaults` guide.
 
 ### Variables
+
 The `variables` sections allow you to link settings across your entire application. Once a variable has been declared in the `variables` section, you can reference it throughout your specification using the `$variables.<variable_name>` syntax.
 
 ```{code-block} YAML
@@ -285,7 +299,7 @@ variables:
       ...: Variable parameters
 ```
 
- For example, you might have a `TextInput` widget where a dashboard user could enter the name of a CSV file with stock data. Establishing such a widget as a Variable would allow the dashboard to dynamically update with the new data source.
+ For example, you might have a `TextInput` widget where a dashboard user could enter the name of a CSV file with stock data. Establishing such a widget as a `Variable` would allow the dashboard to dynamically update with the new data source.
 
 ```{code-block} YAML
 :emphasize-lines: 1-5, 11
@@ -305,6 +319,7 @@ sources:
 For more on variables, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
 
 ### Sources as variables
+
 In addition to the `variables` section, in which you can create arbitrary types of variables, you can also refer to sources with a similar syntax. In some scenarios you might want to refer to a `Source`, a table on a `Source` or a field on a table from elsewhere in the yaml specification.
 
 As an example you may have local CSV file which contains a column of URLs to monitor and feed that information to a `WebsiteSource` which reports whether those URLs are live. Using the `$` syntax we can easily establish such references.
@@ -316,7 +331,7 @@ sources:
     files: [websites.csv]
   live:
     type: live
-    urls: "$csv.websites.url"
+    urls: $csv.websites.url
 ```
 
 The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the `WebsiteSource`.
@@ -324,6 +339,7 @@ The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a t
 For more on referring to sources, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
 
 ### External variables (templating)
+
 In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command, a CLI argument, a HTTP request header or cookie, or a OAuth token variable. This can be achieved using the following templating syntax:
 
 - `{{env("USER")}}`: look in the set environment variables for the named variable
@@ -341,6 +357,7 @@ In many cases you do not want to hardcode variables inside the yaml specificatio
 For more on templating, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
 
 ### Authentication
+
 The `auth` field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
 
 As an example the GitHub OAuth provider returns the login of the user that is visiting the dashboard. If we add the following field to the yaml:
@@ -355,4 +372,5 @@ Lumen will check the current user `login` against all user logins listed here. F
 For more on Authentication, check out the `How to set up authentication` guide.
 
 ## Where to go from here?
+
 As mentioned at top of this page, you should now start building your own dashboards. As you build, consult the relevant `How-to` guides or `Reference` pages, as needed. At any point, if you want deeper discussion of Lumen to solidify your understanding, take a look at the `Background` section.
