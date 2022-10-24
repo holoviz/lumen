@@ -1,7 +1,9 @@
 # {octicon}`tools;2em;sd-mr-1` Build a dashboard
 
 ```{admonition} What is the purpose of this page?
-:class: important
+---
+class: important
+---
 This tutorial is meant to get your hands dirty with building a Lumen dashboard. Don't worry about understanding everything just yet - your only obligation is to complete the steps as directed.
 ```
 
@@ -40,8 +42,8 @@ What you should see in your browser should now match what is on the `Preview` ta
 
 :::{tab-item} YAML
 :sync: yaml
-```{code-block} yaml
 
+```{code-block} yaml
 sources:
   penguin_source:
     type: file
@@ -67,6 +69,7 @@ The simplest view to add is a table with the raw data. This gives us a good idea
 
 :::{tab-item} YAML
 :sync: yaml
+
 ``` {code-block} yaml
 :emphasize-lines: 7-12
 
@@ -101,9 +104,10 @@ The table gives us a primer of the data source, but to start understanding patte
 
 :::{tab-item} YAML
 :sync: yaml
-``` {code-block} yaml
-:emphasize-lines: 11
-
+```{code-block} yaml
+---
+emphasize-lines: 11
+---
 sources:
   penguin_source:
     type: file
@@ -398,6 +402,6 @@ targets:
 
 Congratulations! You have created your first Lumen dashboard and know a bit more about penguins!
 
-:::{note}
+```{note}
 This is just a simple example of how to build a dashboard with Lumen. The next step is to review the core concepts of what we just achieved so you can generalize these steps to create your own dashboard.
-:::
+```

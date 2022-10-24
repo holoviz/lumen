@@ -60,10 +60,10 @@ extensions = [
 
 PANEL_ROOT = pathlib.Path(panel.__file__).parent
 
-version = release = base_version(panel.__version__)
+pn_version = release = base_version(panel.__version__)
 js_version = json.loads((PANEL_ROOT / 'package.json').read_text())['version']
 
-if panel.__version__ != version and (PANEL_ROOT / 'dist' / 'wheels').is_dir():
+if panel.__version__ != pn_version and (PANEL_ROOT / 'dist' / 'wheels').is_dir():
     py_version = panel.__version__.replace("-dirty", "")
     panel_req = f'./wheels/panel-{py_version}-py3-none-any.whl'
     bokeh_req = f'./wheels/bokeh-{BOKEH_VERSION}-py3-none-any.whl'
@@ -90,6 +90,7 @@ myst_enable_extensions = [
 
 html_css_files = [
     'custom.css',
+    'dataframe.css'
 ]
 
 # -- Options for HTML output -------------------------------------------------
