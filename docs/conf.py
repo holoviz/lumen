@@ -17,6 +17,9 @@
 
 # -- Project information -----------------------------------------------------
 
+import json
+import pathlib
+
 from datetime import date
 
 import param
@@ -24,14 +27,19 @@ import param
 param.parameterized.docstring_signature = False
 param.parameterized.docstring_describe_params = False
 
+import panel
+
 from nbsite.shared_conf import setup
 from nbsite.util import base_version  # noqa
+from panel.io.convert import BOKEH_VERSION, PY_VERSION
+from panel.io.resources import CDN_DIST
 
 import lumen
 
 project = 'Lumen'
 copyright = f'2020-{date.today().year}, HoloViz Developers'
 author = 'HoloViz Developers'
+description = 'Declarative data intake, processing, visualization and dashboarding.'
 
 # The full version, including alpha/beta/rc tags
 version = release = base_version(lumen.__version__)
@@ -46,8 +54,26 @@ extensions = [
     'sphinx_design',
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
-    'sphinx_copybutton'
+    'sphinx_copybutton',
+    'nbsite.pyodide'
 ]
+
+PANEL_ROOT = pathlib.Path(panel.__file__).parent
+
+pn_version = release = base_version(panel.__version__)
+js_version = json.loads((PANEL_ROOT / 'package.json').read_text())['version']
+
+if panel.__version__ != pn_version and (PANEL_ROOT / 'dist' / 'wheels').is_dir():
+    py_version = panel.__version__.replace("-dirty", "")
+    panel_req = f'./wheels/panel-{py_version}-py3-none-any.whl'
+    bokeh_req = f'./wheels/bokeh-{BOKEH_VERSION}-py3-none-any.whl'
+else:
+    panel_req = f'{CDN_DIST}wheels/panel-{PY_VERSION}-py3-none-any.whl'
+    bokeh_req = f'{CDN_DIST}wheels/bokeh-{BOKEH_VERSION}-py3-none-any.whl'
+
+nbsite_pyodide_conf = {
+    'requirements': [bokeh_req, panel_req, 'pandas', 'pyodide-http', 'holoviews>=1.15.1']
+}
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -64,6 +90,7 @@ myst_enable_extensions = [
 
 html_css_files = [
     'custom.css',
+    'dataframe.css'
 ]
 
 # -- Options for HTML output -------------------------------------------------
@@ -84,6 +111,7 @@ html_theme_options = {
             "icon": "fab fa-discourse",
         },
     ],
+    "navbar_end": ["navbar-icon-links"],
     "pygment_light_style": "material",
     "pygment_dark_style": "material"
 }
@@ -95,7 +123,6 @@ html_context = {
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
-
 
 # Adding substitutions to the documentation
 myst_substitutions = {

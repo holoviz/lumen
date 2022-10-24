@@ -1,20 +1,23 @@
 # Build a dashboard in Python
 
-:::{admonition} What does this guide solve?
-:class: important
+```{admonition} What does this guide solve?
+---
+class: important
+---
 Although the primary interface for building a Lumen dashboard is the YAML specification file, this guide shows you an alternate approaches for building with Python. To learn more, visit the [Lumen in Python](../conceptual/lumen_python) Conceptual Guide.
-:::
-
+```
 
 ## Overview
+
 When building with Lumen in Python, the main object that defines a dashboard is the `Pipeline`. With this Pipeline object, you can specify the data source, filters, and transforms. There are two approaches to add these specifications to a `Pipeline` object, **declaratively or programmatically**. While the declarative approach is more compact, the programmatic approach allows you to seperate the pipeline creation steps.
 
 ## Declaratively specifying a pipeline
 
 The declarative specification approach looks similar to a YAML file hierarchy, but consists of nested Python dictionary and list objects.
 
-```{code-block} python
+```{pyodide}
 import lumen
+
 from lumen.pipeline import Pipeline
 
 data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
@@ -43,9 +46,10 @@ pipeline = Pipeline.from_spec({
 The programmatic specification approach uses Lumen objects to build the pipeline step by step.
 
 ### Add source
+
 First, add a valid `Source` to your `Pipeline`. A common choice is `FileSource`, which can load CSV, Excel, JSON and Parquet files, but see the [Source Reference](../architecture//source.html#:~:text=Source%20queries%20data.-,Source%20types%23,-class%20lumen.sources) for all options.
 
-```{code-block} python
+```{pyodide}
 from lumen.pipeline import Pipeline
 from lumen.sources import FileSource
 
@@ -54,20 +58,25 @@ data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master
 pipeline = Pipeline(source=FileSource(tables={'penguins': data_url}), table='penguins')
 ```
 
-:::{admonition} Preview the data
-:class: note
+```{admonition} Preview the data
+---
+class: note
+---
 At any point after defining the source in your pipeline, you can inspect the data in a notebook with `pipeline.data`
-:::
-:::{dropdown} `pipeline.data`
-:animate: fade-in-slide-down
-![data preview](../_static/pipeline_data.png)
-:::
+```
+
+```{pyodide}
+pipeline.data.head()
+```
 
 ### Add filter
+
 Next, you can add `widgets` for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to filter the data. See the [Filter Reference](../architecture/filter) for all options.
 
 ```{code-block} python
-:emphasize-lines: 9-12
+---
+emphasize-lines: 9-12
+---
 from lumen.pipeline import Pipeline
 from lumen.sources import FileSource
 
@@ -83,31 +92,16 @@ pipeline.add_filter('widget', field='year')
 ```
 
 ### Add transform
+
 Now you can apply a `transform` to the data, such as computing the mean or selecting certain columns. See the [Transform Reference](../architecture/transform) for more.
 
-```{code-block} python
-:emphasize-lines: 14-15
-from lumen.pipeline import Pipeline
-from lumen.sources import FileSource
+```{pyodide}
+columns = ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
-data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
-
-pipeline = Pipeline(source=FileSource(tables={'penguins': data_url}), table='penguins')
-
-# Filters
-pipeline.add_filter('widget', field='species')
-pipeline.add_filter('widget', field='island')
-pipeline.add_filter('widget', field='sex')
-pipeline.add_filter('widget', field='year')
-
-columns=['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 pipeline.add_transform('columns', columns=columns)
 
+pipeline.data.head()
 ```
-:::{dropdown} **pipeline.data**
-:animate: fade-in-slide-down
-![transform data preview](../_static/pipeline_transform.png)
-:::
 
 ### Display the dashboard
 
@@ -117,26 +111,13 @@ The simplest approach is to render the widgets with the `pipeline.control_panel`
 
 #### Notebook environment
 
-```{code-block} python
-:emphasize-lines: 17-27
-from lumen.pipeline import Pipeline
-from lumen.sources import FileSource
+In a notebook we can also use the pipelines to drive one or more `View` components and display the `Filter` and `Transform` controls using the `control_panel` property:
 
-data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
-
-pipeline = Pipeline(source=FileSource(tables={'penguins': data_url}), table='penguins')
-
-# Filters
-pipeline.add_filter('widget', field='species')
-pipeline.add_filter('widget', field='island')
-pipeline.add_filter('widget', field='sex')
-pipeline.add_filter('widget', field='year')
-
-columns=['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
-pipeline.add_transform('columns', columns=columns)
+```{pyodide}
+import panel as pn
 
 from lumen.views import Table, hvPlotView
-import panel as pn
+
 pn.extension('tabulator', template='fast')
 
 pn.Row(
@@ -147,15 +128,22 @@ pn.Row(
     )
 )
 ```
-![dashboard preview](../_static/pipeline_dash.png)
 
 #### Python script
+
 If you are in a Python script, add `.servable()` to the viewable components, then deploy using `lumen serve` (see How to on [deploying a Lumen dashboard](deploy))
 
 ```{code-block} python
-:emphasize-lines: 22, 26
+---
+emphasize-lines: 22, 26
+---
+import panel as pn
+
 from lumen.pipeline import Pipeline
 from lumen.sources import FileSource
+from lumen.views import Table, hvPlotView
+
+pn.extension('tabulator', template='fast')
 
 data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
 
@@ -167,12 +155,8 @@ pipeline.add_filter('widget', field='island')
 pipeline.add_filter('widget', field='sex')
 pipeline.add_filter('widget', field='year')
 
-columns=['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
+columns = ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 pipeline.add_transform('columns', columns=columns)
-
-from lumen.views import Table, hvPlotView
-import panel as pn
-pn.extension('tabulator', template='fast')
 
 pn.Row(
     pipeline.control_panel.servable(),
@@ -182,9 +166,14 @@ pn.Row(
     ).servable()
 )
 ```
-:::{admonition} Manually update dashboard
-:class: note
+
+```{admonition} Manually update dashboard
+---
+class: note
+---
 By default, every interaction will update the dashboard. If this behavior is unwanted, for instance, if you want to select multiple filter widgets and not have the dashboard update after every individual selection, set `auto_update=False` on the Pipeline. This will require you to manually trigger an update by clicking a button.
-:::
-## Related Resources:
+```
+
+## Related Resources
+
 * [Branch a pipeline in Python](chain_python)

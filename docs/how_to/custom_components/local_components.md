@@ -1,9 +1,11 @@
 # Access custom components
 
-:::{admonition} What does this guide solve?
-:class: important
+```{admonition} What does this guide solve?
+---
+class: important
+---
 This guide will show you how to access local files that build custom components.
-:::
+```
 
 ## Overview
 While Lumen ships with a wide range of components, users may also define custom components in files which live alongside the YAML file. There are two approaches to reference these local custom components.
@@ -26,7 +28,6 @@ Here are our example custom component files:
 
 :::{tab-item} transforms.py
 ```{code-block} python
-
 import param
 from lumen import Transform
 
@@ -85,7 +86,9 @@ class TextEditor(View):
 And here is our example YAML specification (dashboard.yaml) that references these local custom component files:
 
 ```{code-block} yaml
-:emphasize-lines: 22-23, 47-48
+---
+emphasize-lines: 22-23, 47-48
+---
 config:
   title: Palmer Penguins
 

@@ -1,11 +1,14 @@
 # How to define views
 
-:::{admonition} What does this guide solve?
-:class: important
+```{admonition} What does this guide solve?
+---
+class: important
+---
 This guide will show you how to define views on your dashboard
-:::
+```
 
 ## Overview
+
 A view is the final output of a dashboard, but to be able to create a view, at least one data [source](../../reference/source/index.md) is needed.
 The following example source is a table containing data about individual penguins with various measurements.
 This source could have been [filtered](../../reference/filter/index.md) or [transformed](../../reference/transform/index.md) but is omitted to keep the example simple.
@@ -18,10 +21,14 @@ Lumen includes many [view types](../../reference/view/index.md) and is built so 
 Below is an example of two views of the same data - a scatter plot and a table.
 
 ::::{tab-set}
+
 :::{tab-item} YAML
 :sync: yaml
-``` {code-block} yaml
-:emphasize-lines: 10-16
+
+```{code-block} yaml
+---
+emphasize-lines: 10-16
+---
 sources:
   penguin_source:
     type: file
@@ -43,8 +50,11 @@ targets:
 
 :::{tab-item} Python
 :sync: python
-``` {code-block} python
-:emphasize-lines: 14
+
+```{code-block} python
+---
+emphasize-lines: 14
+---
 import panel as pn
 from lumen.pipeline import Pipeline
 from lumen.views import Table, hvPlotView
@@ -60,6 +70,8 @@ pipeline = Pipeline.from_spec(
 
 pn.Column(hvPlotView(pipeline=pipeline), Table(pipeline=pipeline))
 ```
+
 To arrange the Lumen dashboard views in Python, use [Panel](https://panel.holoviz.org/), as shown here.
 :::
+
 ::::
