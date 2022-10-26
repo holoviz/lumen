@@ -12,6 +12,9 @@ from .intake import IntakeBaseSource, IntakeSource
 
 class IntakeBaseSQLSource(IntakeBaseSource):
 
+    cache_per_query = param.Boolean(default=True, doc="""
+        Whether to query the whole dataset or individual queries.""")
+
     filter_in_sql = param.Boolean(default=True, doc="")
 
     # Declare this source supports SQL transforms
