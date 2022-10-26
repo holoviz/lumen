@@ -17,6 +17,8 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
+    __abstract = True
+
     def _apply_transforms(self, source, sql_transforms):
         if not sql_transforms:
             return source
@@ -35,7 +37,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             ) from e
         return source
 
-    @cached()
+    @cached
     def get(self, table, **query):
         '''
         Applies SQL Transforms, creating new temp catalog on the fly
@@ -104,8 +106,8 @@ class IntakeBaseSQLSource(IntakeBaseSource):
 
 class IntakeSQLSource(IntakeBaseSQLSource, IntakeSource):
     """
-    Intake source specifically for SQL sources.
-    Allows for sql transformations to be applied prior to querying the source.
+    Intake source specifically for SQL sources. Allows for
+    SQLTransform to be applied prior to querying the source.
     """
 
     source_type = 'intake_sql'

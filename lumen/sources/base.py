@@ -34,54 +34,44 @@ except ImportError:
     dd = None
 
 
-def cached(with_query=True, locks=weakref.WeakKeyDictionary()):
+def cached(method, locks=weakref.WeakKeyDictionary()):
     """
     Adds caching to a Source.get query.
-
-    Arguments
-    ---------
-    with_query: boolean
-        Whether the Source.get query uses the query parameters.
-        Sources that have no ability to pre-filter the data can
-        use this option to cache the full query and the decorator
-        will apply the filtering after the fact.
 
     Returns
     -------
     Returns method wrapped in caching functionality.
     """
-    def _inner_cached(method):
-        @wraps(method)
-        def wrapped(self, table, **query):
-            if self in locks:
-                main_lock = locks[self]['main']
+    @wraps(method)
+    def wrapped(self, table, **query):
+        if self in locks:
+            main_lock = locks[self]['main']
+        else:
+            main_lock = threading.RLock()
+            locks[self] = {'main': main_lock}
+        with main_lock:
+            if table in locks:
+                lock = locks[self][table]
             else:
-                main_lock = threading.RLock()
-                locks[self] = {'main': main_lock}
-            with main_lock:
-                if table in locks:
-                    lock = locks[self][table]
-                else:
-                    locks[self][table] = lock = threading.RLock()
-            cache_query = query if with_query else {}
+                locks[self][table] = lock = threading.RLock()
+        cache_query = query if self.cache_per_query else {}
+        with lock:
+            df, no_query = self._get_cache(table, **cache_query)
+        if df is None:
+            if not self.cache_per_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
+                cache_query['__dask'] = True
+            df = method(self, table, **cache_query)
             with lock:
-                df, no_query = self._get_cache(table, **cache_query)
-            if df is None:
-                if not with_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
-                    cache_query['__dask'] = True
-                df = method(self, table, **cache_query)
-                with lock:
-                    self._set_cache(df, table, **cache_query)
-            filtered = df
-            if (not with_query or no_query) and query:
-                filtered = FilterTransform.apply_to(
-                    df, conditions=list(query.items())
-                )
-            if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
-                return filtered
-            return filtered.compute()
-        return wrapped
-    return _inner_cached
+                self._set_cache(df, table, **cache_query)
+        filtered = df
+        if (not self.cache_per_query or no_query) and query:
+            filtered = FilterTransform.apply_to(
+                df, conditions=list(query.items())
+            )
+        if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
+            return filtered
+        return filtered.compute()
+    return wrapped
 
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
@@ -125,6 +115,9 @@ class Source(MultiTypeComponent):
     the types of the variables and indexes in each table and allow
     querying the data.
     """
+
+    cache_per_query = param.Boolean(default=True, doc="""
+        Whether to query the whole dataset or individual queries.""")
 
     cache_dir = param.String(default=None, doc="""
         Whether to enable local cache and write file to disk.""")
@@ -422,7 +415,7 @@ class RESTSource(Source):
         return {table: schema['items']['properties'] for table, schema in
                 response.json().items()}
 
-    @cached()
+    @cached
     def get(self, table, **query):
         query = dict(table=table, **query)
         r = requests.get(self.url+'/data', params=query)
@@ -447,15 +440,19 @@ class FileSource(Source):
         names are computed from the filenames, otherwise the keys are
         the names. The values must filepaths or URLs to the data:
 
-            {
-              'local' : '/home/user/local_file.csv',
-              'remote': 'https://test.com/test.csv'
-            }
+        ```
+        {
+            'local' : '/home/user/local_file.csv',
+            'remote': 'https://test.com/test.csv'
+        }
+        ```
 
         if the filepath does not have a declared extension an extension
         may be provided in a list or tuple, e.g.:
 
-            {'table': ['http://test.com/api', 'json']}
+        ```
+        {'table': ['http://test.com/api', 'json']}
+        ```
         """)
 
     use_dask = param.Boolean(default=True, doc="""
@@ -583,7 +580,7 @@ class FileSource(Source):
             raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
         return df
 
-    @cached()
+    @cached
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
@@ -592,6 +589,9 @@ class FileSource(Source):
 
 
 class JSONSource(FileSource):
+
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
 
     chunk_size = param.Integer(default=0, doc="""
         Number of items to load per chunk if a template variable
@@ -640,7 +640,7 @@ class JSONSource(FileSource):
     def _load_fn(self, ext, dask=True):
         return super()._load_fn('json', dask=dask)
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         return super().get(table, **query)
 
@@ -650,6 +650,9 @@ class WebsiteSource(Source):
     """
     Queries whether a website responds with a 400 status code.
     """
+
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
 
     urls = param.List(doc="URLs of the websites to monitor.")
 
@@ -668,7 +671,7 @@ class WebsiteSource(Source):
     def get_tables(self):
         return ['status']
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         data = []
         for url in self.urls:
@@ -683,6 +686,9 @@ class WebsiteSource(Source):
 
 
 class PanelSessionSource(Source):
+
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
 
     endpoint = param.String(default="rest/session_info")
 
@@ -758,7 +764,7 @@ class PanelSessionSource(Source):
                 data.push(row)
         return data
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         data = []
         with futures.ThreadPoolExecutor(len(self.urls)) as executor:
@@ -791,10 +797,12 @@ class JoinedSource(Source):
     tables 'foo' and 'bar' respectively. We now want to merge these
     tables on column 'a' in Table A with column 'b' in Table B:
 
-        {'new_table': [
-          {'source': 'A', 'table': 'foo', 'index': 'a'},
-          {'source': 'B', 'table': 'bar', 'index': 'b'}
-        ]}
+    ```
+    {'new_table': [
+        {'source': 'A', 'table': 'foo', 'index': 'a'},
+        {'source': 'B', 'table': 'bar', 'index': 'b'}
+    ]}
+    ```
 
     The joined source will now publish the "new_table" with all
     columns from tables "foo" and "bar" except for the index column
@@ -810,6 +818,7 @@ class JoinedSource(Source):
         and a specification of the source, table and index to merge
         on.
 
+        ```
         {"new_table": [
             {'source': <source_name>,
              'table': <table_name>,
@@ -820,7 +829,9 @@ class JoinedSource(Source):
              'index': <index_name>
             },
             ...
-        ]}""")
+        ]}
+        ```
+        """)
 
     source_type = 'join'
 
@@ -844,7 +855,7 @@ class JoinedSource(Source):
                         schema[column] = merge_schemas(col_schema, schema.get(column))
         return schemas if table is None else schemas[table]
 
-    @cached()
+    @cached
     def get(self, table, **query):
         df, left_key = None, None
         for spec in self.tables[table]:
@@ -932,6 +943,9 @@ class DerivedSource(Source):
       }
     """
 
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
+
     filters = param.List(doc="""
         A list of filters to apply to all tables of this source.""")
 
@@ -966,7 +980,7 @@ class DerivedSource(Source):
         query = dict({filt.field: filt.value for filt in filters})
         return source.get(table, **query)
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         df = self._get_source_table(table)
         if self.tables:
