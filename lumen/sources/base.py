@@ -115,10 +115,16 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
 
 class Source(MultiTypeComponent):
     """
-    A Source provides a set of tables which declare their available
-    fields. The Source must also be able to return a schema describing
-    the types of the variables and indexes in each table and allow
-    querying the data.
+    `Source` components provide allow querying all kinds of data.
+
+    A `Source` can return one or more tables queried using the
+    `.get_tables` method, a description of the data returned by each
+    table in the form of a JSON schema accessible via the `.get_schema`
+    method and lastly a `.get` method that allows filtering the data.
+
+    The Source base class also implements both in-memory and disk
+    caching which can be enabled if a `cache_dir` is provided. Data
+    cached to disk is stored as parquet files.
     """
 
     cache_per_query = param.Boolean(default=True, doc="""
@@ -405,8 +411,11 @@ class Source(MultiTypeComponent):
 
 class RESTSource(Source):
     """
-    Queries a REST API which is expected to conform to the monitoring
-    REST API specification.
+    `RESTSource` allows querying REST endpoints conforming to the Lumen REST specification.
+
+    The `url` must offer two endpoints, the `/data` endpoint must
+    return data in a records format while the `/schema` endpoint must
+    return a valid Lumen JSON schema.
     """
 
     url = param.String(doc="URL of the REST endpoint to monitor.")
@@ -430,8 +439,12 @@ class RESTSource(Source):
 
 class FileSource(Source):
     """
-    Loads CSV, Excel, JSON and Parquet files using pandas.read_* or
-    dask.read_* functions.
+    `FileSource` loads CSV, Excel and Parquet files using pandas and dask `read_*` functions.
+
+    The `FileSource` can declare a list or dictionary of local or
+    remote files which are then loaded using either `pandas.read_*` or
+    `dask.dataframe.read_*` functions depending on whether `use_dask`
+    is enabled.
     """
 
     dask = param.Boolean(default=False, doc="""
@@ -594,6 +607,12 @@ class FileSource(Source):
 
 
 class JSONSource(FileSource):
+    """
+    The JSONSource is very similar to the FileSource but loads json files.
+
+    Both local and remote JSON files can be fetched by declaring them
+    as a list or dictionaries of `tables`.
+    """
 
     cache_per_query = param.Boolean(default=False, doc="""
         Whether to query the whole dataset or individual queries.""")
@@ -607,10 +626,12 @@ class JSONSource(FileSource):
         names are computed from the filenames, otherwise the keys are
         the names. The values must filepaths or URLs to the data:
 
-            {
-              'local' : '/home/user/local_file.csv',
-              'remote': 'https://test.com/test.csv'
-            }
+        ```
+        {
+            'local' : '/home/user/local_file.csv',
+            'remote': 'https://test.com/test.csv'
+        }
+        ```
     """)
 
     source_type = 'json'
@@ -650,10 +671,9 @@ class JSONSource(FileSource):
         return super().get(table, **query)
 
 
-
 class WebsiteSource(Source):
     """
-    Queries whether a website responds with a 400 status code.
+    `WebsiteSource` queries whether a website responds with a 400 status code.
     """
 
     cache_per_query = param.Boolean(default=False, doc="""
@@ -691,6 +711,13 @@ class WebsiteSource(Source):
 
 
 class PanelSessionSource(Source):
+    """"
+    `PanelSessionSource` queries the session_info endpoint of a Panel application.
+
+    Panel applications with --rest-session-info enabled can be queried
+    about session statistics. This source makes this data available to
+    Lumen for monitoring.
+    """
 
     cache_per_query = param.Boolean(default=False, doc="""
         Whether to query the whole dataset or individual queries.""")
@@ -788,6 +815,8 @@ class PanelSessionSource(Source):
 
 class JoinedSource(Source):
     """
+    `JoinedSource` performs a join on tables from one or more sources.
+
     A JoinedSource applies a join on two or more sources returning
     new table(s) with data from all sources. It iterates over the
     `tables` specification and merges the specified tables from the
@@ -898,54 +927,57 @@ class JoinedSource(Source):
 
 class DerivedSource(Source):
     """
+    `DerivedSource` applies filtering and transforms to tables from other sources.
+
     A DerivedSource references tables on other sources and optionally
     allows applying filters and transforms to the returned data which
     is then made available as a new (derived) table.
 
     The DerivedSource has two modes:
 
-      1) When an explicit `tables` specification is provided full
-         control over the exact tables to filter and transform is
-         available. This is referred to as the 'table' mode.
-      2) When a `source` is declared all tables on that Source are
-         mirrored and filtered and transformed according to the
-         supplied `filters` and `transforms`. This is referred to as
-         'mirror' mode.
+    **Table Mode**
 
-    1. Table Mode
-    ~~~~~~~~~~~~~
+    When an explicit `tables` specification is provided full control
+    over the exact tables to filter and transform is available. This
+    is referred to as the 'table' mode.
 
     In 'table' mode the tables can reference any table on any source
     using the reference syntax and declare filters and transforms to
     apply to that specific table, e.g. a table specification might
     look like this:
 
-      {
-        'derived_table':
-        {
-          'source': 'original_source',
-          'table': 'original_table'
-          'filters': [
-            ...
-          ],
-          'transforms': [
-            ...
-          ]
-        }
+    ```
+    {
+      'derived_table': {
+        'source': 'original_source',
+        'table': 'original_table'
+        'filters': [
+          ...
+        ],
+        'transforms': [
+          ...
+        ]
       }
+    }
+    ```
 
-    2. Mirror
-    ~~~~~~~~~
+    **Mirror**
+
+    When a `source` is declared all tables on that Source are mirrored
+    and filtered and transformed according to the supplied `filters`
+    and `transforms`. This is referred to as 'mirror' mode.
 
     In mirror mode the DerivedSource may reference an existing source
     directly, e.g.:
 
-      {
+    ```
+    {
         'type': 'derived',
         'source': 'original_source',
         'filters': [...],
         'transforms': [...],
-      }
+    }
+    ```
     """
 
     cache_per_query = param.Boolean(default=False, doc="""

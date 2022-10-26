@@ -5,7 +5,11 @@ from .intake_sql import IntakeBaseSQLSource
 
 class IntakeDremioSource(IntakeBaseSQLSource):
     """
-    IntakeDremioSource allows querying Dremio tables and views.
+    `IntakeDremioSource` allows querying Dremio tables and views.
+
+    When provided with the `uri` of the Dremio server and credentials
+    to authenticate with the Dremio instance all available tables can
+    be queried via this `Source`.
 
     Requires the intake-dremio package to be installed.
     """
@@ -15,7 +19,7 @@ class IntakeDremioSource(IntakeBaseSQLSource):
     dask = param.Boolean(default=False, doc="""
         Whether to return a dask DataFrame.""")
 
-    uri = param.String(doc="URI of the catalog file.")
+    uri = param.String(doc="URI of the Dremio server.")
 
     tls = param.Boolean(default=False, doc="Enable encryption")
 

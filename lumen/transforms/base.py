@@ -19,8 +19,7 @@ from ..util import is_ref
 
 class Transform(MultiTypeComponent):
     """
-    A Transform provides the ability to transform a table supplied by
-    a Source.
+    `Transform` components implement transforms of `DataFrame` objects.
     """
 
     controls = param.List(default=[], doc="""
@@ -158,9 +157,10 @@ class Transform(MultiTypeComponent):
 
 class Filter(Transform):
     """
-    Transform that applies the query values from Lumen Filter
-    components to a dataframe. The filter values can be one of the
-    following:
+    `Filter` transform implement the filtering behavior of `Filter` components.
+
+    The filter `conditions` must be declared as a list of tuple containing
+    the name of the column to be filtered and one of the following:
 
       * scalar: A scalar value will be matched using equality operators
       * tuple:  A tuple value specifies a numeric or date range.
@@ -234,9 +234,10 @@ class Filter(Transform):
 
 class HistoryTransform(Transform):
     """
-    The HistoryTransform accumulates a history of the queried data in
-    a buffer up to the supplied length and (optionally) adds a
-    date_column to the data.
+    `HistoryTransform` accumulates a history of the queried data.
+
+    The internal buffer accumulates data up to the supplied `length`
+    and (optionally) adds a date_column to the data.
     """
 
     date_column = param.Selector(doc="""
@@ -279,9 +280,9 @@ class HistoryTransform(Transform):
 
 class Aggregate(Transform):
     """
-    Aggregate one or more columns or indexes, see `pandas.DataFrame.groupby`.
+    `Aggregate` one or more columns or indexes, see `pandas.DataFrame.groupby`.
 
-    df.groupby(<by>)[<columns>].<method>()[.reset_index()]
+    `df.groupby(<by>)[<columns>].<method>()[.reset_index()]`
     """
 
     by = param.ListSelector(doc="""
@@ -313,9 +314,9 @@ class Aggregate(Transform):
 
 class Sort(Transform):
     """
-    Sort on one or more columns, see `pandas.DataFrame.sort_values`.
+    `Sort` on one or more columns, see `pandas.DataFrame.sort_values`.
 
-    df.sort_values(<by>, ascending=<ascending>)
+    `df.sort_values(<by>, ascending=<ascending>)`
     """
 
     by = param.ListSelector(default=[], doc="""
@@ -336,9 +337,9 @@ class Sort(Transform):
 
 class Query(Transform):
     """
-    Applies the `pandas.DataFrame.query` method.
+    `Query` applies the `pandas.DataFrame.query` method.
 
-    df.query(<query>)
+    `df.query(<query>)`
     """
 
     query = param.String(doc="""
@@ -352,9 +353,9 @@ class Query(Transform):
 
 class Columns(Transform):
     """
-    Selects a subset of columns.
+    `Columns` selects a subset of columns.
 
-    df[<columns>]
+    `df[<columns>]`
     """
 
     columns = param.ListSelector(doc="""
@@ -370,7 +371,7 @@ class Columns(Transform):
 
 class Astype(Transform):
     """
-    Transforms the type of one or more columns.
+    `Astype` transforms the type of one or more columns.
     """
 
     dtypes = param.Dict(doc="Mapping from column name to new type.")
@@ -386,9 +387,9 @@ class Astype(Transform):
 
 class Stack(Transform):
     """
-    Stacks the declared level, see `pandas.DataFrame.stack`.
+    `Stack` applies `pandas.DataFrame.stack` to the declared `level`.
 
-    df.stack(<level>)
+    `df.stack(<level>)`
     """
 
     dropna = param.Boolean(default=True, doc="""
@@ -408,9 +409,9 @@ class Stack(Transform):
 
 class Unstack(Transform):
     """
-    Unstacks the declared level(s), see `pandas.DataFrame.stack`.
+    `Unstack` applies `pandas.DataFrame.unstack` to the declared `level`.
 
-    df.unstack(<level>)
+    `df.unstack(<level>)`
     """
 
     fill_value = param.ClassSelector(default=None, class_=(int, str, dict), doc="""
@@ -427,9 +428,9 @@ class Unstack(Transform):
 
 class Iloc(Transform):
     """
-    Applies integer slicing to the data, see `pandas.DataFrame.iloc`.
+    `Iloc` applies integer slicing to the data, see `pandas.DataFrame.iloc`.
 
-    df.iloc[<start>:<end>]
+    `df.iloc[<start>:<end>]`
     """
 
     start = param.Integer(default=None)
@@ -444,9 +445,9 @@ class Iloc(Transform):
 
 class Sample(Transform):
     """
-    Random sample of items.
+    `Sample` returns a random sample of items.
 
-    df.sample(n=<n>, frac=<frac>, replace=<replace>)
+    `df.sample(n=<n>, frac=<frac>, replace=<replace>)`
     """
 
     n = param.Integer(default=None, doc="""
@@ -466,7 +467,7 @@ class Sample(Transform):
 
 class Compute(Transform):
     """
-    Turns a Dask DataFrame into a pandas DataFrame.
+    `Compute` turns a `dask.dataframe.DataFrame` into a `pandas.DataFrame`.
     """
 
     transform_type = 'compute'
@@ -474,9 +475,10 @@ class Compute(Transform):
     def apply(self, table):
         return table.compute()
 
+
 class Pivot(Transform):
     """
-    Pivots a DataFrame given an index, columns, and values.
+    `Pivot` applies `pandas.DataFrame.pivot` given an index, columns, and values.
     """
 
     index = param.String(default=None, doc="""
@@ -499,7 +501,7 @@ class Pivot(Transform):
 
 class Melt(Transform):
     """
-    Melts a DataFrame given the id_vars and value_vars.
+    `Melt` applies the `pandas.melt` operation given the `id_vars` and `value_vars`.
     """
 
     id_vars = param.ListSelector(default=[], doc="""
@@ -533,9 +535,9 @@ class Melt(Transform):
 
 class SetIndex(Transform):
     """
-    Set the DataFrame index using existing columns, see `pandas.DataFrame.set_index`.
+    `SetIndex` promotes DataFrame columns to indexes, see `pandas.DataFrame.set_index`.
 
-    df.set_index(<keys>, drop=<drop>, append=<append>, verify_integrity=<verify_integrity>)
+    `df.set_index(<keys>, drop=<drop>, append=<append>, verify_integrity=<verify_integrity>)`
     """
 
     append = param.Boolean(default=False, doc="""
@@ -566,9 +568,9 @@ class SetIndex(Transform):
 
 class ResetIndex(Transform):
     """
-    Sort on one or more columns, see `pandas.DataFrame.sort_values`.
+    `ResetIndex` resets DataFrame indexes to columns or drops them, see `pandas.DataFrame.reset_index`
 
-    df.sort_values(<by>, ascending=<ascending>)
+    `df.reset_index(drop=<drop>, col_fill=<col_fill>, col_level=<col_level>, level=<level>)`
     """
 
     col_fill = param.String(default="", doc="""
@@ -599,7 +601,7 @@ class ResetIndex(Transform):
 
 class Rename(Transform):
     """
-    Alter axes labels,  see `pandas.DataFrame.rename`.
+    `Rename` renames columns or indexes, see `pandas.DataFrame.rename`.
 
     df.rename(mapper=<mapper>, columns=<columns>, index=<index>,
               level=<level>, axis=<axis>, copy=<copy>)
@@ -678,8 +680,11 @@ class RenameAxis(Transform):
 
 class project_lnglat(Transform):
     """
-    Projects the given (longitude, latitude) values into Web Mercator
-    coordinates (meters East of Greenwich and meters North of the Equator).
+    `project_lnglat` projects the given longitude/latitude columns to Web Mercator.
+
+    Converts latitude and longitude values into WGS84 (Web Mercator)
+    coordinates (meters East of Greenwich and meters North of the
+    Equator).
     """
 
     longitude = param.String(default='longitude', doc="Longitude column")
