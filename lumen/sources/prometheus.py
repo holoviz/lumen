@@ -15,8 +15,11 @@ from .base import Source, cached
 
 class PrometheusSource(Source):
     """
-    Queries a Prometheus PromQL endpoint for timeseries information
-    about Kubernetes pods.
+    `PrometheusSource` allows querying Prometheus PromQL endpoints.
+
+    The `PrometheusSource` is configured to return timeseries about CPU,
+    memory and network usage as well as restarts for a list of
+    Kubernetes pods specified by ID.
     """
 
     ae5_source = param.Parameter(doc="""

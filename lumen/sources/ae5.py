@@ -14,9 +14,10 @@ from .base import Source, cached, cached_schema
 
 class AE5Source(Source):
     """
-    The AE5Source provides a number of tables, which allow monitoring
-    the nodes, deployments, sessions and resource profiles of an
-    Anaconda Enterprise 5 installation.
+    The AE5Source queries an Anaconda Enterprise 5 instance for statistics.
+
+    Specifically it provides tables with information nodes,
+    deployments, sessions, jobs and resource profiles.
     """
 
     cache_per_query = param.Boolean(default=False, doc="""
