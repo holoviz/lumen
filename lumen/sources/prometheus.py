@@ -22,6 +22,9 @@ class PrometheusSource(Source):
     ae5_source = param.Parameter(doc="""
       An AE5Source instance to use for querying.""")
 
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
+
     ids = param.List(default=[], doc="""
       List of pod IDs to query.""")
 
@@ -230,7 +233,7 @@ class PrometheusSource(Source):
             schema[k] = mdef['schema']
         return {"timeseries": schema} if table is None else schema
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         if table not in ('timeseries',):
             raise ValueError(f"PrometheusSource has no '{table}' table, "
