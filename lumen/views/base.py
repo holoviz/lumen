@@ -33,6 +33,9 @@ DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
 
 class Download(Component, Viewer):
+    """
+    `Download` is a plugin component for `View` components that adds a download button.
+    """
 
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
@@ -93,10 +96,11 @@ class Download(Component, Viewer):
 
 class View(MultiTypeComponent, Viewer):
     """
-    A View renders the data returned by a Source as a Viewable Panel
-    object. The base class provides methods which query the Source for
-    the latest data given the current filters and applies all
-    specified `transforms`.
+    `View` components provide a visual representation for the data returned by a `Source` or `Pipeline`.
+
+    The `View` must return a Panel object or an object that can be
+    rendered by Panel. The base class provides methods which query the
+    the provided `Pipeline`.
 
     Subclasses should use these methods to query the data and return
     a Viewable Panel object in the `get_panel` method.
@@ -459,23 +463,26 @@ class View(MultiTypeComponent, Viewer):
 
 class Panel(View):
     """
-    The `Panel` View is a very general purpose view that allows expressing
-    arbitrary Panel objects as a specification. The Panel specification may
-    be arbitrarily nested making it possible to specify entire layouts.
-    Additionally the Panel specification also supports references,
-    including standard source and variable references and a custom `$data`
-    reference that inserts the current data of the `View`.
+    `Panel` views provide a way to declaratively wrap a Panel component.
 
-    :Example:
+    The `Panel` View is a very general purpose view that allows
+    expressing arbitrary Panel objects as a specification. The Panel
+    specification may be arbitrarily nested making it possible to
+    specify entire layouts.  Additionally the Panel specification also
+    supports references, including standard source and variable
+    references and a custom `$data` reference that inserts the current
+    data of the `View`.
 
-        type: panel
-        spec:
-            type: panel.layout.Column
-            objects:
-                - type: pn.pane.Markdown
-                  object: '# My custom title'
-                - type: pn.pane.DataFrame
-                  object: $data
+    ```
+    type: panel
+      spec:
+       type: panel.layout.Column
+       objects:
+         - type: pn.pane.Markdown
+           object: '# My custom title'
+         - type: pn.pane.DataFrame
+           object: $data
+    ```
     """
 
     spec = param.Dict()
@@ -509,8 +516,7 @@ class Panel(View):
 
 class StringView(View):
     """
-    The StringView renders the latest value of the field as a HTML
-    string with a specified fontsize.
+    `StringView` renders the latest value of the field as a HTML string.
     """
 
     font_size = param.String(default='24pt', doc="""
@@ -533,8 +539,7 @@ class StringView(View):
 
 class IndicatorView(View):
     """
-    The IndicatorView renders the latest field value as a Panel
-    Indicator.
+    `IndicatorView` renders the latest field value as a Panel `Indicator`.
     """
 
     indicator = param.Selector(objects=_INDICATORS, doc="""
@@ -597,8 +602,7 @@ class hvPlotBaseView(View):
 
 class hvPlotUIView(hvPlotBaseView):
     """
-    The hvPlotUIView displays provides a component for exploring
-    datasets using widgets.
+    `hvPlotUIView` displays provides a component for exploring datasets interactively.
     """
 
     view_type = 'hvplot_ui'
@@ -627,8 +631,9 @@ class hvPlotUIView(hvPlotBaseView):
 
 class hvPlotView(hvPlotBaseView):
     """
-    The hvPlotView renders the queried data as a bokeh plot generated
-    with hvPlot. hvPlot allows for a concise declaration of a plot via
+    `hvPlotView` renders the queried data as a bokeh plot generated with hvPlot.
+
+    hvPlot allows for a concise but powerful declaration of a plot via
     its simple API.
     """
 
@@ -738,7 +743,9 @@ class hvPlotView(hvPlotBaseView):
 
 class Table(View):
     """
-    Renders a Source table using a Panel Table widget.
+    `Table` renders data using the powerful Panel `Tabulator` component.
+
+    See https://panel.holoviz.org/reference/widgets/Tabulator.html
     """
 
     page_size = param.Integer(default=20, bounds=(1, None), doc="""
@@ -758,8 +765,7 @@ class Table(View):
 
 class DownloadView(View):
     """
-    The Download View allows downloading the current table as a csv or
-    xlsx file.
+    `DownloadView` renders a button that allows downloading data as CSV, Excel, and parquet files.
     """
 
     filename = param.String(default='data', doc="""
@@ -807,6 +813,11 @@ class DownloadView(View):
 
 
 class PerspectiveView(View):
+    """
+    `PerspectiveView` renders data into a Perspective widget.
+
+    See https://panel.holoviz.org/reference/panes/Perspective.html for more details.
+    """
 
     aggregates = param.Dict(None, allow_None=True, doc="""
         How to aggregate. For example {x: "distinct count"}""")
@@ -856,6 +867,9 @@ class PerspectiveView(View):
 
 
 class AltairView(View):
+    """
+    `AltairView` provides a declarative way to render Altair charts.
+    """
 
     chart = param.Dict(default={}, doc="Keyword argument for Chart.")
 

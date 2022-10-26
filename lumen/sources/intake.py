@@ -57,7 +57,13 @@ class IntakeBaseSource(Source):
 
 class IntakeSource(IntakeBaseSource):
     """
-    An IntakeSource loads data from an Intake catalog.
+    An `IntakeSource` loads data from an Intake catalog.
+
+    Intake is a lightweight set of tools for loading and sharing data
+    in data science projects using convenient catalog specifications.
+
+    The `IntakeSource` can be given a dictionary `catalog` specification
+    OR a URI pointing to a catalog.yaml file on disk.
     """
 
     catalog = param.Dict(doc="An inlined Catalog specification.")

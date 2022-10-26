@@ -109,8 +109,12 @@ class IntakeBaseSQLSource(IntakeBaseSource):
 
 class IntakeSQLSource(IntakeBaseSQLSource, IntakeSource):
     """
-    Intake source specifically for SQL sources. Allows for
-    SQLTransform to be applied prior to querying the source.
+    `IntakeSQLSource` extends the `IntakeSource` with support for SQL data.
+
+    In addition to the standard intake support for reading catalogs
+    the `IntakeSQLSource` computes the schema by querying the database
+    instead of loading all the data into memory and allows for
+    `SQLTransform` to be applied when querying the SQL database.
     """
 
     source_type = 'intake_sql'

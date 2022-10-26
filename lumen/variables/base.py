@@ -21,8 +21,8 @@ _PARAM_MAP = {
 
 class Variables(param.Parameterized):
     """
-    The Variables component stores a number Variable types and mirrors
-    their values onto dynamically created parameters allowing other
+    `Variables` stores a number Variable types and mirrors their
+    values onto dynamically created parameters allowing other
     components to easily watch changes in a variable.
     """
 
@@ -81,12 +81,13 @@ class Variables(param.Parameterized):
 
 class Variable(MultiTypeComponent):
     """
-    A Variable may declare a static or dynamic value that can be
-    referenced from other components. The source of the Variable value
-    can be anything from an environment variable to a widget or URL
-    parameter. Variable components allow a concise way to configure
-    other components and make it possible to orchestrate actions across
-    multiple components.
+    `Variable` components declare values that can be referenced from other components.
+
+    The source of the `Variable` value can be anything from an
+    environment variable to a widget or URL parameter. `Variable`
+    components allow a concise way to configure other components and
+    make it possible to orchestrate actions across multiple
+    components.
     """
 
     default = param.Parameter(doc="""
@@ -166,7 +167,7 @@ class Variable(MultiTypeComponent):
 
 class Constant(Variable):
     """
-    A constant value variable.
+    `Constant` declares a constant value that can be referenced.
     """
 
     variable_type = 'constant'
@@ -174,10 +175,11 @@ class Constant(Variable):
 
 class EnvVariable(Variable):
     """
-    An environment variable.
+    `EnvVariable` fetches an environment variable that can be referenced.
     """
 
-    key = param.String(default=None)
+    key = param.String(default=None, doc="""
+        The name of the environment variable to look up.""")
 
     variable_type = 'env'
 
@@ -190,7 +192,7 @@ class EnvVariable(Variable):
 
 class Widget(Variable):
     """
-    A Widget variable that updates when the widget value changes.
+    `Widget` variables dynamically reflect the current widget value.
     """
 
     kind = param.String(default=None, doc="""
@@ -251,8 +253,13 @@ class Widget(Variable):
 
 
 class Parameter(Variable):
+    """
+    `Parameter` variables reflect the current value of a parameter.
+    """
 
-    parameter = param.Parameter()
+    parameter = param.ClassSelector(class_=param.Parameter, doc="""
+        A parameter instance whose current value will be reflected
+        on this variable.""")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -261,7 +268,7 @@ class Parameter(Variable):
 
 class URLQuery(Variable):
     """
-    A variable obtained from the URL query parameters.
+    `URLQuery` variables reflect the value of a URL query parameter.
     """
 
     key = param.String(default=None)
@@ -284,7 +291,7 @@ class URLQuery(Variable):
 
 class Cookie(Variable):
     """
-    A variable obtained from the cookies in the request.
+    `Cookie` variables reflect the value of a cookie in the request.
     """
 
     key = param.String(default=None)
@@ -300,7 +307,7 @@ class Cookie(Variable):
 
 class UserInfo(Variable):
     """
-    A variable obtained from OAuth provider's user info.
+    `UserInfo` variables reflect a value in the user info returned by an OAuth provider.
     """
 
     key = param.String(default=None)
@@ -316,7 +323,7 @@ class UserInfo(Variable):
 
 class Header(Variable):
     """
-    A variable obtained from the request header.
+    `Header` variables reflect the value of a request header.
     """
 
     key = param.String(default=None)

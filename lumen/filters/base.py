@@ -21,8 +21,7 @@ from ..validation import ValidationError
 
 class Filter(MultiTypeComponent):
     """
-    A Filter provides a query which will be used to filter the data
-    returned by a Source.
+    `Filter` components supply the filter values used by `Source` components to query data. .
     """
 
     field = param.String(doc="The field being filtered.")
@@ -217,7 +216,7 @@ class BaseWidgetFilter(Filter):
     visible = param.Boolean(default=True, doc="""
         Whether the filter should be visible.""")
 
-    __abstract__ = True
+    __abstract = True
 
     def _url_sync_error(self, values):
         value = values['value']
@@ -243,9 +242,10 @@ class BaseWidgetFilter(Filter):
 
 class WidgetFilter(BaseWidgetFilter):
     """
-    The WidgetFilter generates a Widget from the table schema provided
-    by a Source and returns the current widget value to query the data
-    returned by the Source.
+    `WidgetFilter` generates a Widget from the table schema provided by a Source.
+
+    By default the widget type will be inferred from the data and
+    depending on whether `multi` value selection is enabled.
     """
 
     empty_select = param.Boolean(default=True, doc="""
@@ -256,7 +256,10 @@ class WidgetFilter(BaseWidgetFilter):
         e.g. for a numeric value this could be a regular slider or a
         range slider.""")
 
-    widget = param.ClassSelector(class_=pn.widgets.Widget)
+    widget = param.ClassSelector(class_=pn.widgets.Widget, doc="""
+        The widget instance. When declared in a specification a full
+        module path to a Panel widget class can be provided to override
+        the default inferred widget.""")
 
     filter_type = 'widget'
 
@@ -316,8 +319,11 @@ class WidgetFilter(BaseWidgetFilter):
 
 class BinFilter(BaseWidgetFilter):
     """
-    The BinFilter allows declaring a set of bins as a list of tuples
-    and an optional set of labels of the same length.
+    `BinFilter` is a special `WidgetFilter` that allows selecting from a set of bins.
+
+    The `bins` must be declared from a list of tuples declaring the
+    lower- and upper-bound of each bin and an optional set of `labels`
+    of the same length.
     """
 
     bins = param.List(default=[], constant=True, doc="""
@@ -425,8 +431,11 @@ class BaseDateFilter(BaseWidgetFilter):
 
 class DateFilter(BaseDateFilter):
     """
-    The DateFilter allows filtering by calendar dates, either by selecting
-    a date or a date range, and with either a slider or a picker widget.
+    `DateFilter` is a `WidgetFilter` specialized to select calendar dates.
+
+    Depending on whether `multi` selection is enabled a single date or
+    range of dates can be selected with a `DatePicker` or
+    `DateRangeSlider` respectively.
     """
 
     filter_type = 'date'
@@ -464,8 +473,11 @@ class _MultiCalendarDateFilter(BaseDateFilter):
 
 class DatetimeFilter(BaseDateFilter):
     """
-    The DatetimeFilter allows filtering by datetimes, either by selecting
-    a datetime or a datetime range, and with either a slider or a picker widget.
+    `DatetimeFilter` is a `WidgetFilter` specialized to filter by datetimes.
+
+    Depending on whether `multi` selection is enabled a single date or
+    range of dates can be selected with a `DatetimePicker` or
+    `DatetimeRangeSlider` respectively.
     """
 
     filter_type = 'datetime'
@@ -521,6 +533,12 @@ class _MultiDatetimeFilter(BaseDateFilter):
 
 
 class ParamFilter(Filter):
+    """
+    `ParamFilter` reflects the value of a parameter declared on a `View`.
+
+    The `ParamFilter` can be used to implement cross-filtering between
+    different views.
+    """
 
     parameter = param.ClassSelector(default=None, class_=(param.Parameter, str), doc="""
         Reference to a Parameter on an existing View.""")
