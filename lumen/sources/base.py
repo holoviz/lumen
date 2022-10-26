@@ -44,6 +44,11 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
     """
     @wraps(method)
     def wrapped(self, table, **query):
+        if self._supports_sql and not self.cache_per_query and 'sql_transforms' in query:
+            raise RuntimeError(
+                'SQLTransforms cannot be used on a Source with cache_per_query '
+                'being disabled. Ensure you set `cache_per_query=True`.'
+            )
         if self in locks:
             main_lock = locks[self]['main']
         else:
