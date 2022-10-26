@@ -19,6 +19,9 @@ class AE5Source(Source):
     Anaconda Enterprise 5 installation.
     """
 
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
+
     hostname = param.String(doc="URL of the AE5 host.")
 
     username = param.String(doc="Username to authenticate with AE5.")
@@ -279,7 +282,7 @@ class AE5Source(Source):
 
         return allocations[self._allocation_columns]
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         if table not in self._tables:
             raise ValueError(f"AE5Source has no '{table}' table, choose from {repr(self._tables)}.")

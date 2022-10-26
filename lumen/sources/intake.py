@@ -7,6 +7,9 @@ from .base import Source, cached, cached_schema
 
 class IntakeBaseSource(Source):
 
+    cache_per_query = param.Boolean(default=False, doc="""
+        Whether to query the whole dataset or individual queries.""")
+
     load_schema = param.Boolean(default=True, doc="""
         Whether to load the schema""")
 
@@ -39,7 +42,7 @@ class IntakeBaseSource(Source):
             schemas[entry] = get_dataframe_schema(data)['items']['properties']
         return schemas if table is None else schemas[table]
 
-    @cached(with_query=False)
+    @cached
     def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         try:

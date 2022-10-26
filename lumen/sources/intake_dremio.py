@@ -4,6 +4,11 @@ from .intake_sql import IntakeBaseSQLSource
 
 
 class IntakeDremioSource(IntakeBaseSQLSource):
+    """
+    IntakeDremioSource allows querying Dremio tables and views.
+
+    Requires the intake-dremio package to be installed.
+    """
 
     cert = param.String(default="Path to certificate file")
 
