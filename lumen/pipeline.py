@@ -175,14 +175,7 @@ class Pipeline(Component):
                     refs.append(ref)
         return refs
 
-    @param.depends('update', watch=True)
-    @catch_and_notify
-    def _update_data(self, *events: param.Event, force: bool = False):
-        if not force and not self.auto_update and events and not any(
-                e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
-            self._stale = True
-            return
-        self._update_widget.loading = True
+    def _compute_data(self):
         query = {}
 
         # Compute Filter query
@@ -203,8 +196,13 @@ class Pipeline(Component):
                 query['sql_transforms'] = self.sql_transforms
             data = self.source.get(self.table, **query)
         else:
-            if self.pipeline.data is None:
-                self.pipeline._update_data()
+            pipelines = []
+            current = self
+            while current.pipeline is not None:
+                pipelines.append(current.pipeline)
+                current = current.pipeline
+            if self.pipeline.data is None or any(p._stale for p in pipelines):
+                self.pipeline._update_data(force=True)
             data = FilterTransform.apply_to(
                 self.pipeline.data, conditions=list(query.items())
             )
@@ -221,10 +219,26 @@ class Pipeline(Component):
         # Apply transforms
         for transform in self.transforms:
             data = transform.apply(data)
+        return data
 
-        self.data = data
-        self._stale = False
-        self._update_widget.loading = False
+    @param.depends('update', watch=True)
+    @catch_and_notify
+    def _update_data(self, *events: param.Event, force: bool = False):
+        if self._update_widget.loading:
+            return
+        if not force and not self.auto_update and events and not any(
+                e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
+            self._stale = True
+            return
+        self._update_widget.loading = True
+        try:
+            self.data = self._compute_data()
+        except Exception as e:
+            raise e
+        else:
+            self._stale = False
+        finally:
+            self._update_widget.loading = False
 
     @classmethod
     def _validate_source(cls, source_spec, spec, context):
@@ -418,7 +432,8 @@ class Pipeline(Component):
         self,
         filters: Optional[List[Filter]]=None,
         transforms: Optional[List[Transform]] = None,
-        sql_transforms: Optional[List[Transform]] = None
+        sql_transforms: Optional[List[Transform]] = None,
+        **kwargs
     ):
         """
         Chains additional filtering, transform and sql_transform operations
@@ -455,6 +470,7 @@ class Pipeline(Component):
                 'schema': get_dataframe_schema(self.data)['items']['properties'],
                 'data': None
             }
+        params.update(kwargs)
         return self.clone(**params)
 
     def clone(self, **params) -> Pipeline:
