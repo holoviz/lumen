@@ -344,7 +344,7 @@ class View(MultiTypeComponent, Viewer):
         if self.pipeline.data is None:
             self.pipeline._update_data()
         self._cache = data = self.pipeline.data
-        return data
+        return data.copy()
 
     def get_value(self, field=None):
         """
