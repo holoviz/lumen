@@ -318,7 +318,10 @@ class Download(Component, Viewer):
 
 class Target(Component, Viewer):
     """
-    A Target renders multiple Views into a layout.
+    `Target` renders one or more `View` components into a layout.
+
+    Additionally it provides functionality for facetting the `View`
+    objects by grouping the data along some dimension.
     """
 
     auto_update = param.Boolean(default=True, constant=True, doc="""

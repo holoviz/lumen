@@ -38,7 +38,7 @@ def load_yaml(yaml_spec, **kwargs):
 
 class Config(Component):
     """
-    High-level configuration options for the Dashboard.
+    `Config` provides high-level configuration options for the Dashboard.
     """
 
     auto_update = param.Boolean(default=True, constant=True, doc="""
@@ -178,7 +178,7 @@ class Config(Component):
 
 class Defaults(Component):
     """
-    Defaults to apply to the component classes.
+    `Defaults` to apply to the component classes.
     """
 
     filters = param.List(doc="Defaults for Filter objects.", class_=dict)
@@ -252,6 +252,12 @@ class Defaults(Component):
 
 
 class Auth(Component):
+    """
+    `Auth` allows specifying a spec that is validated against panel.state.user_info.
+
+    To enable `Auth` you must configure an OAuth provider when deploying
+    an application with `panel.serve`.
+    """
 
     case_sensitive = param.Boolean(default=False, constant=True, doc="""
         Whether auth validation is case-sensitive or not.""")

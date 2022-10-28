@@ -47,10 +47,13 @@ def expand_queries(values, groups=('filters', 'variables')):
 
 class Pipeline(Component):
     """
-    A Pipeline represents a data Source along with any number of
-    Filters and general purpose Transforms. A pipeline can be used
-    to drive one or more visual outputs or leveraged as a standalone
-    component to encapsulate multiple data processing steps.
+    `Pipeline` encapsulates filters and transformations applied to a `Source` table.
+
+    A `Pipeline` ingests data from a `Source` table or another
+    `Pipeline` applying the declared `Filter` and `(SQL)Transform`
+    definitions. It can be used to drive one or more visual outputs or
+    leveraged as a standalone component to encapsulate multiple data
+    processing steps.
     """
 
     data = DataFrame(doc="The current data on this source.")
