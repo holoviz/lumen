@@ -23,6 +23,7 @@ dependencies = [
     "hvplot",
     "holoviews >=1.14",
     "packaging",
+    "intake",
 ]
 
 extras_require = {
