@@ -224,7 +224,9 @@ def generate_component_index(base):
 
 def generate_multi_component_pages(base):
     index = generate_component_index(base)
-    with open(REFERENCE_PATH /  base.__name__.lower() / 'index.md', 'w') as f:
+    component_path = REFERENCE_PATH /  base.__name__.lower()
+    component_path.mkdir(exist_ok=True)
+    with open(component_path / 'index.md', 'w') as f:
         f.write(index)
     for component in concrete_descendents(base).values():
         if component.__name__.startswith('_'):
@@ -264,6 +266,7 @@ def write_index(bases):
         f.write(page)
 
 if __name__ == '__main__':
+    REFERENCE_PATH.mkdir(exist_ok=True)
     for component in bases:
         if issubclass(component, MultiTypeComponent):
             generate_multi_component_pages(component)
