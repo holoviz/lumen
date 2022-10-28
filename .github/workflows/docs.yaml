@@ -53,6 +53,11 @@ jobs:
           conda activate test-environment
           conda list
           doit develop_install -o doc -o examples
+      - name: install rst-to-myst
+      # with pip as it's not yet available on conda-forge
+        run: |
+          conda activate test-environment
+          pip install rst-to-myst
       - name: build docs
         run: |
           conda activate test-environment
