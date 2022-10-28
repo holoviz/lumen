@@ -50,13 +50,11 @@ jobs:
           conda install python=3.9 pyctdev
       - name: doit develop_install
         run: |
-          eval "$(conda shell.bash hook)"
           conda activate test-environment
           conda list
           doit develop_install -o doc -o examples
       - name: build docs
         run: |
-          eval "$(conda shell.bash hook)"
           conda activate test-environment
           cd docs
           python generate_reference.py
