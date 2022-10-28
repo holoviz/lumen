@@ -255,7 +255,7 @@ def write_index(bases):
             page += f'## [`{base.__name__}`]({base.__name__.lower()}/index)\n\n'
             if description:
                 page += f'{description}\n\n'
-            page += generate_grid(base, rel=f'{base.__name__}/')
+            page += generate_grid(base, rel=f'{base.__name__.lower()}/')
             page += '\n\n'
         else:
             page += f'## [`{base.__name__}`]({base.__name__})\n\n'
