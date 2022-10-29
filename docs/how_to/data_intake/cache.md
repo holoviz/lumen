@@ -8,10 +8,8 @@ This guide will show you how to locally cache data to speed up reloading from a 
 ```
 
 ## Caching file
-When working with large data in a non-optional file format, creating a local cache can be advantageous to save time when reloading the data.
-Caching a [source](../../reference/source) is done by using `cache_dir` followed by a directory.
-If the directory does not exist, it will be created.
-The data will be saved as [parquet](https://www.databricks.com/glossary/what-is-parquet) files in the cache directory.
+
+When working with large data in a non-optional file format, creating a local cache can be advantageous to save time when reloading the data. Caching a [source](../../reference/source) is done by using `cache_dir` followed by a directory. If the directory does not exist, it will be created. The data will be saved as [parquet](https://www.databricks.com/glossary/what-is-parquet) files in the cache directory.
 Below is an example of caching a 370 MB file that consists of almost 12 million rows.
 
 ```{warning}
@@ -19,6 +17,7 @@ The initial load can take a couple of minutes as the file needs to be downloaded
 ```
 
 ::::{tab-set}
+
 :::{tab-item} YAML
 :sync: yaml
 
@@ -65,9 +64,11 @@ pipeline = Pipeline.from_spec(
 )
 pipeline.data
 ```
-
 :::
+
 ::::
+
+Depending on the source type data caching will cache the entire table or individual queries. Using the `cache_per_query` option you can toggle this behavior.
 
 ```{note}
 Lumen's [cache]() can be added to all [source types](../../reference/source).
