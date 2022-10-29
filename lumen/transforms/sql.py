@@ -163,6 +163,8 @@ class SQLFilter(SQLTransform):
       List of filter conditions expressed as tuples of the column
       name and the filter value.""")
 
+    transform_type = 'sql_filter'
+
     @classmethod
     def _range_filter(cls, col, v1, v2):
         start = str(v1) if isinstance(v1, dt.date) else v1
