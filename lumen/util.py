@@ -15,12 +15,9 @@ import panel as pn
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
-from panel.io.cache import _hash_funcs
 
 log = getLogger(__name__)
 
-# Temporarily patch panel _hash_funcs
-_hash_funcs[dt.date] = lambda obj: f'{type(obj)}{obj}'.encode('utf-8')
 
 def get_dataframe_schema(df, columns=None):
     """
