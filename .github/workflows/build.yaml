@@ -76,7 +76,6 @@ jobs:
           miniconda-version: "latest"
       - name: conda setup
         run: |
-          conda config --set always_yes True
           conda install -c pyviz/label/dev "pyctdev>=0.5"
           doit ecosystem_setup
           doit env_create $CHANS_DEV --python=$PYTHON_VERSION
