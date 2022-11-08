@@ -565,7 +565,7 @@ class Pipeline(Component):
         objects = []
         pipeline = self
         while pipeline is not None:
-            objects.extend(getattr(self, type))
+            objects.extend(getattr(pipeline, type))
             pipeline = pipeline.pipeline
         return objects
 
