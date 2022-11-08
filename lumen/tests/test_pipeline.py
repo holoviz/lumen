@@ -16,7 +16,6 @@ def test_pipeline_source_only(make_filesource, mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = make_filesource(str(root))
     pipeline = Pipeline(source=source, table='test')
-    pipeline._update_data()
 
     pd.testing.assert_frame_equal(pipeline.data, mixed_df)
 
@@ -28,7 +27,6 @@ def test_pipeline_change_table(make_filesource, mixed_df):
     source = make_filesource(str(root))
     source.tables = {'test': 'test.csv', 'test2': 'test2.csv'}
     pipeline = Pipeline(source=source, table='test')
-    pipeline._update_data()
 
     pd.testing.assert_frame_equal(pipeline.data, mixed_df)
 
@@ -40,7 +38,6 @@ def test_pipeline_with_filter(make_filesource, mixed_df):
     source = make_filesource(str(root))
     cfilter = ConstantFilter(field='A', value=(1, 2))
     pipeline = Pipeline(source=source, filters=[cfilter], table='test')
-    pipeline._update_data()
 
     expected = mixed_df.iloc[1:3]
     pd.testing.assert_frame_equal(pipeline.data, expected)
@@ -55,7 +52,6 @@ def test_pipeline_manual_with_filter(make_filesource, mixed_df):
     source = make_filesource(str(root))
     cfilter = ConstantFilter(field='A', value=(1, 2))
     pipeline = Pipeline(source=source, filters=[cfilter], table='test', auto_update=False)
-    pipeline._update_data()
 
     expected = mixed_df.iloc[1:3]
     pd.testing.assert_frame_equal(pipeline.data, expected)
@@ -75,7 +71,6 @@ def test_pipeline_with_transform(make_filesource, mixed_df):
 
     transform = Columns(columns=['A', 'B'])
     pipeline = Pipeline(source=source, transforms=[transform], table='test')
-    pipeline._update_data()
 
     expected = mixed_df[['A', 'B']]
     pd.testing.assert_frame_equal(pipeline.data, expected)
@@ -91,7 +86,6 @@ def test_pipeline_manual_with_transform(make_filesource, mixed_df):
 
     transform = Columns(columns=['A', 'B'])
     pipeline = Pipeline(source=source, transforms=[transform], table='test', auto_update=False)
-    pipeline._update_data()
 
     expected = mixed_df[['A', 'B']]
     pd.testing.assert_frame_equal(pipeline.data, expected)
@@ -113,7 +107,6 @@ def test_pipeline_with_sql_transform(mixed_df):
 
     transform = SQLColumns(columns=['A', 'B'])
     pipeline = Pipeline(source=source, table='test_sql', sql_transforms=[transform])
-    pipeline._update_data()
 
     df = mixed_df[['A', 'B']]
     pd.testing.assert_frame_equal(pipeline.data, df)
@@ -131,7 +124,6 @@ def test_pipeline_chained_with_filter(make_filesource, mixed_df):
     cfilter2 = ConstantFilter(field='B', value=1.0)
     pipeline1 = Pipeline(source=source, filters=[cfilter1], table='test')
     pipeline2 = pipeline1.chain(filters=[cfilter2])
-    pipeline2._update_data()
 
     expected = mixed_df.iloc[[1, 3]]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
@@ -145,7 +137,6 @@ def test_pipeline_chained_with_filter(make_filesource, mixed_df):
     expected = mixed_df.iloc[[2]]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
-
 def test_pipeline_manual_chained_with_filter(make_filesource, mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = make_filesource(str(root))
@@ -153,8 +144,7 @@ def test_pipeline_manual_chained_with_filter(make_filesource, mixed_df):
     cfilter1 = ConstantFilter(field='A', value=(1, 3))
     cfilter2 = ConstantFilter(field='B', value=1.0)
     pipeline1 = Pipeline(source=source, filters=[cfilter1], table='test', auto_update=False)
-    pipeline2 = pipeline1.chain(filters=[cfilter2])
-    pipeline2._update_data()
+    pipeline2 = pipeline1.chain(filters=[cfilter2], _chain_update=True)
 
     expected = mixed_df.iloc[[1, 3]]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
@@ -185,7 +175,6 @@ def test_pipeline_chained_with_transform(make_filesource, mixed_df):
     pipeline1 = Pipeline(source=source, filters=[cfilter], table='test')
     transform = Columns(columns=['A', 'B'])
     pipeline2 = pipeline1.chain(transforms=[transform])
-    pipeline2._update_data()
 
     expected = mixed_df.iloc[1:3][['A', 'B']]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
@@ -199,7 +188,7 @@ def test_pipeline_chained_with_transform(make_filesource, mixed_df):
     expected = mixed_df.iloc[2:4][['B', 'C']]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
-def test_pipeline_chained_with_sql_transform(mixed_df):
+def test_pipeline_collapsed_with_sql_transform(mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -209,7 +198,6 @@ def test_pipeline_chained_with_sql_transform(mixed_df):
     pipeline1 = Pipeline(source=source, filters=[cfilter], table='test_sql')
     transform = SQLColumns(columns=['A', 'B'])
     pipeline2 = pipeline1.chain(sql_transforms=[transform])
-    pipeline2._update_data()
 
     expected = mixed_df.iloc[1:3][['A', 'B']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
@@ -222,6 +210,69 @@ def test_pipeline_chained_with_sql_transform(mixed_df):
     transform.columns = ['B', 'C']
     expected = mixed_df.iloc[2:4][['B', 'C']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+def test_pipeline_chained_with_sql_transform(mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = IntakeSQLSource(
+        uri=str(root / 'catalog.yml'), root=str(root)
+    )
+
+    transform1 = SQLColumns(columns=['A', 'B'])
+    pipeline1 = Pipeline(source=source, sql_transforms=[transform1], table='test_sql')
+    cfilter1 = ConstantFilter(field='A', value=(1, 2))
+    pipeline2 = pipeline1.chain(filters=[cfilter1])
+    cfilter2 = ConstantFilter(field='B', value=(0, 2))
+    pipeline3 = pipeline2.chain(filters=[cfilter2])
+
+    expected = mixed_df.iloc[1:3][['A', 'B']]
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+
+    # Update
+    cfilter1.value = (1, 3)
+    expected = mixed_df.iloc[1:4][['A', 'B']]
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+
+    transform1.columns = ['B', 'C']
+    expected = mixed_df[['B', 'C']]
+    pd.testing.assert_frame_equal(pipeline2.data, expected)
+
+def test_pipeline_chained_manual_update_with_sql_transform(mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = IntakeSQLSource(
+        uri=str(root / 'catalog.yml'), root=str(root)
+    )
+
+    transform1 = SQLColumns(columns=['A', 'B'])
+    pipeline1 = Pipeline(
+        source=source, sql_transforms=[transform1], table='test_sql',
+        auto_update=False, name='Pipeline 1'
+    )
+    cfilter1 = ConstantFilter(field='A', value=(1, 2))
+    pipeline2 = pipeline1.chain(filters=[cfilter1], auto_update=False, name='Pipeline 2')
+    cfilter2 = ConstantFilter(field='B', value=(0, 2))
+    pipeline3 = pipeline2.chain(filters=[cfilter2], auto_update=False, name='Pipeline 3')
+
+    expected = mixed_df.iloc[1:3][['A', 'B']]
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+
+    # Update
+    cfilter1.value = (1, 3)
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+    pipeline3.param.trigger('update')
+    expected = mixed_df.iloc[1:4][['A', 'B']]
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+
+    transform1.columns = ['B', 'C']
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+    pipeline3.param.trigger('update')
+    expected = mixed_df[['B', 'C']]
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+
+    cfilter2.value = (0, 0)
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
+    pipeline3.param.trigger('update')
+    expected = mixed_df.iloc[::2][['B', 'C']]
+    pd.testing.assert_frame_equal(pipeline3.data, expected)
 
 def test_not_removing_type(penguins_file):
     spec = {

@@ -262,7 +262,8 @@ class View(MultiTypeComponent, Viewer):
                 pipeline = pipeline.chain(
                     filters=overrides.get('filters', []),
                     transforms=overrides.get('transforms', []),
-                    sql_transforms=overrides.get('sql_transforms', [])
+                    sql_transforms=overrides.get('sql_transforms', []),
+                    _chain_update=True
                 )
             resolved_spec['pipeline'] = pipeline
 

@@ -29,7 +29,7 @@ class DataFrame(param.DataFrame):
 
     def __get__(self, obj, objtype):
         if (obj is not None and obj.__dict__.get(self._internal_name) is None) or (obj._stale and obj.auto_update):
-            obj._update_data()
+            obj._update_data(force=True)
         return super().__get__(obj, objtype)
 
 
@@ -113,7 +113,7 @@ class Pipeline(Component):
         self._update_widget.button_type = 'warning' if self._stale else 'success'
 
     def _init_callbacks(self):
-        self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table'])
+        self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
         self.source.param.watch(self._update_data, self.source._reload_params)
         for filt in self.filters:
             filt.param.watch(self._update_data, ['value'])
@@ -126,8 +126,7 @@ class Pipeline(Component):
             self.pipeline.param.watch(self._update_data, 'data')
 
     def _update_refs(self, *events):
-        if self.auto_update:
-            self._update_data()
+        self._update_data()
 
     def to_spec(self, context=None):
         """
@@ -224,15 +223,14 @@ class Pipeline(Component):
             data = transform.apply(data)
         return data
 
-    @param.depends('update', watch=True)
     @catch_and_notify
     def _update_data(self, *events: param.Event, force: bool = False):
         if self._update_widget.loading:
             return
-        if not force and not self.auto_update and events and not any(
-                e.name == 'update' or (e.name == 'data' and isinstance(e.obj, Pipeline)) for e in events):
+        if not force and not self.auto_update and not any(e.name == 'update' for e in events):
             self._stale = True
             return
+
         self._update_widget.loading = True
         try:
             self.data = self._compute_data()
@@ -473,8 +471,12 @@ class Pipeline(Component):
                 'schema': get_dataframe_schema(self.data)['items']['properties'],
                 'data': None
             }
+        chain_update = kwargs.pop('_chain_update', False)
         params.update(kwargs)
-        return self.clone(**params)
+        new = self.clone(**params)
+        if chain_update and not new.auto_update:
+            self.param.watch(lambda e: new.param.trigger('update'), 'update')
+        return new
 
     def clone(self, **params) -> Pipeline:
         """

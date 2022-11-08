@@ -137,7 +137,7 @@ class Card(Viewer):
                 if 'pipeline' in view_spec:
                     del view_spec['pipeline']
             if filters:
-                pipeline = pipeline.chain(filters=list(filters))
+                pipeline = pipeline.chain(filters=list(filters), _chain_update=True)
             view = View.from_spec(view_spec, pipeline=pipeline)
             views.append(view)
         if filters:
