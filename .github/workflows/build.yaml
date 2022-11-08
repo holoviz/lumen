@@ -76,24 +76,23 @@ jobs:
           miniconda-version: "latest"
       - name: conda setup
         run: |
-          conda config --set always_yes True
-          conda install -c pyviz/label/dev "pyctdev>=0.5"
-          doit ecosystem_setup
-          doit env_create $CHANS_DEV --python=$PYTHON_VERSION
+          conda create -n test-environment
+          conda activate test-environment
+          conda config --remove channels defaults
+          conda config --env --remove channels defaults
+          conda config --env --append channels pyviz/label/dev --append channels conda-forge
+          conda install "python=$PYTHON_VERSION" "pyctdev>=0.5"
       - name: env setup
         run: |
-          eval "$(conda shell.bash hook)"
           conda activate test-environment
-          doit develop_install $CHANS_DEV -o tests
+          doit develop_install -o tests
           doit pip_on_conda
       - name: pip build
         run: |
-          eval "$(conda shell.bash hook)"
           conda activate test-environment
           doit ecosystem=pip package_build $PKG_TEST_PYTHON --test-group=all
       - name: pip upload
         if: github.event_name == 'push'
         run: |
-          eval "$(conda shell.bash hook)"
           conda activate test-environment
           doit ecosystem=pip package_upload -u $PPU -p $PPP -r $PYPI
