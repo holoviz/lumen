@@ -47,7 +47,7 @@ class Component(param.Parameterized):
         self._refs = params.pop('refs', {})
         expected = list(self.param.params())
         validate_parameters(params, expected, type(self).name)
-        params = self._extract_refs(params)
+        params = self._extract_refs(params, self._refs)
         super().__init__(**params)
         for p, ref in self._refs.items():
             if isinstance(state.variables, dict):
@@ -56,16 +56,23 @@ class Component(param.Parameterized):
                 ref = ref.split('$variables.')[1]
                 state.variables.param.watch(partial(self._update_ref, p), ref)
 
-    def _extract_refs(self, params):
+    def _extract_refs(self, params, refs):
         from .variables import Parameter, Variable, Widget
         processed = {}
         for pname, pval in params.items():
             if isinstance(pval, Variable):
                 processed[pname] = pval.value
-                self._refs[pname] = f'$variable.{pval.name}'
+                refs[pname] = f'$variable.{pval.name}'
                 state.add_variable(pval)
                 continue
-            elif isinstance(pval, param.Parameter):
+            elif isinstance(pval, dict):
+                subrefs = {}
+                processed[pname] = self._extract_refs(pval, subrefs)
+                for subkey, subref in subrefs.items():
+                    refs[f'{pname}.{subkey}'] = subref
+                continue
+
+            if isinstance(pval, param.Parameter):
                 if isinstance(pval.owner, pn.widgets.Widget) and pval.name == 'value':
                     pval = pval.owner
                 else:
@@ -89,7 +96,7 @@ class Component(param.Parameterized):
                 processed[pname] = pval
             else:
                 var_name = var_name.replace(' ', '_')
-                self._refs[pname] = f'$variables.{var_name}'
+                refs[pname] = f'$variables.{var_name}'
                 var = var_type(name=var_name, **var_kwargs)
                 state.variables.add_variable(var)
         return processed
