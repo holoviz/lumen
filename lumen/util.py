@@ -10,6 +10,7 @@ from functools import wraps
 from logging import getLogger
 from subprocess import check_output
 
+import pandas as pd
 import panel as pn
 
 from jinja2 import DebugUndefined, Environment, Undefined
@@ -42,7 +43,7 @@ def get_dataframe_schema(df, columns=None):
         is_dask = False
 
     schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
-    if df is None or df.empty:
+    if df is None:
         return schema
 
     if columns is None:
@@ -53,13 +54,19 @@ def get_dataframe_schema(df, columns=None):
         dtype = df.dtypes[name]
         column = df[name]
         if dtype.kind in 'uifM':
-            vmin, vmax = column.min(), column.max()
-            if is_dask:
-                vmin, vmax = dd.compute(vmin, vmax)
+            if df.empty:
+                if dtype.kind == 'M':
+                    vmin, vmax = pd.NaT, pd.NaT
+                else:
+                    vmin, vmax = float('NaN'), float('NaN')
+            else:
+                vmin, vmax = column.min(), column.max()
+                if is_dask:
+                    vmin, vmax = dd.compute(vmin, vmax)
             if dtype.kind == 'M':
                 kind = 'string'
                 vmin, vmax = vmin.isoformat(), vmax.isoformat()
-            else:
+            elif not df.empty:
                 if dtype.kind == 'f':
                     cast = float
                     kind = 'number'
@@ -79,6 +86,8 @@ def get_dataframe_schema(df, columns=None):
         elif dtype.kind == 'O':
             if isinstance(dtype, CategoricalDtype) and len(dtype.categories):
                 cats = list(dtype.categories)
+            elif df.empty:
+                cats = []
             else:
                 try:
                     cats = column.unique()
@@ -277,10 +286,13 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                log.error(
-                    f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
-                )
-                pn.state.notifications.error(message.format(e=e))
+                if pn.state.notifications:
+                    log.error(
+                        f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
+                    )
+                    pn.state.notifications.error(message.format(e=e))
+                else:
+                    raise e
         return wrapper
 
     if function:
