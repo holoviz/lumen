@@ -6,18 +6,11 @@
    xmlns:svg="http://www.w3.org/2000/svg"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:xlink="http://www.w3.org/1999/xlink"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    width="771.17261mm"
    height="267.41895mm"
    viewBox="0 0 771.1726 267.41894"
    version="1.1"
-   id="svg8"
-   inkscape:export-filename="/Users/philippjfr/lumen_dashboard.png"
-   inkscape:export-xdpi="41.934856"
-   inkscape:export-ydpi="41.934856"
-   inkscape:version="1.0.2 (e86c8708, 2021-01-15)"
-   sodipodi:docname="diagram.svg">
+   id="svg8">
   <defs
      id="defs2">
     <marker
@@ -25,9 +18,7 @@
        id="marker16777"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow2Mend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="scale(-0.6)"
          d="M 8.7185878,4.0337352 -2.2072895,0.01601326 8.7185884,-4.0017078 c -1.7454984,2.3720609 -1.7354408,5.6174519 -6e-7,8.035443 z"
@@ -39,10 +30,7 @@
        id="marker16693"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow2Mend"
-       inkscape:isstock="true"
-       inkscape:collect="always">
+       orient="auto">
       <path
          transform="scale(-0.6)"
          d="M 8.7185878,4.0337352 -2.2072895,0.01601326 8.7185884,-4.0017078 c -1.7454984,2.3720609 -1.7354408,5.6174519 -6e-7,8.035443 z"
@@ -54,10 +42,7 @@
        id="marker15296"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow2Mend"
-       inkscape:isstock="true"
-       inkscape:collect="always">
+       orient="auto">
       <path
          transform="scale(-0.6)"
          d="M 8.7185878,4.0337352 -2.2072895,0.01601326 8.7185884,-4.0017078 c -1.7454984,2.3720609 -1.7354408,5.6174519 -6e-7,8.035443 z"
@@ -69,9 +54,7 @@
        id="Arrow2Mstart"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow2Mstart"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="scale(0.6)"
          d="M 8.7185878,4.0337352 -2.2072895,0.01601326 8.7185884,-4.0017078 c -1.7454984,2.3720609 -1.7354408,5.6174519 -6e-7,8.035443 z"
@@ -83,9 +66,7 @@
        id="marker14936"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow1Lend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="matrix(-0.8,0,0,-0.8,-10,0)"
          style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1pt;stroke-opacity:1"
@@ -97,9 +78,7 @@
        id="Arrow2Lend"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow2Lend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="matrix(-1.1,0,0,-1.1,-1.1,0)"
          d="M 8.7185878,4.0337352 -2.2072895,0.01601326 8.7185884,-4.0017078 c -1.7454984,2.3720609 -1.7354408,5.6174519 -6e-7,8.035443 z"
@@ -111,9 +90,7 @@
        id="marker14840"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow1Lend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="matrix(-0.8,0,0,-0.8,-10,0)"
          style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1pt;stroke-opacity:1"
@@ -125,9 +102,7 @@
        id="marker14800"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow1Lend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="matrix(-0.8,0,0,-0.8,-10,0)"
          style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1pt;stroke-opacity:1"
@@ -139,9 +114,7 @@
        id="Arrow1Lend"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow1Lend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="matrix(-0.8,0,0,-0.8,-10,0)"
          style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1pt;stroke-opacity:1"
@@ -153,9 +126,7 @@
        id="marker15296-0"
        refX="0"
        refY="0"
-       orient="auto"
-       inkscape:stockid="Arrow2Mend"
-       inkscape:isstock="true">
+       orient="auto">
       <path
          transform="scale(-0.6)"
          d="M 8.7185878,4.0337352 -2.2072895,0.01601326 8.7185884,-4.0017078 c -1.7454984,2.3720609 -1.7354408,5.6174519 -6e-7,8.035443 z"
@@ -208,7 +179,6 @@
        y2="175.53"
        xlink:href="#linear-gradient-2" />
     <linearGradient
-       inkscape:collect="always"
        xlink:href="#linear-gradient-2"
        id="linearGradient16581"
        gradientUnits="userSpaceOnUse"
@@ -269,31 +239,6 @@
          y="212.07454" />
     </clipPath>
   </defs>
-  <sodipodi:namedview
-     id="base"
-     pagecolor="#ffffff"
-     bordercolor="#666666"
-     borderopacity="1.0"
-     inkscape:pageopacity="0.0"
-     inkscape:pageshadow="2"
-     inkscape:zoom="0.5"
-     inkscape:cx="1343.2627"
-     inkscape:cy="674.38015"
-     inkscape:document-units="mm"
-     inkscape:current-layer="layer1"
-     inkscape:document-rotation="0"
-     showgrid="false"
-     inkscape:snap-to-guides="true"
-     inkscape:snap-global="false"
-     fit-margin-top="0"
-     fit-margin-left="0"
-     fit-margin-right="0"
-     fit-margin-bottom="0"
-     inkscape:window-width="2056"
-     inkscape:window-height="1263"
-     inkscape:window-x="0"
-     inkscape:window-y="38"
-     inkscape:window-maximized="1" />
   <metadata
      id="metadata5">
     <rdf:RDF>
@@ -307,8 +252,6 @@
     </rdf:RDF>
   </metadata>
   <g
-     inkscape:label="Layer 1"
-     inkscape:groupmode="layer"
      id="layer1"
      transform="translate(131.91664,3.7136203)">
     <circle
@@ -427,8 +370,7 @@
     <path
        style="fill:none;stroke:#21b59a;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m -74.501096,116.55603 h 33.664702"
-       id="path14480"
-       sodipodi:nodetypes="cc" />
+       id="path14480" />
     <path
        style="fill:none;stroke:#21b59a;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m -49.087172,155.54728 c 16.710528,-11.14035 16.710528,-11.48849 16.710528,-11.48849"
@@ -439,7 +381,6 @@
        x="89.142059"
        y="99.613617"
        id="text14512"><tspan
-         sodipodi:role="line"
          id="tspan14510"
          x="89.142059"
          y="99.613617"
@@ -472,7 +413,6 @@
        x="254.30409"
        y="112.42783"
        id="text14512-8"><tspan
-         sodipodi:role="line"
          id="tspan14510-1"
          x="254.30409"
          y="112.42783"
@@ -483,7 +423,6 @@
        x="494.82703"
        y="97.179489"
        id="text14512-81"><tspan
-         sodipodi:role="line"
          id="tspan14510-3"
          x="494.82703"
          y="97.179489"
@@ -621,28 +560,6 @@
        cx="563.83734"
        cy="227.6378"
        r="19.449919" />
-    <text
-       xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#21b59a;fill-opacity:1;stroke:none;stroke-width:0.264583"
-       x="23.246998"
-       y="55.039524"
-       id="text15926"><tspan
-         sodipodi:role="line"
-         id="tspan15924"
-         x="23.246998"
-         y="55.039524"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#21b59a;fill-opacity:1;stroke-width:0.264583">Data Intake</tspan></text>
-    <text
-       xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#035a86;fill-opacity:1;stroke:none;stroke-width:0.264583"
-       x="223.13173"
-       y="54.785522"
-       id="text15926-0"><tspan
-         sodipodi:role="line"
-         id="tspan15924-4"
-         x="223.13173"
-         y="54.785522"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#035a86;fill-opacity:1;stroke-width:0.264583">Data Processing</tspan></text>
     <rect
        style="fill:#f9f9f9;stroke:#035a86;stroke-width:1;stroke-miterlimit:4;stroke-dasharray:1.5, 1.5;stroke-dashoffset:0;stroke-opacity:1"
        id="rect15228-8"
@@ -656,7 +573,6 @@
        x="254.47623"
        y="163.32794"
        id="text14512-8-3"><tspan
-         sodipodi:role="line"
          id="tspan14510-1-1"
          x="254.47623"
          y="163.32794"
@@ -682,7 +598,6 @@
        x="470.85709"
        y="54.785522"
        id="text15926-0-7"><tspan
-         sodipodi:role="line"
          id="tspan15924-4-6"
          x="470.85709"
          y="54.785522"
@@ -754,23 +669,19 @@
     <path
        style="fill:none;stroke:#47b14c;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m 550.30588,202.59771 4.62772,7.73333"
-       id="path16601"
-       sodipodi:nodetypes="cc" />
+       id="path16601" />
     <path
        style="fill:none;stroke:#47b14c;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m 578.35872,182.39967 6.68085,4.97582"
-       id="path16603"
-       sodipodi:nodetypes="cc" />
+       id="path16603" />
     <path
        style="fill:none;stroke:#47b14c;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m 593.69426,150.60645 6.77231,2.26404"
-       id="path16605"
-       sodipodi:nodetypes="cc" />
+       id="path16605" />
     <path
        style="fill:none;stroke:#47b14c;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m 592.19813,119.56131 7.50055,-2.91365"
-       id="path16607"
-       sodipodi:nodetypes="cc" />
+       id="path16607" />
     <path
        style="fill:none;stroke:#47b14c;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m 572.37411,86.645978 6.7327,-5.984605"
@@ -782,8 +693,7 @@
     <path
        style="fill:none;stroke:#21b59a;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#marker16777)"
        d="M 30.306292,211.6565 71.719447,182.95104"
-       id="path16767"
-       sodipodi:nodetypes="cc" />
+       id="path16767" />
     <image
        width="28"
        height="28"
@@ -795,22 +705,17 @@
        style="stroke:#21b59a" />
     <text
        xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#d35f5f;fill-opacity:1;stroke:none;stroke-width:0.264583"
-       x="111.87859"
-       y="20.759279"
+       style="font-style:normal;font-weight:normal;font-size:25.4px;line-height:1.25;font-family:sans-serif;fill:#2c5aa0;fill-opacity:1;stroke:none;stroke-width:0.264583"
+       x="119.2869"
+       y="47.746803"
        id="text15926-02"><tspan
-         sodipodi:role="line"
          id="tspan15924-48"
-         x="111.87859"
-         y="20.759279"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#d35f5f;fill-opacity:1;stroke-width:0.264583">Data Pipeline</tspan></text>
+         x="119.2869"
+         y="47.746803"
+         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:25.4px;font-family:Ubuntu;-inkscape-font-specification:'Ubuntu Bold';fill:#2c5aa0;fill-opacity:1;stroke-width:0.264583">Data Pipeline</tspan></text>
     <path
        style="fill:none;stroke:#47b14c;stroke-width:1.95443;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;marker-end:url(#marker15296-0)"
        d="m 416.94353,138.62298 h 30.50335"
        id="path15224-3" />
-    <path
-       style="fill:none;stroke:#d35f5f;stroke-width:3;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-       d="M 16.250024,42.853046 V 29.094713 H 423.70835 v 14.816666"
-       id="path1144" />
   </g>
 </svg>
