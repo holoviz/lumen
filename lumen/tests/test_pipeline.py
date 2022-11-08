@@ -2,12 +2,14 @@ import pathlib
 
 import pandas as pd
 
+from panel.widgets import Select
+
 from lumen.filters import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
 from lumen.transforms import Columns
-from lumen.transforms.sql import SQLColumns
+from lumen.transforms.sql import SQLColumns, SQLGroupBy
 
 
 def test_pipeline_source_only(make_filesource, mixed_df):
@@ -249,3 +251,21 @@ def test_load_chained_pipeline(penguins_file):
     assert 'penguins' in pipelines
     assert 'penguins_chained' in pipelines
     assert pipelines['penguins_chained'].pipeline is pipelines['penguins']
+
+def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = IntakeSQLSource(
+        uri=str(root / 'catalog.yml'), root=str(root)
+    )
+
+    sel = Select(options=['A', 'B'], value='A')
+    transform = SQLGroupBy(aggregates={'AVG': sel}, by=['C'])
+    pipeline = Pipeline(source=source, table='test_sql', sql_transforms=[transform])
+
+    df = mixed_df[['C', 'A']]
+    pd.testing.assert_frame_equal(pipeline.data, df)
+
+    # Update
+    sel.value = 'B'
+    df = mixed_df[['C', 'B']]
+    pd.testing.assert_frame_equal(pipeline.data, df)
