@@ -76,8 +76,7 @@ jobs:
           miniconda-version: "latest"
       - name: conda setup
         run: |
-          echo "Remove defaults channel"
-          conda create test-environment
+          conda create -n test-environment
           conda activate test-environment
           conda config --remove channels defaults
           conda config --env --remove channels defaults
