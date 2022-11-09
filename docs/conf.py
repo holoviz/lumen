@@ -107,7 +107,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "Discourse",
-            "url": "https://discourse.holoviz.org/",
+            "url": "https://discourse.holoviz.org/c/lumen/14",
             "icon": "fab fa-discourse",
         },
     ],
