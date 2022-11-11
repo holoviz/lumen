@@ -101,21 +101,36 @@ class Component(param.Parameterized):
                 state.variables.add_variable(var)
         return processed
 
-    def _update_ref(self, pname, event):
+    def _update_ref(self, pname, event=None, value=None):
         """
         Component should implement appropriate downstream events
         following a change in a variable.
         """
+        new = value if event is None else event.new
         if '.' in pname:
             pname, *keys = pname.split('.')
             old = getattr(self, pname)
             current = new = old.copy()
             for k in keys[:-1]:
                 current = current[k]
-            current[keys[-1]] = event.new
+            current[keys[-1]] = new
         else:
-            new = event.new
+            new = new
         self.param.update({pname: new})
+
+    def _sync_refs(self, trigger=True):
+        updates = []
+        for p, ref in self._refs.items():
+            if isinstance(state.variables, dict):
+                continue
+            elif isinstance(ref, str) and ref.startswith('$variables.'):
+                ref = ref.split('$variables.')[1]
+                with param.discard_events(self):
+                    self._update_ref(p, value=getattr(state.variables, ref))
+                    pname, *_ = p.split('.')
+                    updates.append(pname)
+        if trigger:
+            self.param.trigger(*updates)
 
     ##################################################################
     # Validation API
