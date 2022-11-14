@@ -1,9 +1,9 @@
 import datetime as dt
 
 from lumen.transforms.sql import (
-    SQLColumns, SQLDistinct, SQLFilter, SQLGroupBy,
-    SQLLimit, SQLMinMax
+    SQLColumns, SQLDistinct, SQLFilter, SQLGroupBy, SQLLimit, SQLMinMax,
 )
+
 
 def test_sql_group_by_single_column():
     assert (
