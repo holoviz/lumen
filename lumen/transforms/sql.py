@@ -1,4 +1,5 @@
 import datetime as dt
+import textwrap
 
 import numpy as np
 import param
@@ -47,6 +48,11 @@ class SQLTransform(Transform):
         """
         return sql_in
 
+    @classmethod
+    def _render_template(cls, template, **params):
+        template = textwrap.dedent(template).lstrip()
+        return Template(template, trim_blocks=True, lstrip_blocks=True).render(**params)
+
 
 class SQLGroupBy(SQLTransform):
     """
@@ -64,18 +70,17 @@ class SQLGroupBy(SQLTransform):
     def apply(self, sql_in):
         template = """
             SELECT
-                {{by_cols}},
-                {{aggs}}
+                {{by_cols}}, {{aggs}}
             FROM ( {{sql_in}} )
-            GROUP BY {{by_cols}}
-        """
+            GROUP BY {{by_cols}}"""
         by_cols = ', '.join(self.by)
-        aggs = ', '.join([
-            f'{agg}({col}) AS {col}' for agg, col in self.aggregates.items()
-        ])
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
-            by_cols=by_cols, aggs=aggs, sql_in=sql_in
-        )
+        aggs = []
+        for agg, cols in self.aggregates.items():
+            if isinstance(cols, str):
+                cols = [cols]
+            for col in cols:
+                aggs.append(f'{agg}({col}) AS {col}')
+        return self._render_template(template, by_cols=by_cols, aggs=', '.join(aggs), sql_in=sql_in)
 
 
 class SQLLimit(SQLTransform):
@@ -94,9 +99,7 @@ class SQLLimit(SQLTransform):
             FROM ( {{sql_in}} )
             LIMIT {{limit}}
         """
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
-            limit=self.limit, sql_in=sql_in
-        )
+        return self._render_template(template, sql_in=sql_in, limit=self.limit)
 
 
 class SQLDistinct(SQLTransform):
@@ -109,11 +112,8 @@ class SQLDistinct(SQLTransform):
         template = """
             SELECT DISTINCT
                 {{columns}}
-            FROM ( {{sql_in}} )
-        """
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
-            columns=', '.join(self.columns), sql_in=sql_in
-        )
+            FROM ( {{sql_in}} )"""
+        return self._render_template(template, sql_in=sql_in, columns=', '.join(self.columns))
 
 
 class SQLMinMax(SQLTransform):
@@ -130,11 +130,8 @@ class SQLMinMax(SQLTransform):
         template = """
             SELECT
                 {{columns}}
-            FROM ( {{sql_in}} )
-        """
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
-            columns=', '.join(aggs), sql_in=sql_in
-        )
+            FROM ( {{sql_in}} )"""
+        return self._render_template(template, sql_in=sql_in, columns=', '.join(aggs))
 
 
 class SQLColumns(SQLTransform):
@@ -149,9 +146,7 @@ class SQLColumns(SQLTransform):
                 {{columns}}
             FROM ( {{sql_in}} )
         """
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
-            columns=', '.join(self.columns), sql_in=sql_in
-        )
+        return self._render_template(template, sql_in=sql_in, columns=', '.join(self.columns))
 
 
 class SQLFilter(SQLTransform):
@@ -172,7 +167,7 @@ class SQLFilter(SQLTransform):
         if isinstance(v1, dt.date) and not isinstance(v1, dt.datetime):
             start += ' 00:00:00'
         if isinstance(v2, dt.date) and not isinstance(v2, dt.datetime):
-            end += ' 00:00:00'
+            end += ' 23:59:59'
         return f'{col} BETWEEN {start!r} AND {end!r}'
 
     def apply(self, sql_in):
@@ -220,8 +215,5 @@ class SQLFilter(SQLTransform):
             SELECT
                 *
             FROM ( {{sql_in}} )
-            WHERE ( {{conditions}} )
-        """
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(
-            conditions=' AND '.join(conditions), sql_in=sql_in
-        )
+            WHERE ( {{conditions}} )"""
+        return self._render_template(template, sql_in=sql_in, conditions=' AND '.join(conditions))
