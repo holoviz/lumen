@@ -106,16 +106,16 @@ class Component(param.Parameterized):
         Component should implement appropriate downstream events
         following a change in a variable.
         """
-        new = value if event is None else event.new
+        new_value = value if event is None else event.new
         if '.' in pname:
             pname, *keys = pname.split('.')
             old = getattr(self, pname)
             current = new = old.copy()
             for k in keys[:-1]:
                 current = current[k]
-            current[keys[-1]] = new
+            current[keys[-1]] = new_value
         else:
-            new = new
+            new = new_value
         self.param.update({pname: new})
 
     def _sync_refs(self, trigger=True):
