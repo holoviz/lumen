@@ -226,6 +226,7 @@ class Widget(Variable):
             widget_type = getattr(pn.widgets, self.kind)
         if 'value' not in params and default is not None:
             params['value'] = default
+
         if self.label:
             params['name'] = self.label
         deserialized = {}
@@ -246,6 +247,21 @@ class Widget(Variable):
         else:
             self.value = self._widget.value
             self._widget.link(self, value='value', bidirectional=True)
+
+    def to_spec(self, context=None):
+        """
+        Exports the full specification to reconstruct this component.
+
+        Returns
+        -------
+        Resolved and instantiated Component object
+        """
+        spec = super().to_spec(context=context)
+        pvals = self._widget.param.values()
+        for pname, pobj in self._widget.param.objects().items():
+            if pvals[pname] is not pobj.default and pname not in spec:
+                spec[pname] = pvals[pname]
+        return spec
 
     @property
     def panel(self):
