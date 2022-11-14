@@ -315,6 +315,7 @@ class View(MultiTypeComponent, Viewer):
         Updates the cached Panel object and returns a boolean value
         indicating whether a rerender is required.
         """
+        self._sync_refs(trigger=False)
         if self._panel is not None:
             self._cleanup()
             updates = self._get_params()

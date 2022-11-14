@@ -232,6 +232,11 @@ class Pipeline(Component):
             return
 
         self._update_widget.loading = True
+
+        # Ensure all refs are up-to-date before we run the pipeline
+        for f in self.filters+self.transforms+self.sql_transforms:
+            f._sync_refs()
+
         try:
             self.data = self._compute_data()
         except Exception as e:
