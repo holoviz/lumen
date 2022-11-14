@@ -573,10 +573,14 @@ class Dashboard(Component):
         if not rendered:
             spec = state.spec['targets'][event.new]
             self._set_loading(spec['title'])
-            if isinstance(target, Future):
-                target = target.result()
-            else:
-                target = self._load_target(spec)
+            try:
+                if isinstance(target, Future):
+                    target = target.result()
+                else:
+                    target = self._load_target(spec)
+            except Exception as e:
+                self._layout.loading = False
+                raise e
             self.targets[event.new] = target
             self._layout[event.new] = target.panels
             self._rendered[event.new] = True
