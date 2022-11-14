@@ -104,6 +104,8 @@ class Pipeline(Component):
     def __init__(self, *, source, table, **params):
         if 'schema' not in params:
             params['schema'] = source.get_schema(table)
+        if any(isinstance(t, SQLTransform) for t in params.get('transforms', [])):
+            raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
         super().__init__(source=source, table=table, **params)
         self._update_widget = pn.Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
         self._init_callbacks()
