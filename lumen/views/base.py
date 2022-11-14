@@ -164,9 +164,11 @@ class View(MultiTypeComponent, Viewer):
         self.download.view = self
         if self.selection_group:
             self._init_link_selections()
-        self.update()
+        self._initialized = False
 
     def __panel__(self):
+        if not self._initialized:
+            self.update()
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
     def _init_link_selections(self):
@@ -429,6 +431,7 @@ class View(MultiTypeComponent, Viewer):
         if invalidate_cache:
             self._cache = None
         stale = self._update_panel()
+        self._initialized = True
         if stale:
             self.param.trigger('rerender')
 
@@ -443,6 +446,8 @@ class View(MultiTypeComponent, Viewer):
 
     @property
     def panel(self):
+        if not self._initialized:
+            self.update()
         panel = self._panel
         if isinstance(panel, PaneBase):
             if len(panel.layout) == 1 and panel._unpack:
