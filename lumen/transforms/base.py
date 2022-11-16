@@ -52,6 +52,14 @@ class Transform(MultiTypeComponent):
             if is_ref(v):
                 refs[k] = v
                 v = state.resolve_reference(v)
+            elif isinstance(v, dict):
+                resolved = {}
+                for sk, sv in v.items():
+                    if is_ref(sv):
+                        refs[f'{k}.{sk}'] = sv
+                        sv = state.resolve_reference(sv)
+                    resolved[sk] = sv
+                v = resolved
             if (k in transform_type.param and
                 isinstance(transform_type.param[k], param.ListSelector) and
                 not isinstance(v, list)):
@@ -607,7 +615,7 @@ class Rename(Transform):
               level=<level>, axis=<axis>, copy=<copy>)
     """
 
-    axis = param.ClassSelector(default=0, class_=(int, str), doc="""
+    axis = param.ClassSelector(default=None, class_=(int, str), doc="""
         The axis to rename. 0 or 'index', 1 or 'columns'""")
 
     columns = param.Dict(default=None, doc="""
