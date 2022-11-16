@@ -171,6 +171,25 @@ class View(MultiTypeComponent, Viewer):
             self.update()
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
+    def _update_ref(self, pname, event=None, value=None):
+        # Note: Do not trigger update in View if Pipeline references
+        # the same variable and is not set up to auto-update
+        if event is not None and not self.pipeline.auto_update:
+            refs = []
+            current = self.pipeline
+            while current is not None:
+                for ref in current.refs:
+                    if ref not in refs:
+                        refs.append(ref)
+                current = current.pipeline
+            print(refs)
+            if any(
+                ref.split('.')[-1] == event.name
+                for ref in refs if ref.startswith('$variables')
+            ):
+                return
+        super()._update_ref(pname, event=event, value=value)
+
     def _init_link_selections(self):
         doc = pn.state.curdoc or self.pipeline
         if self._ls is not None:

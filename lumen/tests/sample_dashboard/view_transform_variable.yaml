@@ -1,0 +1,28 @@
+variables:
+  rename:
+    type: constant
+    default: Z
+sources:
+  test:
+    type: 'file'
+    tables: ['../sources/test.csv']
+    kwargs:
+      parse_dates: ['D']
+pipelines:
+  test:
+    auto_update: false
+    source: test
+    table: test
+    transforms:
+      - type: rename
+        axis: 1
+        mapper:
+          A: $variables.rename
+targets:
+  - title: "Test"
+    pipeline: test
+    views:
+      - type: hvplot
+        kind: line
+        x: index
+        y: $variables.rename
