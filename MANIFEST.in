@@ -1,6 +1,7 @@
 include README.md
 include LICENSE.txt
 include lumen/.version
+recursive-include lumen/tests *.yaml
 recursive-include lumen/tests *.yml
 recursive-include lumen/tests *.csv
 recursive-include lumen/tests *.py
