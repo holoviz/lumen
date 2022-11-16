@@ -158,3 +158,23 @@ def test_dashboard_with_view_variable(set_root, document):
     state.variables.page_size = 10
 
     assert table.page_size == 10
+
+def test_dashboard_with_view_and_transform_variable(set_root, document):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'view_transform_variable.yaml'))
+    dashboard._render_dashboard()
+    target = dashboard.targets[0]
+    target.update()
+
+    plot = target._cards[0]._card[0][0]
+
+    assert plot.object.vdims == ['Z']
+
+    state.variables.rename = 'Y'
+
+    assert plot.object.vdims == ['Z']
+
+    list(target._pipelines.values())[0].param.trigger('update')
+
+    assert plot.object.vdims == ['Y']

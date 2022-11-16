@@ -41,7 +41,7 @@ class Config(Component):
     `Config` provides high-level configuration options for the Dashboard.
     """
 
-    auto_update = param.Boolean(default=True, constant=True, doc="""
+    auto_update = param.Boolean(default=None, constant=True, doc="""
         Whether changes in filters, transforms and references automatically
         trigger updates in the data or whether an update has to be triggered
         manually using the update event or the update button in the UI."""
@@ -411,7 +411,7 @@ class Dashboard(Component):
         target_spec = dict(target_spec)
         if 'reloadable' not in target_spec:
             target_spec['reloadable'] = self.config.reloadable
-        if 'auto_update' not in target_spec:
+        if 'auto_update' not in target_spec and self.config.auto_update is not None:
             target_spec['auto_update'] = self.config.auto_update
         target = Target.from_spec(target_spec)
         self._rerender_watchers[target] = target.param.watch(
@@ -430,7 +430,10 @@ class Dashboard(Component):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
         if force or self._load_global or not state.pipelines:
-            state.load_pipelines(auto_update=self.config.auto_update)
+            kwargs = {}
+            if self.config.auto_update is not None:
+                kwargs['auto_update'] = self.config.auto_update
+            state.load_pipelines(**kwargs)
         if not self.auth.authorized:
             self.targets = []
             return
