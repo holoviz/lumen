@@ -53,7 +53,7 @@ class Filter(MultiTypeComponent):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if state.app and state.app.config.sync_with_url and self.sync_with_url and pn.state.location:
+        if state.config and state.config.sync_with_url and self.sync_with_url and pn.state.location:
             pn.state.location.sync(self, {'value': self.field}, on_error=self._url_sync_error)
 
     @classproperty

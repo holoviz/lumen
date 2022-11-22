@@ -366,7 +366,7 @@ class Dashboard(Component):
         self._create_header()
         self._populate_template()
 
-        state._apps[pn.state.curdoc] = self
+        state.config = self.config
         pn.state.onload(self._render_dashboard)
 
     def _init_config(self):

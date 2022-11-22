@@ -42,7 +42,7 @@ def make_variable_filesource():
     root = config._root
     def create(root, **kwargs):
         config._root = root
-        state._variables[None] = Variables.from_spec({'tables': {'type': 'constant', 'default': {'test': 'test.csv'}}})
+        state._variable = Variables.from_spec({'tables': {'type': 'constant', 'default': {'test': 'test.csv'}}})
         source = Source.from_spec(dict({
             'type': 'file',
             'tables': '$variables.tables',
@@ -84,12 +84,20 @@ def clear_state():
     yield
     state.global_sources.clear()
     state.global_filters.clear()
+    state._configs.clear()
+    state._config = None
+    state._specs.clear()
     state._spec.clear()
-    state._loading.clear()
+    state._loadings.clear()
+    state._loading = None
     state._sources.clear()
+    state._source.clear()
     state._filters.clear()
+    state._filter.clear()
     state._pipelines.clear()
+    state._pipeline.clear()
     state._variables.clear()
+    state._variable = None
 
 @pytest.fixture
 def document():
