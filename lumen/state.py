@@ -32,7 +32,7 @@ class _session_state:
     _pipeline = {}
 
     _filters = WeakKeyDictionary()
-    _filt = {}
+    _filter = {}
 
     _variables = WeakKeyDictionary()
     _variable = None
@@ -252,7 +252,7 @@ class _session_state:
 
     def load_pipelines(self, **kwargs):
         from .pipeline import Pipeline
-        self._pipelines[pn.state.curdoc or None] = pipelines = {}
+        pipelines = self.pipelines
         for name, pipeline_spec in self.spec.get('pipelines', {}).items():
             pipelines[name] = Pipeline.from_spec(
                 dict(pipeline_spec, name=name, **kwargs)
