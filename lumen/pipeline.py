@@ -98,7 +98,7 @@ class Pipeline(Component):
         Whether the pipeline is stale."""
     )
 
-    _internal_params = ['data', 'name', 'schema']
+    _internal_params = ['data', 'name', 'schema', '_stale']
     _required_fields = [('source', 'pipeline')]
 
     def __init__(self, *, source, table, **params):
