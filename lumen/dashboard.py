@@ -582,13 +582,13 @@ class Dashboard(Component):
                 else:
                     target = self._load_target(spec)
             except Exception as e:
-                self._layout.loading = False
+                self._main.loading = False
                 raise e
             self.targets[event.new] = target
             self._layout[event.new] = target.panels
             self._rendered[event.new] = True
         self._render_filters()
-        self._layout.loading = False
+        self._main.loading = False
 
     def _edit(self, event):
         self._yaml = event.new
@@ -618,7 +618,7 @@ class Dashboard(Component):
         else:
             items = [self._loading]
         self._layout[:] = items
-        self._layout.loading = True
+        self._main.loading = True
 
     def _open_modal(self, event):
         self._template.open_modal()
@@ -676,12 +676,12 @@ class Dashboard(Component):
         items = []
         for target, spec in zip(self.targets, state.spec.get('targets', [])):
             if target is None or isinstance(target, Future):
-                panel = pn.Column(name=spec['title'])
+                panel = pn.layout.VSpacer(name=spec['title'])
             else:
                 panel = target.panels
             items.append(panel)
         self._layout[:] = items
-        self._layout.loading = False
+        self._main.loading = False
 
     def _render_unauthorized(self):
         auth_keys = list(state.spec.get('auth'))
