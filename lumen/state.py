@@ -46,7 +46,7 @@ class _session_state:
     @config.setter
     def config(self, config):
         if pn.state.curdoc is None:
-            self._confi = spec
+            self._config = config
         else:
             self._configs[pn.state.curdoc] = config
 
