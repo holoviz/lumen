@@ -16,34 +16,86 @@ class _session_state:
 
     global_filters = {}
 
-    _specs = WeakKeyDictionary() if pn.state.curdoc else {}
+    _configs = WeakKeyDictionary()
+    _config = None
 
+    _specs = WeakKeyDictionary()
     _spec = {}
 
-    _apps = WeakKeyDictionary() if pn.state.curdoc else {}
+    _loadings = WeakKeyDictionary()
+    _loading = None
 
-    _loading = WeakKeyDictionary() if pn.state.curdoc else {}
+    _sources = WeakKeyDictionary()
+    _source = {}
 
-    _sources = WeakKeyDictionary() if pn.state.curdoc else {}
+    _pipelines = WeakKeyDictionary()
+    _pipeline = {}
 
-    _pipelines = WeakKeyDictionary() if pn.state.curdoc else {}
+    _filters = WeakKeyDictionary()
+    _filt = {}
 
-    _filters = WeakKeyDictionary() if pn.state.curdoc else {}
-
-    _variables = WeakKeyDictionary() if pn.state.curdoc else {}
+    _variables = WeakKeyDictionary()
+    _variable = None
 
     @property
-    def app(self):
-        return self._apps.get(pn.state.curdoc)
+    def config(self):
+        if pn.state.curdoc is None:
+            return self._config
+        return self._configs.get(pn.state.curdoc, self._config)
+
+    @config.setter
+    def config(self, config):
+        if pn.state.curdoc is None:
+            self._confi = spec
+        else:
+            self._configs[pn.state.curdoc] = config
+
+    @property
+    def filters(self):
+        if pn.state.curdoc is None:
+            if self._filter is None:
+                self._filter = self._global_filters
+            return self._filter
+        elif pn.state.curdoc not in self._filters:
+            self._filters[pn.state.curdoc] = self._global_filters
+        return self._filters[pn.state.curdoc]
+
+    @property
+    def loading_msg(self):
+        if pn.state.curdoc is None:
+            return self._loading
+        return self._loadings.get(pn.state.curdoc)
+
+    @loading_msg.setter
+    def loading_msg(self, loading_msg):
+        if pn.state.curdoc is None:
+            self._loading = loading_msg
+        else:
+            self._loadings[pn.state.curdoc] = loading_msg
+
+    @property
+    def pipelines(self):
+        if pn.state.curdoc is None:
+            return self._pipeline
+        elif pn.state.curdoc not in self._pipelines:
+            self._pipelines[pn.state.curdoc] = dict(self._pipeline)
+        return self._pipelines[pn.state.curdoc]
+
+    @property
+    def sources(self):
+        if pn.state.curdoc is None:
+            return self._source
+        elif pn.state.curdoc not in self._sources:
+            self._sources[pn.state.curdoc] = dict(
+                self.global_sources, **self._source
+            )
+        return self._sources[pn.state.curdoc]
 
     @property
     def spec(self):
         if pn.state.curdoc is None:
             return self._spec
-        if pn.state.curdoc not in self._specs:
-            self.spec = {}
-        spec = self._specs.get(pn.state.curdoc, {})
-        return spec
+        return self._specs.get(pn.state.curdoc, self._spec)
 
     @spec.setter
     def spec(self, spec):
@@ -51,6 +103,30 @@ class _session_state:
             self._spec = spec
         else:
             self._specs[pn.state.curdoc] = spec
+
+    @property
+    def variables(self):
+        from .variables import Variables
+        if self._variable is None:
+            self._variable = Variables()
+        if pn.state.curdoc is None:
+            return self._variable
+        elif pn.state.curdoc not in self._variables:
+            self._variables[pn.state.curdoc] = variables = Variables()
+            for var in self._variable._vars.values():
+                variables.add_variable(var)
+        return self._variables[pn.state.curdoc]
+
+    @property
+    def _global_filters(self):
+        from .filters import Filter
+        return {
+            source: {
+                name: Filter.from_spec(spec, schema)
+                for name, (spec, schema) in filters.items()
+            }
+            for source, filters in self.global_filters.items()
+        }
 
     def to_spec(
         self, auth=None, config=None, defaults=None,
@@ -113,38 +189,6 @@ class _session_state:
         return context
 
     @property
-    def filters(self):
-        from .filters import Filter
-        if pn.state.curdoc not in self._filters:
-            self._filters[pn.state.curdoc] = {
-                source: {
-                    name: Filter.from_spec(spec, schema)
-                    for name, (spec, schema) in filters.items()
-                }
-                for source, filters in self.global_filters.items()
-            }
-        return self._filters[pn.state.curdoc]
-
-    @property
-    def sources(self):
-        if pn.state.curdoc not in self._sources:
-            self._sources[pn.state.curdoc] = dict(self.global_sources)
-        return self._sources[pn.state.curdoc]
-
-    @property
-    def pipelines(self):
-        if pn.state.curdoc not in self._pipelines:
-            self._pipelines[pn.state.curdoc] = {}
-        return self._pipelines[pn.state.curdoc]
-
-    @property
-    def variables(self):
-        if pn.state.curdoc not in self._variables:
-            from .variables import Variables
-            self._variables[pn.state.curdoc] = Variables()
-        return self._variables[pn.state.curdoc]
-
-    @property
     def global_refs(self):
         target_refs = []
         source_specs = self.spec.get('sources', {})
@@ -161,14 +205,6 @@ class _session_state:
         else:
             combined_refs, merged_refs = set(), set()
         return list(merged_refs | (set(var_refs) - combined_refs))
-
-    @property
-    def loading_msg(self):
-        return self._loading.get(pn.state.curdoc)
-
-    @loading_msg.setter
-    def loading_msg(self, loading_msg):
-        self._loading[pn.state.curdoc] = loading_msg
 
     def load_global_sources(self, clear_cache=True):
         """

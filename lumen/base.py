@@ -126,7 +126,7 @@ class Component(param.Parameterized):
             elif isinstance(ref, str) and ref.startswith('$variables.'):
                 ref = ref.split('$variables.')[1]
                 with param.discard_events(self):
-                    self._update_ref(p, value=getattr(state.variables, ref))
+                    self._update_ref(p, value=state.variables[ref])
                     pname, *_ = p.split('.')
                     updates.append(pname)
         if trigger:
