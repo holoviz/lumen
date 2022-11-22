@@ -497,7 +497,9 @@ class Target(Component, Viewer):
 
         # Filter controls
         filters = []
+        auto_update = self.auto_update
         for pipeline in self._pipelines.values():
+            auto_update &= pipeline.auto_update
             subpipeline = pipeline
             while subpipeline is not None:
                 subfilters = []
@@ -528,7 +530,7 @@ class Target(Component, Viewer):
             views.append(self._view_controls)
 
         # Add update button
-        if not self.auto_update and apply_button:
+        if not auto_update and apply_button:
             views.append(self._update_button)
 
         # Reload buttons
