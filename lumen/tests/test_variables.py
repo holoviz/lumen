@@ -4,7 +4,7 @@ import param
 
 from panel.widgets import IntSlider
 
-from lumen.variables import Variable, Variables
+from lumen.variables import Variable, Variables, Widget
 
 
 def test_variables():
@@ -99,3 +99,14 @@ def test_widget_variable_select_to_spec():
         'options': ['A', 'B', 'C'],
         'value': 'A'
     }
+
+
+def test_intslider_value_sync():
+    pval = IntSlider(value=20)
+    var_kwargs = dict(
+        kind=f"{pval.__module__}.{type(pval).__name__}",
+        **{k: v for k, v in pval.param.values().items()},
+    )
+    var = Widget(**var_kwargs)
+
+    assert var.value == pval.value
