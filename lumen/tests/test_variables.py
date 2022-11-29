@@ -4,7 +4,7 @@ import param
 
 from panel.widgets import IntSlider
 
-from lumen.variables import Variable, Variables
+from lumen.variables import Variable, Variables, Widget
 
 
 def test_variables():
@@ -99,3 +99,8 @@ def test_widget_variable_select_to_spec():
         'options': ['A', 'B', 'C'],
         'value': 'A'
     }
+
+
+def test_intslider_value_initialize():
+    var = Widget(kind="IntSlider", value=20)
+    assert var.value == 20
