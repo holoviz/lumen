@@ -389,7 +389,8 @@ class Astype(Transform):
     def apply(self, table):
         table = table.copy()
         for col, dtype in self.dtypes.items():
-            table[col] = table[col].astype(dtype)
+            if col in table.columns:
+                table[col] = table[col].astype(dtype)
         return table
 
 
