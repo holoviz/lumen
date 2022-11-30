@@ -37,7 +37,7 @@ pipelines:
       - type: project_lnglat
         latitude: lat
         longitude: lon
-targets:
+layouts:
   - title: "Occupancy"
     pipeline: station_occupancy
     views:

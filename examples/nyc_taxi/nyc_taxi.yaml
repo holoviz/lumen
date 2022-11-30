@@ -15,7 +15,7 @@ sources:
             - type: file
               regex: '{{ CATALOG_DIR }}/data'
               argkey: urlpath
-targets:
+layouts:
   - title: Trip Data
     source: nyc_taxi
     views:

@@ -17,7 +17,7 @@ pipelines:
         field: date
       - type: widget
         field: weather
-targets:
+layouts:
   - title: Seattle Weather
     pipeline: seattle
     views:

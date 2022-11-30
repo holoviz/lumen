@@ -23,7 +23,7 @@ sources:
     tables:
       penguins: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Table
     source: penguins
     download: csv
@@ -48,7 +48,7 @@ sources:
     tables:
       penguins: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Table
     source: penguins
     download: csv
@@ -73,7 +73,7 @@ sources:
     tables:
       penguins: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Table
     source: penguins
     download: csv

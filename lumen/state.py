@@ -130,7 +130,7 @@ class _session_state:
 
     def to_spec(
         self, auth=None, config=None, defaults=None,
-        pipelines={}, sources={}, targets=[], variables=None
+        pipelines={}, sources={}, layouts=[], variables=None
     ):
         """
         Exports the full specification of the supplied components including
@@ -144,7 +144,7 @@ class _session_state:
         variables: lumen.variables.Variables
         pipelines: Dict[str, Pipeline]
         sources: Dict[str, Source]
-        targets: list[Target]
+        layouts: list[Layout]
 
         Returns
         -------
@@ -182,33 +182,33 @@ class _session_state:
             context['pipelines'] = {}
         for k, pipeline in pipelines.items():
             context['pipelines'][k] = pipeline.to_spec(context=context)
-        if targets:
-            context['targets'] = [
-                target.to_spec(context) for target in targets
+        if layouts:
+            context['layouts'] = [
+                layout.to_spec(context) for layout in layouts
             ]
         return context
 
     @property
     def global_refs(self):
-        target_refs = []
+        layout_refs = []
         source_specs = self.spec.get('sources', {})
-        for target in self.spec.get('targets', []):
-            if isinstance(target.get('source'), str):
-                src_ref = target['source']
-                target = dict(target, source=source_specs.get(src_ref))
-            target_refs.append(set(extract_refs(target, 'variables')))
+        for layout in self.spec.get('layouts', []):
+            if isinstance(layout.get('source'), str):
+                src_ref = layout['source']
+                layout = dict(layout, source=source_specs.get(src_ref))
+            layout_refs.append(set(extract_refs(layout, 'variables')))
 
         var_refs = extract_refs(self.spec.get('variables'), 'variables')
-        if target_refs:
-            combined_refs = set.union(*target_refs)
-            merged_refs = set.intersection(*target_refs)
+        if layout_refs:
+            combined_refs = set.union(*layout_refs)
+            merged_refs = set.intersection(*layout_refs)
         else:
             combined_refs, merged_refs = set(), set()
         return list(merged_refs | (set(var_refs) - combined_refs))
 
     def load_global_sources(self, clear_cache=True):
         """
-        Loads global sources shared across all targets.
+        Loads global sources shared across all layouts.
         """
         from .sources import Source
         for name, source_spec in self.spec.get('sources', {}).items():
@@ -288,8 +288,8 @@ class _session_state:
     def resolve_views(self):
         from .views import View
         exts = []
-        for target in self.spec.get('targets', []):
-            views = target.get('views', [])
+        for layout in self.spec.get('layouts', []):
+            views = layout.get('views', [])
             if isinstance(views, dict):
                 views = list(views.values())
             for view in views:
