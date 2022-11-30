@@ -57,8 +57,9 @@ class Component(param.Parameterized):
                 continue
             elif isinstance(ref, str) and '$variables' in ref:
                 ref_vars = VARIABLE_RE.findall(ref)
-                print(ref, ref_vars)
                 state.variables.param.watch(partial(self._update_ref, p, ref), ref_vars)
+                if '.' not in p and p not in params:
+                    self._update_ref(p, ref)
 
     def _extract_refs(self, params, refs):
         from .variables import Parameter, Variable, Widget
@@ -67,7 +68,7 @@ class Component(param.Parameterized):
             if isinstance(pval, Variable):
                 processed[pname] = pval.value
                 refs[pname] = f'$variables.{pval.name}'
-                state.add_variable(pval)
+                state.variables.add_variable(pval)
                 continue
             elif isinstance(pval, dict):
                 subrefs = {}
@@ -118,7 +119,7 @@ class Component(param.Parameterized):
         following a change in a variable.
         """
         expr = cleanup_expr(ref)
-        new_value = pd.eval(expr, local_dict=dict(state.variables))
+        new_value = pd.eval(expr, local_dict=dict(state.variables), engine='python')
         if '.' in pname:
             pname, *keys = pname.split('.')
             old = getattr(self, pname)

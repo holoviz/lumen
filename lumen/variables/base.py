@@ -55,6 +55,11 @@ class Variables(param.Parameterized):
         a parameter that can be watched.
         """
         if var.name in self._vars:
+            self.param.warning(
+                'A Variable named {var.name!r} has already been defined.'
+                'Overriding the existing variable and unlinking any attached '
+                'components.'
+            )
             variable = self._vars.pop(var.name)
             variable.param.unwatch(self._watchers.pop(var.name))
         self._vars[var.name] = var

@@ -4,6 +4,8 @@ import param
 
 from panel.widgets import IntSlider
 
+from lumen.base import Component
+from lumen.state import state
 from lumen.variables import Variable, Variables, Widget
 
 
@@ -104,3 +106,62 @@ def test_widget_variable_select_to_spec():
 def test_intslider_value_initialize():
     var = Widget(kind="IntSlider", value=20)
     assert var.value == 20
+
+
+class CustomComponent(Component):
+
+    string = param.String()
+
+    number = param.Number()
+
+    dictionary = param.Dict()
+
+
+def test_variable_resolve_simple_var():
+    state._variable = vars = Variables.from_spec({
+        'str'  : 'a',
+        'int'  : 1,
+    })
+    obj = CustomComponent(refs={'string': "$variables.str"})
+    assert obj.string == 'a'
+    vars.str = 'b'
+    assert obj.string == 'b'
+
+def test_variable_resolve_str_expr():
+    state._variable = vars = Variables.from_spec({
+        'str'  : 'a',
+        'int'  : 1,
+    })
+    obj = CustomComponent(refs={'string': "'{0}_{1}'.format($variables.str, $variables.int)"})
+    assert obj.string == 'a_1'
+    vars.int = 2
+    assert obj.string == 'a_2'
+    vars.str = 'b'
+    assert obj.string == 'b_2'
+
+def test_variable_resolve_numeric_expr():
+    state._variable = vars = Variables.from_spec({
+        'float': 3.1,
+        'int'  : 1,
+    })
+    obj = CustomComponent(refs={'number': "$variables.int + $variables.float"})
+    assert obj.number == 4.1
+    vars.int = 2
+    assert obj.number == 5.1
+    vars.float = 1.2
+    assert obj.number == 3.2
+
+def test_variable_resolve_numeric_expr_in_dict():
+    state._variable = vars = Variables.from_spec({
+        'float': 3.1,
+        'int'  : 1,
+    })
+    obj = CustomComponent(
+        dictionary={'a': 4.1},
+        refs={'dictionary.a': "$variables.int + $variables.float"}
+    )
+    assert obj.dictionary['a'] == 4.1
+    vars.int = 2
+    assert obj.dictionary['a'] == 5.1
+    vars.float = 1.2
+    assert obj.dictionary['a'] == 3.2
