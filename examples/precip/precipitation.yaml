@@ -22,7 +22,7 @@ sources:
               precip:
                 label: Precipitation
                 unit: mean mm/day
-targets:
+layouts:
   - title: Southern Rockies
     source: rockies
     facet:

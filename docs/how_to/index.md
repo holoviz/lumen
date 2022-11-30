@@ -5,8 +5,8 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 **[General](general/index)**
 * [Validate a specification file](general/validate)
 * [Build a dashboard in Python](general/pipeline_python)
+* [Use variables and references](general/variables_and_references)
 * [Override parameter defaults]() (under construction)
-* [Use variables and references]() (under construction)
 * [Set up authentication]() (under construction)
 
 **[Data intake](data_intake/index)**

@@ -28,7 +28,7 @@ sources:
     tables:
       local_table: local_table.csv
 
-targets:
+layouts:
   - title: Table
     source: local_source
     views:
@@ -72,7 +72,7 @@ sources:
     tables:
       remote_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Table
     source: remote_source
     views:

@@ -30,7 +30,7 @@ class Card(Viewer):
     """
 
     layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
-        Defines the layout of the views in the monitor target. Can be
+        Defines the layout of the views in the monitor layout. Can be
         'column', 'row', 'grid', 'row' or a nested list of indexes
         corresponding to the views, e.g. [[0, 1], [2]] will create
         a Column of one row containing views 0 and 1 and a second Row
@@ -64,13 +64,13 @@ class Card(Viewer):
                     if isinstance(index, int):
                         if isinstance(self.views, dict):
                             raise KeyError(
-                                f'Layout specification for {self.title!r} target used '
+                                f'Layout specification for {self.title!r} layout used '
                                 f'integer index ({index}) but views were declared as a '
                                 'dictionary.'
                             )
                         elif index >= view_size:
                             raise IndexError(
-                                f'Layout specification for {self.title!r} target references '
+                                f'Layout specification for {self.title!r} layout references '
                                 f'out-of-bounds index ({index}) even though the maximum '
                                 f'available index is {view_size - 1}.'
                             )
@@ -78,7 +78,7 @@ class Card(Viewer):
                     elif isinstance(self.views, dict):
                         if index not in self.views:
                             raise KeyError(
-                                f'Layout specification for {self.title} target references '
+                                f'Layout specification for {self.title} layout references '
                                 'unknown view {index!r}.'
                             )
                         view = self.views[index]
@@ -88,7 +88,7 @@ class Card(Viewer):
                             view = matches[0]
                         else:
                             raise KeyError(
-                                f"Target could not find named view '{index}'."
+                                f"Layout could not find named view '{index}'."
                             )
                     row.append(view.panel)
                 item.append(row)
@@ -316,9 +316,9 @@ class Download(Component, Viewer):
         return cls(pipelines=pipelines, **spec)
 
 
-class Target(Component, Viewer):
+class Layout(Component, Viewer):
     """
-    `Target` renders one or more `View` components into a layout.
+    `Layout` renders one or more `View` components into a layout.
 
     Additionally it provides functionality for facetting the `View`
     objects by grouping the data along some dimension.
@@ -336,22 +336,22 @@ class Target(Component, Viewer):
 
     facet = param.ClassSelector(class_=Facet, doc="""
         The facet object determines whether and how to facet the cards
-        on the target.""")
+        on the layout.""")
 
     layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
-        Defines the layout of the views in the monitor target. Can be
+        Defines the layout of the views in the monitor layout. Can be
         'column', 'row', 'grid', 'row' or a nested list of indexes
         corresponding to the views, e.g. [[0, 1], [2]] will create
         a Column of one row containing views 0 and 1 and a second Row
         containing view 2.""" )
 
     reloadable = param.Boolean(default=True, doc="""
-        Whether to allow reloading data target's source using a button.""")
+        Whether to allow reloading data layout's source using a button.""")
 
     show_title = param.Boolean(default=True, doc="""
         Whether to show the title in Card headers.""")
 
-    title = param.String(doc="A title for this Target.")
+    title = param.String(doc="A title for this Layout.")
 
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
@@ -477,8 +477,8 @@ class Target(Component, Viewer):
 
         # Variable controls
         global_refs = state.global_refs
-        target_refs = [ref.split('.')[1] for ref in self.refs if ref not in global_refs]
-        var_panel = state.variables.panel(target_refs)
+        layout_refs = [ref.split('.')[1] for ref in self.refs if ref not in global_refs]
+        var_panel = state.variables.panel(layout_refs)
         if var_panel is not None:
             views.append(var_panel)
 
@@ -591,24 +591,24 @@ class Target(Component, Viewer):
     @classmethod
     def _validate_config(cls, config, spec, context):
         msg = (
-            "Passing 'config' to a Target is deprecated use the 'facet' key "
-            "on the target instead."
+            "Passing 'config' to a Layout is deprecated use the 'facet' key "
+            "on the layout instead."
         )
         return cls._deprecation(msg, 'facet', spec, config)
 
     @classmethod
     def _validate_sort(cls, sort, spec, context):
         msg = (
-            "Passing 'sort' to a Target is deprecated use the 'facet' key "
-            "on the target instead."
+            "Passing 'sort' to a Layout is deprecated use the 'facet' key "
+            "on the layout instead."
         )
         return cls._deprecation(msg, 'facet', spec, {'sort': sort})
 
     @classmethod
     def _validate_facet_layout(cls, facet_layout, spec, context):
         msg = (
-            "Passing 'facet_layout' to a Target is deprecated use the 'facet' key "
-            "on the target instead."
+            "Passing 'facet_layout' to a Layout is deprecated use the 'facet' key "
+            "on the layout instead."
         )
         return cls._deprecation(msg, 'facet', spec, {'facet_layout': facet_layout})
 
@@ -628,12 +628,12 @@ class Target(Component, Viewer):
         for filter_spec in filter_specs:
             if filter_spec['type'] == 'facet':
                 raise ValidationError(
-                    'Target facetting must be declared via the facet field of the target specification, '
+                    'Layout facetting must be declared via the facet field of the layout specification, '
                     'specifying filters of type \'facet\' is no longer supported.', spec, 'filters'
                 )
         if 'pipeline' in spec:
             raise ValidationError(
-                'Target may not declare filters AND a pipeline. Please declare the filters as '
+                'Layout may not declare filters AND a pipeline. Please declare the filters as '
                 'part of the pipeline. ', spec, 'filters'
             )
         return filters
@@ -642,12 +642,12 @@ class Target(Component, Viewer):
     def _validate_source(cls, source_spec, spec, context):
         if isinstance(source_spec, str):
             if source_spec not in context['sources']:
-                msg = f'Target specified non-existent source {source_spec!r}.'
+                msg = f'Layout specified non-existent source {source_spec!r}.'
                 msg = match_suggestion_message(source_spec, list(context['sources']), msg)
                 raise ValidationError(msg, spec, source_spec)
             return source_spec
         warnings.warn(
-            'Inlining source definitions in a target is no longer supported. '
+            'Inlining source definitions in a layout is no longer supported. '
             'Please ensure you declare all sources as part of the global \'sources\' '
             'field', DeprecationWarning
         )
@@ -667,7 +667,7 @@ class Target(Component, Viewer):
         views = list(view_specs.values()) if isinstance(view_specs, dict) else view_specs
         if not all('pipeline' in spec for spec in views):
             raise ValidationError(
-                'Target (or its views) must declare a source or a pipeline.', spec
+                'Layout (or its views) must declare a source or a pipeline.', spec
             )
         return view_specs
 
@@ -678,7 +678,7 @@ class Target(Component, Viewer):
     @classmethod
     def from_spec(cls, spec, **kwargs):
         """
-        Creates a Target object from a specification. If a Target
+        Creates a Layout object from a specification. If a Layout
         specification references an existing Source or Filter by name.
 
         Parameters
@@ -686,11 +686,11 @@ class Target(Component, Viewer):
         spec : dict
           Specification declared as a dictionary of parameter values.
         kwargs: dict
-          Additional kwargs to pass to the Target
+          Additional kwargs to pass to the Layout
 
         Returns
         -------
-        Resolved and instantiated Target object
+        Resolved and instantiated Layout object
         """
         # Resolve source
         spec = dict(spec)
@@ -779,7 +779,7 @@ class Target(Component, Viewer):
     @property
     def panels(self):
         """
-        Returns a layout of the rendered View objects on this target.
+        Returns a layout of the rendered View objects on this layout.
         """
         if len(self._cards) > 1:
             default = 'flex' if 'flex' in _LAYOUTS else 'grid'
@@ -852,8 +852,8 @@ class Target(Component, Viewer):
 
     def update(self, *events, clear_cache=True):
         """
-        Updates the views on this target by clearing any caches and
-        rerendering the views on this Target.
+        Updates the views on this layout by clearing any caches and
+        rerendering the views on this Layout.
         """
         if clear_cache:
             self.source.clear_cache()

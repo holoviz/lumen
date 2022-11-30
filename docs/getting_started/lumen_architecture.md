@@ -22,8 +22,8 @@ Manipulating the data with `filters` and `transforms`.
 ::::{grid} 1
 :gutter: 3
 
-:::{grid-item-card} `targets`
-:link: ../user_guide/dashboard.html#targets
+:::{grid-item-card} `layouts`
+:link: ../user_guide/dashboard.html#layouts
 
 The presentation of the manipulated data with `views`.
 :::

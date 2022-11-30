@@ -11,10 +11,10 @@ from panel.pane import HoloViews
 from panel.param import Param
 from panel.widgets import Tabulator
 
+from lumen.layout import Layout
 from lumen.pipeline import Pipeline
 from lumen.sources import DerivedSource, FileSource
 from lumen.state import state
-from lumen.target import Target
 from lumen.transforms import Astype
 from lumen.views import View
 
@@ -28,15 +28,15 @@ def test_view_controls(set_root):
             'x': 'A', 'y': 'B', 'kind': 'scatter'
         }
     }
-    target = Target.from_spec({'source': source, 'views': views})
+    layout = Layout.from_spec({'source': source, 'views': views})
 
-    filter_panel = target.get_filter_panel()
+    filter_panel = layout.get_filter_panel()
     param_pane = filter_panel[0][0]
     assert isinstance(param_pane, Param)
     assert param_pane.parameters == ['x', 'y']
 
-    assert len(target._cards) == 1
-    card = target._cards[0]
+    assert len(layout._cards) == 1
+    card = layout._cards[0]
     hv_pane = card._card[0][0]
     isinstance(hv_pane.object, hv.Scatter)
     assert hv_pane.object.kdims == ['A']
@@ -69,15 +69,15 @@ def test_transform_controls(set_root):
 
     doc = Document()
     with set_curdoc(doc):
-        target = Target.from_spec({'views': views, 'source': source})
-        filter_panel = target.get_filter_panel()
+        layout = Layout.from_spec({'views': views, 'source': source})
+        filter_panel = layout.get_filter_panel()
         param_pane = filter_panel[0][0]
 
         assert isinstance(param_pane, Param)
         assert param_pane.parameters == ['by']
 
-        assert len(target._cards) == 1
-        card = target._cards[0]
+        assert len(layout._cards) == 1
+        card = layout._cards[0]
         hv_pane = card._card[0][0]
         isinstance(hv_pane.object, hv.Scatter)
         assert hv_pane.object.kdims == ['A']
@@ -111,15 +111,15 @@ def test_view_controls_facetted(set_root):
         'facet': {'by': 'C'},
         'views': views
     }
-    target = Target.from_spec(spec, sources={'test': source})
+    layout = Layout.from_spec(spec, sources={'test': source})
 
-    filter_panel = target.get_filter_panel()
+    filter_panel = layout.get_filter_panel()
     param_pane = filter_panel[3][0]
     assert isinstance(param_pane, Param)
     assert param_pane.parameters == ['x', 'y']
 
-    assert len(target._cards) == 5
-    for card in target._cards:
+    assert len(layout._cards) == 5
+    for card in layout._cards:
         hv_pane = card._card[0][0]
         isinstance(hv_pane.object, hv.Scatter)
         assert hv_pane.object.kdims == ['A']
@@ -128,7 +128,7 @@ def test_view_controls_facetted(set_root):
     param_pane._widgets['x'].value = 'C'
     param_pane._widgets['y'].value = 'D'
 
-    for card in target._cards:
+    for card in layout._cards:
         hv_pane = card._card[0][0]
         isinstance(hv_pane.object, hv.Scatter)
         assert hv_pane.object.kdims == ['C']
@@ -163,15 +163,15 @@ def test_transform_controls_facetted(set_root):
     doc = Document()
     with set_curdoc(doc):
         state.sources['test'] = derived
-        target = Target.from_spec(spec, sources={'test': derived})
-        filter_panel = target.get_filter_panel()
+        layout = Layout.from_spec(spec, sources={'test': derived})
+        filter_panel = layout.get_filter_panel()
         param_pane = filter_panel[3][0]
 
         assert isinstance(param_pane, Param)
         assert param_pane.parameters == ['ascending']
 
-        assert len(target._cards) == 2
-        card1, card2 = target._cards
+        assert len(layout._cards) == 2
+        card1, card2 = layout._cards
         hv_pane1 = card1._card[0][0]
         isinstance(hv_pane1.object, hv.Scatter)
         assert hv_pane1.object.kdims == ['D']
@@ -222,12 +222,12 @@ def test_layout_view(set_root, layout, error):
 
         if error is not None:
             with pytest.raises(error):
-                Target.from_spec(spec, sources={'test': derived})
+                Layout.from_spec(spec, sources={'test': derived})
         else:
-            Target.from_spec(spec, sources={'test': derived})
+            Layout.from_spec(spec, sources={'test': derived})
 
 
-def test_target_constructor_with_views_instance_list(set_root):
+def test_layout_constructor_with_views_instance_list(set_root):
     set_root(str(Path(__file__).parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
     view1 = View.from_spec({
@@ -237,8 +237,8 @@ def test_target_constructor_with_views_instance_list(set_root):
     view2 = View.from_spec({
         'type': 'table', 'table': 'test'
     }, source=source)
-    target = Target(views=[view1, view2])
-    layout = target.panels
+    layout = Layout(views=[view1, view2])
+    layout = layout.panels
 
     assert isinstance(layout, Column)
     assert len(layout) == 1
@@ -249,7 +249,7 @@ def test_target_constructor_with_views_instance_list(set_root):
     assert isinstance(layout[0][0][0], HoloViews)
     assert isinstance(layout[0][0][1], Tabulator)
 
-def test_target_constructor_with_views_instance_dict(set_root):
+def test_layout_constructor_with_views_instance_dict(set_root):
     set_root(str(Path(__file__).parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
     view1 = View.from_spec({
@@ -259,8 +259,8 @@ def test_target_constructor_with_views_instance_dict(set_root):
     view2 = View.from_spec({
         'type': 'table', 'table': 'test'
     }, source=source)
-    target = Target(views={'hv': view1, 'table': view2}, layout=[['hv'], ['table']])
-    layout = target.panels
+    layout = Layout(views={'hv': view1, 'table': view2}, layout=[['hv'], ['table']])
+    layout = layout.panels
 
     assert isinstance(layout, Column)
     assert len(layout) == 1
@@ -273,7 +273,7 @@ def test_target_constructor_with_views_instance_dict(set_root):
     assert isinstance(layout[0][0][1], Row)
     assert isinstance(layout[0][0][1][0], Tabulator)
 
-def test_target_to_spec_view_list(set_root):
+def test_layout_to_spec_view_list(set_root):
     set_root(str(Path(__file__).parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
     pipeline = Pipeline(source=source, table='test')
@@ -281,10 +281,10 @@ def test_target_to_spec_view_list(set_root):
         'type': 'hvplot', 'x': 'A', 'y': 'B', 'kind': 'scatter'
     }, pipeline=pipeline)
     view2 = View.from_spec({'type': 'table'}, pipeline=pipeline)
-    target = Target(views=[view1, view2], title='Plots')
+    layout = Layout(views=[view1, view2], title='Plots')
 
     context = {}
-    spec = target.to_spec(context)
+    spec = layout.to_spec(context)
     assert context == {
         'sources': {
             source.name: {
@@ -315,13 +315,13 @@ def test_target_to_spec_view_list(set_root):
     }
 
 
-def test_target_to_spec_with_views_instance_dict(set_root):
+def test_layout_to_spec_with_views_instance_dict(set_root):
     set_root(str(Path(__file__).parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
     pipeline = Pipeline(source=source, table='test')
     view1 = View.from_spec({'type': 'hvplot', 'x': 'A', 'y': 'B', 'kind': 'scatter'}, pipeline=pipeline)
     view2 = View.from_spec({'type': 'table'}, pipeline=pipeline)
-    target = Target(
+    layout = Layout(
         views={'hv': view1, 'table': view2},
         layout=[['hv'], ['table']],
         title="Test"
@@ -329,7 +329,7 @@ def test_target_to_spec_with_views_instance_dict(set_root):
     assert view1.pipeline is view2.pipeline
 
     context = {}
-    spec = target.to_spec(context)
+    spec = layout.to_spec(context)
     assert context == {
         'sources': {
             source.name: {

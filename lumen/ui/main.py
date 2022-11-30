@@ -43,11 +43,11 @@ def main():
     (path / 'launchers').mkdir(parents=True, exist_ok=True)
     (path / 'pipelines').mkdir(parents=True, exist_ok=True)
     (path / 'sources').mkdir(parents=True, exist_ok=True)
-    (path / 'targets').mkdir(parents=True, exist_ok=True)
+    (path / 'layouts').mkdir(parents=True, exist_ok=True)
     (path / 'variables').mkdir(parents=True, exist_ok=True)
     (path / 'views').mkdir(parents=True, exist_ok=True)
     state.modal = pn.Column(sizing_mode='stretch_both')
-    state.spec = {'config': {}, 'sources': {}, 'targets': [], 'variables': {}}
+    state.spec = {'config': {}, 'sources': {}, 'layouts': [], 'variables': {}}
     state.template = FastListTemplate(theme='dark', title='Lumen Builder')
     builder = Builder(
         template=state.template, spec=state.spec, modal=state.modal, **params

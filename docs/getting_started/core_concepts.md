@@ -45,7 +45,7 @@ To specify how you want the data to be manipulated (filtered and transformed)
 ::::{grid} 1
 :gutter: 3
 
-:::{grid-item-card} `targets`
+:::{grid-item-card} `layouts`
 To create the views (e.g. table, plot) for your dashboard
 :::
 
@@ -62,7 +62,7 @@ sources:
 pipelines:
   ...:
     ...: ...
-targets:
+layouts:
   - ...: ...
     ...: ...
 ```
@@ -76,7 +76,7 @@ The config section provides general settings which apply to the whole dashboard.
 ```{code-block} YAML
 config:
   title: The title of the overall application
-  layout: The layout to put the targets in ('grid', 'tabs', 'column')
+  layout: The layout to put the invidual (sub-)layouts in.
   logo: A URL or local path to an image file
   sync_with_url: Whether to sync app state with URL
   template: The template to use for the monitoring application
@@ -182,12 +182,12 @@ pipelines:
 
 See the [Transform Reference](../architecture/transform) for other transform types and for the relevant parameters.
 
-## Targets (views)
+## Layouts (views)
 
-The `targets` section defines how the dashboard is going to look. The essential structure of a `targets` section is as follows:
+The `layouts` section defines how the dashboard is going to look. The essential structure of a `layouts` section is as follows:
 
 ```{code-block} YAML
-targets:
+layouts:
   - title: Dashboard title
     pipeline: The pipeline driving these views
     ...: Dashboard parameters
@@ -196,16 +196,16 @@ targets:
         ...: View parameters
 ```
 
-:::{dropdown} Expand this dropdown for a more complex example structure of `targets`
+:::{dropdown} Expand this dropdown for a more complex example structure of `layouts`
 :animate: fade-in-slide-down
 ```{code-block} yaml
-targets:
+layouts:
   - title: The title of the monitoring endpoint
     download:
       format: When specified adds a section to the sidebar allowing users to download the filtered dataset
       kwargs: Additional keyword arguments to pass to the pandas/dask to_<format> method
       tables: Allows declaring a subset of tables to download
-    pipeline: The pipeline driving the views of this target. Each View can independently declare a pipeline or all use the shared pipeline defined at the target level
+    pipeline: The pipeline driving the views of this layout. Each View can independently declare a pipeline or all use the shared pipeline defined at the layout level
     views: A list of metrics to monitor and display on the endpoint
       - pipeline: The Pipeline driving the View
         type: The type of View to use for rendering the table
@@ -225,7 +225,7 @@ Each view can be of a different type, but a good starting point is the `hvPlotVi
 In your tutorial, the final dashboard included two `kinds` - scatter and histogram:
 
 ```{code-block} YAML
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     layout: [[0], [1, 2]]
