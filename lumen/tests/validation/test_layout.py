@@ -1,6 +1,6 @@
 import pytest
 
-from lumen.target import Download, Facet, Target
+from lumen.layout import Download, Facet, Layout
 from lumen.validation import ValidationError
 
 
@@ -26,7 +26,7 @@ from lumen.validation import ValidationError
     ),
     ids=["correct", "unknown_key", "missing_required", "wrong_type"],
 )
-def test_target_Facet(spec, msg):
+def test_layout_Facet(spec, msg):
     if msg is None:
         Facet.validate(spec)
 
@@ -57,7 +57,7 @@ def test_target_Facet(spec, msg):
     ),
     ids=["correct1", "correct2", "missing_required", "wrong_format"],
 )
-def test_target_Download(spec, msg):
+def test_layout_Download(spec, msg):
     if msg is None:
         if isinstance(spec, str):
             assert Download.validate(spec) == {"format": "csv"}
@@ -78,15 +78,15 @@ def test_target_Download(spec, msg):
         ),
         (
             {"title": "Table", "source": "penguin", "views": []},
-            "Target specified non-existent source 'penguin'",
+            "Layout specified non-existent source 'penguin'",
         ),
         (
             {"title": "Table", "source": "penguins"},
-            "The Target component requires 'views' parameter to be defined",
+            "The Layout component requires 'views' parameter to be defined",
         ),
         (
             {"source": "penguins", "views": []},
-            "The Target component requires 'title' parameter to be defined",
+            "The Layout component requires 'title' parameter to be defined",
         ),
     ),
     ids=[
@@ -96,15 +96,15 @@ def test_target_Download(spec, msg):
         "missing_title",
     ],
 )
-def test_target_Target(spec, msg):
+def test_layout_Layout(spec, msg):
     context = {
         "sources": {"penguins": {}},
-        "targets": [],
+        "layouts": [],
     }
 
     if msg is None:
-        assert Target.validate(spec.copy(), context) == spec
+        assert Layout.validate(spec.copy(), context) == spec
 
     else:
         with pytest.raises(ValidationError, match=msg):
-            Target.validate(spec, context)
+            Layout.validate(spec, context)

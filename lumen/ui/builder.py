@@ -16,10 +16,10 @@ from .base import Wizard
 from .config import ConfigEditor
 from .dashboard import DashboardGallery
 from .launcher import LauncherGallery
+from .layouts import LayoutEditor, LayoutGallery, LayoutGalleryItem
 from .pipeline import PipelineGallery
 from .sources import SourceGallery
 from .state import state
-from .targets import TargetEditor, TargetGallery, TargetGalleryItem
 from .variables import VariablesEditor
 from .views import ViewEditor, ViewGallery, ViewGalleryItem
 
@@ -36,14 +36,14 @@ class Builder(param.Parameterized):
 
     def __init__(self, **params):
         path = params['component_dir']
-        dash_params, launcher_params, pipeline_params, source_params, target_params, var_params, view_params = (
+        dash_params, launcher_params, pipeline_params, source_params, layout_params, var_params, view_params = (
             {}, {}, {}, {}, {}, {}, {}
         )
         dash_params['path'] = os.path.join(path, 'dashboards')
         launcher_params['path'] = os.path.join(path, 'launchers')
         pipeline_params['path'] = os.path.join(path, 'pipelines')
         source_params['path'] = os.path.join(path, 'sources')
-        target_params['path'] = os.path.join(path, 'targets')
+        layout_params['path'] = os.path.join(path, 'layouts')
         var_params['path'] = os.path.join(path, 'variables')
         view_params['path'] = os.path.join(path, 'views')
 
@@ -61,11 +61,11 @@ class Builder(param.Parameterized):
         state.sources = self.sources = SourceGallery(spec=self.spec['sources'], **source_params)
         state.pipelines = self.pipelines = PipelineGallery(spec=self.spec['pipelines'], **pipeline_params)
         state.views = self.views = ViewGallery(**view_params)
-        state.targets = self.targets = TargetGallery(spec=self.spec['targets'], **target_params)
+        state.layouts = self.layouts = LayoutGallery(spec=self.spec['layouts'], **layout_params)
         self.launcher = LauncherGallery(builder=self, **launcher_params)
         self.wizard = Wizard(items=[
             self.welcome, self.config, self.variables, self.sources,
-            self.pipelines, self.views, self.targets, self.launcher
+            self.pipelines, self.views, self.layouts, self.launcher
         ], sizing_mode='stretch_both')
 
         preview = pn.widgets.Button(name='Preview', width=100)
@@ -129,9 +129,9 @@ class Builder(param.Parameterized):
         self.pipelines.param.trigger('spec')
 
         views, view_gallery = [], {}
-        targets, target_items = [], {}
-        for target in self.spec['targets']:
-            view_specs = target['views']
+        layouts, layout_items = [], {}
+        for layout in self.spec['layouts']:
+            view_specs = layout['views']
             if isinstance(view_specs, list):
                 specs = {}
                 for view in view_specs:
@@ -144,25 +144,25 @@ class Builder(param.Parameterized):
                     specs[name] = view
                 view_specs = specs
             view_specs = view_specs.items()
-            target_views = []
+            layout_views = []
             for name, view in view_specs:
                 view = dict(view)
                 view_type = view.get('type')
                 view_editor = ViewEditor(
-                    view_type=view_type, name=name, spec=view, pipeline=target.get('pipeline')
+                    view_type=view_type, name=name, spec=view, pipeline=layout.get('pipeline')
                 )
                 view_gallery[name] = ViewGalleryItem(
                     editor=view_editor, name=name, selected=True, spec=view
                 )
                 views.append(view_editor)
-                target_views.append(name)
+                layout_views.append(name)
 
-            target_editor = TargetEditor(spec=target, views=target_views)
-            item = TargetGalleryItem(spec=target, editor=target_editor)
-            targets.append(target_editor)
-            target_items[f'target{uuid.uuid4().hex}'] = item
+            layout_editor = LayoutEditor(spec=layout, views=layout_views)
+            item = LayoutGalleryItem(spec=layout, editor=layout_editor)
+            layouts.append(layout_editor)
+            layout_items[f'layout{uuid.uuid4().hex}'] = item
 
-        self.targets.param.set_param(targets=targets, items=target_items)
+        self.layouts.param.set_param(layouts=layouts, items=layout_items)
         self.views.param.set_param(views=views, items=view_gallery)
         self.welcome.ready = True
         self.wizard.loading = False

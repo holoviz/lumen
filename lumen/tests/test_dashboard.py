@@ -15,8 +15,8 @@ def test_dashboard_with_local_view(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'dashboard.yml'))
-    target = dashboard.targets[0]
-    view = View.from_spec(target.views[0], target.source, [])
+    layout = dashboard.layouts[0]
+    view = View.from_spec(layout.views[0], layout.source, [])
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 
 def test_dashboard_from_spec():
@@ -24,7 +24,7 @@ def test_dashboard_from_spec():
         'sources': {
             'test': {'type': 'file', 'files': ['./sources/test.csv']}
         },
-        'targets': [{
+        'layouts': [{
             'title': 'Test',
             'source': 'test',
             'views': [{'table': 'test', 'type': 'table'}],
@@ -33,15 +33,15 @@ def test_dashboard_from_spec():
     dashboard = Dashboard(spec, root=str(pathlib.Path(__file__).parent))
     dashboard._render_dashboard()
     assert state.spec == spec
-    target = dashboard.targets[0]
-    view = View.from_spec(target.views[0], target.source, [])
+    layout = dashboard.layouts[0]
+    view = View.from_spec(layout.views[0], layout.source, [])
     assert view.view_type == 'table'
 
 def test_dashboard_from_spec_invalid():
     with pytest.raises(ValidationError):
         Dashboard({'foo': 'bar'})
 
-def test_dashboard_reload_target(set_root):
+def test_dashboard_reload_layout(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'dashboard.yml'))
@@ -59,8 +59,8 @@ def test_dashboard_with_url_sync(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'sync_query.yml'))
     dashboard._render_dashboard()
-    assert pn.state.location.search == '?target=0'
-    pn.state.location.search = '?target=1'
+    assert pn.state.location.search == '?layout=0'
+    pn.state.location.search = '?layout=1'
     assert dashboard._layout.active == 1
 
 def test_dashboard_with_url_sync_filters(set_root, document):
@@ -68,8 +68,8 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'sync_query_filters.yml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    f1, f2 = list(target._pipelines.values())[0].filters
+    layout = dashboard.layouts[0]
+    f1, f2 = list(layout._pipelines.values())[0].filters
     f1.value = (0.1, 0.7)
     assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
@@ -84,10 +84,10 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'sql_dashboard.yml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    target.update()
+    layout = dashboard.layouts[0]
+    layout.update()
 
-    table = target._cards[0]._card[0][0]
+    table = layout._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -100,10 +100,10 @@ def test_dashboard_with_transform_variable(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'transform_variable.yml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    target.update()
+    layout = dashboard.layouts[0]
+    layout.update()
 
-    table = target._cards[0]._card[0][0]
+    table = layout._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -116,10 +116,10 @@ def test_dashboard_with_source_variable(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'source_variable.yml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    target.update()
+    layout = dashboard.layouts[0]
+    layout.update()
 
-    table = target._cards[0]._card[0][0]
+    table = layout._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -132,10 +132,10 @@ def test_dashboard_with_nested_source_variable(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'source_nested_variable.yml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    target.update()
+    layout = dashboard.layouts[0]
+    layout.update()
 
-    table = target._cards[0]._card[0][0]
+    table = layout._cards[0]._card[0][0]
     expected = pd._testing.makeMixedDataFrame()
     pd.testing.assert_frame_equal(table.value, expected)
 
@@ -148,10 +148,10 @@ def test_dashboard_with_view_variable(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'view_variable.yml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    target.update()
+    layout = dashboard.layouts[0]
+    layout.update()
 
-    table = target._cards[0]._card[0][0]
+    table = layout._cards[0]._card[0][0]
 
     assert table.page_size == 20
 
@@ -164,10 +164,10 @@ def test_dashboard_with_view_and_transform_variable(set_root, document):
     set_root(str(root))
     dashboard = Dashboard(str(root / 'view_transform_variable.yaml'))
     dashboard._render_dashboard()
-    target = dashboard.targets[0]
-    target.update()
+    layout = dashboard.layouts[0]
+    layout.update()
 
-    plot = target._cards[0]._card[0][0]
+    plot = layout._cards[0]._card[0][0]
 
     assert plot.object.vdims == ['Z']
 
@@ -175,6 +175,6 @@ def test_dashboard_with_view_and_transform_variable(set_root, document):
 
     assert plot.object.vdims == ['Z']
 
-    list(target._pipelines.values())[0].param.trigger('update')
+    list(layout._pipelines.values())[0].param.trigger('update')
 
     assert plot.object.vdims == ['Y']

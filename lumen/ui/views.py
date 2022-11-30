@@ -153,7 +153,7 @@ class ViewEditor(ReactiveHTML):
         elif 'pipeline' in self.spec:
             source = f"{self.spec['pipeline']!r} pipeline"
         else:
-            source = 'target source.'
+            source = 'layout source.'
         return f"A {self.view_type} view of the {source}."
 
     def render(self):

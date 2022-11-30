@@ -19,11 +19,11 @@ from .config import (
     _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, config,
 )
 from .filters import ConstantFilter, Filter, WidgetFilter  # noqa
+from .layout import Layout
 from .panel import IconButton
 from .pipeline import Pipeline
 from .sources import RESTSource, Source  # noqa
 from .state import state
-from .target import Target
 from .transforms import Transform  # noqa
 from .util import catch_and_notify, expand_spec, resolve_module_reference
 from .validation import ValidationError, match_suggestion_message
@@ -48,7 +48,7 @@ class Config(Component):
     )
 
     background_load = param.Boolean(default=False, constant=True, doc="""
-        Whether to load any targets in the background.""")
+        Whether to load any layouts in the background.""")
 
     editable = param.Boolean(default=False, constant=True, doc="""
         Whether the dashboard specification is editable from within
@@ -69,7 +69,7 @@ class Config(Component):
         A logo to add to the theme.""")
 
     ncols = param.Integer(default=3, bounds=(1, None), constant=True, doc="""
-        Number of columns to lay out targets in.""")
+        Number of columns to lay out layouts in.""")
 
     reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data from source(s) using a button.""")
@@ -314,13 +314,13 @@ class Dashboard(Component):
     defaults = param.ClassSelector(default=Defaults(), class_=Defaults, doc="""
         Defaults to apply to component classes.""")
 
-    targets = param.List(default=[], item_type=Target, doc="""
-        List of targets monitoring some source.""")
+    layouts = param.List(default=[], item_type=Layout, doc="""
+        List of layouts monitoring some source.""")
 
     # Specification configuration
     _allows_refs = False
 
-    _valid_keys = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'targets']
+    _valid_keys = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'layouts']
 
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
@@ -393,7 +393,7 @@ class Dashboard(Component):
             )
             self._main[:] = [alert]
         if isinstance(self._layout, pn.Tabs) and self.config.sync_with_url:
-            pn.state.location.sync(self._layout, {'active': 'target'})
+            pn.state.location.sync(self._layout, {'active': 'layout'})
 
     def _load_specification(self, from_file=False):
         if self._yaml_file == 'local':
@@ -407,24 +407,24 @@ class Dashboard(Component):
         state.spec = self.validate(load_yaml(self._yaml, **kwargs))
         state.resolve_views()
 
-    def _load_target(self, target_spec):
-        target_spec = dict(target_spec)
-        if 'reloadable' not in target_spec:
-            target_spec['reloadable'] = self.config.reloadable
-        if 'auto_update' not in target_spec and self.config.auto_update is not None:
-            target_spec['auto_update'] = self.config.auto_update
-        target = Target.from_spec(target_spec)
-        self._rerender_watchers[target] = target.param.watch(
-            self._render_targets, 'rerender'
+    def _load_layout(self, layout_spec):
+        layout_spec = dict(layout_spec)
+        if 'reloadable' not in layout_spec:
+            layout_spec['reloadable'] = self.config.reloadable
+        if 'auto_update' not in layout_spec and self.config.auto_update is not None:
+            layout_spec['auto_update'] = self.config.auto_update
+        layout = Layout.from_spec(layout_spec)
+        self._rerender_watchers[layout] = layout.param.watch(
+            self._render_layouts, 'rerender'
         )
         if isinstance(self._layout, pn.Tabs):
-            target.show_title = False
-        target.start()
-        return target
+            layout.show_title = False
+        layout.start()
+        return layout
 
     def _background_load(self, i, spec):
-        self.targets[i] = target = self._load_target(spec)
-        return target
+        self.layouts[i] = layout = self._load_layout(spec)
+        return layout
 
     def _materialize_specification(self, force=False):
         if force or self._load_global or not state.global_sources:
@@ -435,36 +435,36 @@ class Dashboard(Component):
                 kwargs['auto_update'] = self.config.auto_update
             state.load_pipelines(**kwargs)
         if not self.auth.authorized:
-            self.targets = []
+            self.layouts = []
             return
 
-        # Clean up old targets
-        for target in self.targets:
-            if isinstance(target, Target) and target in self._rerender_watchers:
-                target.param.unwatch(self._rerender_watchers[target])
-                del self._rerender_watchers[target]
+        # Clean up old layouts
+        for layout in self.layouts:
+            if isinstance(layout, Layout) and layout in self._rerender_watchers:
+                layout.param.unwatch(self._rerender_watchers[layout])
+                del self._rerender_watchers[layout]
 
-        targets = []
-        target_specs = state.spec.get('targets', [])
-        ntargets = len(target_specs)
+        layouts = []
+        layout_specs = state.spec.get('layouts', [])
+        nlayouts = len(layout_specs)
         if isinstance(self._layout, pn.Tabs) and self.config.background_load:
-            self._thread_pool = ThreadPoolExecutor(max_workers=ntargets-1)
-        for i, target_spec in enumerate(target_specs):
+            self._thread_pool = ThreadPoolExecutor(max_workers=nlayouts-1)
+        for i, layout_spec in enumerate(layout_specs):
             if state.loading_msg:
                 state.loading_msg.object = (
-                    f"Loading target {target_spec['title']!r} ({i + 1}/{ntargets})..."
+                    f"Loading layout {layout_spec['title']!r} ({i + 1}/{nlayouts})..."
             )
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
                 if self.config.background_load:
-                    item = self._thread_pool.submit(self._background_load, i, target_spec)
+                    item = self._thread_pool.submit(self._background_load, i, layout_spec)
                 else:
                     item = None
                 self._rendered.append(False)
             else:
-                item = self._load_target(target_spec)
+                item = self._load_layout(layout_spec)
                 self._rendered.append(True)
-            targets.append(item)
-        self.targets[:] = targets
+            layouts.append(item)
+        self.layouts[:] = layouts
         if self._thread_pool is not None:
             self._thread_pool.shutdown()
 
@@ -571,21 +571,21 @@ class Dashboard(Component):
 
     @catch_and_notify
     def _activate_filters(self, event):
-        target = self.targets[event.new]
+        layout = self.layouts[event.new]
         rendered = self._rendered[event.new]
         if not rendered:
-            spec = state.spec['targets'][event.new]
+            spec = state.spec['layouts'][event.new]
             self._set_loading(spec['title'])
             try:
-                if isinstance(target, Future):
-                    target = target.result()
+                if isinstance(layout, Future):
+                    layout = layout.result()
                 else:
-                    target = self._load_target(spec)
+                    layout = self._load_layout(spec)
             except Exception as e:
                 self._main.loading = False
                 raise e
-            self.targets[event.new] = target
-            self._layout[event.new] = target.panels
+            self.layouts[event.new] = layout
+            self._layout[event.new] = layout.panels
             self._rendered[event.new] = True
         self._render_filters()
         self._main.loading = False
@@ -626,27 +626,27 @@ class Dashboard(Component):
     def _get_global_filters(self):
         views = []
         filters = []
-        for target in self.targets:
-            if target is None or isinstance(target, Future):
+        for layout in self.layouts:
+            if layout is None or isinstance(layout, Future):
                 continue
-            for pipeline in target._pipelines.values():
+            for pipeline in layout._pipelines.values():
                 for filt in pipeline.filters:
-                    if ((all(isinstance(target, (type(None), Future)) or any(filt in p.filters for p in target._pipelines.values())
-                             for target in self.targets) and
+                    if ((all(isinstance(layout, (type(None), Future)) or any(filt in p.filters for p in layout._pipelines.values())
+                             for layout in self.layouts) and
                          filt.panel is not None) and filt.shared) and filt not in filters:
                         views.append(filt.panel)
                         filters.append(filt)
         if not self.config.auto_update:
             button = pn.widgets.Button(name='Apply Update')
             def update_pipelines(event):
-                for target in self.targets:
-                    if target is None or isinstance(target, Future):
+                for layout in self.layouts:
+                    if layout is None or isinstance(layout, Future):
                         continue
-                    for pipeline in target._pipelines.values():
+                    for pipeline in layout._pipelines.values():
                         pipeline.param.trigger('update')
             button.on_click(update_pipelines)
             views.append(button)
-        if not views or len(self.targets) == 1:
+        if not views or len(self.layouts) == 1:
             return None, None
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
 
@@ -655,30 +655,30 @@ class Dashboard(Component):
         filters = [] if global_panel is None else [global_panel]
         global_refs = [ref.split('.')[1] for ref in state.global_refs]
         self._variable_panel = self.variables.panel(global_refs)
-        apply_button = not self.config.auto_update or len(self.targets) == 1
+        apply_button = not self.config.auto_update or len(self.layouts) == 1
         if self._variable_panel is not None:
             filters.append(self._variable_panel)
-        for i, target in enumerate(self.targets):
+        for i, layout in enumerate(self.layouts):
             if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
                 continue
-            elif target is None or isinstance(target, Future):
-                spec = state.spec['targets'][i]
+            elif layout is None or isinstance(layout, Future):
+                spec = state.spec['layouts'][i]
                 panel = pn.Column(name=spec['title'])
             else:
-                panel = target.get_filter_panel(skip=self._global_filters, apply_button=apply_button)
+                panel = layout.get_filter_panel(skip=self._global_filters, apply_button=apply_button)
             if panel is not None:
                 filters.append(panel)
         self._sidebar[:] = filters
 
-    def _render_targets(self, event=None):
+    def _render_layouts(self, event=None):
         if event is not None:
             self._set_loading(event.obj.title)
         items = []
-        for target, spec in zip(self.targets, state.spec.get('targets', [])):
-            if target is None or isinstance(target, Future):
+        for layout, spec in zip(self.layouts, state.spec.get('layouts', [])):
+            if layout is None or isinstance(layout, Future):
                 panel = pn.layout.VSpacer(name=spec['title'])
             else:
-                panel = target.panels
+                panel = layout.panels
             items.append(panel)
         self._layout[:] = items
         self._main.loading = False
@@ -717,7 +717,7 @@ class Dashboard(Component):
             else:
                 active = list(range(len(self._sidebar)))
             self._sidebar.active = active
-            self._render_targets()
+            self._render_layouts()
         else:
             self._render_unauthorized()
         self._main.loading = False
@@ -744,10 +744,10 @@ class Dashboard(Component):
         return cls._validate_dict_subtypes('sources', Source, source_specs, spec, context, context['sources'])
 
     @classmethod
-    def _validate_targets(cls, target_specs, spec, context):
-        if 'targets' not in context:
-            context['targets'] = []
-        return cls._validate_list_subtypes('targets', Target, target_specs, spec, context, context['targets'])
+    def _validate_layouts(cls, layout_specs, spec, context):
+        if 'layouts' not in context:
+            context['layouts'] = []
+        return cls._validate_list_subtypes('layouts', Layout, layout_specs, spec, context, context['layouts'])
 
     @classmethod
     def _validate_variables(cls, variable_specs, spec, context):
@@ -773,6 +773,10 @@ class Dashboard(Component):
         --------
         Validated specification.
         """
+        # Backward compatibility for old naming (targets -> layouts)
+        if 'targets' in spec:
+            spec['layouts'] = spec.pop('targets')
+
         cls._validate_keys(spec)
         cls._validate_required(spec)
         return cls._validate_spec(spec)
@@ -820,9 +824,9 @@ class Dashboard(Component):
             for name, pipeline in state.pipelines.items()
         }
         spec.update(super().to_spec(context=spec))
-        spec['targets'] = [
-            tspec if target is None else target
-            for target, tspec in zip(spec['targets'], state.spec['targets'])
+        spec['layouts'] = [
+            tspec if layout is None else layout
+            for layout, tspec in zip(spec['layouts'], state.spec['layouts'])
         ]
         return {k: v for k, v in spec.items() if v != {}}
 

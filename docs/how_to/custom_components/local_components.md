@@ -113,7 +113,7 @@ pipelines:
       - type: my_module.StableSor
         by: island
 
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     layout: [[0, 1], [2, 3]]
@@ -234,7 +234,7 @@ pipelines:
       - type: my_library.my_module.StableSort
         by: island
 
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     layout: [[0, 1], [2, 3]]

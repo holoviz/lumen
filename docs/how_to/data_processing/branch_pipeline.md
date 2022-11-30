@@ -30,7 +30,7 @@ pipelines:
       - type: widget
         field: island
 
-targets:
+layouts:
   - title: Penguins
     sizing_mode: stretch_width
     views:
@@ -72,7 +72,7 @@ pipelines:
       - type: columns
         columns: ['species', 'island', 'bill_length_mm', 'bill_depth_mm']
 
-targets:
+layouts:
   - title: Penguins
     sizing_mode: stretch_width
     views:
@@ -107,7 +107,7 @@ pipelines:
       - type: columns
         columns: ['species', 'island', 'bill_length_mm', 'bill_depth_mm']
 
-targets:
+layouts:
   - title: Penguins
     sizing_mode: stretch_width
     views:

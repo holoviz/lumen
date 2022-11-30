@@ -79,7 +79,7 @@ sources:
     tables:
       penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Penguins
     source: penguin_source
     views:
@@ -114,7 +114,7 @@ sources:
     tables:
       penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Penguins
     source: penguin_source
     views:
@@ -146,7 +146,7 @@ sources:
     tables:
       penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
   - title: Penguins
     source: penguin_source
     views:
@@ -196,7 +196,7 @@ pipelines:
       - type: columns
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     views:
@@ -245,7 +245,7 @@ pipelines:
       - type: columns
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     views:
@@ -272,7 +272,7 @@ targets:
 
 ## 8. Customize the appearance and behavior
 
-The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space, and does not resize responsively. We can get responsive plots by adding `sizing_mode` to the target and `responsive` to the views. By changing the `layout` and `height`, we can further customize how the dashboard looks.
+The default layout we get is less than ideal for this case since it cuts off one of our plots, leaves a lot of empty space, and does not resize responsively. We can get responsive plots by adding `sizing_mode` to the layout and `responsive` to the views. By changing the `layout` and `height`, we can further customize how the dashboard looks.
 
 ::::{tab-set}
 
@@ -300,7 +300,7 @@ pipelines:
       - type: columns
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     layout: [[0], [1, 2]]
@@ -366,7 +366,7 @@ pipelines:
       - type: columns
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 
-targets:
+layouts:
   - title: Penguins
     pipeline: penguin_pipeline
     layout: [[0], [1, 2]]

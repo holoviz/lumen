@@ -49,7 +49,7 @@ pipelines:
       - type: columns
         columns: $variables.columns
 
-targets:
+layouts:
 - title: Plot
   pipeline: ticker_pipe
   views:
@@ -93,7 +93,7 @@ sources:
     type: live
     urls: $csv.websites.url
 
-targets:
+layouts:
 - title: Status of websites
   source: live
   views:
@@ -157,7 +157,7 @@ sources:
     tables:
       table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
 - title: Hello my dear friend {{ USER }}
   source: source
   views:
@@ -199,7 +199,7 @@ sources:
     tables:
       table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 
-targets:
+layouts:
 - title: {{ shell("echo hello from the shell") }}
   source: source
   views:

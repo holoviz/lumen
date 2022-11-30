@@ -13,8 +13,8 @@ from .sources import ASSETS_DIR
 from .state import state
 
 
-class TargetEditor(ReactiveHTML):
-    "Select the views on this target and declare a layout."
+class LayoutEditor(ReactiveHTML):
+    "Select the views on this layout and declare a layout."
 
     spec = param.Dict(default={})
 
@@ -32,7 +32,7 @@ class TargetEditor(ReactiveHTML):
     view_select = param.Parameter()
 
     _template = """
-    <span style="font-size: 1.5em">{{ title }} Target</span>
+    <span style="font-size: 1.5em">{{ title }} Layout</span>
     <p>{{ __doc__ }}</p>
     <fast-divider></fast-divider>
     <div style="display: flex; width: 100%;">
@@ -80,7 +80,7 @@ class TargetEditor(ReactiveHTML):
 
     @property
     def thumbnail(self):
-        return ASSETS_DIR / 'target.png'
+        return ASSETS_DIR / 'layout.png'
 
     def _construct_layout(self, layout_spec):
         layout_kwargs = {'sizing_mode': 'stretch_both'}
@@ -140,9 +140,9 @@ class TargetEditor(ReactiveHTML):
         self.layout = layout
 
 
-class TargetGalleryItem(GalleryItem):
+class LayoutGalleryItem(GalleryItem):
 
-    editor = param.ClassSelector(class_=TargetEditor, precedence=-1)
+    editor = param.ClassSelector(class_=LayoutEditor, precedence=-1)
 
     selected = param.Boolean(default=True)
 
@@ -163,12 +163,12 @@ class TargetGalleryItem(GalleryItem):
         super()._open_modal(event)
 
 
-class TargetGallery(WizardItem, Gallery):
+class LayoutGallery(WizardItem, Gallery):
     "Add, select and configure layout groups to add to your dashboard."
 
     spec = param.ClassSelector(class_=(dict, list), default=[])
 
-    targets = param.List(precedence=-1)
+    layouts = param.List(precedence=-1)
 
     _template = """
     <span style="font-size: 1.5em">Layout groups</span>
@@ -176,7 +176,7 @@ class TargetGallery(WizardItem, Gallery):
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items.values() %}
-      <fast-card id="target-container" style="width: 350px; height: 400px;">
+      <fast-card id="layout-container" style="width: 350px; height: 400px;">
         ${item}
       </fast-card>
     {% endfor %}
@@ -191,29 +191,29 @@ class TargetGallery(WizardItem, Gallery):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._editor = TargetsEditor()
-        self._save_button = pn.widgets.Button(name='Save target')
-        self._save_button.on_click(self._save_targets)
+        self._editor = LayoutsEditor()
+        self._save_button = pn.widgets.Button(name='Save layout')
+        self._save_button.on_click(self._save_layouts)
         self._modal_content = [self._editor, self._save_button]
 
-    def _save_targets(self, event):
-        for target in self._editor.targets:
-            item = TargetGalleryItem(
-                name=target.title, spec=target.spec, selected=True,
-                editor=target, thumbnail=target.thumbnail
+    def _save_layouts(self, event):
+        for layout in self._editor.layouts:
+            item = LayoutGalleryItem(
+                name=layout.title, spec=layout.spec, selected=True,
+                editor=layout, thumbnail=layout.thumbnail
             )
-            self.items[target.title] = item
-            self.targets.append(target)
-            self.spec.append(target.spec)
+            self.items[layout.title] = item
+            self.layouts.append(layout)
+            self.spec.append(layout.spec)
         self.param.trigger('items')
-        self.param.trigger('targets')
-        self._editor.targets = []
+        self.param.trigger('layouts')
+        self._editor.layouts = []
         state.template.close_modal()
 
 
-class TargetsEditor(WizardItem):
+class LayoutsEditor(WizardItem):
     """
-    Add and configure your monitoring targets.
+    Add and configure your monitoring layouts.
     """
 
     title = param.String(default="")
@@ -224,28 +224,28 @@ class TargetsEditor(WizardItem):
 
     source = param.String()
 
-    targets = param.List([], precedence=-1)
+    layouts = param.List([], precedence=-1)
 
     title = param.String(default='')
 
     _template = """
     <span style="font-size: 2em">Layout editor</span>
     <p>{{ __doc__ }}</p>
-    <fast-button id="submit" appearance="accent" style="position: absolute; top: 3em; right: 5px;" onclick="${_add_target}">
+    <fast-button id="submit" appearance="accent" style="position: absolute; top: 3em; right: 5px;" onclick="${_add_layout}">
       <b style="font-size: 2em;">+</b>
     </fast-button>
     <fast-divider></fast-divider>
     <div style="display: flex;">
-      <div id="target-list" style="flex: auto; overflow-y: auto; gap: 1em;">
-        {% for target in targets %}
-        <div id="target-container">${target}</div>
+      <div id="layout-list" style="flex: auto; overflow-y: auto; gap: 1em;">
+        {% for layout in layouts %}
+        <div id="layout-container">${layout}</div>
         <fast-divider></faster-divider>
         {% endfor %}
       </div>
     </div>
     """
 
-    _dom_events = {'target-title': ['keyup']}
+    _dom_events = {'layout-title': ['keyup']}
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -257,10 +257,10 @@ class TargetsEditor(WizardItem):
         if not self.source and self.sources:
             self.source = self.sources[0]
 
-    def _add_target(self, event):
+    def _add_layout(self, event):
         spec = {'title': self.title}
-        editor = TargetEditor(spec=spec, title=self.title)
+        editor = LayoutEditor(spec=spec, title=self.title)
         self.spec.append(spec)
-        self.targets.append(editor)
-        self.param.trigger('targets')
+        self.layouts.append(editor)
+        self.param.trigger('layouts')
         self.title = ''

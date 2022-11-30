@@ -139,7 +139,7 @@ class DashboardGallery(WizardItem, Gallery):
         return
 
     def _create_new(self, event):
-        self.spec = {'sources': {}, 'targets': []}
+        self.spec = {'sources': {}, 'layouts': []}
 
     def _selected(self, event):
         self.spec = event.obj.spec

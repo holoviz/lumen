@@ -33,7 +33,7 @@ class Filter(MultiTypeComponent):
         about the data to be filtered.""")
 
     shared = param.Boolean(default=False, doc="""
-        Whether the filter is shared across all targets.""")
+        Whether the filter is shared across all layouts.""")
 
     sync_with_url = param.Boolean(default=True, doc="""
         Whether to sync the filter state with the URL parameters.""")

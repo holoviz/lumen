@@ -15,7 +15,7 @@ The `config` section provides general settings which apply to the whole dashboar
 ```yaml
 config:
   title: The title of the overall application
-  layout: The layout to put the targets in ('grid', 'tabs', 'column')
+  layout: The layout to arrange the (sub-)layouts in ('grid', 'tabs', 'column')
   logo: A URL or local path to an image file
   sync_with_url: Whether to sync app state with URL
   template: The template to use for the monitoring application
@@ -79,7 +79,7 @@ Once declared variables can be referenced through the rest of your dashboard spe
 
 ### `sources`
 
-The `sources` section allows defining [Source](lumen.sources.Source) instances which can be referenced from the monitoring targets. This is useful when reusing a `Source` across multiple targets.
+The `sources` section allows defining [Source](lumen.sources.Source) instances which can be referenced by the pipelines.
 
 ```yaml
 sources:
@@ -109,7 +109,7 @@ sources:
 
 ### `pipelines`
 
-The `pipelines` section allows declaring reusable pipelines that encapsulate a [Source](lumen.sources.Source) along with any number of [Filter](lumen.filters.Filter) and [Transform](lumen.transforms.Transform) components. A pipeline can be declared in this global section or the definition can be inlined on each Target or View.
+The `pipelines` section allows declaring reusable pipelines that encapsulate a [Source](lumen.sources.Source) along with any number of [Filter](lumen.filters.Filter) and [Transform](lumen.transforms.Transform) components. A pipeline can be declared in this global section or the definition can be inlined on each Layout or View.
 
 ```yaml
 pipelines:
@@ -123,18 +123,18 @@ pipelines:
         columns: [year, country, population]
 ```
 
-### `targets`
+### `layouts`
 
-The targets section defines the actual monitoring targets and therefore makes up the meat of the declaration.
+The layouts section defines the actual visual representations on the page and therefore makes up the meat of the declaration.
 
 ```yaml
-targets: This is the list of targets to monitor
+layouts: This is the list of visual layouts to render.
   - title: The title of the monitoring endpoint
     download:
       format: When specified adds a section to the sidebar allowing users to download the filtered dataset
       kwargs: Additional keyword arguments to pass to the pandas/dask to_<format> method
       tables: Allows declaring a subset of tables to download
-    pipeline: The pipeline driving the views of this target. Each View can independently declare a pipeline or all use the shared pipeline defined at the target level
+    pipeline: The pipeline driving the views of this layout. Each View can independently declare a pipeline or all use the shared pipeline defined at the layout level
     views: A list of metrics to monitor and display on the endpoint
       - pipeline: The Pipeline driving the View
         type: The type of View to use for rendering the table
