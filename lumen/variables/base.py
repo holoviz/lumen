@@ -31,6 +31,9 @@ class Variables(param.Parameterized):
         self._vars = {}
         self._watchers = {}
 
+    def keys(self):
+        return self._vars.keys()
+
     @classmethod
     def from_spec(cls, spec):
         variables = cls()

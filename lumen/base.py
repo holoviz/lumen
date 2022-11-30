@@ -2,13 +2,16 @@ import warnings
 
 from functools import partial
 
+import pandas as pd
 import panel as pn
 import param
 
 from panel.util import classproperty
 
 from .state import state
-from .util import is_ref, resolve_module_reference
+from .util import (
+    VARIABLE_RE, cleanup_expr, is_ref, resolve_module_reference,
+)
 from .validation import (
     ValidationError, match_suggestion_message, reverse_match_suggestion,
     validate_parameters,
@@ -52,9 +55,10 @@ class Component(param.Parameterized):
         for p, ref in self._refs.items():
             if isinstance(state.variables, dict):
                 continue
-            elif isinstance(ref, str) and ref.startswith('$variables.'):
-                ref = ref.split('$variables.')[1]
-                state.variables.param.watch(partial(self._update_ref, p), ref)
+            elif isinstance(ref, str) and '$variables' in ref:
+                ref_vars = VARIABLE_RE.findall(ref)
+                print(ref, ref_vars)
+                state.variables.param.watch(partial(self._update_ref, p, ref), ref_vars)
 
     def _extract_refs(self, params, refs):
         from .variables import Parameter, Variable, Widget
@@ -62,7 +66,7 @@ class Component(param.Parameterized):
         for pname, pval in params.items():
             if isinstance(pval, Variable):
                 processed[pname] = pval.value
-                refs[pname] = f'$variable.{pval.name}'
+                refs[pname] = f'$variables.{pval.name}'
                 state.add_variable(pval)
                 continue
             elif isinstance(pval, dict):
@@ -85,9 +89,16 @@ class Component(param.Parameterized):
             if isinstance(pval, pn.widgets.Widget):
                 processed[pname] = pval.value
                 var_name = pval.name
+                widget_type = type(pval).__name__
+                if not var_name:
+                    raise ValueError(
+                        f'Cannot use {widget_type} widget without an explicit '
+                        'name as a reference. Ensure any Widget passed in as '
+                        'a reference has been given a name.'
+                    )
                 var_type = Widget
                 var_kwargs = dict(
-                    kind=f'{pval.__module__}.{type(pval).__name__}',
+                    kind=f'{pval.__module__}.{widget_type}',
                     **{k: v for k, v in pval.param.values().items() if k != 'name'}
                 )
                 var_kwargs['widget'] = pval
@@ -101,12 +112,13 @@ class Component(param.Parameterized):
                 state.variables.add_variable(var)
         return processed
 
-    def _update_ref(self, pname, event=None, value=None):
+    def _update_ref(self, pname, ref, *events):
         """
         Component should implement appropriate downstream events
         following a change in a variable.
         """
-        new_value = value if event is None else event.new
+        expr = cleanup_expr(ref)
+        new_value = pd.eval(expr, local_dict=dict(state.variables))
         if '.' in pname:
             pname, *keys = pname.split('.')
             old = getattr(self, pname)
@@ -123,10 +135,9 @@ class Component(param.Parameterized):
         for p, ref in self._refs.items():
             if isinstance(state.variables, dict):
                 continue
-            elif isinstance(ref, str) and ref.startswith('$variables.'):
-                ref = ref.split('$variables.')[1]
+            elif isinstance(ref, str) and '$variables' in ref:
                 with param.discard_events(self):
-                    self._update_ref(p, value=state.variables[ref])
+                    self._update_ref(p, ref)
                     pname, *_ = p.split('.')
                     updates.append(pname)
         if trigger:

@@ -39,7 +39,7 @@ def test_transform_control_options_by_reference(make_filesource):
         'type': 'test',
         'controls': [{
             'name': 'value',
-            'options': '@original.test.C'
+            'options': '$original.test.C'
         }]
     })
     assert transform.param.value.objects == ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
