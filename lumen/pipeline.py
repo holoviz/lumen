@@ -18,7 +18,7 @@ from .filters import Filter, ParamFilter, WidgetFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
-from .util import catch_and_notify, get_dataframe_schema
+from .util import VARIABLES_RE, catch_and_notify, get_dataframe_schema
 from .validation import ValidationError, match_suggestion_message
 
 
@@ -308,6 +308,8 @@ class Pipeline(Component):
     ):
         if isinstance(spec, str):
             return state.pipelines[spec]
+        elif isinstance(spec, Pipeline):
+            return spec
 
         spec = spec.copy()
         if source is not None:
@@ -591,10 +593,10 @@ class Pipeline(Component):
         variables, variable_controls = [], []
         for transform in transforms:
             for ref in transform.refs:
-                if ref.startswith('$variable'):
-                    variable = state.variables._vars[ref.split('$variables.')[1]]
-                    if variable not in variables:
-                        variables.append(variable)
+                var_refs = VARIABLES_RE.findall(ref)
+                for var_ref in var_refs:
+                    if var_ref not in variables:
+                        variables.append(var_ref)
         for variable in variables:
             vpanel = variable.panel
             if vpanel is not None:
