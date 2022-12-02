@@ -50,7 +50,8 @@ class Component(param.Parameterized):
         self._refs = params.pop('refs', {})
         expected = list(self.param.params())
         validate_parameters(params, expected, type(self).name)
-        params = self._extract_refs(params, self._refs)
+        if self._allows_refs:
+            params = self._extract_refs(params, self._refs)
         super().__init__(**params)
         for p, ref in self._refs.items():
             if isinstance(state.variables, dict):
@@ -62,13 +63,13 @@ class Component(param.Parameterized):
                     self._update_ref(p, ref)
 
     def _extract_refs(self, params, refs):
-        from .variables import Parameter, Variable, Widget
+        from .variables import Variable
         processed = {}
         for pname, pval in params.items():
-            if isinstance(pval, Variable):
-                processed[pname] = pval.value
-                refs[pname] = f'$variables.{pval.name}'
-                state.variables.add_variable(pval)
+            if isinstance(pval, (pn.widgets.Widget, param.Parameter, Variable)):
+                var = state.variables.add_variable(pval)
+                processed[pname] = var.value
+                refs[pname] = f'$variables.{var.name}'
                 continue
             elif isinstance(pval, dict):
                 subrefs = {}
@@ -76,41 +77,8 @@ class Component(param.Parameterized):
                 for subkey, subref in subrefs.items():
                     refs[f'{pname}.{subkey}'] = subref
                 continue
-
-            if isinstance(pval, param.Parameter):
-                if isinstance(pval.owner, pn.widgets.Widget) and pval.name == 'value':
-                    pval = pval.owner
-                else:
-                    processed[pname] = getattr(pval.owner, pval.name)
-                    var_type = Parameter
-                    var_name = pval.name
             else:
-                var_type = None
-
-            if isinstance(pval, pn.widgets.Widget):
-                processed[pname] = pval.value
-                var_name = pval.name
-                widget_type = type(pval).__name__
-                if not var_name:
-                    raise ValueError(
-                        f'Cannot use {widget_type} widget without an explicit '
-                        'name as a reference. Ensure any Widget passed in as '
-                        'a reference has been given a name.'
-                    )
-                var_type = Widget
-                var_kwargs = dict(
-                    kind=f'{pval.__module__}.{widget_type}',
-                    **{k: v for k, v in pval.param.values().items() if k != 'name'}
-                )
-                var_kwargs['widget'] = pval
-
-            if var_type is None:
                 processed[pname] = pval
-            else:
-                var_name = var_name.replace(' ', '_')
-                refs[pname] = f'$variables.{var_name}'
-                var = var_type(name=var_name, **var_kwargs)
-                state.variables.add_variable(var)
         return processed
 
     def _update_ref(self, pname, ref, *events):
