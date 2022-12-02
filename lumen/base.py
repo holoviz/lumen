@@ -66,7 +66,9 @@ class Component(param.Parameterized):
         from .variables import Variable
         processed = {}
         for pname, pval in params.items():
-            if isinstance(pval, (pn.widgets.Widget, param.Parameter, Variable)):
+            if is_ref(pval):
+                refs[pname] = pval
+            elif isinstance(pval, (pn.widgets.Widget, param.Parameter, Variable)):
                 var = state.variables.add_variable(pval)
                 processed[pname] = var.value
                 refs[pname] = f'$variables.{var.name}'
