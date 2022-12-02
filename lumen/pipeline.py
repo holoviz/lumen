@@ -597,8 +597,8 @@ class Pipeline(Component):
                 for var_ref in var_refs:
                     if var_ref not in variables:
                         variables.append(var_ref)
-        for variable in variables:
-            vpanel = variable.panel
+        for var_ref in variables:
+            vpanel = state.variables._vars[var_ref].panel
             if vpanel is not None:
                 variable_controls.append(vpanel)
         if variable_controls:
