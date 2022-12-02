@@ -26,7 +26,9 @@ from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms import SQLTransform, Transform
-from ..util import catch_and_notify, is_ref, resolve_module_reference
+from ..util import (
+    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
+)
 from ..validation import ValidationError
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
@@ -171,24 +173,27 @@ class View(MultiTypeComponent, Viewer):
             self.update()
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
-    def _update_ref(self, pname, event=None, value=None):
+    def _update_ref(self, pname, ref, *events):
         # Note: Do not trigger update in View if Pipeline references
         # the same variable and is not set up to auto-update
-        if event is not None and not self.pipeline.auto_update:
+        for event in events:
+            if self.pipeline.auto_update:
+                continue
             refs = []
             current = self.pipeline
             while current is not None:
                 for ref in current.refs:
-                    if ref not in refs:
-                        refs.append(ref)
+                    for subref in VARIABLE_RE.findall(ref):
+                        if subref not in refs:
+                            refs.append(subref)
                 current = current.pipeline
-            print(refs)
             if any(
-                ref.split('.')[-1] == event.name
+                ref == event.name
+                for e in events
                 for ref in refs if ref.startswith('$variables')
             ):
                 return
-        super()._update_ref(pname, event=event, value=value)
+        super()._update_ref(pname, ref, *events)
 
     def _init_link_selections(self):
         doc = pn.state.curdoc or self.pipeline

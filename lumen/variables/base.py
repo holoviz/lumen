@@ -31,6 +31,9 @@ class Variables(param.Parameterized):
         self._vars = {}
         self._watchers = {}
 
+    def keys(self):
+        return self._vars.keys()
+
     @classmethod
     def from_spec(cls, spec):
         variables = cls()
@@ -46,17 +49,88 @@ class Variables(param.Parameterized):
             variables.add_variable(var)
         return variables
 
+    def _convert_to_variable(self, var):
+        throttled = False
+        if isinstance(var, param.Parameter):
+            if isinstance(var.owner, pn.widgets.Widget) and var.name in ('value', 'value_throttled'):
+                throttled = var.name == 'value_throttled'
+                var = var.owner
+            else:
+                var_type = Parameter
+                var_name = var.name
+                var_kwargs = {'parameter': var, 'value': getattr(var.owner, var.name)}
+        else:
+            var_type = None
+
+        if isinstance(var, _PnWidget):
+            var_name = var.name
+            widget_type = type(var).__name__
+            if not var_name:
+                raise ValueError(
+                    f'Cannot use {widget_type} widget without an explicit '
+                    'name as a reference. Ensure any Widget passed in as '
+                    'a reference has been given a name.'
+                )
+            var_type = Widget
+            extras = {k: v for k, v in var.param.values().items() if k != 'name'}
+            var_kwargs = dict(
+                kind=f'{var.__module__}.{widget_type}', throttled=throttled,
+                widget=var, **extras
+            )
+
+        if var_type is None:
+            raise ValueError(
+                f'Could not convert object of type {type(var).__name__} '
+                'to a Variable. Only panel.widgets.Widget and param.Parameter '
+                'types may be automatically promoted to Variables.'
+            )
+        var_name = var_name.replace(' ', '_')
+        old_var = self._vars.get(var_name)
+        if (
+            isinstance(old_var, var_type) and
+            ((var_type is Widget and var is old_var._widget) or
+             (var_type is Parameter and var is old_var.parameter))
+        ):
+            return old_var
+        return var_type(name=var_name, **var_kwargs)
+
     def add_variable(self, var):
         """
         Adds a new variable to the Variables instance and sets up
         a parameter that can be watched.
+
+        Arguments
+        ---------
+        var: Variable | panel.widgets.Widget | param.Parameter
+            The Variable to add to the Variables store.
         """
-        if var.name in self._vars:
+        if not isinstance(var, Variable):
+            var = self._convert_to_variable(var)
+        old_var = self._vars.get(var.name)
+        if old_var:
+            if var is old_var:
+                return var
+            elif old_var and type(var) is type(old_var):
+                vtname = type(var).__name__
+                self.param.warning(
+                    f'A {vtname} named {var.name!r} has already been defined and '
+                    'is linked to a different source. Overriding the existing '
+                    'variable and unlinking any attached components.'
+                )
+            else:
+                self.param.warning(
+                    f'A Variable named {var.name!r} of a different type has '
+                    'already been defined. Overriding the existing variable '
+                    'and unlinking any attached components.'
+                )
             variable = self._vars.pop(var.name)
             variable.param.unwatch(self._watchers.pop(var.name))
         self._vars[var.name] = var
         self.param.add_parameter(var.name, param.Parameter(default=var.value))
-        self._watchers[var.name] = var.param.watch(partial(self._update_value, var.name), 'value')
+        self._watchers[var.name] = var.param.watch(
+            partial(self._update_value, var.name), 'value'
+        )
+        return var
 
     def _update_value(self, name, event):
         self.param.update({name: event.new})
@@ -90,25 +164,25 @@ class Variable(MultiTypeComponent):
     components.
     """
 
-    default = param.Parameter(doc="""
-       Default value to use if no other value is defined""")
+    default = param.Parameter(constant=True, doc="""
+        Default value to use if no other value is defined""")
 
     label = param.String(default=None, doc="""
-       Optional label override for variable. Used wherever the variable
-       shows up in the UI.""")
+        Optional label override for variable. Used wherever the variable
+        shows up in the UI.""")
 
     materialize = param.Boolean(default=False, constant=True, doc="""
-       Whether the variable should be inlined as a constant variable
-       (in the Lumen Builder).""")
+        Whether the variable should be inlined as a constant variable
+        (in the Lumen Builder).""")
 
     required = param.Boolean(default=False, constant=True, doc="""
-       Whether the variable should be treated as required.""")
+        Whether the variable should be treated as required.""")
 
     secure = param.Boolean(default=False, constant=True, doc="""
-       Whether the variable should be treated as secure.""")
+        Whether the variable should be treated as secure.""")
 
     value = param.Parameter(doc="""
-       The materialized value of the variable.""")
+        The materialized value of the variable.""")
 
     variable_type = None
 
@@ -178,8 +252,8 @@ class EnvVariable(Variable):
     `EnvVariable` fetches an environment variable that can be referenced.
     """
 
-    key = param.String(default=None, doc="""
-        The name of the environment variable to look up.""")
+    key = param.String(default=None, constant=True, doc="""
+        The name of the environment variable to observe.""")
 
     variable_type = 'env'
 
@@ -195,13 +269,13 @@ class Widget(Variable):
     `Widget` variables dynamically reflect the current widget value.
     """
 
-    kind = param.String(default=None, doc="""
-       The type of widget to instantiate.""")
+    kind = param.String(default=None, constant=True, doc="""
+        The type of widget to instantiate.""")
 
-    throttled = param.Boolean(default=True, doc="""
-       If the widget has a value_throttled parameter use that instead,
-       ensuring that no intermediate events are generated, e.g. when
-       dragging a slider.""")
+    throttled = param.Boolean(default=True, constant=True, doc="""
+        If the widget has a value_throttled parameter use that instead,
+        ensuring that no intermediate events are generated, e.g. when
+        dragging a slider.""")
 
     variable_type = 'widget'
 
@@ -284,13 +358,18 @@ class Parameter(Variable):
     `Parameter` variables reflect the current value of a parameter.
     """
 
-    parameter = param.ClassSelector(class_=param.Parameter, doc="""
+    parameter = param.ClassSelector(class_=param.Parameter, constant=True, doc="""
         A parameter instance whose current value will be reflected
         on this variable.""")
 
+    _allows_refs = False
+
     def __init__(self, **params):
         super().__init__(**params)
-        self.param.parameter.owner.watch(lambda e: self.param.update(value=e.new), self.param.parameter.name)
+        self.parameter.owner.param.watch(
+            lambda e: self.param.update(value=e.new),
+            self.parameter.name
+        )
 
 
 class URLQuery(Variable):
@@ -298,7 +377,8 @@ class URLQuery(Variable):
     `URLQuery` variables reflect the value of a URL query parameter.
     """
 
-    key = param.String(default=None)
+    key = param.String(default=None, constant=True, doc="""
+        The URL query parameter to observe.""")
 
     variable_type = 'url'
 
@@ -321,7 +401,8 @@ class Cookie(Variable):
     `Cookie` variables reflect the value of a cookie in the request.
     """
 
-    key = param.String(default=None)
+    key = param.String(default=None, constant=True, doc="""
+        The cookie to observe.""")
 
     variable_type = 'cookie'
 
@@ -337,7 +418,8 @@ class UserInfo(Variable):
     `UserInfo` variables reflect a value in the user info returned by an OAuth provider.
     """
 
-    key = param.String(default=None)
+    key = param.String(default=None, constant=True, doc="""
+        The key in the OAuth pn.state.user_info dictionary to observe.""")
 
     variable_type = 'user'
 
@@ -353,7 +435,8 @@ class Header(Variable):
     `Header` variables reflect the value of a request header.
     """
 
-    key = param.String(default=None)
+    key = param.String(default=None, constant=True, doc="""
+        The request header to observe.""")
 
     variable_type = 'header'
 

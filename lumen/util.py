@@ -19,6 +19,7 @@ from panel import state
 
 log = getLogger(__name__)
 
+VARIABLE_RE = re.compile(r'\$variables\.([a-zA-Z_]\w*)')
 
 def get_dataframe_schema(df, columns=None):
     """
@@ -232,7 +233,9 @@ def is_ref(value):
     """
     Whether the value is a reference.
     """
-    return isinstance(value, str) and (value.startswith('$') or value.startswith('@'))
+    if not isinstance(value, str):
+        return False
+    return bool(VARIABLE_RE.findall(value)) or value.startswith('$')
 
 def extract_refs(spec, ref_type=None):
     refs = []
@@ -250,9 +253,15 @@ def extract_refs(spec, ref_type=None):
         refs.append(spec)
     if ref_type is None:
         return refs
-    filtered = [ref for ref in refs if ref[1:].startswith(ref_type)]
+    filtered = [ref for ref in refs if f'${ref_type}' in ref[1:]]
     return filtered
 
+def cleanup_expr(expr):
+    ref_vars = VARIABLE_RE.findall(expr)
+    for var in ref_vars:
+        re_var = r'\$variables\.' + var
+        expr = re.sub(re_var, var, expr)
+    return expr
 
 def catch_and_notify(message=None):
     """Catch exception and notify user

@@ -55,7 +55,7 @@ def make_variable_filesource():
     for source in state.global_sources.values():
         source.clear_cache()
     state.global_sources.clear()
-    state._variables.clear()
+    state._variable = None
 
 @pytest.fixture
 def mixed_df():
