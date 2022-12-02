@@ -18,7 +18,7 @@ from .filters import Filter, ParamFilter, WidgetFilter
 from .sources import Source
 from .state import state
 from .transforms import Filter as FilterTransform, SQLTransform, Transform
-from .util import VARIABLES_RE, catch_and_notify, get_dataframe_schema
+from .util import VARIABLE_RE, catch_and_notify, get_dataframe_schema
 from .validation import ValidationError, match_suggestion_message
 
 
@@ -593,7 +593,7 @@ class Pipeline(Component):
         variables, variable_controls = [], []
         for transform in transforms:
             for ref in transform.refs:
-                var_refs = VARIABLES_RE.findall(ref)
+                var_refs = VARIABLE_RE.findall(ref)
                 for var_ref in var_refs:
                     if var_ref not in variables:
                         variables.append(var_ref)
