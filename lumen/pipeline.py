@@ -244,12 +244,16 @@ class Pipeline(Viewer, Component):
             f._sync_refs()
 
         try:
+            if pn.state.curdoc:
+                pn.state.curdoc.hold()
             self.data = self._compute_data()
         except Exception as e:
             raise e
         else:
             self._stale = False
         finally:
+            if pn.state.curdoc:
+                pn.state.curdoc.unhold()
             self._update_widget.loading = False
 
     @classmethod
