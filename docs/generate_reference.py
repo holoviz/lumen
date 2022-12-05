@@ -21,14 +21,14 @@ import lumen.sources.intake_sql
 from lumen.base import MultiTypeComponent
 from lumen.dashboard import Auth, Config, Defaults
 from lumen.filters import Filter
+from lumen.layout import Layout
 from lumen.pipeline import Pipeline
 from lumen.sources import Source
-from lumen.target import Target
 from lumen.transforms import Transform
 from lumen.variables import Variable
 from lumen.views import View
 
-bases = [Config, Variable, Pipeline, Source, Filter, Transform, View, Target, Auth, Defaults]
+bases = [Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
 
 BASE_PATH = pathlib.Path(lumen.__file__).parent.parent
 REFERENCE_PATH = BASE_PATH / 'docs' / 'reference'
