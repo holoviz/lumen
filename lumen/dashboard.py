@@ -12,6 +12,7 @@ import yaml
 
 from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
+from panel.viewable import Viewer
 
 from .auth import AuthPlugin
 from .base import Component
@@ -303,7 +304,7 @@ class Auth(Component):
         return authorized
 
 
-class Dashboard(Component):
+class Dashboard(Component, Viewer):
 
     auth = param.ClassSelector(default=Auth(), class_=Auth, doc="""
         Auth object which validates the auth spec against pn.state.user_info.""")
@@ -324,6 +325,12 @@ class Dashboard(Component):
 
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
+        for subobj in (Auth, Config, Defaults):
+            pname = subobj.__name__.lower()
+            if pname in params and isinstance(params[pname], dict):
+                params[pname] = subobj.from_spec(params[pname])
+        if specification is None:
+            specification = state.to_spec(**params)
         if isinstance(specification, dict):
             state.spec = self.validate(specification)
             self._yaml = yaml.dump(specification)
@@ -373,6 +380,9 @@ class Dashboard(Component):
         pn.config.notifications = True
         if CSS_URLS['font-awesome'] not in pn.config.css_files:
             pn.config.css_files.append(CSS_URLS['font-awesome'])
+
+    def __panel__(self):
+        return self.layout()
 
     ##################################################################
     # Load specification
@@ -785,13 +795,13 @@ class Dashboard(Component):
         """
         Returns a layout of the dashboard contents.
         """
-        spinner = pn.indicators.LoadingSpinner(width=40, height=40)
+        spinner = pn.indicators.LoadingSpinner(width=30, height=30, align=('end', 'center'))
         pn.state.sync_busy(spinner)
 
         title_html = f'<font color="white"><h1>{self.config.title}</h1></font>'
         return pn.Column(
             pn.Row(
-                pn.pane.HTML(title_html),
+                pn.pane.HTML(title_html, margin=(0, 20)),
                 pn.layout.HSpacer(),
                 spinner,
                 background='#00aa41'

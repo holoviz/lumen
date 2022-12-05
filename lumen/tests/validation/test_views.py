@@ -1,7 +1,7 @@
 import pytest
 
 from lumen.validation import ValidationError
-from lumen.views import Download, View
+from lumen.views.base import Download, View
 
 
 @pytest.mark.parametrize(

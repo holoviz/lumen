@@ -11,6 +11,7 @@ import panel as pn
 import param
 import tqdm
 
+from panel.viewable import Viewer
 from panel.widgets import Widget
 
 from .base import Component
@@ -45,7 +46,7 @@ def expand_queries(values, groups=('filters', 'variables')):
     return [dict(zip(groups, group)) for group in product(*spec_groups)]
 
 
-class Pipeline(Component):
+class Pipeline(Viewer, Component):
     """
     `Pipeline` encapsulates filters and transformations applied to a `Source` table.
 
@@ -129,6 +130,9 @@ class Pipeline(Component):
 
     def _update_refs(self, *events):
         self._update_data()
+
+    def __panel__(self):
+        return pn.Row(self.control_panel, self.param.data)
 
     def to_spec(self, context=None):
         """

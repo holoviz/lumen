@@ -558,3 +558,6 @@ class ParamFilter(Filter):
     def _attach_watcher(self, *args):
         if isinstance(self.parameter, param.Parameter):
             self.parameter.owner.param.watch(self._update_value, self.parameter.name)
+
+
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Filter)]

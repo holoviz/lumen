@@ -217,3 +217,6 @@ class SQLFilter(SQLTransform):
             FROM ( {{sql_in}} )
             WHERE ( {{conditions}} )"""
         return self._render_template(template, sql_in=sql_in, conditions=' AND '.join(conditions))
+
+
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]
