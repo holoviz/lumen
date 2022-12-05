@@ -18,6 +18,7 @@ Variables give Lumen components a lot of flexibility. Variables can be defined i
 The data source is a remote dataset containing a `volume` column many magnitudes greater than the rest, making it impossible to see the other time series in the data. Removing `Volume` from the `columns` variable makes the other time series visible.
 
 ::::{tab-set}
+
 :::{tab-item} YAML
 
 ```{code-block} yaml
@@ -60,15 +61,14 @@ layouts:
 :::
 
 :::{tab-item} Preview - All columns
-![](../_static/how_to/variables/variable_all.png)
+![](../../_static/how_to/variables/variable_all.png)
 :::
 
 :::{tab-item} Preview - Selected columns
-![](../_static/how_to/variables/variable_selected.png)
+![](../../_static/how_to/variables/variable_selected.png)
 :::
 
 ::::
-
 
 ## Sources as variables
 
@@ -103,7 +103,7 @@ layouts:
 :::
 
 :::{tab-item} Preview
-![](../_static/how_to/variables/source_variable.png)
+![](../../_static/how_to/variables/source_variable.png)
 :::
 
 :::{tab-item} websites.csv
@@ -137,7 +137,6 @@ The last way to reference variables is by using external variables. There are si
 | Request header       | `{{ header("USER") }}` |
 | OAuth user token     | `{{ oauth("USER") }}`  |
 
-
 Furthermore, CLI arguments or shell commands can be used. See the sections below.
 
 ### Variables with the command line
@@ -169,12 +168,12 @@ layouts:
 
 :::{tab-item} Correct Preview
 Ran with `lumen serve cli_example.yml --template-vars="{'USER': 'lumen_user'}"`
-![](../_static/how_to/variables/cli_good.png)
+![](../../_static/how_to/variables/cli_good.png)
 :::
 
 :::{tab-item} Faulty Preview
 Ran with `lumen serve cli_example.yml`
-![](../_static/how_to/variables/cli_bad.png)
+![](../../_static/how_to/variables/cli_bad.png)
 :::
 
 ::::
@@ -187,6 +186,7 @@ It is worth noting that the output will be trimmed of any trailing whitespace.
 As a simple example, `echo` can be used as the shell command.
 
 ::::{tab-set}
+
 :::{tab-item} YAML
 
 ```{code-block} yaml
@@ -210,14 +210,14 @@ layouts:
 :::
 
 :::{tab-item}  Preview
-![](../_static/how_to/variables/shell.png)
+![](../../_static/how_to/variables/shell.png)
 :::
 
 ::::
 
-```{admonition} Should I use `$` or `{{ }}` for reference?
+:::{admonition} Should I use `$` or `{{ }}` for reference?
 ---
 class: tip
 ---
 As a rule of thumb, internal variables are referenced with a starting dollar sign `$`, whereas external references use double curly brackets before and after `{{ }}`.
-```
+:::

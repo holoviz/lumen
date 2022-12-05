@@ -1,7 +1,8 @@
 # How to - Data Visualization
 
-* [Deploy a dashboard](deploy)
 * [Define views](views)
+* [Build a dashboard in Python](dashboard_python)
+* [Deploy a dashboard](deploy)
 
 ```{toctree}
 :titlesonly:
@@ -9,5 +10,6 @@
 :maxdepth: 1
 
 Deploy a dashboard<deploy>
+Build a dashboard in Python<dashboard_python>
 Define views<views>
 ```

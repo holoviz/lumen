@@ -4,26 +4,24 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 
 **[General](general/index)**
 * [Validate a specification file](general/validate)
-* [Build a dashboard in Python](general/pipeline_python)
 * [Use variables and references](general/variables_and_references)
-* [Override parameter defaults]() (under construction)
-* [Set up authentication]() (under construction)
 
 **[Data intake](data_intake/index)**
 * [Cache data](data_intake/cache)
 * [Access local files]() (under construction)
 
 **[Data processing](data_processing/index)**
-* [Branch a pipeline](data_processing/branch_pipelinel)
+* [Build a pipeline in Python](data_processing/pipeline_python)
+* [Branch a pipeline](data_processing/branch_pipeline)
 
 **[Data visualization](data_visualization/index)**
-* [Deploy a dashboard](data_visualization/deploy)
 * [Define views](data_visualization/views)
+* [Deploy a dashboard](data_visualization/deploy)
 
 **[Data output](data_output/index)**
 * [Download data from dashboard](data_output/download_data)
 
-**[Custom components](custom_components/index)**
+**[Advanced topics](advanced/index)**
 * [Access custom components](custom_components/local_components)
 
 ```{toctree}
