@@ -166,9 +166,9 @@ class ConstantFilter(Filter):
 
     @property
     def query(self):
-        field_schema = self.schema.get(self.field)
         query = self.value
-        if field_schema.get('type') == 'number' and isinstance(query, list) and len(query) == 2:
+        field_type = (self.schema or {}).get(self.field, {}).get('type', None)
+        if field_type == 'number' and isinstance(query, list) and len(query) == 2:
             return tuple(query)
         return query
 
