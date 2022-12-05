@@ -489,13 +489,14 @@ class FileSource(Source):
         'csv': {'parse_dates': True}
     }
 
+    _template_re = re.compile(r'(\$\{[\w.]+\})')
+
     source_type = 'file'
 
     def __init__(self, **params):
         if 'files' in params:
             params['tables'] = params.pop('files')
         super().__init__(**params)
-        self._template_re = re.compile(r'(@\{.*\})')
 
     def _load_fn(self, ext, dask=True):
         kwargs = dict(self._load_kwargs.get(ext, {}))
@@ -641,6 +642,8 @@ class JSONSource(FileSource):
         template_values = []
         for m in template_vars:
             values = state.resolve_reference(f'${m[2:-1]}')
+            if not isinstance(values, list):
+                values = [values]
             template_values.append(values)
         tables = []
         cross_product = list(product(*template_values))
@@ -665,10 +668,6 @@ class JSONSource(FileSource):
 
     def _load_fn(self, ext, dask=True):
         return super()._load_fn('json', dask=dask)
-
-    @cached
-    def get(self, table, **query):
-        return super().get(table, **query)
 
 
 class WebsiteSource(Source):
