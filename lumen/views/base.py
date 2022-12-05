@@ -965,3 +965,6 @@ class AltairView(View):
 
     def get_panel(self):
         return pn.pane.Vega(**self._get_params())
+
+
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)]

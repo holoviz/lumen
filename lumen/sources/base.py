@@ -1041,3 +1041,5 @@ class DerivedSource(Source):
                 spec['source'].clear_cache()
         else:
             self.source.clear_cache()
+
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Source)]

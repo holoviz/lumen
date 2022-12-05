@@ -710,3 +710,6 @@ class project_lnglat(Transform):
         table[self.longitude] = longitude * origin_shift / 180.0
         table[self.latitude] = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
         return table
+
+
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Transform)]

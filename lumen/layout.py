@@ -21,7 +21,7 @@ from .sources import Source
 from .state import state
 from .util import catch_and_notify, extract_refs
 from .validation import ValidationError, match_suggestion_message
-from .views import DOWNLOAD_FORMATS, View
+from .views.base import DOWNLOAD_FORMATS, View
 
 
 class Card(Viewer):
