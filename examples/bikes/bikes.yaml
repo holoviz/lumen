@@ -1,6 +1,10 @@
 config:
   title: "Transport for London: Bike Station Occupancy"
   layout: column
+variables:
+  TFL_API_KEY:
+    type: constant
+    value: a1c692de000b4944af55f59d8e849915
 sources:
   stations:
     type: json
@@ -12,7 +16,7 @@ sources:
     chunk_size: 15
     cache_dir: cache
     tables:
-      occupancy: "https://api.tfl.gov.uk/Occupancy/BikePoints/@{stations.stations.id}?app_key=a1c692de000b4944af55f59d8e849915"
+      occupancy: "https://api.tfl.gov.uk/Occupancy/BikePoints/${stations.stations.id}?app_key=${variables.TFL_API_KEY}"
   station_occupancy:
     type: join
     sources: [stations, occupancy]
@@ -31,6 +35,16 @@ pipelines:
     filters:
       - type: param
         parameter: locations.selection_expr
+      - type: widget
+        field: bikesCount
+      - type: widget
+        field: totalDocks
+      - type: constant
+        field: lat
+        value: [50, 52]
+      - type: constant
+        field: lon
+        value: [-1, 1]
     transforms:
       - type: columns
         columns: [commonName, bikesCount, totalDocks, lat, lon]
@@ -54,14 +68,15 @@ layouts:
         line_color: black
         xaxis: null
         yaxis: null
+        framewise: false
         selection_group: bikes
       table:
         type: table
-        width: 400
         height: 500
         margin: [0, 100]
         hidden_columns: [lat, lon]
         show_index: false
+        sizing_mode: stretch_width
       count_hist:
         type: hvplot
         kind: hist

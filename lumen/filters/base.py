@@ -166,7 +166,11 @@ class ConstantFilter(Filter):
 
     @property
     def query(self):
-        return self.value
+        query = self.value
+        field_type = (self.schema or {}).get(self.field, {}).get('type', None)
+        if field_type == 'number' and isinstance(query, list) and len(query) == 2:
+            return tuple(query)
+        return query
 
     @property
     def panel(self):
