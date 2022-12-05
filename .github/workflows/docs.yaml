@@ -61,7 +61,7 @@ jobs:
       - name: build docs
         run: |
           conda activate test-environment
-          cd docs
+          cd doc
           python generate_reference.py
           make html
       - name: Deploy dev
@@ -72,7 +72,7 @@ jobs:
         with:
           personal_token: ${{ secrets.ACCESS_TOKEN }}
           external_repository: pyviz-dev/lumen
-          publish_dir: ./docs/_build/html
+          publish_dir: ./doc/_build/html
           force_orphan: true
       - name: Deploy main
         if: |
@@ -81,6 +81,6 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/_build/html
+          publish_dir: ./doc/_build/html
           cname: lumen.holoviz.org
           force_orphan: true
