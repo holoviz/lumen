@@ -7,7 +7,7 @@ This conceptual overview of creating a Lumen dashboard is meant to help you star
 
 ## Overview
 
-Lumen is a framework for easily building powerful data-driven dashboards. The *ease* of Lumen comes from the primary interface being a simple **YAML** file, which reads like a cooking recipe. The *power* of Lumen comes from the ability to leverage different data intake, data processing, and data visualization libraries that are available in the Python data science ecosystem, but without having to code!
+Lumen is a framework for easily building powerful data-driven dashboards. The *ease* of Lumen comes from the primary interface being a simple **YAML** file, which reads like a cooking recipe. We call this the **specification**. Unlike a recipe Lumen makes it very easy to go back and forth between the specification and the final product. This makes it easy to interactively go back and forth and iteratively improve the specification. The *power* of Lumen comes from the ability to leverage different data intake, data processing, and data visualization libraries that are available in the Python data science ecosystem, but without having to code!
 
 ## YAML specification
 
@@ -71,16 +71,14 @@ In addition to these core sections, there is plenty of advanced functionality th
 
 ## Config
 
-The config section provides general settings which apply to the whole dashboard. The structure is very simple:
+The `config` section provides general settings which apply to the whole dashboard to control things like the title, overall layout and theme. The structure is very simple:
 
 ```{code-block} YAML
 config:
-  title: The title of the overall application
-  layout: The layout to put the invidual (sub-)layouts in.
-  logo: A URL or local path to an image file
-  sync_with_url: Whether to sync app state with URL
-  template: The template to use for the monitoring application
-  ncols: The number of columns to use in the grid of cards
+  title: My dashboard
+  layout: tabs
+  logo: assets/my_logo.png
+  ...
 ```
 
 You might remember an implementation of this from what you created in the [Build a dashboard](build_dashboard) tutorial. Your config section was used to add a title and dark theme to your dashboard:
@@ -91,7 +89,7 @@ config:
   theme: dark
 ```
 
-To see all the possible config parameters, see the `Config Reference`.
+See the [Config Reference](../reference/Config.html) for a description of all parameters.
 
 ## Sources
 
@@ -104,7 +102,7 @@ sources:
     ...: Additional source parameters
 ```
 
-A common choice for a source type is [FileSource](lumen.sources.FileSource), which can load CSV, Excel, JSON and Parquet files from either local (filepaths) or remote (URL) locations. In your tutorial, you use a remote CSV source:
+A common choice for a source type is [FileSource](../reference/source/FileSource), which can load CSV, Excel, JSON and Parquet files from either local (filepaths) or remote (URL) locations. In your tutorial, you use a remote CSV source:
 
 ```{code-block} YAML
 sources:
@@ -114,15 +112,15 @@ sources:
       table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 ```
 
- See the [Source Reference](lumen.sources.Source) for other source types and for the relevant parameters.
+See the [Source Reference](../reference/source/index) for other source types and for the relevant parameters.
 
-## Pipelines (data manipulation)
+## Pipelines (data processing)
 
 The `pipelines` section is where you list all the ways that you want the data to be **filtered** or **transformed**. If you don't need the data to be manipulated, you can just exclude this section.
 
 ### Filters
 
-A filter allows you or your dashboard's viewers to drill down into just a subset of the data.
+The `filters` of a `Pipeline` allows you or your dashboard's viewers to drill down into just a subset of the data.
 
 ```{code-block} YAML
 pipelines:
@@ -147,7 +145,7 @@ pipelines:
         field: island
 ```
 
-See the [Filter Reference](../architecture/filter) for other filter types and for the relevant parameters.
+See the [Filter Reference](../reference/filter/index) for other filter types and for the relevant parameters.
 
 ### Transforms
 
@@ -180,11 +178,11 @@ pipelines:
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 ```
 
-See the [Transform Reference](../architecture/transform) for other transform types and for the relevant parameters.
+See the [Transform Reference](../reference/transform/index) for other transform types and for the relevant parameters.
 
 ## Layouts (views)
 
-The `layouts` section defines how the dashboard is going to look. The essential structure of a `layouts` section is as follows:
+The `layouts` section declares the actual content in the rendered application. The essential structure of a `layouts` section is as follows:
 
 ```{code-block} YAML
 layouts:
@@ -220,7 +218,7 @@ layouts:
 ```
 :::
 
-Each view can be of a different type, but a good starting point is the `hvPlotView`. This view type allows you to produce [many different types of plots](https://hvplot.holoviz.org/reference/index.html) available from the [hvPlot](https://hvplot.holoviz.org/) library, just by specifying the `kind` parameter.
+At minimum each `Layout` must declare a `title` and a set of `views`. Each view can be of a different type, but a good starting point is the `hvPlotView`. This view type allows you to produce [many different types of plots](https://hvplot.holoviz.org/reference/index.html) available from the [hvPlot](https://hvplot.holoviz.org/) library, just by specifying the `kind` parameter.
 
 In your tutorial, the final dashboard included two `kinds` - scatter and histogram:
 
@@ -251,7 +249,7 @@ layouts:
         height: 350
 ```
 
-See the [View Reference](../architecture/view) for other view types and for the relevant parameters.
+See the [View Reference](../reference/view/index) for other view types and for the relevant parameters.
 
 ## Advanced Functionality
 
@@ -259,7 +257,7 @@ The following sections are meant to introduce you some of Lumen's advanced funct
 
 ### Defaults
 
-The `defaults` section allows overriding parameter defaults on the [Filter](lumen.filters.Filter), [Source](lumen.sources.Source), [Transform](lumen.transforms.Transform) and [View](lumen.views.View) objects.
+The `defaults` section allows overriding parameter defaults on the [Filter](../reference/filter/index), [Source](../reference/source/index), [Transform](../reference/transform/index) and [View](../reference/view/index) objects.
 
 ```{code-block} YAML
 defaults:
@@ -316,7 +314,7 @@ sources:
       ticker: $variables.ticker
 ```
 
-For more on variables, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
+For more on variables, check out the [How to use variables and references](../how_to/general/variables_and_references) guide.
 
 ### Sources as variables
 
@@ -336,7 +334,7 @@ sources:
 
 The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the `WebsiteSource`.
 
-For more on referring to sources, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
+For more on referring to sources, check out the [How to use variables and references](../how_to/variables_and_references) guide.
 
 ### External variables (templating)
 
@@ -354,7 +352,7 @@ In many cases you do not want to hardcode variables inside the yaml specificatio
 
 - `{{USER}}`: Arguments passed in using `--template-vars="{'USER': 'lumen_user'}"` when using `lumen serve` on the commandline.
 
-For more on templating, check out the [How to use variables and references](../how_to/variables_and_references.md) guide.
+For more on templating, check out the [How to use variables and references](../how_to/variables_and_references) guide.
 
 ### Authentication
 
