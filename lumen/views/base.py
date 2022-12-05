@@ -701,7 +701,7 @@ class hvPlotView(hvPlotBaseView):
         if self.streaming:
             processed['stream'] = self._stream
         plot = df.hvplot(
-            kind=self.kind, x=self.x, y=self.y, **processed
+            kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         plot = plot.opts(**self.opts) if self.opts else plot
         if self.selection_group or 'selection_expr' in self._param_watchers:

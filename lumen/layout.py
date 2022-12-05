@@ -238,7 +238,7 @@ class Download(Component, Viewer):
         The list of tables to allow downloading.""")
 
     _internal_params = ['name', 'pipelines']
-    _required_keys = ['format']
+    _required_keys = []
 
     def __init__(self, **params):
         super().__init__(**params)
