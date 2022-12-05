@@ -47,15 +47,11 @@ def test_layout_Facet(spec, msg):
             None,
         ),
         (
-            {"formats": "csv"},
-            "The Download component requires 'format' parameter to be defined",
-        ),
-        (
             {"format": "csvs"},
             "Download component 'format' value failed validation: csvs",
         ),
     ),
-    ids=["correct1", "correct2", "missing_required", "wrong_format"],
+    ids=["correct1", "correct2", "wrong_format"],
 )
 def test_layout_Download(spec, msg):
     if msg is None:
