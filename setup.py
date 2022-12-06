@@ -24,6 +24,7 @@ dependencies = [
     "holoviews >=1.14",
     "packaging",
     "intake",
+    "jinja2 >3.0"
 ]
 
 extras_require = {
