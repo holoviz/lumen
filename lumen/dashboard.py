@@ -568,6 +568,8 @@ class Dashboard(Component, Viewer):
 
     def _create_sidebar(self):
         self._sidebar = pn.Accordion(margin=0, sizing_mode='stretch_width')
+        self._update_button = pn.widgets.Button(name='Apply Update')
+        self._update_button.on_click(self._update_pipelines)
 
     def _populate_template(self):
         self._template.modal[:] = [self._modal]
@@ -647,18 +649,21 @@ class Dashboard(Component, Viewer):
                         views.append(filt.panel)
                         filters.append(filt)
         if not self.config.auto_update:
-            button = pn.widgets.Button(name='Apply Update')
-            def update_pipelines(event):
-                for layout in self.layouts:
-                    if layout is None or isinstance(layout, Future):
-                        continue
-                    for pipeline in layout._pipelines.values():
-                        pipeline.param.trigger('update')
-            button.on_click(update_pipelines)
-            views.append(button)
+            views.append(self._update_button)
         if not views or len(self.layouts) == 1:
             return None, None
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
+
+    def _update_pipelines(self, event=None):
+        self._update_button.loading = True
+        try:
+            for layout in self.layouts:
+                if layout is None or isinstance(layout, Future):
+                    continue
+                for pipeline in layout._pipelines.values():
+                    pipeline.param.trigger('update')
+        finally:
+            self._update_button.loading = False
 
     def _render_filters(self):
         self._global_filters, global_panel = self._get_global_filters()
