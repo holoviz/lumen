@@ -413,8 +413,12 @@ class Layout(Component, Viewer):
         self._rerender(update_views=False)
 
     def _manual_update(self, *events):
-        for p in self._pipelines.values():
-            p.param.trigger('update')
+        self._update_button.loading = True
+        try:
+            for p in self._pipelines.values():
+                p.param.trigger('update')
+        finally:
+            self._update_button.loading = False
 
     def _sync_component(self, component, *events):
         component.param.set_param(**{event.name: event.new for event in events})
