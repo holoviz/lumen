@@ -2,7 +2,7 @@
 
 ```{admonition} What is the purpose of this page?
 :class: important
-This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you achieved in the tutorial ([Build a dashboard](build_dashboard)). After this page you should start building your own dashboard. As you build, consult the relevant [How-to](../how_to/) guides or [Reference](../reference/) pages, as needed.
+This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you achieved in the tutorial ([Build a dashboard](build_dashboard)). After this page you should start building your own dashboard. As you build, consult the relevant [How-to](../how_to/index) guides or [Reference](../reference/index) pages, as needed.
 ```
 
 ## Overview

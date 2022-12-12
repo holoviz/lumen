@@ -2,7 +2,7 @@
 
 <img src="../_static/bikes.png" width="100%">
 
-```{literalinclude} ../../examples/bikes/bikes.yaml
+```{literalinclude} ../../examples/gallery/bikes/bikes.yaml
 ---
 language: yaml
 ```

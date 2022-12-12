@@ -31,7 +31,7 @@ from lumen.views import View
 bases = [Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
 
 BASE_PATH = pathlib.Path(lumen.__file__).parent.parent
-REFERENCE_PATH = BASE_PATH / 'docs' / 'reference'
+REFERENCE_PATH = BASE_PATH / 'doc' / 'reference'
 EXAMPLES_PATH = BASE_PATH / 'examples' / 'reference'
 
 def escape_param_doc(doc):

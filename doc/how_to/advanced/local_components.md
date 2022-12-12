@@ -146,7 +146,7 @@ lumen serve dashboard.yaml --show
 ```
 
 
-![](../_static/how_to/local_components/local_components_app.png)
+![](../../_static/how_to/local_components/local_components_app.png)
 
 
 ## Approach 2: Using module paths
@@ -266,7 +266,7 @@ Now launch the dashboard with:
 lumen serve dashboard.yaml --show
 ```
 
-![](../_static/how_to/local_components/local_components_app.png)
+![](../../_static/how_to/local_components/local_components_app.png)
 
 
 ## Related Resources
