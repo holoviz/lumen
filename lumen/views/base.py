@@ -73,7 +73,7 @@ class Download(Component, Viewer):
     _validate_params: ClassVar[bool] = True
 
     @classmethod
-    def validate(cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None):
+    def validate(cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None):
         if isinstance(spec, str):
             spec = {'format': spec}
         return super().validate(spec, context)
@@ -268,7 +268,7 @@ class View(MultiTypeComponent, Viewer):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any], source=None, filters=None, pipeline=None):
+    def from_spec(cls, spec: Dict[str, Any] | str, source=None, filters=None, pipeline=None):
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -290,6 +290,11 @@ class View(MultiTypeComponent, Viewer):
         -------
         The resolved View object.
         """
+        if isinstance(spec, str):
+            raise ValueError(
+                "View cannot be materialized by reference. Please pass "
+                "full specification for the View."
+            )
         spec = spec.copy()
         resolved_spec, refs = {}, {}
 

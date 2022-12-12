@@ -1,6 +1,6 @@
 import pytest
 
-from lumen.sources import Source
+from lumen.sources.base import Source
 from lumen.validation import ValidationError
 
 

@@ -6,7 +6,7 @@ import textwrap
 from typing import Any, ClassVar
 
 import numpy as np
-import param
+import param  # type: ignore
 
 from jinja2 import Template
 

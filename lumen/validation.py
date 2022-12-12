@@ -21,7 +21,7 @@ def validate_parameters(params: list[str], expected: list[str], name: str) -> No
 def match_suggestion_message(
     word: str,
     possibilities: list[str],
-    msg: str | None = None,
+    msg: str = '',
     n: int = 3
 ) -> str:
     match = get_close_matches(word, possibilities, n)
@@ -40,7 +40,7 @@ def match_suggestion_message(
 def reverse_match_suggestion(
     word: str,
     possibilities: list[str],
-    msg: str | None
+    msg: str
 ) -> tuple[str, str | None]:
     match = get_close_matches(word, list(possibilities), n=1)
     if match:

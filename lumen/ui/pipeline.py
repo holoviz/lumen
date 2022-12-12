@@ -1,12 +1,12 @@
 import pathlib
 
 import panel as pn
-import param
+import param  # type: ignore
 
-from lumen.filters import Filter
+from lumen.filters.base import Filter
 from lumen.pipeline import Pipeline
 from lumen.state import state as lm_state
-from lumen.transforms import Transform
+from lumen.transforms.base import Transform
 
 from .base import WizardItem
 from .fast import FastComponent

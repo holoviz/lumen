@@ -324,7 +324,7 @@ class Pipeline(Viewer, Component):
     @classmethod
     def from_spec(
         cls, spec: Dict[str, Any] | str, source: Source | None = None,
-        source_filters: List[Filter] | None = None
+        source_filters: Dict[str, Filter] | None = None
     ):
         if isinstance(spec, str):
             return state.pipelines[spec]
@@ -347,7 +347,7 @@ class Pipeline(Viewer, Component):
                 else:
                     resolved_source = state.load_source(source, state.spec['sources'][source])
             else:
-                resolved_source = source
+                resolved_source = source  # type: ignore
             params['source'] = resolved_source
         elif 'pipeline' in spec:
             pipeline = spec['pipeline']

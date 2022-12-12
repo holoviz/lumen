@@ -176,7 +176,7 @@ class Component(param.Parameterized):
     @classmethod
     def _validate_list_subtypes(
         cls, key: str, subtype: Type[Component], subtype_specs: List[Dict[str, Any] | str],
-        spec: Dict[str, Any], context: Dict[str, Any], subcontext: List[Dict[str, Any]] | None = None
+        spec: Dict[str, Any], context: Dict[str, Any], subcontext: List[Dict[str, Any] | str] | None = None
     ):
         if not isinstance(subtype_specs, list):
             raise ValidationError(
@@ -225,7 +225,7 @@ class Component(param.Parameterized):
     @classmethod
     def _validate_dict_or_list_subtypes(
         cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str],
-        spec: Dict[str, Any], context: Dict[str, Any], subcontext: Dict[str, Any] | List[Dict[str, Any]] | None = None
+        spec: Dict[str, Any], context: Dict[str, Any], subcontext: Dict[str, Any] | List[Dict[str, Any] | str] | None = None
     ):
         if isinstance(subtype_specs, list):
             assert subcontext is None or isinstance(subcontext, list)
@@ -344,6 +344,11 @@ class Component(param.Parameterized):
         -------
         Resolved and instantiated Component object
         """
+        if isinstance(spec, str):
+            raise ValueError(
+                "Component cannot be materialized by reference. Please pass "
+                "full specification for the component."
+            )
         return cls(**spec)
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -381,15 +386,15 @@ class Component(param.Parameterized):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
+        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
     ) -> Dict[str, Any] | str:
         """
         Validates the component specification given the validation context.
 
         Arguments
         -----------
-        spec: dict
-          The specification for the component being validated.
+        spec: dict | str
+          The specification for the component being validated (or a referene to the component)
         context: dict
           Validation context contains the specification of all previously validated components,
           e.g. to allow resolving of references.
@@ -398,6 +403,8 @@ class Component(param.Parameterized):
         --------
         Validated specification.
         """
+        if isinstance(spec, str):
+            return spec
         context = {} if context is None else context
         cls._validate_keys(spec)
         cls._validate_required(spec)
@@ -497,6 +504,11 @@ class MultiTypeComponent(Component):
 
     @classmethod
     def from_spec(cls, spec: Dict[str, Any] | str) -> 'MultiTypeComponent':
+        if isinstance(spec, str):
+            raise ValueError(
+                "MultiTypeComponent cannot be materialized by reference. Please pass "
+                "full specification for the MultiTypeComponent."
+            )
         component_cls = cls._get_type(spec['type'], spec)
         return component_cls(**spec)
 
@@ -514,15 +526,15 @@ class MultiTypeComponent(Component):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
+        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
     ) -> Dict[str, Any] | str:
         """
         Validates the component specification given the validation context and the path.
 
         Arguments
         -----------
-        spec: dict
-          The specification for the component being validated.
+        spec: dict | str
+          The specification for the component being validated or a reference to the component.
         context: dict
           Validation context contains the specification of all previously validated components,
           e.g. to allow resolving of references.
@@ -531,6 +543,8 @@ class MultiTypeComponent(Component):
         --------
         Validated specification.
         """
+        if isinstance(spec, str):
+            return spec
         context = {} if context is None else context
         if 'type' not in spec:
             msg = f'{cls.__name__} component specification did not declare a type.'

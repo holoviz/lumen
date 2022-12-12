@@ -1,5 +1,5 @@
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.reactive import ReactiveHTML
 

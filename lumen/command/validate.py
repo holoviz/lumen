@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from bokeh.command.subcommand import Argument, Subcommand
+from bokeh.command.subcommand import Argument, Subcommand  # type: ignore
 
 from ..validation import ValidationError
 

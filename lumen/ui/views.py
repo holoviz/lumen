@@ -1,11 +1,11 @@
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.reactive import ReactiveHTML
 
 from lumen.state import state as lm_state
 from lumen.util import catch_and_notify
-from lumen.views import View
+from lumen.views.base import View
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem
@@ -356,11 +356,11 @@ class hvPlotViewEditor(ViewEditor):
     view_type = param.String(default='hvplot')
 
     def __init__(self, **params):
-        import hvplot.pandas  # noqa
+        import hvplot.pandas  # type: ignore # noqa
         super().__init__(**params)
 
     def render(self):
-        from hvplot.ui import hvDataFrameExplorer
+        from hvplot.ui import hvDataFrameExplorer  # type: ignore
         kwargs = dict(self.spec)
         del kwargs['type']
         pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]

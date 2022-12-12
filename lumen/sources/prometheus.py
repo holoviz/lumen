@@ -6,7 +6,7 @@ from concurrent import futures
 
 import pandas as pd
 import panel as pn
-import param
+import param  # type: ignore
 import requests
 
 from ..util import parse_timedelta

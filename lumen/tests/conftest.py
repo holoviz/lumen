@@ -7,12 +7,12 @@ import pandas as pd
 import panel as pn
 import pytest
 
-from bokeh.document import Document
+from bokeh.document import Document  # type: ignore
 
 from lumen.config import config
-from lumen.sources import FileSource, Source
+from lumen.sources.base import FileSource, Source
 from lumen.state import state
-from lumen.variables import Variables
+from lumen.variables.base import Variables
 
 
 @pytest.fixture

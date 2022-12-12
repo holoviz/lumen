@@ -2,7 +2,7 @@ import argparse
 
 from pathlib import Path
 
-from bokeh.command.subcommand import Argument, Subcommand
+from bokeh.command.subcommand import Argument, Subcommand  # type: ignore
 
 from lumen.config import config
 from lumen.state import state

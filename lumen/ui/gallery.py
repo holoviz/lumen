@@ -1,7 +1,7 @@
 import os
 import pathlib
 
-import param
+import param  # type: ignore
 import yaml
 
 from panel.reactive import ReactiveHTML

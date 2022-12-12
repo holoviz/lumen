@@ -1,11 +1,11 @@
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.reactive import ReactiveHTML
 
 from lumen.config import _LAYOUTS
 from lumen.state import state as lm_state
-from lumen.views import View
+from lumen.views.base import View
 
 from .base import WizardItem
 from .gallery import Gallery, GalleryItem

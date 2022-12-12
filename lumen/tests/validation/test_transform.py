@@ -1,6 +1,6 @@
 import pytest
 
-from lumen.transforms import Transform
+from lumen.transforms.base import Transform
 from lumen.validation import ValidationError
 
 

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import (
-    Any, ClassVar, Dict, Type,
+    Any, ClassVar, Dict, List, Type,
 )
 
-import param
+import param  # type: ignore
 import yaml
 
 from .util import resolve_module_reference
@@ -17,7 +17,7 @@ class AuthPlugin(param.Parameterized):
     transforms to it.
     """
 
-    auth_type: ClassVar[str] | None = None
+    auth_type: ClassVar[str | None] = None
 
     @classmethod
     def _get_type(cls, auth_type: str) -> Type['AuthPlugin']:
@@ -83,7 +83,7 @@ class YamlAuthMapperPlugin(AuthPlugin):
         with open(self.yaml_file) as f:
             text = f.read()
         mapping = yaml.load(text, Loader=yaml.Loader)
-        new = defaultdict(list)
+        new: Dict[str, List[str]] = defaultdict(list)
         for origin, replacements in mapping.items():
             values = spec.pop(origin)
             for val in values:

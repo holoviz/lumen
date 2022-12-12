@@ -1,4 +1,8 @@
-import param
+from __future__ import annotations
+
+from typing import ClassVar
+
+import param  # type: ignore
 
 from panel.io.server import init_doc, state
 from panel.layout.base import ListLike, NamedListLike
@@ -8,7 +12,7 @@ from panel.widgets.select import SelectBase
 
 class FastDesignProvider(ListLike, ReactiveHTML):
 
-    _template = '<fast-design-system-provider id="fdsp" use-defaults>${objects}</fast-design-system-provider>'
+    _template: ClassVar[str] = '<fast-design-system-provider id="fdsp" use-defaults>${objects}</fast-design-system-provider>'
 
 
 class FastComponent(ReactiveHTML):

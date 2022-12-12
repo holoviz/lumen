@@ -2,13 +2,13 @@ import os
 import pathlib
 
 import panel as pn
-import param
+import param  # type: ignore
 import requests
 import yaml
 
 from panel.reactive import ReactiveHTML
 
-from lumen.sources import Source
+from lumen.sources.base import Source
 from lumen.state import state as lm_state
 from lumen.util import catch_and_notify
 

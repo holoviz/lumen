@@ -1,7 +1,7 @@
 from weakref import WeakKeyDictionary
 
 import panel as pn
-import param
+import param  # type: ignore
 
 
 class session_state(param.Parameterized):

@@ -1,8 +1,8 @@
-import param
+import param  # type: ignore
 
 from panel.widgets import RangeSlider
 
-from lumen.filters import Filter
+from lumen.filters.base import Filter
 
 
 def test_resolve_module_type():

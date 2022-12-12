@@ -1,29 +1,14 @@
-import param
+from __future__ import annotations
+
+from typing import ClassVar
+
+import param  # type: ignore
 
 from panel import panel
 from panel.reactive import ReactiveHTML
 from panel.widgets import FileDownload
 
 from .util import catch_and_notify
-
-try:
-    # Backward compatibility for panel 0.12.6
-    import bokeh.core.properties as bp
-
-    from panel.links import PARAM_MAPPING
-
-    # The Bokeh Color property has `_default_help` set which causes
-    # an error to be raise when Nullable is called on it. This converter
-    # overrides the Bokeh _help to set it to None and avoid the error.
-    # See https://github.com/holoviz/panel/issues/3058
-    def color_param_to_ppt(p, kwargs):
-        ppt = bp.Color(**kwargs)
-        ppt._help = None
-        return ppt
-
-    PARAM_MAPPING[param.Color] = color_param_to_ppt
-except Exception:
-    pass
 
 
 class DownloadButton(ReactiveHTML):
@@ -40,7 +25,7 @@ class DownloadButton(ReactiveHTML):
 
     size = param.Integer(default=20)
 
-    _template = """
+    _template: ClassVar[str] = """
     <style>
     .download-button {
       position: absolute;

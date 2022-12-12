@@ -1,5 +1,5 @@
-import intake
-import param
+import intake  # type: ignore
+import param  # type: ignore
 
 from ..util import get_dataframe_schema
 from .base import Source, cached, cached_schema

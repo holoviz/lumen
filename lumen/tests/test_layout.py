@@ -1,10 +1,10 @@
 from pathlib import Path
 
-import holoviews as hv
+import holoviews as hv  # type: ignore
 import numpy as np
 import pytest
 
-from bokeh.document import Document
+from bokeh.document import Document  # type: ignore
 from panel.io.server import set_curdoc
 from panel.layout import Card, Column, Row
 from panel.pane import HoloViews
@@ -13,10 +13,10 @@ from panel.widgets import Tabulator
 
 from lumen.layout import Layout
 from lumen.pipeline import Pipeline
-from lumen.sources import DerivedSource, FileSource
+from lumen.sources.base import DerivedSource, FileSource
 from lumen.state import state
-from lumen.transforms import Astype
-from lumen.views import View
+from lumen.transforms.base import Astype
+from lumen.views.base import View
 
 
 def test_view_controls(set_root):

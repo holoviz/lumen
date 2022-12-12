@@ -147,7 +147,12 @@ class Config(Component):
         return theme
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any]) -> 'Dashboard':
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Dashboard':
+        if isinstance(spec, str):
+            raise ValueError(
+                "Config cannot be materialized by reference. Please pass "
+                "full specification for the Config."
+            )
         if 'template' in spec:
             template = spec['template']
             if template in _TEMPLATES:
@@ -289,7 +294,12 @@ class Auth(Component):
     _allows_refs: ClassVar[bool] = False
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any]) -> 'Auth':
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Auth':
+        if isinstance(spec, str):
+            raise ValueError(
+                "Auth cannot be materialized by reference. Please pass "
+                "full specification for Auth."
+            )
         spec = dict(spec)
         case_sensitive = spec.pop('case_sensitive', cls.case_sensitive)
         plugins = spec.pop('plugins', [])
@@ -785,7 +795,7 @@ class Dashboard(Component, Viewer):
 
     @classmethod
     def _validate_layouts(
-        cls, layout_specs: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, layout_specs: List[Dict[str, Any] | str], spec: Dict[str, Any], context: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         if 'layouts' not in context:
             context['layouts'] = []
@@ -805,7 +815,7 @@ class Dashboard(Component, Viewer):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
+        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
         """
         Validates the component specification given the validation context.
@@ -819,6 +829,11 @@ class Dashboard(Component, Viewer):
         --------
         Validated specification.
         """
+        if isinstance(spec, str):
+            raise ValueError(
+                'Dashboard must be materialized with a full specification. '
+                'Materializing a Dashboard from a string is not supported.'
+            )
         if context is not None:
             raise ValueError(
                 'Dashboard.validate is already the top-level context '

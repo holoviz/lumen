@@ -1,23 +1,28 @@
+from __future__ import annotations
+
 import datetime as dt
 import warnings
 
 from functools import partial
 from io import BytesIO, StringIO
 from itertools import product
+from typing import (
+    Any, ClassVar, Dict, List, Literal, Tuple,
+)
 
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.util import PARAM_NAME_PATTERN
-from panel.viewable import Layoutable, Viewer
+from panel.viewable import Layoutable, Viewable, Viewer
 from param import edit_constant
 
 from .base import Component
 from .config import _LAYOUTS
-from .filters import FacetFilter, Filter
+from .filters.base import FacetFilter, Filter
 from .panel import IconButton
 from .pipeline import Pipeline
-from .sources import Source
+from .sources.base import Source
 from .state import state
 from .util import catch_and_notify, extract_refs
 from .validation import ValidationError, match_suggestion_message
@@ -50,7 +55,7 @@ class Card(Viewer):
         )
         self._card[:] = [self._construct_layout()]
 
-    def __panel__(self):
+    def __panel__(self) -> pn.Card:
         return self._card
 
     def _construct_layout(self):
@@ -162,8 +167,8 @@ class Facet(Component):
     sort = param.ListSelector(default=[], objects=[], doc="""
         List of fields to sort by.""")
 
-    _valid_keys = 'params'
-    _required_keys = ['by']
+    _valid_keys: ClassVar[Literal['params']] = 'params'
+    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['by']
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -179,7 +184,7 @@ class Facet(Component):
         )
         self._reverse_widget.link(self, value='reverse')
 
-    def get_sort_key(self, views):
+    def get_sort_key(self, views) -> Tuple:
         sort_key = []
         for field in self.sort:
             values = [v.get_value(field) for v in views]
@@ -237,8 +242,8 @@ class Download(Component, Viewer):
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
 
-    _internal_params = ['name', 'pipelines']
-    _required_keys = []
+    _internal_params: ClassVar[List[str]] = ['name', 'pipelines']
+    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = []
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -767,7 +772,7 @@ class Layout(Component, Viewer):
         return cls(source=source, pipelines=pipelines, **params)
 
     @property
-    def refs(self):
+    def refs(self) -> List[str]:
         refs = []
         for pipeline in self._pipelines.values():
             for ref in pipeline.refs:
@@ -781,7 +786,7 @@ class Layout(Component, Viewer):
         return refs
 
     @property
-    def panels(self):
+    def panels(self) -> Viewable:
         """
         Returns a layout of the rendered View objects on this layout.
         """
@@ -815,7 +820,7 @@ class Layout(Component, Viewer):
             )
         return layout_type(*content, **kwargs)
 
-    def to_spec(self, context=None):
+    def to_spec(self, context: Dict[str, Any] = None) -> Dict[str, Any]:
         spec = super().to_spec(context=context)
         if len(self._pipelines) == 1:
             pipeline = list(self._pipelines.values())[0]
@@ -840,7 +845,7 @@ class Layout(Component, Viewer):
         return spec
 
     @pn.depends('refresh_rate', watch=True)
-    def start(self, event=None):
+    def start(self, event: param.parameterized.Event | None = None):
         """
         Starts any periodic callback instantiated on this object.
         """
@@ -854,7 +859,7 @@ class Layout(Component, Viewer):
                 self.update, refresh_rate
             )
 
-    def update(self, *events, clear_cache=True):
+    def update(self, *events: param.parameterized.Event, clear_cache: bool = True):
         """
         Updates the views on this layout by clearing any caches and
         rerendering the views on this Layout.

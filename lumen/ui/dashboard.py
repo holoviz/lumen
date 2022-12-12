@@ -1,7 +1,7 @@
 import pathlib
 
 import panel as pn
-import param
+import param  # type: ignore
 import yaml
 
 from .base import WizardItem
@@ -31,7 +31,6 @@ class DashboardGalleryItem(GalleryItem):
 
     def _launch(self, event):
         self.selected = True
-
 
 
 class DashboardGallery(WizardItem, Gallery):

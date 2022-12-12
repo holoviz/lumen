@@ -1,6 +1,6 @@
 import pandas as pd
 import panel as pn
-import param
+import param  # type: ignore
 
 from .util import resolve_module_reference
 
