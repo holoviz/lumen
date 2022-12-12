@@ -247,7 +247,6 @@ class View(MultiTypeComponent, Viewer):
         self._panel = self.get_panel()
         return True
 
-
     @classmethod
     def _validate_filters(cls, *args, **kwargs):
         return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
@@ -269,7 +268,7 @@ class View(MultiTypeComponent, Viewer):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any], pipeline=None, source=None, filters=None):
+    def from_spec(cls, spec: Dict[str, Any], source=None, filters=None, pipeline=None):
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -278,14 +277,14 @@ class View(MultiTypeComponent, Viewer):
         ----------
         spec: dict
             Specification declared as a dictionary of parameter values.
-        pipeline: lumen.pipeline.Pipeline
-            The Lumen pipeline driving this View. Must not be supplied
-            if the spec contains a pipeline definition or reference.
         source: lumen.sources.Source
             The Source object containing the tables the View renders.
         filters: list(lumen.filters.Filter)
             A list of Filter objects which provide query values for
             the Source.
+        pipeline: lumen.pipeline.Pipeline
+            The Lumen pipeline driving this View. Must not be supplied
+            if the spec contains a pipeline definition or reference.
 
         Returns
         -------
@@ -521,7 +520,7 @@ class View(MultiTypeComponent, Viewer):
         Streams new data to the existing _panel object. Will only
         be called if streaming is enabled.
         """
-        raise NotImplementedError
+        raise NotImplementedError('View does not implement streaming.')
 
     def _cleanup(self):
         """
@@ -804,7 +803,7 @@ class hvPlotView(hvPlotBaseView):
             return
         if invalidate_cache:
             self._cache = None
-        if not self.streaming or self._stream is None:
+        if not self.streaming or self._data_stream is None:
             stale = self._update_panel()
             if stale:
                 self.param.trigger('rerender')

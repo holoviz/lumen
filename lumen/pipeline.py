@@ -346,6 +346,8 @@ class Pipeline(Viewer, Component):
                     resolved_source = state.sources[source]
                 else:
                     resolved_source = state.load_source(source, state.spec['sources'][source])
+            else:
+                resolved_source = source
             params['source'] = resolved_source
         elif 'pipeline' in spec:
             pipeline = spec['pipeline']
