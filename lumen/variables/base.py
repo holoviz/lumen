@@ -3,14 +3,13 @@ from __future__ import annotations
 import os
 
 from functools import partial
-from typing import (
-    TYPE_CHECKING, ClassVar, List, Literal,
-)
+from typing import TYPE_CHECKING, ClassVar, List
 
 import panel as pn
 import param  # type: ignore
 
 from panel.widgets import Widget as _PnWidget
+from typing_extensions import Literal
 
 from ..base import MultiTypeComponent
 from ..state import state

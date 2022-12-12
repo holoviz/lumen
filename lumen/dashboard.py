@@ -8,7 +8,7 @@ import traceback
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
-    Any, ClassVar, Dict, List, Literal, Tuple, Type,
+    Any, ClassVar, Dict, List, Tuple, Type,
 )
 
 import panel as pn
@@ -18,6 +18,7 @@ import yaml
 from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
 from panel.viewable import Viewable, Viewer
+from typing_extensions import Literal
 
 from .auth import AuthPlugin
 from .base import Component, MultiTypeComponent

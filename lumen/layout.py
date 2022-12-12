@@ -7,7 +7,7 @@ from functools import partial
 from io import BytesIO, StringIO
 from itertools import product
 from typing import (
-    Any, ClassVar, Dict, List, Literal, Tuple,
+    Any, ClassVar, Dict, List, Tuple,
 )
 
 import panel as pn
@@ -16,6 +16,7 @@ import param  # type: ignore
 from panel.util import PARAM_NAME_PATTERN
 from panel.viewable import Layoutable, Viewable, Viewer
 from param import edit_constant
+from typing_extensions import Literal
 
 from .base import Component
 from .config import _LAYOUTS

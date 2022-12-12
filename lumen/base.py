@@ -10,7 +10,7 @@ import warnings
 
 from functools import partial
 from typing import (
-    Any, ClassVar, Dict, List, Literal, Tuple, Type,
+    Any, ClassVar, Dict, List, Tuple, Type,
 )
 
 import pandas as pd
@@ -18,6 +18,7 @@ import panel as pn
 import param  # type: ignore
 
 from panel.util import classproperty
+from typing_extensions import Literal
 
 from .state import state
 from .util import (
