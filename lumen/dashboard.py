@@ -803,10 +803,10 @@ class Dashboard(Component, Viewer):
         spinner = pn.indicators.LoadingSpinner(width=30, height=30, align=('end', 'center'))
         pn.state.sync_busy(spinner)
 
-        title_html = f'<font color="white"><h1>{self.config.title}</h1></font>'
+        title_html = f'<div style="color: white; font-size: 2em;">{self.config.title}</div>'
         return pn.Column(
             pn.Row(
-                pn.pane.HTML(title_html, margin=(0, 20)),
+                pn.pane.HTML(title_html, margin=(20, 20), align='center'),
                 pn.layout.HSpacer(),
                 spinner,
                 background='#00aa41'
