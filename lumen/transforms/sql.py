@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import datetime as dt
 import textwrap
+
+from typing import Any, ClassVar
 
 import numpy as np
 import param
@@ -49,7 +53,7 @@ class SQLTransform(Transform):
         return sql_in
 
     @classmethod
-    def _render_template(cls, template, **params):
+    def _render_template(cls, template: str, **params: Any) -> str:
         template = textwrap.dedent(template).lstrip()
         return Template(template, trim_blocks=True, lstrip_blocks=True).render(**params)
 
@@ -65,7 +69,7 @@ class SQLGroupBy(SQLTransform):
     aggregates = param.Dict(doc="""
         mapping of Aggregate Functions to use to which column to use them on""")
 
-    transform_type = 'sql_group_by'
+    transform_type: ClassVar[str] = 'sql_group_by'
 
     def apply(self, sql_in):
         template = """
@@ -90,7 +94,7 @@ class SQLLimit(SQLTransform):
 
     limit = param.Integer(default=1000, doc="Limit on the number of rows to return")
 
-    transform_type = 'sql_limit'
+    transform_type: ClassVar[str] = 'sql_limit'
 
     def apply(self, sql_in):
         template = """
@@ -106,7 +110,7 @@ class SQLDistinct(SQLTransform):
 
     columns = param.List(default=[], doc="Columns to return distinct values for.")
 
-    transform_type = 'sql_distinct'
+    transform_type: ClassVar[str] = 'sql_distinct'
 
     def apply(self, sql_in):
         template = """
@@ -120,7 +124,7 @@ class SQLMinMax(SQLTransform):
 
     columns = param.List(default=[], doc="Columns to return min/max values for.")
 
-    transform_type = 'sql_minmax'
+    transform_type: ClassVar[str] = 'sql_minmax'
 
     def apply(self, sql_in):
         aggs = []
@@ -138,7 +142,7 @@ class SQLColumns(SQLTransform):
 
     columns = param.List(default=[], doc="Columns to return.")
 
-    transform_type = 'sql_columns'
+    transform_type: ClassVar[str] = 'sql_columns'
 
     def apply(self, sql_in):
         template = """
@@ -158,7 +162,7 @@ class SQLFilter(SQLTransform):
       List of filter conditions expressed as tuples of the column
       name and the filter value.""")
 
-    transform_type = 'sql_filter'
+    transform_type: ClassVar[str] = 'sql_filter'
 
     @classmethod
     def _range_filter(cls, col, v1, v2):

@@ -330,7 +330,7 @@ class Component(param.Parameterized):
         return [v for k, v in self._refs.items() if v.startswith('$variables.')]
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any]):
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Component':
         """
         Creates a Component instanceobject from a specification.
 
@@ -496,7 +496,7 @@ class MultiTypeComponent(Component):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any]) -> 'MultiTypeComponent':
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'MultiTypeComponent':
         component_cls = cls._get_type(spec['type'], spec)
         return component_cls(**spec)
 
@@ -515,7 +515,7 @@ class MultiTypeComponent(Component):
     @classmethod
     def validate(
         cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, Any] | str:
         """
         Validates the component specification given the validation context and the path.
 

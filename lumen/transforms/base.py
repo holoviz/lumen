@@ -1,20 +1,31 @@
 """
 The Transform components allow transforming tables in arbitrary ways.
 """
+from __future__ import annotations
 
 import datetime as dt
 import hashlib
 
+from typing import (
+    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Tuple, Union,
+)
+
 import numpy as np
 import pandas as pd
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
 from ..state import state
 from ..util import is_ref
+
+if TYPE_CHECKING:
+    from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
+    from panel.viewable import Viewable
+    DataFrame = Union[pd.DataFrame, dDataFrame]
+    Series = Union[pd.Series, dSeries]
 
 
 class Transform(MultiTypeComponent):
@@ -25,14 +36,14 @@ class Transform(MultiTypeComponent):
     controls = param.List(default=[], doc="""
         Parameters that should be exposed as widgets in the UI.""")
 
-    transform_type = None
+    transform_type: ClassVar[str | None] = None
 
-    _field_params = []
+    _field_params: ClassVar[List[str]] = []
 
     __abstract = True
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Transform':
         """
         Resolves a Transform specification.
 
@@ -45,6 +56,11 @@ class Transform(MultiTypeComponent):
         -------
         The resolved Transform object.
         """
+        if isinstance(spec, str):
+            raise ValueError(
+                "Transform cannot be materialized by reference. Please pass "
+                "full specification for the transform."
+            )
         spec = dict(spec)
         transform_type = Transform._get_type(spec.pop('type', None))
         new_spec, refs = {}, {}
@@ -104,7 +120,7 @@ class Transform(MultiTypeComponent):
         return transform
 
     @classmethod
-    def apply_to(cls, table, **kwargs):
+    def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
         """
         Calls the apply method based on keyword arguments passed to define transform.
 
@@ -118,12 +134,12 @@ class Transform(MultiTypeComponent):
         """
         return cls(**kwargs).apply(table)
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         """
         Implements hashing to allow a Source to compute a hash key.
         """
         sha = hashlib.sha256()
-        hash_vals = (type(self).__name__.encode('utf-8'),)
+        hash_vals: Tuple[Any, ...] = (type(self).__name__.encode('utf-8'),)
         hash_vals += tuple(sorted([
             (k, v) for k, v in self.param.values().items()
             if k not in Transform.param
@@ -131,7 +147,7 @@ class Transform(MultiTypeComponent):
         sha.update(_generate_hash(hash_vals))
         return int(sha.hexdigest(), base=16)
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         """
         Given a table transform it in some way and return it.
 
@@ -148,14 +164,14 @@ class Transform(MultiTypeComponent):
         return table
 
     @property
-    def control_panel(self):
+    def control_panel(self) -> Viewable:
         return pn.Param(
             self.param, parameters=self.controls, sizing_mode='stretch_width',
             margin=(-10, 0, 5, 0)
         )
 
     @property
-    def refs(self):
+    def refs(self) -> List[str]:
         refs = super().refs
         for c in self.controls:
             if c not in refs:
@@ -181,7 +197,7 @@ class Filter(Transform):
       name and the filter value.""")
 
     @classmethod
-    def _range_filter(cls, column, start, end):
+    def _range_filter(cls, column: Series, start: Any, end: Any) -> Series | None:
         if column.dtype.kind == 'M':
             if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
                 start = dt.datetime(*start.timetuple()[:3], 0, 0, 0)
@@ -197,7 +213,7 @@ class Filter(Transform):
             mask = (column>=start) & (column<=end)
         return mask
 
-    def apply(self, df):
+    def apply(self, df: DataFrame) -> DataFrame:
         filters = []
         for k, val in self.conditions:
             if k not in df.columns:
@@ -262,7 +278,7 @@ class HistoryTransform(Transform):
         super().__init__(**params)
         self._buffer = []
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         """
         Accumulates a history of the data in a buffer up to the
         declared `length` and optionally adds the current datetime to
@@ -308,11 +324,11 @@ class Aggregate(Transform):
     kwargs = param.Dict(default={}, doc="""
         Keyword arguments to the aggregation method.""")
 
-    transform_type = 'aggregate'
+    transform_type: ClassVar[str] = 'aggregate'
 
-    _field_params = ['by', 'columns']
+    _field_params: ClassVar[List[str]] = ['by', 'columns']
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         grouped = table.groupby(self.by)
         if self.columns:
             grouped = grouped[self.columns]
@@ -335,11 +351,11 @@ class Sort(Transform):
        orders. If this is a list of bools, must match the length of
        the by.""")
 
-    transform_type = 'sort'
+    transform_type: ClassVar[str] = 'sort'
 
-    _field_params = ['by']
+    _field_params: ClassVar[List[str]] = ['by']
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.sort_values(self.by, ascending=self.ascending)
 
 
@@ -353,9 +369,9 @@ class Query(Transform):
     query = param.String(doc="""
         The query to apply to the table.""")
 
-    transform_type = 'query'
+    transform_type: ClassVar[str] = 'query'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.query(self.query)
 
 
@@ -369,11 +385,11 @@ class Columns(Transform):
     columns = param.ListSelector(doc="""
         The subset of columns to select.""")
 
-    transform_type = 'columns'
+    transform_type: ClassVar[str] = 'columns'
 
-    _field_params = ['columns']
+    _field_params: ClassVar[List[str]] = ['columns']
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table[self.columns]
 
 
@@ -384,9 +400,9 @@ class Astype(Transform):
 
     dtypes = param.Dict(doc="Mapping from column name to new type.")
 
-    transform_type = 'as_type'
+    transform_type: ClassVar[str] = 'as_type'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         table = table.copy()
         for col, dtype in self.dtypes.items():
             if col in table.columns:
@@ -410,9 +426,9 @@ class Stack(Transform):
     level = param.ClassSelector(default=-1, class_=(int, list, str), doc="""
         The indexes to stack.""")
 
-    transform_type = 'stack'
+    transform_type: ClassVar[str] = 'stack'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.stack(level=self.level, dropna=self.dropna)
 
 
@@ -429,9 +445,9 @@ class Unstack(Transform):
     level = param.ClassSelector(default=-1, class_=(int, list, str), doc="""
         The indexes to unstack.""")
 
-    transform_type = 'unstack'
+    transform_type: ClassVar[str] = 'unstack'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.unstack(level=self.level, fill_value=self.fill_value)
 
 
@@ -446,9 +462,9 @@ class Iloc(Transform):
 
     end = param.Integer(default=None)
 
-    transform_type = 'iloc'
+    transform_type: ClassVar[str] = 'iloc'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.iloc[self.start:self.end]
 
 
@@ -468,9 +484,9 @@ class Sample(Transform):
     replace = param.Boolean(default=False, doc="""
         Sample with or without replacement.""")
 
-    transform_type = 'sample'
+    transform_type: ClassVar[str] = 'sample'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.sample(n=self.n, frac=self.frac, replace=self.replace)
 
 
@@ -479,9 +495,9 @@ class Compute(Transform):
     `Compute` turns a `dask.dataframe.DataFrame` into a `pandas.DataFrame`.
     """
 
-    transform_type = 'compute'
+    transform_type: ClassVar[str] = 'compute'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.compute()
 
 
@@ -502,9 +518,9 @@ class Pivot(Transform):
         If not specified, all remaining columns will be used
         and the result will have hierarchically indexed columns.""")
 
-    transform_type = 'pivot'
+    transform_type: ClassVar[str] = 'pivot'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.pivot(index=self.index, columns=self.columns, values=self.values)
 
 
@@ -532,14 +548,22 @@ class Melt(Transform):
     value_name = param.String(default='value', doc="""
          Name to use for the 'value' column.""")
 
-    transform_type = 'melt'
+    transform_type: ClassVar[str] = 'melt'
 
-    _field_params = ['id_vars', 'value_vars']
+    _field_params: ClassVar[List[str]] = ['id_vars', 'value_vars']
 
-    def apply(self, table):
-        return pd.melt(table, id_vars=self.id_vars, value_vars=self.value_vars,
-                       var_name=self.var_name, value_name=self.value_name,
-                       ignore_index=self.ignore_index)
+    def apply(self, table: DataFrame) -> DataFrame:
+        melt: Callable
+        if isinstance(table, pd.DataFrame):
+            melt = pd.melt
+        else:
+            import dask.dataframe as dd
+            melt = dd.melt
+        return melt(
+            table, id_vars=self.id_vars, value_vars=self.value_vars,
+            var_name=self.var_name, value_name=self.value_name,
+            ignore_index=self.ignore_index
+        )
 
 
 class SetIndex(Transform):
@@ -564,11 +588,11 @@ class SetIndex(Transform):
         until necessary. Setting to False will improve the performance
         of this method.""")
 
-    transform_type = 'set_index'
+    transform_type: ClassVar[str] = 'set_index'
 
-    _field_params = ['keys']
+    _field_params: ClassVar[List[str]] = ['keys']
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.set_index(
             self.keys, drop=self.drop, append=self.append,
             verify_integrity=self.verify_integrity
@@ -599,13 +623,13 @@ class ResetIndex(Transform):
         Only remove the given levels from the index. Removes all levels
         by default.""")
 
-    transform_type = 'reset_index'
+    transform_type: ClassVar[str] = 'reset_index'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.reset_index(
             drop=self.drop, col_fill=self.col_fill, col_level=self.col_level,
             level=self.level
-        )
+        )  # type: ignore
 
 
 class Rename(Transform):
@@ -623,7 +647,7 @@ class Rename(Transform):
         Alternative to specifying axis (`mapper, axis=1` is equivalent to
         `columns=mapper`).""")
 
-    copy = param.Boolean(default=True, doc="""
+    copy = param.Boolean(default=False, doc="""
         Also copy underlying data.""")
 
     index = param.Dict(default=None, doc="""
@@ -637,13 +661,13 @@ class Rename(Transform):
     level = param.ClassSelector(default=None, class_=(int, str), doc="""
         In case of a MultiIndex, only rename labels in the specified level.""")
 
-    transform_type = 'rename'
+    transform_type: ClassVar[str] = 'rename'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.rename(
             axis=self.axis, columns=self.columns, copy=self.copy,
             index=self.index, mapper=self.mapper, level=self.level,
-        )
+        )  # type: ignore
 
 
 class RenameAxis(Transform):
@@ -678,9 +702,9 @@ class RenameAxis(Transform):
     mapper = param.ClassSelector(default=None, class_=(str, list), doc="""
         Value to set the axis name attribute.""")
 
-    transform_type = 'rename_axis'
+    transform_type: ClassVar[str] = 'rename_axis'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         return table.rename_axis(
             axis=self.axis, columns=self.columns, copy=self.copy,
             index=self.index, mapper=self.mapper,
@@ -699,9 +723,9 @@ class project_lnglat(Transform):
     longitude = param.String(default='longitude', doc="Longitude column")
     latitude = param.String(default='longitude', doc="Latitude column")
 
-    transform_type = 'project_lnglat'
+    transform_type: ClassVar[str] = 'project_lnglat'
 
-    def apply(self, table):
+    def apply(self, table: DataFrame) -> DataFrame:
         table = table.copy()
         longitude = table[self.longitude]
         latitude = table[self.latitude]
