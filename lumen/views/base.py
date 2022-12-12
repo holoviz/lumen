@@ -198,11 +198,7 @@ class View(MultiTypeComponent, Viewer):
                         if subref not in refs:
                             refs.append(subref)
                 current = current.pipeline
-            if any(
-                ref == event.name
-                for e in events
-                for ref in refs if ref.startswith('$variables')
-            ):
+            if any(ref == event.name for e in events for ref in refs):
                 return
         super()._update_ref(pname, ref, *events)
 
