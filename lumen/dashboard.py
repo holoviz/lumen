@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import html
 import importlib
 import importlib.util
@@ -5,34 +7,37 @@ import os
 import traceback
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from typing import (
+    Any, ClassVar, Dict, List, Literal, Tuple, Type,
+)
 
 import panel as pn
-import param
+import param  # type: ignore
 import yaml
 
 from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 
 from .auth import AuthPlugin
-from .base import Component
+from .base import Component, MultiTypeComponent
 from .config import (
     _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, config,
 )
-from .filters import ConstantFilter, Filter, WidgetFilter  # noqa
+from .filters.base import ConstantFilter, Filter, WidgetFilter  # noqa
 from .layout import Layout
 from .panel import IconButton
 from .pipeline import Pipeline
-from .sources import RESTSource, Source  # noqa
+from .sources.base import RESTSource, Source  # noqa
 from .state import state
-from .transforms import Transform  # noqa
+from .transforms.base import Transform  # noqa
 from .util import catch_and_notify, expand_spec, resolve_module_reference
 from .validation import ValidationError, match_suggestion_message
-from .variables import Variable, Variables
-from .views import View  # noqa
+from .variables.base import Variable, Variables
+from .views.base import View  # noqa
 
 
-def load_yaml(yaml_spec, **kwargs):
+def load_yaml(yaml_spec: str, **kwargs) -> Dict[str, Any]:
     expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
     return yaml.load(expanded, Loader=yaml.Loader)
 
@@ -89,8 +94,8 @@ class Config(Component):
                            check_on_set=False, doc="""
         The Panel template theme to style the dashboard with.""")
 
-    _valid_keys = 'params'
-    _validate_params = True
+    _valid_keys: ClassVar[Literal['params']] = 'params'
+    _validate_params: ClassVar[bool] = True
 
     @classmethod
     def _validate_layout(cls, layout, spec, context):
@@ -100,7 +105,9 @@ class Config(Component):
         return layout
 
     @classmethod
-    def _validate_template(cls, template, spec, context):
+    def _validate_template(
+        cls, template: str, spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> str:
         if template in _TEMPLATES:
             return template
         elif '.' not in template:
@@ -131,14 +138,16 @@ class Config(Component):
         return template
 
     @classmethod
-    def _validate_theme(cls, theme, spec, context):
+    def _validate_theme(
+        cls, theme: str, spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> str:
         if theme not in _THEMES:
             msg = f'Config theme {theme!r} could not be found. Theme must be one of {list(_THEMES)}.'
             raise ValidationError(msg, spec, 'theme')
         return theme
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec: Dict[str, Any]) -> 'Dashboard':
         if 'template' in spec:
             template = spec['template']
             if template in _TEMPLATES:
@@ -152,7 +161,7 @@ class Config(Component):
             spec['layout'] = _LAYOUTS[spec['layout']]
         return cls(**spec)
 
-    def to_spec(self, context=None):
+    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         spec = super().to_spec(context=context)
         if 'layout' in spec:
             spec['layout'] = {v: k for k, v in _LAYOUTS.items()}[spec['layout']]
@@ -190,11 +199,13 @@ class Defaults(Component):
 
     views = param.List(doc="Defaults for View objects.", class_=dict)
 
-    _valid_keys = 'params'
-    _validate_params = True
+    _valid_keys: ClassVar[Literal['params']] = 'params'
+    _validate_params: ClassVar[bool] = True
 
     @classmethod
-    def _validate_defaults(cls, defaults_type, defaults, spec):
+    def _validate_defaults(
+        cls, defaults_type: Type[MultiTypeComponent], defaults: List[Dict[str, Any]], spec: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         highlight = f'{defaults_type.__name__.lower()}s'
         if not isinstance(defaults, list):
             raise ValidationError(
@@ -228,19 +239,27 @@ class Defaults(Component):
         return defaults
 
     @classmethod
-    def _validate_filters(cls, filter_defaults, spec, context):
+    def _validate_filters(
+        cls, filter_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+    ):
         return cls._validate_defaults(Filter, filter_defaults, spec)
 
     @classmethod
-    def _validate_sources(cls, source_defaults, spec, context):
+    def _validate_sources(
+        cls, source_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+    ):
         return cls._validate_defaults(Source, source_defaults, spec)
 
     @classmethod
-    def _validate_transforms(cls, transform_defaults, spec, context):
+    def _validate_transforms(
+        cls, transform_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+    ):
         return cls._validate_defaults(Transform, transform_defaults, spec)
 
     @classmethod
-    def _validate_views(cls, view_defaults, spec, context):
+    def _validate_views(
+        cls, view_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+    ):
         return cls._validate_defaults(View, view_defaults, spec)
 
     def apply(self):
@@ -267,10 +286,10 @@ class Auth(Component):
         Dictionary of keys and values to match the pn.state.user_info
         against.""")
 
-    _allows_refs = False
+    _allows_refs: ClassVar[bool] = False
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec: Dict[str, Any]) -> 'Auth':
         spec = dict(spec)
         case_sensitive = spec.pop('case_sensitive', cls.case_sensitive)
         plugins = spec.pop('plugins', [])
@@ -280,10 +299,10 @@ class Auth(Component):
         return cls(spec=spec, case_sensitive=case_sensitive)
 
     @property
-    def authorized(self):
+    def authorized(self) -> bool:
         if not self.spec:
             return True
-        elif pn.state.user_info is None and self.spec:
+        elif pn.state.user_info is None:
             return config.dev
         authorized = True
         for k, value in self.spec.items():
@@ -381,7 +400,7 @@ class Dashboard(Component, Viewer):
         if CSS_URLS['font-awesome'] not in pn.config.css_files:
             pn.config.css_files.append(CSS_URLS['font-awesome'])
 
-    def __panel__(self):
+    def __panel__(self) -> Viewable:
         return self.layout()
 
     ##################################################################
@@ -405,7 +424,7 @@ class Dashboard(Component, Viewer):
         if isinstance(self._layout, pn.Tabs) and self.config.sync_with_url:
             pn.state.location.sync(self._layout, {'active': 'layout'})
 
-    def _load_specification(self, from_file=False):
+    def _load_specification(self, from_file: bool = False):
         if self._yaml_file == 'local':
             return
         kwargs = {}
@@ -417,7 +436,7 @@ class Dashboard(Component, Viewer):
         state.spec = self.validate(load_yaml(self._yaml, **kwargs))
         state.resolve_views()
 
-    def _load_layout(self, layout_spec):
+    def _load_layout(self, layout_spec: Dict[str, Any]) -> Layout:
         layout_spec = dict(layout_spec)
         if 'reloadable' not in layout_spec:
             layout_spec['reloadable'] = self.config.reloadable
@@ -432,11 +451,11 @@ class Dashboard(Component, Viewer):
         layout.start()
         return layout
 
-    def _background_load(self, i, spec):
+    def _background_load(self, i: int, spec: Dict[str, Any]) -> Layout:
         self.layouts[i] = layout = self._load_layout(spec)
         return layout
 
-    def _materialize_specification(self, force=False):
+    def _materialize_specification(self, force: bool = False):
         if force or self._load_global or not state.global_sources:
             state.load_global_sources(clear_cache=force)
         if force or self._load_global or not state.pipelines:
@@ -582,7 +601,7 @@ class Dashboard(Component, Viewer):
     ##################################################################
 
     @catch_and_notify
-    def _activate_filters(self, event):
+    def _activate_filters(self, event: param.parameterized.Event):
         layout = self.layouts[event.new]
         rendered = self._rendered[event.new]
         if not rendered:
@@ -602,19 +621,21 @@ class Dashboard(Component, Viewer):
         self._render_filters()
         self._main.loading = False
 
-    def _edit(self, event):
+    def _edit(self, event: param.parameterized.Event):
         self._yaml = event.new
         self._edited = True
 
-    def _navigate(self, event):
+    def _navigate(self, event: param.parameterized.Event):
+        if pn.state.location is None:
+            return
         app = self._apps[event.new]
         pn.state.location.pathname = f'/{app}'
         pn.state.location.reload = True
 
-    def _set_loading(self, name=''):
+    def _set_loading(self, name: str = ''):
         state.loading_msg.object = f'<b>Reloading {name}...</b>'
         if isinstance(self._layout, pn.GridBox):
-            items = [pn.pane.HTML(width=self._layout[i].width)
+            items = [pn.pane.HTML(width=self._layout[i].width) # type: ignore
                      for i in range(self._layout.ncols) if i < len(self._layout)]
             index = int(min(self._layout.ncols, (len(self._layout)-1)) / 2)
             if items:
@@ -622,7 +643,7 @@ class Dashboard(Component, Viewer):
             else:
                 items = [self._loading]
         elif isinstance(self._layout, pn.Tabs):
-            items = list(zip(self._layout._names, list(self._layout.objects)))
+            items = list(zip(self._layout._names, list(self._layout.objects))) # type: ignore
             tab_name = items[self._layout.active][0]
             if name and tab_name != name:
                 return
@@ -632,10 +653,10 @@ class Dashboard(Component, Viewer):
         self._layout[:] = items
         self._main.loading = True
 
-    def _open_modal(self, event):
+    def _open_modal(self, event: param.parameterized.Event):
         self._template.open_modal()
 
-    def _get_global_filters(self):
+    def _get_global_filters(self) -> Tuple[List[Filter] | None, pn.Column | None]:
         views = []
         filters = []
         for layout in self.layouts:
@@ -654,7 +675,7 @@ class Dashboard(Component, Viewer):
             return None, None
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
 
-    def _update_pipelines(self, event=None):
+    def _update_pipelines(self, event: param.parameterized.Event | None = None):
         self._update_button.loading = True
         try:
             for layout in self.layouts:
@@ -685,7 +706,7 @@ class Dashboard(Component, Viewer):
                 filters.append(panel)
         self._sidebar[:] = filters
 
-    def _render_layouts(self, event=None):
+    def _render_layouts(self, event: param.parameterized.Event | None = None):
         if event is not None:
             self._set_loading(event.obj.title)
         items = []
@@ -737,7 +758,7 @@ class Dashboard(Component, Viewer):
             self._render_unauthorized()
         self._main.loading = False
 
-    def _reload(self, *events):
+    def _reload(self, *events: param.parameterized.Event):
         self._load_specification()
         self._materialize_specification(force=True)
         self._render()
@@ -747,25 +768,33 @@ class Dashboard(Component, Viewer):
     ##################################################################
 
     @classmethod
-    def _validate_pipelines(cls, pipeline_specs, spec, context):
+    def _validate_pipelines(
+        cls, pipeline_specs: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if 'pipelines' not in context:
             context['pipelines'] = {}
         return cls._validate_dict_subtypes('pipelines', Pipeline, pipeline_specs, spec, context, context['pipelines'])
 
     @classmethod
-    def _validate_sources(cls, source_specs, spec, context):
+    def _validate_sources(
+        cls, source_specs: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if 'sources' not in context:
             context['sources'] = {}
         return cls._validate_dict_subtypes('sources', Source, source_specs, spec, context, context['sources'])
 
     @classmethod
-    def _validate_layouts(cls, layout_specs, spec, context):
+    def _validate_layouts(
+        cls, layout_specs: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         if 'layouts' not in context:
             context['layouts'] = []
         return cls._validate_list_subtypes('layouts', Layout, layout_specs, spec, context, context['layouts'])
 
     @classmethod
-    def _validate_variables(cls, variable_specs, spec, context):
+    def _validate_variables(
+        cls, variable_specs: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if 'variables' not in context:
             context['variables'] = {}
         return cls._validate_dict_subtypes('variables', Variable, variable_specs, spec, context, context['variables'])
@@ -775,7 +804,9 @@ class Dashboard(Component, Viewer):
     ##################################################################
 
     @classmethod
-    def validate(cls, spec):
+    def validate(
+        cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
         """
         Validates the component specification given the validation context.
 
@@ -788,6 +819,11 @@ class Dashboard(Component, Viewer):
         --------
         Validated specification.
         """
+        if context is not None:
+            raise ValueError(
+                'Dashboard.validate is already the top-level context '
+                'you may not pass a context argument.'
+            )
         # Backward compatibility for old naming (targets -> layouts)
         if 'targets' in spec:
             spec['layouts'] = spec.pop('targets')
@@ -817,7 +853,7 @@ class Dashboard(Component, Viewer):
             )
         )
 
-    def to_spec(self):
+    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -825,7 +861,12 @@ class Dashboard(Component, Viewer):
         -------
         Declarative specification of this component.
         """
-        spec = {}
+        if context is not None:
+            raise ValueError(
+                'Dashboard.to_spec is already the top-level context '
+                'you may not pass a context argument.'
+            )
+        spec: Dict[str, Any] = {}
         spec['variables'] = {
             name: variable.to_spec(context=spec)
             for name, variable in state.variables._vars.items()
