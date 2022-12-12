@@ -69,7 +69,7 @@ class Download(Component, Viewer):
 
     # Specification configuration
     _internal_params: ClassVar[List[str]] = ['view', 'name']
-    _required_keys: ClassVar[List[str | Tuple[str]]] = ['format']
+    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['format']
     _validate_params: ClassVar[bool] = True
 
     @classmethod

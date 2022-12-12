@@ -49,7 +49,7 @@ class Component(param.Parameterized):
 
     # Keys that must be declared declared as a list of strings or
     # tuples of strings if one of multiple must be defined.
-    _required_keys: ClassVar[List[str | Tuple[str]]] = []
+    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = []
 
     # Keys that are valid to define
     _valid_keys: ClassVar[List[str] | Literal['params'] | None] = None
@@ -147,7 +147,9 @@ class Component(param.Parameterized):
             raise ValidationError(msg, spec, key)
 
     @classmethod
-    def _validate_required(cls, spec: Dict[str, Any], required: List[str | Tuple[str]] | None = None):
+    def _validate_required(
+        cls, spec: Dict[str, Any], required: List[str | Tuple[str, ...]] | None = None
+    ):
         if required is None:
             required_keys = cls._required_keys
         else:
@@ -173,7 +175,7 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_list_subtypes(
-        cls, key: str, subtype: Type[Component], subtype_specs: List[Dict[str, Any]],
+        cls, key: str, subtype: Type[Component], subtype_specs: List[Dict[str, Any] | str],
         spec: Dict[str, Any], context: Dict[str, Any], subcontext: List[Dict[str, Any]] | None = None
     ):
         if not isinstance(subtype_specs, list):
@@ -192,7 +194,7 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_dict_subtypes(
-        cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any]],
+        cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any] | str],
         spec: Dict[str, Any], context: Dict[str, Any], subcontext: Dict[str, Any] | None = None
     ):
         if not isinstance(subtype_specs, dict):
@@ -222,7 +224,7 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_dict_or_list_subtypes(
-        cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any]] | List[Dict[str, Any]],
+        cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str],
         spec: Dict[str, Any], context: Dict[str, Any], subcontext: Dict[str, Any] | List[Dict[str, Any]] | None = None
     ):
         if isinstance(subtype_specs, list):
@@ -380,7 +382,7 @@ class Component(param.Parameterized):
     @classmethod
     def validate(
         cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, Any] | str:
         """
         Validates the component specification given the validation context.
 
@@ -420,10 +422,10 @@ class MultiTypeComponent(Component):
 
     __abstract = True
 
-    _required_keys: ClassVar[List[str | Tuple[str]]] = ['type']
+    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['type']
 
     @classproperty
-    def _valid_keys_(cls) -> List[str | Tuple[str]] | None:
+    def _valid_keys_(cls) -> List[str | Tuple[str, ...]] | None:
         if cls._valid_keys is None:
             valid = None
         elif cls._valid_keys == 'params':

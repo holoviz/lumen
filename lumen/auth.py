@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 from collections import defaultdict
+from typing import (
+    Any, ClassVar, Dict, Type,
+)
 
 import param
 import yaml
@@ -12,10 +17,10 @@ class AuthPlugin(param.Parameterized):
     transforms to it.
     """
 
-    auth_type = None
+    auth_type: ClassVar[str] | None = None
 
     @classmethod
-    def _get_type(cls, auth_type):
+    def _get_type(cls, auth_type: str) -> Type['AuthPlugin']:
         if '.' in auth_type:
             return resolve_module_reference(auth_type, AuthPlugin)
         try:
@@ -28,12 +33,12 @@ class AuthPlugin(param.Parameterized):
         raise ValueError(f"No AuthPlugin for auth_type '{auth_type}' could be found.")
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec: Dict[str, Any]) -> 'AuthPlugin':
         spec = dict(spec)
         auth_plugin = cls._get_type(spec.pop('type'))
         return auth_plugin(**spec)
 
-    def transform(self, spec):
+    def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         return dict(spec)
 
 
@@ -71,9 +76,9 @@ class YamlAuthMapperPlugin(AuthPlugin):
 
     yaml_file = param.Filename()
 
-    auth_type = 'yaml'
+    auth_type: ClassVar[str] = 'yaml'
 
-    def transform(self, spec):
+    def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         spec = dict(spec)
         with open(self.yaml_file) as f:
             text = f.read()
