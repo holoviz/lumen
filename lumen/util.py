@@ -295,7 +295,6 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                raise e
                 if pn.config.notifications:
                     log.error(
                         f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
