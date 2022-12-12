@@ -134,7 +134,11 @@ class JSONSchema(pn.pane.PaneBase):
 
     def _enum(self, schema):
         wtype = self._multi_select_widget if self.multi else self._select_widget
-        return wtype, {'options': sorted(schema['enum'])}
+        try:
+            options = sorted(schema['enum'])
+        except TypeError:
+            options = schema['enum']
+        return wtype, {'options': options}
 
     def __init__(self, object=None, schema=None, **params):
         if schema is not None:
