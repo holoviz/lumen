@@ -404,7 +404,10 @@ class Dashboard(Component, Viewer):
         self._populate_template()
 
         state.config = self.config
-        pn.state.onload(self._render_dashboard)
+        if pn.state._is_pyodide:
+            self._render_dashboard()
+        else:
+            pn.state.onload(self._render_dashboard)
 
     def _init_config(self):
         pn.config.notifications = True

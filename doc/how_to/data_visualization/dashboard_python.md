@@ -24,6 +24,8 @@ pipeline = lm.Pipeline.from_spec({
     ],
     'auto_update': False
 })
+
+pipeline
 ```
 
 ## Attaching Views
@@ -59,6 +61,15 @@ layout
 
 ## Building the dashboard
 
+Finally we can add our `Layout` to a `Dashboard` instance and give the dashboard a title via the `config` option.
+
 ```{pyodide}
-lm.Dashboard(layouts=[layout], config={'title': 'Palmer Penguins'})
+lm.Dashboard(config={'title': 'Palmer Penguins'}, layouts=[layout])
+```
+
+```{admonition} Note
+---
+class: success
+---
+A `Dashboard` (like most other components can be previewed by displaying itself in notebook environments or by using `.show()` in a REPL. To serve it as a standalone application use the `.servable()` method and launch the notebook or script with `panel serve app.py`.
 ```
