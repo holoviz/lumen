@@ -333,7 +333,7 @@ class Component(param.Parameterized):
     @classmethod
     def from_spec(cls, spec: Dict[str, Any] | str) -> 'Component':
         """
-        Creates a Component instanceobject from a specification.
+        Creates a Component instance from a specification.
 
         Parameters
         ----------

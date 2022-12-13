@@ -264,7 +264,9 @@ class View(MultiTypeComponent, Viewer):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str, source=None, filters=None, pipeline=None):
+    def from_spec(
+        cls, spec: Dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> 'View':
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.

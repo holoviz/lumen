@@ -1,22 +1,35 @@
+from __future__ import annotations
+
+from typing import (
+    TYPE_CHECKING, Any, ClassVar, Dict,
+)
 from weakref import WeakKeyDictionary
 
 import panel as pn
 import param  # type: ignore
+
+if TYPE_CHECKING:
+    from bokeh.document import Document  # type: ignore
+    from panel.template import FastListTemplate
+
+    from lumen.sources.base import Source
+
+    from .views import ViewGallery
 
 
 class session_state(param.Parameterized):
 
     components = param.String(default='./components')
 
-    _modals = WeakKeyDictionary()
+    _modals: ClassVar[WeakKeyDictionary[Document, pn.Column]] = WeakKeyDictionary()
 
-    _sources = WeakKeyDictionary()
+    _sources: ClassVar[WeakKeyDictionary[Document, Dict[str, Source]]] = WeakKeyDictionary()
 
-    _specs = WeakKeyDictionary()
+    _specs: ClassVar[WeakKeyDictionary[Document, Dict[str, Any]]] = WeakKeyDictionary()
 
-    _templates = WeakKeyDictionary()
+    _templates: ClassVar[WeakKeyDictionary[Document, FastListTemplate]] = WeakKeyDictionary()
 
-    _views = WeakKeyDictionary()
+    _views: ClassVar[WeakKeyDictionary[Document, ViewGallery]] = WeakKeyDictionary()
 
     @property
     def spec(self):
@@ -39,7 +52,7 @@ class session_state(param.Parameterized):
         return self._modals.get(pn.state.curdoc)
 
     @modal.setter
-    def modal(self, modal):
+    def modal(self, modal: pn.Column):
         self._modals[pn.state.curdoc] = modal
 
     @property
@@ -47,7 +60,7 @@ class session_state(param.Parameterized):
         return self._templates.get(pn.state.curdoc)
 
     @template.setter
-    def template(self, template):
+    def template(self, template: FastListTemplate):
         self._templates[pn.state.curdoc] = template
 
     @property
@@ -55,7 +68,7 @@ class session_state(param.Parameterized):
         return self._views.get(pn.state.curdoc)
 
     @views.setter
-    def views(self, views):
+    def views(self, views: ViewGallery):
         self._views[pn.state.curdoc] = views
 
 

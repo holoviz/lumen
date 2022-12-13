@@ -326,6 +326,19 @@ class Pipeline(Viewer, Component):
         cls, spec: Dict[str, Any] | str, source: Source | None = None,
         source_filters: Dict[str, Filter] | None = None
     ):
+        """
+        Creates a Pipeline from a specification.
+
+        Parameters
+        ----------
+        spec : dict or str
+            Specification declared as a dictionary of parameter values
+            or a string referencing a source in the sources dictionary.
+
+        Returns
+        -------
+        Resolved and instantiated Pipeline object
+        """
         if isinstance(spec, str):
             return state.pipelines[spec]
         elif isinstance(spec, Pipeline):

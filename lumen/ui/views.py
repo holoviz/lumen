@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import ClassVar, Type
+
 import panel as pn
 import param  # type: ignore
 
@@ -8,7 +12,7 @@ from lumen.util import catch_and_notify
 from lumen.views.base import View
 
 from .base import WizardItem
-from .gallery import Gallery, GalleryItem
+from .gallery import Editor, Gallery, GalleryItem
 from .sources import ASSETS_DIR
 from .state import state
 
@@ -222,7 +226,7 @@ class ViewGallery(WizardItem, Gallery):
     </div>
     """
 
-    _editor_type = ViewEditor
+    _editor_type: ClassVar[Type[Editor]] = ViewEditor
 
     _gallery_item = ViewGalleryItem
 
