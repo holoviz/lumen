@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import re
@@ -11,27 +13,40 @@ from functools import wraps
 from itertools import product
 from os.path import basename
 from pathlib import Path
+from typing import (
+    TYPE_CHECKING, Any, ClassVar, Dict, List, Tuple, Type, Union,
+)
 from urllib.parse import quote, urlparse
 
 import numpy as np
 import pandas as pd
 import panel as pn
-import param
+import param  # type: ignore
 import requests
 
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
-from ..filters import Filter
+from ..filters.base import Filter
 from ..state import state
-from ..transforms import Filter as FilterTransform, Transform
+from ..transforms.base import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
 
+DataFrameTypes: Tuple[Type, ...]
 try:
     import dask.dataframe as dd
+    DataFrameTypes = (pd.DataFrame, dd.DataFrame)
 except ImportError:
-    dd = None
+    dd = None  # type: ignore
+    DataFrameTypes = (pd.DataFrame,)
+
+if TYPE_CHECKING:
+    from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
+    from panel.viewable import Viewable
+    DataFrame = Union[pd.DataFrame, dDataFrame]
+    Series = Union[pd.Series, dSeries]
+
 
 
 def cached(method, locks=weakref.WeakKeyDictionary()):
@@ -141,23 +156,25 @@ class Source(MultiTypeComponent):
     root = param.ClassSelector(class_=Path, precedence=-1, doc="""
         Root folder of the cache_dir, default is config.root""")
 
-    source_type = None
+    source_type: ClassVar[str | None] = None
 
     __abstract = True
 
     # Specification configuration
-    _internal_params = ['name', 'root']
+    _internal_params: ClassVar[List[str]] = ['name', 'root']
 
     # Declare whether source supports SQL transforms
-    _supports_sql = False
+    _supports_sql: ClassVar[bool] = False
 
     @property
-    def _reload_params(self):
+    def _reload_params(self) -> List[str]:
         "List of parameters that trigger a data reload."
         return list(self.param)
 
     @classmethod
-    def _recursive_resolve(cls, spec, source_type):
+    def _recursive_resolve(
+        cls, spec: Dict[str, Any], source_type: Type['Source']
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         resolved_spec, refs = {}, {}
         if 'sources' in source_type.param and 'sources' in spec:
             resolved_spec['sources'] = {
@@ -175,6 +192,7 @@ class Source(MultiTypeComponent):
                 for sk, sv in subrefs.items():
                     refs[f'{k}.{sk}'] = sv
             if k == 'filters' and 'source' in resolved_spec:
+                assert isinstance(resolved_spec['source'], Source)
                 source_schema = resolved_spec['source'].get_schema()
                 v = [Filter.from_spec(fspec, source_schema) for fspec in v]
             if k == 'transforms':
@@ -183,7 +201,9 @@ class Source(MultiTypeComponent):
         return resolved_spec, refs
 
     @classmethod
-    def _validate_filters(cls, filter_specs, spec, context):
+    def _validate_filters(
+        cls, filter_specs: Dict[str, Dict[str, Any] | str], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
         warnings.warn(
             'Providing filters in a Source definition is deprecated, '
             'please declare filters as part of a Pipeline.', DeprecationWarning
@@ -191,17 +211,18 @@ class Source(MultiTypeComponent):
         return cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context)
 
     @classmethod
-    def validate(cls, spec, context=None):
+    def validate(cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None) -> Dict[str, Any] | str:
         if isinstance(spec, str):
-            if spec not in context['sources']:
+            if context is None or spec not in context.get('sources', {}):
                 msg = f'Referenced non-existent source {spec!r}.'
-                msg = match_suggestion_message(spec, list(context['sources']), msg)
+                sources = list(context.get('sources', {})) if context else []
+                msg = match_suggestion_message(spec, sources, msg)
                 raise ValidationError(msg, spec, spec)
             return spec
         return super().validate(spec, context)
 
     @classmethod
-    def from_spec(cls, spec):
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Source':
         """
         Creates a Source object from a specification. If a Source
         specification references other sources these may be supplied
@@ -237,7 +258,7 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
 
-    def _get_key(self, table, **query):
+    def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
         sha.update(table.encode('utf-8'))
         if 'sql_transforms' in query:
@@ -245,7 +266,7 @@ class Source(MultiTypeComponent):
         sha.update(_generate_hash(query))
         return sha.hexdigest()
 
-    def _get_schema_cache(self):
+    def _get_schema_cache(self) -> Dict[str, Dict[str, Any]]:
         schema = self._schema_cache if self._schema_cache else None
         if self.cache_dir:
             path = self.root / self.cache_dir / f'{self.name}.json'
@@ -271,19 +292,20 @@ class Source(MultiTypeComponent):
 
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
-        if self.cache_dir:
-            path = self.root / self.cache_dir
-            path.mkdir(parents=True, exist_ok=True)
-            try:
-                with open(path / f'{self.name}.json', 'w') as f:
-                    json.dump(schema, f, default=str)
-            except Exception as e:
-                self.param.warning(
-                    f"Could not cache schema to disk. Error while "
-                    f"serializing schema to disk: {e}"
-                )
+        if not self.cache_dir:
+            return
+        path = self.root / self.cache_dir
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(path / f'{self.name}.json', 'w') as f:
+                json.dump(schema, f, default=str)
+        except Exception as e:
+            self.param.warning(
+                f"Could not cache schema to disk. Error while "
+                f"serializing schema to disk: {e}"
+            )
 
-    def _get_cache(self, table, **query):
+    def _get_cache(self, table: str, **query) -> Tuple[DataFrame | None, bool]:
         query.pop('__dask', None)
         key = self._get_key(table, **query)
         if key in self._cache:
@@ -303,7 +325,9 @@ class Source(MultiTypeComponent):
                 return dd.read_parquet(path), not bool(query)
         return None, not bool(query)
 
-    def _set_cache(self, data, table, write_to_file=True, **query):
+    def _set_cache(
+        self, data: DataFrame, table: str, write_to_file: bool = True, **query
+    ):
         query.pop('__dask', None)
         key = self._get_key(table, **query)
         self._cache[key] = data
@@ -330,7 +354,7 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
-    def clear_cache(self, *events):
+    def clear_cache(self, *events: param.parameterized.Event):
         """
         Clears any cached data.
         """
@@ -342,14 +366,14 @@ class Source(MultiTypeComponent):
                 shutil.rmtree(path)
 
     @property
-    def panel(self):
+    def panel(self) -> Viewable | None:
         """
         A Source can return a Panel object which displays information
         about the Source or controls how the Source queries data.
         """
         return None
 
-    def get_tables(self):
+    def get_tables(self) -> List[str]:
         """
         Returns the list of tables available on this source.
 
@@ -360,7 +384,7 @@ class Source(MultiTypeComponent):
         """
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         """
         Returns JSON schema describing the tables returned by the
         Source.
@@ -388,10 +412,10 @@ class Source(MultiTypeComponent):
             return schemas if table is None else schemas[table]
         except KeyError as e:
             msg = f"{type(self).name} does not contain '{table}'"
-            msg = match_suggestion_message(table, names, msg)
+            msg = match_suggestion_message(table or '', names, msg)
             raise ValidationError(msg) from e
 
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> DataFrame:
         """
         Return a table; optionally filtered by the given query.
 
@@ -420,17 +444,17 @@ class RESTSource(Source):
 
     url = param.String(doc="URL of the REST endpoint to monitor.")
 
-    source_type = 'rest'
+    source_type: ClassVar[str] = 'rest'
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
         return {table: schema['items']['properties'] for table, schema in
                 response.json().items()}
 
     @cached
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> pd.DataFrame:
         query = dict(table=table, **query)
         r = requests.get(self.url+'/data', params=query)
         df = pd.DataFrame(r.json())
@@ -485,13 +509,13 @@ class FileSource(Source):
         'json': pd.read_json
     }
 
-    _load_kwargs = {
+    _load_kwargs: ClassVar[Dict[str, Dict[str, Any]]] = {
         'csv': {'parse_dates': True}
     }
 
     _template_re = re.compile(r'(\$\{[\w.]+\})')
 
-    source_type = 'file'
+    source_type: ClassVar[str] = 'file'
 
     def __init__(self, **params):
         if 'files' in params:
@@ -519,14 +543,14 @@ class FileSource(Source):
             raise ValueError(f"File type '{ext}' not recognized and cannot be loaded.")
         return self._pd_load_fns[ext], kwargs
 
-    def _set_cache(self, data, table, **query):
+    def _set_cache(self, data: DataFrame, table: str, write_to_file: bool = True, **query):
         file, ext = self._named_files[table]
         if ext in ('parq', 'parquet') and Path(file).exists():
-            query['write_to_file'] = False
-        super()._set_cache(data, table, **query)
+            write_to_file = False
+        super()._set_cache(data, table, write_to_file, **query)
 
     @property
-    def _named_files(self):
+    def _named_files(self) -> Dict[str, Tuple[str, str]]:
         if isinstance(self.tables, list):
             tables = {}
             for f in self.tables:
@@ -552,17 +576,17 @@ class FileSource(Source):
             files[name] = (table, ext)
         return files
 
-    def _resolve_template_vars(self, table):
+    def _resolve_template_vars(self, table: str) -> List[str]:
         for m in self._template_re.findall(str(table)):
             values = state.resolve_reference(f'${m[2:-1]}')
             values = ','.join([v for v in values])
             table = table.replace(m, quote(values))
         return [table]
 
-    def get_tables(self):
+    def get_tables(self) -> List[str]:
         return list(self._named_files)
 
-    def _load_table(self, table, dask=True):
+    def _load_table(self, table: str, dask: bool = True) -> DataFrame:
         df = None
         for name, (filepath, ext) in self._named_files.items():
             if isinstance(filepath, Path) or '://' not in filepath:
@@ -600,7 +624,7 @@ class FileSource(Source):
         return df
 
     @cached
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> DataFrame:
         dask = query.pop('__dask', self.dask)
         df = self._load_table(table)
         df = FilterTransform.apply_to(df, conditions=list(query.items()))
@@ -635,9 +659,9 @@ class JSONSource(FileSource):
         ```
     """)
 
-    source_type = 'json'
+    source_type: ClassVar[str] = 'json'
 
-    def _resolve_template_vars(self, template):
+    def _resolve_template_vars(self, template: str) -> List[str]:
         template_vars = self._template_re.findall(template)
         template_values = []
         for m in template_vars:
@@ -658,15 +682,14 @@ class JSONSource(FileSource):
                     table = table.replace(m, quote(tvals))
                 tables.append(table)
         else:
-            tvalues = list(zip(*cross_product))
             table = template
-            for m, tvals in zip(template_vars, tvalues):
+            for m, tvals in zip(template_vars, zip(*cross_product)):
                 values = ','.join([v for v in set(tvals)])
                 table = table.replace(m, quote(values))
             tables.append(table)
         return tables
 
-    def _load_fn(self, ext, dask=True):
+    def _load_fn(self, ext: str, dask: bool = True) -> DataFrame:
         return super()._load_fn('json', dask=dask)
 
 
@@ -680,10 +703,10 @@ class WebsiteSource(Source):
 
     urls = param.List(doc="URLs of the websites to monitor.")
 
-    source_type = 'live'
+    source_type: ClassVar[str] = 'live'
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schema = {
             "status": {
                 "url": {"type": "string", 'enum': self.urls},
@@ -692,11 +715,11 @@ class WebsiteSource(Source):
         }
         return schema if table is None else schema[table]
 
-    def get_tables(self):
+    def get_tables(self) -> List[str]:
         return ['status']
 
     @cached
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> pd.DataFrame:
         data = []
         for url in self.urls:
             try:
@@ -727,10 +750,10 @@ class PanelSessionSource(Source):
 
     timeout = param.Parameter(default=5)
 
-    source_type = 'session_info'
+    source_type: ClassVar[str] = 'session_info'
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schema = {
             "summary": {
                 "url": {"type": "string", "enum": self.urls},
@@ -752,17 +775,17 @@ class PanelSessionSource(Source):
         }
         return schema if table is None else schema[table]
 
-    def get_tables(self):
+    def get_tables(self) -> List[str]:
         return ['summary', 'sessions']
 
-    def _get_session_info(self, table, url):
-        r = requests.get(
+    def _get_session_info(self, table: str, url: str) -> List[Dict[str, Any]]:
+        res = requests.get(
             url + self.endpoint, verify=False, timeout=self.timeout
         )
-        data = []
-        if r.status_code != 200:
+        data: List[Dict[str, Any]] = []
+        if res.status_code != 200:
             return data
-        r = r.json()
+        r = res.json()
         session_info = r['session_info']
         sessions = session_info['sessions']
 
@@ -792,11 +815,11 @@ class PanelSessionSource(Source):
                     row["session_duration"] = session["ended"]-session["started"]
                 else:
                     row["session_duration"] = float('NaN')
-                data.push(row)
+                data.append(row)
         return data
 
     @cached
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> pd.DataFrame:
         data = []
         with futures.ThreadPoolExecutor(len(self.urls)) as executor:
             tasks = {executor.submit(self._get_session_info, table, url): url
@@ -866,18 +889,19 @@ class JoinedSource(Source):
         ```
         """)
 
-    source_type = 'join'
+    source_type: ClassVar[str] = 'join'
 
-    def get_tables(self):
+    def get_tables(self) -> List[str]:
         return list(self.tables)
 
     @cached_schema
-    def get_schema(self, table=None):
-        schemas = {}
+    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+        schemas: Dict[str, Dict[str, Any]] = {}
         for name, specs in self.tables.items():
             if table is not None and name != table:
                 continue
-            schemas[name] = schema = {}
+            schema: Dict[str, Any] = {}
+            schemas[name] = schema
             for spec in specs:
                 source, subtable = spec['source'], spec['table']
                 table_schema = self.sources[source].get_schema(subtable)
@@ -889,7 +913,7 @@ class JoinedSource(Source):
         return schemas if table is None else schemas[table]
 
     @cached
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> DataFrame:
         df, left_key = None, None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
@@ -904,10 +928,10 @@ class JoinedSource(Source):
             else:
                 df = pd.merge(df, df_merge, left_on=left_key,
                               right_on=right_key, how='outer')
-        return df
+        return df  # type: ignore
 
     @property
-    def panel(self):
+    def panel(self) -> pn.Column:
         column = pn.Column(sizing_mode='stretch_width')
         for name, source in self.sources.items():
             panel = source.panel
@@ -994,13 +1018,13 @@ class DerivedSource(Source):
     transforms = param.List(doc="""
         A list of transforms to apply to all tables of this source.""")
 
-    source_type = 'derived'
+    source_type: ClassVar[str] = 'derived'
 
     @classmethod
-    def _validate_filters(cls, *args, **kwargs):
+    def _validate_filters(cls, *args, **kwargs) -> List[Dict[str, Any] | str]:  # type: ignore
         return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
 
-    def _get_source_table(self, table):
+    def _get_source_table(self, table: str) -> DataFrame:
         if self.tables:
             spec = self.tables.get(table)
             if spec is None:
@@ -1017,7 +1041,7 @@ class DerivedSource(Source):
         return source.get(table, **query)
 
     @cached
-    def get(self, table, **query):
+    def get(self, table: str, **query) -> DataFrame:
         df = self._get_source_table(table)
         if self.tables:
             transforms = self.tables[table].get('transforms', []) + self.transforms
@@ -1030,7 +1054,7 @@ class DerivedSource(Source):
 
     get.__doc__ = Source.get.__doc__
 
-    def get_tables(self):
+    def get_tables(self) -> List[str]:
         return list(self.tables) if self.tables else self.source.get_tables()
 
     def clear_cache(self):

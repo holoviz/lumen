@@ -4,21 +4,22 @@ import sys
 
 from itertools import product
 from typing import (
-    Any, Dict, List, Optional, Type, Union,
+    Any, ClassVar, Dict, List, Tuple, Type,
 )
 
 import panel as pn
-import param
-import tqdm
+import param  # type: ignore
+import tqdm  # type: ignore
 
 from panel.viewable import Viewer
 from panel.widgets import Widget
 
 from .base import Component
-from .filters import Filter, ParamFilter, WidgetFilter
-from .sources import Source
+from .filters.base import Filter, ParamFilter, WidgetFilter
+from .sources.base import Source
 from .state import state
-from .transforms import Filter as FilterTransform, SQLTransform, Transform
+from .transforms.base import Filter as FilterTransform, Transform
+from .transforms.sql import SQLTransform
 from .util import VARIABLE_RE, catch_and_notify, get_dataframe_schema
 from .validation import ValidationError, match_suggestion_message
 
@@ -99,8 +100,8 @@ class Pipeline(Viewer, Component):
         Whether the pipeline is stale."""
     )
 
-    _internal_params = ['data', 'name', 'schema', '_stale']
-    _required_fields = [('source', 'pipeline')]
+    _internal_params: ClassVar[List[str]] = ['data', 'name', 'schema', '_stale']
+    _required_fields: ClassVar[List[str | Tuple[str, str]]] = [('source', 'pipeline')]
 
     def __init__(self, *, source, table, **params):
         if 'schema' not in params:
@@ -128,13 +129,13 @@ class Pipeline(Viewer, Component):
         if self.pipeline is not None:
             self.pipeline.param.watch(self._update_data, 'data')
 
-    def _update_refs(self, *events):
+    def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()
 
-    def __panel__(self):
+    def __panel__(self) -> pn.Row:
         return pn.Row(self.control_panel, self.param.data)
 
-    def to_spec(self, context=None):
+    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -171,7 +172,7 @@ class Pipeline(Viewer, Component):
         return spec
 
     @property
-    def refs(self):
+    def refs(self) -> List[str]:
         refs = self.source.refs.copy()
         for filt in self.filters:
             for ref in filt.refs:
@@ -219,7 +220,7 @@ class Pipeline(Viewer, Component):
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
-            from holoviews import Dataset
+            from holoviews import Dataset  # type: ignore
             if filt.value is not None:
                 ds = Dataset(data)
                 data = ds.select(filt.value).data
@@ -230,7 +231,7 @@ class Pipeline(Viewer, Component):
         return data
 
     @catch_and_notify
-    def _update_data(self, *events: param.Event, force: bool = False):
+    def _update_data(self, *events: param.parameterized.Event, force: bool = False):
         if self._update_widget.loading:
             return
         if not force and not self.auto_update and not any(e.name == 'update' for e in events):
@@ -257,7 +258,9 @@ class Pipeline(Viewer, Component):
             self._update_widget.loading = False
 
     @classmethod
-    def _validate_source(cls, source_spec, spec, context):
+    def _validate_source(
+        cls, source_spec: Dict[str, Any] | str, spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any] | str:
         if isinstance(source_spec, str):
             if source_spec not in context['sources']:
                 msg = f'Pipeline specified non-existent source {source_spec!r}.'
@@ -267,7 +270,9 @@ class Pipeline(Viewer, Component):
         return Source.validate(source_spec, context)
 
     @classmethod
-    def _validate_pipeline(cls, pipeline_spec, spec, context):
+    def _validate_pipeline(
+        cls, pipeline_spec: Dict[str, Any] | str, spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any] | str:
         if isinstance(pipeline_spec, str):
             if pipeline_spec not in context['pipelines']:
                 msg = f'Pipeline specified non-existent pipeline {pipeline_spec!r}.'
@@ -277,7 +282,12 @@ class Pipeline(Viewer, Component):
         return Pipeline.validate(pipeline_spec, context)
 
     @classmethod
-    def _validate_filters(cls, filter_specs, spec, context):
+    def _validate_filters(
+        cls,
+        filter_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str],
+        spec: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str]:
         for filter_spec in (filter_specs if isinstance(filter_specs, list) else filter_specs.values()):
             if not isinstance(filter_spec, str):
                 continue
@@ -300,9 +310,11 @@ class Pipeline(Viewer, Component):
         return cls._validate_dict_or_list_subtypes('filters', Filter, filter_specs, spec, context)
 
     @classmethod
-    def validate(cls, spec, context=None):
+    def validate(
+        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
+    ) -> Dict[str, Any] | str:
         if isinstance(spec, str):
-            if spec not in context['pipelines']:
+            if context is not None and spec not in context['pipelines']:
                 msg = f'Referenced non-existent pipeline {spec!r}.'
                 msg = match_suggestion_message(spec, list(context['pipelines']), msg)
                 raise ValidationError(msg, spec, spec)
@@ -311,9 +323,22 @@ class Pipeline(Viewer, Component):
 
     @classmethod
     def from_spec(
-        cls, spec: Dict[str, Any] | str, source: Optional[Source] = None,
-        source_filters: Optional[List[Filter]] = None
+        cls, spec: Dict[str, Any] | str, source: Source | None = None,
+        source_filters: Dict[str, Filter] | None = None
     ):
+        """
+        Creates a Pipeline from a specification.
+
+        Parameters
+        ----------
+        spec : dict or str
+            Specification declared as a dictionary of parameter values
+            or a string referencing a source in the sources dictionary.
+
+        Returns
+        -------
+        Resolved and instantiated Pipeline object
+        """
         if isinstance(spec, str):
             return state.pipelines[spec]
         elif isinstance(spec, Pipeline):
@@ -328,13 +353,15 @@ class Pipeline(Viewer, Component):
         if 'source' in spec:
             source = spec['source']
             if isinstance(source, dict):
-                source = Source.from_spec(source)
+                resolved_source = Source.from_spec(source)
             elif isinstance(source, str):
                 if source in state.sources:
-                    source = state.sources[source]
+                    resolved_source = state.sources[source]
                 else:
-                    source = state.load_source(source, state.spec['sources'][source])
-            params['source'] = source
+                    resolved_source = state.load_source(source, state.spec['sources'][source])
+            else:
+                resolved_source = source  # type: ignore
+            params['source'] = resolved_source
         elif 'pipeline' in spec:
             pipeline = spec['pipeline']
             if isinstance(pipeline, dict):
@@ -344,12 +371,12 @@ class Pipeline(Viewer, Component):
             else:
                 raise ValidationError('Pipeline {pipeline!r} could not be resolved.', spec)
             params['pipeline'] = pipeline
-            params['source'] = source = pipeline.source
+            params['source'] = resolved_source = pipeline.source
             params['table'] = pipeline.table
 
         # Validate table
         table = params.get('table')
-        tables = source.get_tables()
+        tables = resolved_source.get_tables()
         if table is None:
             if len(tables) > 1:
                 raise ValidationError(
@@ -360,10 +387,10 @@ class Pipeline(Viewer, Component):
                 )
             params['table'] = table = tables[0]
         elif table not in tables:
-            if hasattr(source, '_get_source'):
+            if hasattr(resolved_source, '_get_source'):
                 # Certain sources perform fuzzy matching so we use the
                 # internal API to see if the table has a match
-                source._get_source(table)
+                resolved_source._get_source(table)
             else:
                 raise ValidationError(
                     "The Pipeline specification references a table that is not "
@@ -374,7 +401,7 @@ class Pipeline(Viewer, Component):
         params['filters'] = filters = []
         filter_specs = spec.pop('filters', {})
         if filter_specs:
-            params['schema'] = schema = source.get_schema(table)
+            params['schema'] = schema = resolved_source.get_schema(table)
         for filt_spec in (filter_specs.items() if isinstance(filter_specs, dict) else filter_specs):
             if isinstance(filt_spec, tuple):
                 filt_spec = dict(filt_spec[1], table=table, name=filt_spec[0])
@@ -396,7 +423,9 @@ class Pipeline(Viewer, Component):
             obj.precache(precache)
         return obj
 
-    def add_filter(self, filt: Union[Filter, Type[Filter], Widget], field: Optional[str] = None, **kwargs):
+    def add_filter(
+        self, filt: Filter | Type[Filter] | Widget, field: str | None = None, **kwargs
+    ):
         """
         Add a filter to the pipeline.
 
@@ -448,9 +477,9 @@ class Pipeline(Viewer, Component):
 
     def chain(
         self,
-        filters: Optional[List[Filter]]=None,
-        transforms: Optional[List[Transform]] = None,
-        sql_transforms: Optional[List[Transform]] = None,
+        filters: List[Filter] | None = None,
+        transforms: List[Transform] | None = None,
+        sql_transforms: List[Transform] | None = None,
         **kwargs
     ):
         """
@@ -495,14 +524,16 @@ class Pipeline(Viewer, Component):
             self.param.watch(lambda e: new.param.trigger('update'), 'update')
         return new
 
-    def clone(self, **params) -> Pipeline:
+    def clone(self, **params) -> 'Pipeline':
         """
         Create a new instance of the pipeline with optionally overridden parameter values.
         """
         return type(self)(**dict({p: v for p, v in self.param.values().items()
                                   if p != 'name'}, **params))
 
-    def precache(self, queries: Dict[str, Dict[str, []]] | List[Dict[str, Dict[str, Any]]]) -> None:
+    def precache(
+        self, queries: Dict[str, Dict[str, List[Any]]] | List[Dict[str, Dict[str, Any]]]
+    ) -> None:
         """
         Populates the cache of the Source with the provided queries.
 
@@ -558,8 +589,8 @@ class Pipeline(Viewer, Component):
             self._update_data(force=True)
         self.auto_update = old_auto
 
-    def _set_spec(self, spec):
-        previous = {'variables': {}, 'filters': {}}
+    def _set_spec(self, spec: Dict[str, Any]):
+        previous: Dict[str, Dict[str, Any]] = {'variables': {}, 'filters': {}}
         filters = self.traverse('filters')
         for var_name, var_val in spec.get('variables', {}).items():
             variable = state.variables._vars[var_name]

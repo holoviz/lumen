@@ -1,16 +1,26 @@
+from __future__ import annotations
+
 import importlib
 import os
 import sys
 import weakref
 
+from types import ModuleType
+from typing import (
+    TYPE_CHECKING, Any, ClassVar, Dict, Type,
+)
+
 import panel as pn
-import param as param
+import param  # type: ignore
 
 from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
 from panel.widgets.indicators import Indicator
 
 from .validation import ValidationError, match_suggestion_message
+
+if TYPE_CHECKING:
+    from bokeh.document import Document  # type: ignore
 
 
 class ConfigDict(dict):
@@ -30,7 +40,7 @@ class ConfigDict(dict):
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
 _INDICATORS = ConfigDict("Indicator", **_INDICATORS)
 
-_LAYOUTS = {
+_LAYOUTS: Dict[str, Type[pn.layout.Panel]] = {
     'accordion': pn.Accordion,
     'column'   : pn.Column,
     'grid'     : pn.GridBox,
@@ -73,9 +83,9 @@ class _config(param.Parameterized):
     yamls = param.List(default=[], doc="""
       List of yaml files currently being served.""")
 
-    _modules = {}
+    _modules: ClassVar[Dict[str, ModuleType]] = {}
 
-    _session_config = weakref.WeakKeyDictionary()
+    _session_config: ClassVar[weakref.WeakKeyDictionary[Document, Dict[str, Any]]] = weakref.WeakKeyDictionary()
 
     @property
     def root(self):

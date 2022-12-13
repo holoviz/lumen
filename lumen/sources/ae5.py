@@ -2,10 +2,10 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
-import param
+import param  # type: ignore
 import requests
 
-from ae5_tools.api import AEAdminSession, AEUserSession
+from ae5_tools.api import AEAdminSession, AEUserSession  # type: ignore
 from panel import state
 
 from ..util import get_dataframe_schema

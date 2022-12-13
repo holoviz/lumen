@@ -1,6 +1,6 @@
 import os
 
-import param
+import param  # type: ignore
 
 from panel.widgets import IntSlider, TextInput
 

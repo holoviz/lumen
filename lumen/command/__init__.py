@@ -3,10 +3,10 @@ import ast
 import os
 import sys
 
-import bokeh.command.util
+import bokeh.command.util  # type: ignore
 
-from bokeh.application.handlers.code import CodeHandler
-from bokeh.command.util import (
+from bokeh.application.handlers.code import CodeHandler  # type: ignore
+from bokeh.command.util import (  # type: ignore
     build_single_handler_application as _build_application, die,
 )
 from panel.command import Serve, main as _pn_main, transform_cmds

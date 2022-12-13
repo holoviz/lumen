@@ -1,13 +1,22 @@
+from __future__ import annotations
+
 import os
 import pathlib
 
-import param
+from typing import ClassVar, Type
+
+import param  # type: ignore
 import yaml
 
 from panel.reactive import ReactiveHTML
 
 from ..util import expand_spec
 from .state import state
+
+
+class Editor(ReactiveHTML):
+
+    __abstract = True
 
 
 class GalleryItem(ReactiveHTML):
@@ -62,7 +71,7 @@ class Gallery(ReactiveHTML):
 
     hidden = param.Boolean(default=True)
 
-    _editor_type = None
+    _editor_type: ClassVar[Type[Editor] | None] = None
 
     _gallery_item = GalleryItem
 

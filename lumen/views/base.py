@@ -1,17 +1,22 @@
 """
-The View classes render the data returned by a Source as a Panel
+The View classes render the data returned by a Pipeline as a Panel
 object.
 """
+from __future__ import annotations
+
 import sys
 
 from io import BytesIO, StringIO
+from typing import (
+    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Tuple,
+)
 from weakref import WeakKeyDictionary
 
 import numpy as np
 import panel as pn
-import param
+import param  # type: ignore
 
-from bokeh.models import NumeralTickFormatter
+from bokeh.models import NumeralTickFormatter  # type: ignore
 from panel.pane.base import PaneBase
 from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
@@ -21,15 +26,20 @@ from panel.viewable import Viewable, Viewer
 
 from ..base import Component, MultiTypeComponent
 from ..config import _INDICATORS
-from ..filters import Filter, ParamFilter
+from ..filters.base import Filter, ParamFilter
 from ..panel import DownloadButton
 from ..pipeline import Pipeline
 from ..state import state
-from ..transforms import SQLTransform, Transform
+from ..transforms.base import Transform
+from ..transforms.sql import SQLTransform
 from ..util import (
     VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
 )
 from ..validation import ValidationError
+
+if TYPE_CHECKING:
+    from bokeh.document import Document  # type: ignore
+    from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -58,20 +68,21 @@ class Download(Component, Viewer):
     view = param.Parameter(doc="Holds the current view.")
 
     # Specification configuration
-    _internal_params = ['view', 'name']
-    _required_keys = ['format']
-    _validate_params = True
+    _internal_params: ClassVar[List[str]] = ['view', 'name']
+    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['format']
+    _validate_params: ClassVar[bool] = True
 
     @classmethod
-    def validate(cls, spec, context=None):
+    def validate(cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None):
         if isinstance(spec, str):
             spec = {'format': spec}
         return super().validate(spec, context)
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return self.format is not None
 
-    def _table_data(self):
+    def _table_data(self) -> IO:
+        io: IO[Any]
         if self.format in ('json', 'csv'):
             io = StringIO()
         else:
@@ -88,7 +99,7 @@ class Download(Component, Viewer):
         io.seek(0)
         return io
 
-    def __panel__(self):
+    def __panel__(self) -> DownloadButton:
         filename = f'{self.view.pipeline.table}.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
@@ -127,19 +138,19 @@ class View(MultiTypeComponent, Viewer):
 
     field = param.Selector(doc="The field being visualized.")
 
-    view_type = None
+    view_type: ClassVar[str | None] = None
 
     # Panel extension to load to render this View
-    _extension = None
+    _extension: ClassVar[str | None] = None
 
     # Parameters which reference fields in the table
-    _field_params = ['field']
+    _field_params: ClassVar[List[str]] = ['field']
 
-    _requires_source = True
+    _requires_source: ClassVar[bool] = True
 
-    _selections = WeakKeyDictionary()
+    _selections: ClassVar[WeakKeyDictionary[Document, link_selections]] = WeakKeyDictionary()
 
-    _supports_selections = False
+    _supports_selections: ClassVar[bool] = False
 
     __abstract = True
 
@@ -168,12 +179,12 @@ class View(MultiTypeComponent, Viewer):
             self._init_link_selections()
         self._initialized = False
 
-    def __panel__(self):
+    def __panel__(self) -> Viewable:
         if not self._initialized:
             self.update()
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
-    def _update_ref(self, pname, ref, *events):
+    def _update_ref(self, pname: str, ref: str, *events: param.parameterized.Event) -> None:
         # Note: Do not trigger update in View if Pipeline references
         # the same variable and is not set up to auto-update
         for event in events:
@@ -187,11 +198,7 @@ class View(MultiTypeComponent, Viewer):
                         if subref not in refs:
                             refs.append(subref)
                 current = current.pipeline
-            if any(
-                ref == event.name
-                for e in events
-                for ref in refs if ref.startswith('$variables')
-            ):
+            if any(ref == event.name for e in events for ref in refs):
                 return
         super()._update_ref(pname, ref, *events)
 
@@ -210,8 +217,31 @@ class View(MultiTypeComponent, Viewer):
         if 'selection_expr' in self.param:
             self._ls.param.watch(self._update_selection_expr, 'selection_expr')
 
-    def _update_selection_expr(self, event):
+    def _update_selection_expr(self, event: param.parameterized.Event):
         self.selection_expr = event.new
+
+    def __bool__(self) -> bool:
+        return self._cache is not None and len(self._cache) > 0
+
+    @catch_and_notify
+    def _update_panel(self, *events: param.parameterized.Event):
+        """
+        Updates the cached Panel object and returns a boolean value
+        indicating whether a rerender is required.
+        """
+        self._sync_refs(trigger=False)
+        if self._panel is not None:
+            self._cleanup()
+            try:
+                self._stream()
+                return False
+            except NotImplementedError:
+                updates = self._get_params()
+                if updates is not None:
+                    self._panel.param.set_param(**updates)
+                    return False
+        self._panel = self.get_panel()
+        return True
 
     @classmethod
     def _validate_filters(cls, *args, **kwargs):
@@ -229,8 +259,14 @@ class View(MultiTypeComponent, Viewer):
     def _validate_pipeline(cls, *args, **kwargs):
         return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
+    ##################################################################
+    # Public API
+    ##################################################################
+
     @classmethod
-    def from_spec(cls, spec, source=None, filters=None, pipeline=None):
+    def from_spec(
+        cls, spec: Dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> 'View':
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -239,19 +275,24 @@ class View(MultiTypeComponent, Viewer):
         ----------
         spec: dict
             Specification declared as a dictionary of parameter values.
-        pipeline: lumen.pipeline.Pipeline
-            The Lumen pipeline driving this View. Must not be supplied
-            if the spec contains a pipeline definition or reference.
         source: lumen.sources.Source
             The Source object containing the tables the View renders.
         filters: list(lumen.filters.Filter)
             A list of Filter objects which provide query values for
             the Source.
+        pipeline: lumen.pipeline.Pipeline
+            The Lumen pipeline driving this View. Must not be supplied
+            if the spec contains a pipeline definition or reference.
 
         Returns
         -------
         The resolved View object.
         """
+        if isinstance(spec, str):
+            raise ValueError(
+                "View cannot be materialized by reference. Please pass "
+                "full specification for the View."
+            )
         spec = spec.copy()
         resolved_spec, refs = {}, {}
 
@@ -330,30 +371,6 @@ class View(MultiTypeComponent, Viewer):
                     filt.parameter = view.param[parameter]
         return view
 
-    def __bool__(self):
-        return self._cache is not None and len(self._cache) > 0
-
-    @catch_and_notify
-    def _update_panel(self, *events):
-        """
-        Updates the cached Panel object and returns a boolean value
-        indicating whether a rerender is required.
-        """
-        self._sync_refs(trigger=False)
-        if self._panel is not None:
-            self._cleanup()
-            updates = self._get_params()
-            if updates is not None:
-                self._panel.param.set_param(**updates)
-                return False
-        self._panel = self.get_panel()
-        return True
-
-    def _cleanup(self):
-        """
-        Method that is called on update.
-        """
-
     def get_data(self):
         """
         Queries the Source for the specified table applying any
@@ -374,7 +391,7 @@ class View(MultiTypeComponent, Viewer):
         self._cache = data = self.pipeline.data
         return data.copy()
 
-    def get_value(self, field=None):
+    def get_value(self, field: str | None = None):
         """
         Queries the Source for the data associated with a particular
         field applying any filters and transformations specified on
@@ -400,20 +417,7 @@ class View(MultiTypeComponent, Viewer):
         row = data.iloc[-1]
         return row[self.field if field is None else field]
 
-    def get_panel(self):
-        """
-        Constructs and returns a Panel object which will represent a
-        view of the queried table.
-
-        Returns
-        -------
-        panel.Viewable
-            A Panel Viewable object representing a current
-            representation of the queried table.
-        """
-        return pn.panel(self.get_data())
-
-    def to_spec(self, context=None):
+    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -442,7 +446,7 @@ class View(MultiTypeComponent, Viewer):
             spec['pipeline'] = self.pipeline.name
         return spec
 
-    def update(self, *events, invalidate_cache=True):
+    def update(self, *events: param.parameterized.Event, invalidate_cache: bool=True):
         """
         Triggers an update in the View.
 
@@ -460,17 +464,14 @@ class View(MultiTypeComponent, Viewer):
         if stale:
             self.param.trigger('rerender')
 
-    def _get_params(self):
-        return None
-
     @property
-    def control_panel(self):
+    def control_panel(self) -> Param:
         return Param(
             self.param, parameters=self.controls, sizing_mode='stretch_width'
         )
 
     @property
-    def panel(self):
+    def panel(self) -> Viewable:
         if not self._initialized:
             self.update()
         panel = self._panel
@@ -484,12 +485,52 @@ class View(MultiTypeComponent, Viewer):
         return panel
 
     @property
-    def refs(self):
+    def refs(self) -> List[str]:
         refs = super().refs
         for c in self.controls:
             if c not in refs:
                 refs.append(c)
         return refs
+
+    ##################################################################
+    # Component subclassable API
+    ##################################################################
+
+    def get_panel(self) -> Viewable:
+        """
+        Constructs and returns a Panel object which will represent a
+        view of the queried table.
+
+        Returns
+        -------
+        panel.Viewable
+            A Panel Viewable object representing a current
+            representation of the queried table.
+        """
+        return pn.panel(self.get_data())
+
+    def _get_params(self) -> Dict[str, Any] | None:
+        """
+        Returns a dictionary of parameter values that will update the
+        parameters on the existing _panel object inplace.  If not
+        implemented each update will re-render the entire object by
+        calling get_panel and replacing the existing object.
+        """
+        return None
+
+    def _stream(self):
+        """
+        Streams new data to the existing _panel object. Will only
+        be called if streaming is enabled.
+        """
+        raise NotImplementedError('View does not implement streaming.')
+
+    def _cleanup(self):
+        """
+        Implements any cleanup that has to be performed when the View
+        is updated.
+        """
+
 
 
 class Panel(View):
@@ -518,9 +559,9 @@ class Panel(View):
 
     spec = param.Dict()
 
-    view_type = 'panel'
+    view_type: ClassVar[str] = 'panel'
 
-    _requires_source = False
+    _requires_source: ClassVar[bool] = False
 
     def _resolve_spec(self, spec):
         if not isinstance(spec, dict) or 'type' not in spec:
@@ -553,12 +594,12 @@ class StringView(View):
     font_size = param.String(default='24pt', doc="""
         The font size of the rendered field value.""")
 
-    view_type = 'string'
+    view_type: ClassVar[str] = 'string'
 
-    def get_panel(self):
+    def get_panel(self) -> pn.pane.HTML:
         return pn.pane.HTML(**self._get_params())
 
-    def _get_params(self):
+    def _get_params(self) -> Dict[str, Any]:
         value = self.get_value()
         params = dict(self.kwargs)
         if value is None:
@@ -591,7 +632,7 @@ class IndicatorView(View):
     def get_panel(self):
         return self.indicator(**self._get_params())
 
-    def _get_params(self):
+    def _get_params(self) -> Dict[str, Any]:
         params = dict(self.kwargs)
         if 'data' in self.indicator.param:
             params['data'] = self.get_data()
@@ -618,10 +659,10 @@ class hvPlotBaseView(View):
     __abstract = True
 
     def __init__(self, **params):
-        import hvplot.pandas  # noqa
+        import hvplot.pandas  # type: ignore # noqa
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # noqa
+                import hvplot.dask  # type: ignore # noqa
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
@@ -639,7 +680,7 @@ class hvPlotUIView(hvPlotBaseView):
     view_type = 'hvplot_ui'
 
     def _get_args(self):
-        from hvplot.ui import hvPlotExplorer
+        from hvplot.ui import hvPlotExplorer  # type: ignore
         params = {
             k: v for k, v in self.param.values().items()
             if k in hvPlotExplorer.param and v is not None and k != 'name'
@@ -686,7 +727,7 @@ class hvPlotView(hvPlotBaseView):
     _supports_selections = True
 
     def __init__(self, **params):
-        self._stream = None
+        self._data_stream = None
         self._linked_objs = []
         super().__init__(**params)
 
@@ -699,7 +740,7 @@ class hvPlotView(hvPlotBaseView):
                 v = NumeralTickFormatter(format=v)
             processed[k] = v
         if self.streaming:
-            processed['stream'] = self._stream
+            processed['stream'] = self._data_stream
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
@@ -738,8 +779,8 @@ class hvPlotView(hvPlotBaseView):
     def _get_params(self):
         df = self.get_data()
         if self.streaming:
-            from holoviews.streams import Pipe
-            self._stream = Pipe(data=df)
+            from holoviews.streams import Pipe  # type: ignore
+            self._data_stream = Pipe(data=df)
         return dict(object=self.get_plot(df))
 
     def update(self, *events, invalidate_cache=True):
@@ -765,12 +806,13 @@ class hvPlotView(hvPlotBaseView):
             return
         if invalidate_cache:
             self._cache = None
-        if not self.streaming or self._stream is None:
+        if not self.streaming or self._data_stream is None:
             stale = self._update_panel()
             if stale:
                 self.param.trigger('rerender')
         else:
-            self._stream.send(self.get_data())
+            self._data_stream.send(self.get_data())
+
 
 class Table(View):
     """
@@ -813,11 +855,12 @@ class DownloadView(View):
 
     _required_keys = ["format"]
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return True
 
     @catch_and_notify("Download failed")
-    def _table_data(self):
+    def _table_data(self) -> IO[Any]:
+        io: IO[Any]
         if self.format in ('json', 'csv'):
             io = StringIO()
         else:
@@ -834,10 +877,10 @@ class DownloadView(View):
         io.seek(0)
         return io
 
-    def get_panel(self):
+    def get_panel(self) -> pn.widgets.FileDownload:
         return pn.widgets.FileDownload(**self._get_params())
 
-    def _get_params(self):
+    def _get_params(self) -> Dict[str, Any]:
         filename = f'{self.filename}.{self.format}'
         return dict(filename=filename, callback=self._table_data, **self.kwargs)
 
@@ -886,14 +929,14 @@ class PerspectiveView(View):
 
     _field_params = ['columns', 'computed_columns', 'column_pivots', 'row_pivots']
 
-    def _get_params(self):
+    def _get_params(self) -> Dict[str, Any]:
         df = self.get_data()
         param_values = dict(self.param.get_param_values())
         params = set(View.param) ^ set(PerspectiveView.param)
         kwargs = dict({p: param_values[p] for p in params}, **self.kwargs)
         return dict(object=df, toggle_config=False, **kwargs)
 
-    def get_panel(self):
+    def get_panel(self) -> pn.pane.Perspective:
         return pn.pane.Perspective(**self._get_params())
 
 
@@ -929,8 +972,8 @@ class AltairView(View):
 
     _extension = 'vega'
 
-    def _transform_encoding(self, encoding, value):
-        import altair as alt
+    def _transform_encoding(self, encoding: str, value: Any) -> Any:
+        import altair as alt  # type: ignore
         if isinstance(value, dict):
             value = dict(value)
             for kw, val in value.items():
@@ -945,7 +988,7 @@ class AltairView(View):
             value = getattr(alt, encoding.capitalize())(**value)
         return value
 
-    def _get_params(self):
+    def _get_params(self) -> Dict[str, Any]:
         import altair as alt
         df = self.get_data()
         chart = alt.Chart(df, **self.chart)
@@ -963,7 +1006,7 @@ class AltairView(View):
             encoded = encoded.properties(**self.properties)
         return dict(object=encoded, **self.kwargs)
 
-    def get_panel(self):
+    def get_panel(self) -> pn.pane.Vega:
         return pn.pane.Vega(**self._get_params())
 
 

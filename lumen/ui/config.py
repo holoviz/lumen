@@ -1,4 +1,4 @@
-import param
+import param  # type: ignore
 
 from lumen.config import _TEMPLATES
 

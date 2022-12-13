@@ -1,6 +1,6 @@
 import pytest
 
-from lumen.filters import Filter
+from lumen.filters.base import Filter
 from lumen.validation import ValidationError
 
 

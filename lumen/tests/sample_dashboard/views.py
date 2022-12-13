@@ -1,4 +1,4 @@
-from lumen.views import View
+from lumen.views.base import View
 
 
 class TestView(View):

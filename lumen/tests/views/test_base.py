@@ -3,10 +3,10 @@ from pathlib import Path
 import pandas as pd
 
 from lumen.panel import DownloadButton
-from lumen.sources import FileSource
+from lumen.sources.base import FileSource
 from lumen.state import state
-from lumen.variables import Variables
-from lumen.views import View, hvPlotView
+from lumen.variables.base import Variables
+from lumen.views.base import View, hvPlotView
 
 
 def test_resolve_module_type():

@@ -1,7 +1,7 @@
 import pathlib
 
 import panel as pn
-import param
+import param  # type: ignore
 import yaml
 
 from panel import Param
