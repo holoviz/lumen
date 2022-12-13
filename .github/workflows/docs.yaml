@@ -57,7 +57,7 @@ jobs:
       # with pip as it's not yet available on conda-forge
         run: |
           conda activate test-environment
-          pip install rst-to-myst
+          pip install rst-to-myst "pydata-sphinx-theme==0.9.0"
       - name: build docs
         run: |
           conda activate test-environment
