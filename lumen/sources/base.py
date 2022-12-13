@@ -851,14 +851,12 @@ class JoinedSource(Source):
 
     As a simple example we may have sources A and B, which contain
     tables 'foo' and 'bar' respectively. We now want to merge these
-    tables on column 'a' in Table A with column 'b' in Table B:
+    tables on column 'a' in Table A with column 'b' in Table B::
 
-    ```
-    {'new_table': [
-        {'source': 'A', 'table': 'foo', 'index': 'a'},
-        {'source': 'B', 'table': 'bar', 'index': 'b'}
-    ]}
-    ```
+        {'new_table': [
+          {'source': 'A', 'table': 'foo', 'index': 'a'},
+          {'source': 'B', 'table': 'bar', 'index': 'b'}
+        ]}
 
     The joined source will now publish the "new_table" with all
     columns from tables "foo" and "bar" except for the index column
@@ -967,40 +965,36 @@ class DerivedSource(Source):
     In 'table' mode the tables can reference any table on any source
     using the reference syntax and declare filters and transforms to
     apply to that specific table, e.g. a table specification might
-    look like this:
+    look like this::
 
-    ```
-    {
-      'derived_table': {
-        'source': 'original_source',
-        'table': 'original_table'
-        'filters': [
-          ...
-        ],
-        'transforms': [
-          ...
-        ]
-      }
-    }
-    ```
+        {
+          'derived_table': {
+            'source': 'original_source',
+            'table': 'original_table'
+            'filters': [
+              ...
+            ],
+            'transforms': [
+              ...
+            ]
+          }
+        }
 
-    **Mirror**
+    **Mirror mode**
 
     When a `source` is declared all tables on that Source are mirrored
     and filtered and transformed according to the supplied `filters`
     and `transforms`. This is referred to as 'mirror' mode.
 
     In mirror mode the DerivedSource may reference an existing source
-    directly, e.g.:
+    directly, e.g.::
 
-    ```
-    {
-        'type': 'derived',
-        'source': 'original_source',
-        'filters': [...],
-        'transforms': [...],
-    }
-    ```
+        {
+            'type': 'derived',
+            'source': 'original_source',
+            'filters': [...],
+            'transforms': [...],
+        }
     """
 
     cache_per_query = param.Boolean(default=False, doc="""

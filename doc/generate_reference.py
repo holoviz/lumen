@@ -2,6 +2,7 @@ import numbers
 import pathlib
 import sys
 import textwrap
+import types
 import typing
 
 import numpy as np
@@ -12,7 +13,6 @@ param.parameterized.docstring_signature = False
 param.parameterized.docstring_describe_params = False
 
 from param import concrete_descendents
-from rst_to_myst import rst_to_myst
 
 import lumen
 import lumen.sources.intake
@@ -160,9 +160,32 @@ def generate_param_docs(base, component, gutter=3, margin=0):
         param_item = '<br>'.join(pitems)
         grid_item = f':::{{grid-item-card}} {pbadge}\n:shadow: md\n\n{param_item}\n:::'
         grid_items.append(grid_item)
+    if not grid_items:
+        return None
     grid_items = '\n\n'.join(grid_items)
     grid = f'::::{{grid}} 1 1 2 2\n:gutter: {gutter}\n:margin: {margin}\n\n{grid_items}\n\n::::'
     return f'## Parameters\n\n{grid}'
+
+PARAM_DEPRECATED = [
+    'debug', 'defaults', 'message', 'pprint', 'print_param_values', 'script_repr',
+    'state_pop', 'state_push', 'script_repr', 'verbose', 'warning'
+]
+
+def generate_automethods(component):
+    methods = [
+        member for member in dir(component)
+        if not member.startswith('_') and isinstance(getattr(component, member), types.FunctionType)
+        and member not in PARAM_DEPRECATED
+    ]
+    if not methods:
+        return None
+    automethods = ""
+    for method in methods:
+        automethods += f"""
+```{{eval-rst}}
+.. automethod:: {component.__module__}.{component.__name__}.{method}
+```"""
+    return f'## Methods\n\n{automethods}'
 
 def generate_page(base, component):
     title = f'# {component.__name__}'
@@ -171,20 +194,16 @@ def generate_page(base, component):
         title += f'&nbsp;&nbsp;{{bdg-primary}}`type: {ctype}`'
     title += '\n'
     page_items = [title]
-    if component.__doc__:
-        try:
-            lines = []
-            for line in rst_to_myst(component.__doc__).text.split('\n'):
-                if line.startswith('>'):
-                    line = line[1:].lstrip()
-                lines.append(line)
-            doc = '\n'.join(lines)
-            page_items.append(doc)
-        except Exception as e:
-            print(f'Failed to convert {title[2:]} docstring: {e}')
+    page_items.append(f"""
+```{{eval-rst}}
+.. autoclass:: {component.__module__}.{component.__name__}
+```\n\n""")
     params = generate_param_docs(base, component)
     if params:
         page_items.extend(['\n---', params])
+    methods = generate_automethods(component)
+    if methods:
+        page_items.extend(['\n---', methods])
     examples = generate_examples(base, component)
     if examples:
         page_items.extend(['\n---', examples])
