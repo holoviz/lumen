@@ -31,7 +31,8 @@ param.parameterized.docstring_describe_params = False
 
 import panel
 
-from nbsite.shared_conf import setup
+from nbsite import nbbuild
+from nbsite.shared_conf import remove_mystnb_static
 from nbsite.util import base_version  # noqa
 from panel.io.convert import BOKEH_VERSION, PY_VERSION
 from panel.io.resources import CDN_DIST, DIST_DIR
@@ -47,6 +48,10 @@ description = 'Declarative data intake, processing, visualization and dashboardi
 version = release = base_version(lumen.__version__)
 
 # -- General configuration ---------------------------------------------------
+
+def setup(app):
+    nbbuild.setup(app)
+    app.connect("builder-inited", remove_mystnb_static)
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom

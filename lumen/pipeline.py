@@ -30,7 +30,7 @@ class DataFrame(param.DataFrame):
     """
 
     def __get__(self, obj, objtype):
-        if (obj is not None and obj.__dict__.get(self._internal_name) is None) or (obj._stale and obj.auto_update):
+        if obj is not None and (obj.__dict__.get(self._internal_name) is None or (obj._stale and obj.auto_update)):
             obj._update_data(force=True)
         return super().__get__(obj, objtype)
 
