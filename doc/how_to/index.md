@@ -11,18 +11,20 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 * [Access local files]() (under construction)
 
 **[Data processing](data_processing/index)**
-* [Build a pipeline in Python](data_processing/pipeline_python)
+* [Build a pipeline programmatically](data_processing/pipeline_python)
 * [Branch a pipeline](data_processing/branch_pipeline)
 
 **[Data visualization](data_visualization/index)**
 * [Define views](data_visualization/views)
+* [Build a dashboard programmatically](data_processing/dashboard_python)
 * [Deploy a dashboard](data_visualization/deploy)
 
 **[Data output](data_output/index)**
 * [Download data from dashboard](data_output/download_data)
 
 **[Advanced topics](advanced/index)**
-* [Access custom components](custom_components/local_components)
+* [Access custom components](advanced/local_components)
+* [Configuring authentication](advanced/auth)
 
 ```{toctree}
 :titlesonly:
@@ -34,5 +36,5 @@ Data intake<data_intake/index>
 Data processing<data_processing/index>
 Data visualization<data_visualization/index>
 Data output<data_output/index>
-Custom components<custom_components/index>
+Advanced topics<advanced/index>
 ```

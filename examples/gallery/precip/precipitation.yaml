@@ -1,0 +1,41 @@
+config:
+  title: "Precipitation Dashboard"
+sources:
+  rockies:
+    type: intake
+    shared: true
+    cache_dir: cache
+    catalog:
+      sources:
+        southern_rockies:
+          driver: csv
+          args:
+            urlpath: 's3://datasets.holoviz.org/precipitation/v1/SRLCC_{emissions}_Precip_{model}.csv'
+            csv_kwargs:
+              skiprows: 3
+              names: ['time', 'precip']
+              parse_dates: ['time']
+pipelines:
+  rockies:
+    source: rockies
+    table: southern_rockies
+    filters:
+      - type: widget
+        field: model
+      - type: widget
+        field: model
+layouts:
+  - title: Southern Rockies
+    pipeline: rockies
+    facet:
+      by: [model]
+      layout: column
+    views:
+      - type: hvplot
+        kind: line
+        x: time
+        y: precip
+        by: [model, emissions]
+        min_height: 200
+        responsive: true
+    sizing_mode: stretch_width
