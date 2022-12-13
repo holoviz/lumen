@@ -361,6 +361,9 @@ class Dashboard(Component, Viewer):
                 params[pname] = subobj.from_spec(params[pname])
         if specification is None:
             specification = state.to_spec(**params)
+            load_vars = False
+        else:
+            load_vars = True
         if isinstance(specification, dict):
             state.spec = self.validate(specification)
             self._yaml = yaml.dump(specification)
@@ -392,7 +395,10 @@ class Dashboard(Component, Viewer):
         self.auth = Auth.from_spec(state.spec.get('auth', {}))
         self.config = Config.from_spec(state.spec.get('config', {}))
         self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
-        self.variables = Variables.from_spec(state.spec.get('variables', {}))
+        if load_vars:
+            self.variables = Variables.from_spec(state.spec.get('variables', {}))
+        else:
+            self.variables = state.variables
         self.defaults.apply()
 
         # Load and populate template
