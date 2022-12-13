@@ -41,6 +41,7 @@ extras_require = {
         'pre-commit',
     ],
     'doc': [
+        'pydata-sphinx-theme <=0.10',
         'nbsite >=0.8.0rc5',
         'sphinx-design',
         'sphinx-copybutton',
