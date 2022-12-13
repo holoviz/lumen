@@ -17,7 +17,9 @@
 
 # -- Project information -----------------------------------------------------
 
+import glob
 import json
+import os
 import pathlib
 
 from datetime import date
@@ -32,7 +34,7 @@ import panel
 from nbsite.shared_conf import setup
 from nbsite.util import base_version  # noqa
 from panel.io.convert import BOKEH_VERSION, PY_VERSION
-from panel.io.resources import CDN_DIST
+from panel.io.resources import CDN_DIST, DIST_DIR
 
 import lumen
 
@@ -72,7 +74,11 @@ else:
     bokeh_req = f'{CDN_DIST}wheels/bokeh-{BOKEH_VERSION}-py3-none-any.whl'
 
 nbsite_pyodide_conf = {
-    'requirements': [bokeh_req, panel_req, 'pandas', 'pyodide-http', 'holoviews>=1.15.1']
+    'requirements': [bokeh_req, panel_req, 'pandas', 'pyodide-http', 'holoviews>=1.15.1'],
+    'extra_css': [
+        CDN_DIST + f'css/{os.path.basename(cssf)}'
+        for cssf in glob.glob(str(DIST_DIR / 'css' / '*.css'))
+    ]
 }
 
 # Add any paths that contain templates here, relative to this directory.

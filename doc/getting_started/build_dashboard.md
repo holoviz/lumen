@@ -139,22 +139,21 @@ This plot is a bit overwhelming, so instead of plotting everything in one plot, 
 :::{tab-item} YAML
 :sync: yaml
 ``` {code-block} yaml
-:emphasize-lines: 13-17
+:emphasize-lines: 12-14
 sources:
   penguin_source:
     type: file
     tables:
       penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
-
 layouts:
   - title: Penguins
     source: penguin_source
     views:
       - type: hvplot
         table: penguin_table
+        kind: scatter
         x: bill_length_mm
         y: bill_depth_mm
-        kind: scatter
         color: species
 ```
 :::
@@ -223,8 +222,9 @@ We can even expand the views with a histogram and a table.
 
 :::{tab-item} YAML
 :sync: yaml
-``` {code-block} yaml
-:emphasize-lines: 29-34
+
+```{code-block} yaml
+:emphasize-lines: 29-33
 
 sources:
   penguin_source:
@@ -259,8 +259,8 @@ layouts:
         y: bill_length_mm
       - type: table
         show_index: false
-
 ```
+
 :::
 
 :::{tab-item} Preview
@@ -279,7 +279,7 @@ The default layout we get is less than ideal for this case since it cuts off one
 :::{tab-item} YAML
 :sync: yaml
 ``` {code-block} yaml
-:emphasize-lines: 23-25, 32-33, 37-38, 43
+:emphasize-lines: 23-25, 32-33, 37-38, 41
 
 sources:
   penguin_source:
