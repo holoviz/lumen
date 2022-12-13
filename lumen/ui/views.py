@@ -1,14 +1,18 @@
+from __future__ import annotations
+
+from typing import ClassVar, Type
+
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.reactive import ReactiveHTML
 
 from lumen.state import state as lm_state
 from lumen.util import catch_and_notify
-from lumen.views import View
+from lumen.views.base import View
 
 from .base import WizardItem
-from .gallery import Gallery, GalleryItem
+from .gallery import Editor, Gallery, GalleryItem
 from .sources import ASSETS_DIR
 from .state import state
 
@@ -222,7 +226,7 @@ class ViewGallery(WizardItem, Gallery):
     </div>
     """
 
-    _editor_type = ViewEditor
+    _editor_type: ClassVar[Type[Editor]] = ViewEditor
 
     _gallery_item = ViewGalleryItem
 
@@ -356,11 +360,11 @@ class hvPlotViewEditor(ViewEditor):
     view_type = param.String(default='hvplot')
 
     def __init__(self, **params):
-        import hvplot.pandas  # noqa
+        import hvplot.pandas  # type: ignore # noqa
         super().__init__(**params)
 
     def render(self):
-        from hvplot.ui import hvDataFrameExplorer
+        from hvplot.ui import hvDataFrameExplorer  # type: ignore
         kwargs = dict(self.spec)
         del kwargs['type']
         pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]

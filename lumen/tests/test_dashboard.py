@@ -8,7 +8,7 @@ from lumen.config import config
 from lumen.dashboard import Dashboard
 from lumen.state import state
 from lumen.validation import ValidationError
-from lumen.views import View
+from lumen.views.base import View
 
 
 def test_dashboard_with_local_view(set_root):

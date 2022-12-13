@@ -2,7 +2,7 @@ import argparse
 
 from pathlib import Path
 
-from bokeh.command.subcommand import Argument, Subcommand
+from bokeh.command.subcommand import Argument, Subcommand  # type: ignore
 from panel.command import Serve
 
 from ..ui.launcher import Launcher

@@ -1,8 +1,22 @@
+from __future__ import annotations
+
+from typing import (
+    TYPE_CHECKING, Any, Dict, List, Tuple, cast,
+)
 from weakref import WeakKeyDictionary
 
 import panel as pn
 
 from .util import extract_refs, is_ref
+
+if TYPE_CHECKING:
+    from bokeh.document import Document  # type: ignore
+
+    from .dashboard import Config
+    from .filters.base import Filter
+    from .pipeline import Pipeline
+    from .sources.base import Source
+    from .variables.base import Variables
 
 
 class _session_state:
@@ -12,46 +26,46 @@ class _session_state:
     across components.
     """
 
-    global_sources = {}
+    global_sources: Dict[str, Source] = {}
 
-    global_filters = {}
+    global_filters: Dict[str, Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
 
-    _configs = WeakKeyDictionary()
-    _config = None
+    _configs: WeakKeyDictionary[Document, Config] = WeakKeyDictionary()
+    _config: Config | None = None
 
-    _specs = WeakKeyDictionary()
-    _spec = {}
+    _specs: WeakKeyDictionary[Document, Dict[str, Any]] = WeakKeyDictionary()
+    _spec: Dict[str, Any] = {}
 
-    _loadings = WeakKeyDictionary()
-    _loading = None
+    _loadings: WeakKeyDictionary[Document, Dict[str, pn.pane.HTML]] = WeakKeyDictionary()
+    _loading: pn.pane.HTML | None = None
 
-    _sources = WeakKeyDictionary()
-    _source = {}
+    _sources: WeakKeyDictionary[Document, Dict[str, Source]] = WeakKeyDictionary()
+    _source: Dict[str, Source] = {}
 
-    _pipelines = WeakKeyDictionary()
-    _pipeline = {}
+    _pipelines: WeakKeyDictionary[Document, Dict[str, Pipeline]] = WeakKeyDictionary()
+    _pipeline: Dict[str, Pipeline] = {}
 
-    _filters = WeakKeyDictionary()
-    _filter = {}
+    _filters: WeakKeyDictionary[Document, Dict[str, Dict[str, Filter]]] = WeakKeyDictionary()
+    _filter: Dict[str, Dict[str, Filter]] = {}
 
-    _variables = WeakKeyDictionary()
-    _variable = None
+    _variables: WeakKeyDictionary[Document, Variables] = WeakKeyDictionary()
+    _variable: Variables | None = None
 
     @property
-    def config(self):
+    def config(self) -> Config | None:
         if pn.state.curdoc is None:
             return self._config
         return self._configs.get(pn.state.curdoc, self._config)
 
     @config.setter
-    def config(self, config):
+    def config(self, config: Config):
         if pn.state.curdoc is None:
             self._config = config
         else:
             self._configs[pn.state.curdoc] = config
 
     @property
-    def filters(self):
+    def filters(self) -> Dict[str, Dict[str, Filter]]:
         if pn.state.curdoc is None:
             if self._filter is None:
                 self._filter = self._global_filters
@@ -67,14 +81,14 @@ class _session_state:
         return self._loadings.get(pn.state.curdoc)
 
     @loading_msg.setter
-    def loading_msg(self, loading_msg):
+    def loading_msg(self, loading_msg: pn.pane.HTML):
         if pn.state.curdoc is None:
             self._loading = loading_msg
         else:
             self._loadings[pn.state.curdoc] = loading_msg
 
     @property
-    def pipelines(self):
+    def pipelines(self) -> Dict[str, Pipeline]:
         if pn.state.curdoc is None:
             return self._pipeline
         elif pn.state.curdoc not in self._pipelines:
@@ -82,7 +96,7 @@ class _session_state:
         return self._pipelines[pn.state.curdoc]
 
     @property
-    def sources(self):
+    def sources(self) -> Dict[str, Source]:
         if pn.state.curdoc is None:
             return self._source
         elif pn.state.curdoc not in self._sources:
@@ -92,28 +106,28 @@ class _session_state:
         return self._sources[pn.state.curdoc]
 
     @property
-    def spec(self):
+    def spec(self) -> Dict[str, Any]:
         if pn.state.curdoc is None:
             return self._spec
         return self._specs.get(pn.state.curdoc, self._spec)
 
     @spec.setter
-    def spec(self, spec):
+    def spec(self, spec: Dict[str, Any]):
         if pn.state.curdoc is None:
             self._spec = spec
         else:
             self._specs[pn.state.curdoc] = spec
 
     @property
-    def variables(self):
+    def variables(self) -> Variables:
         from .variables import Variables
         if self._variable is None:
             self._variable = Variables()
         if pn.state.curdoc is None:
-            return self._variable
+            return self._variable  # type: ignore
         elif pn.state.curdoc not in self._variables:
             self._variables[pn.state.curdoc] = variables = Variables()
-            for var in self._variable._vars.values():
+            for var in self._variable._vars.values():  # type: ignore
                 variables.add_variable(var)
         return self._variables[pn.state.curdoc]
 
@@ -189,7 +203,7 @@ class _session_state:
         return context
 
     @property
-    def global_refs(self):
+    def global_refs(self) -> List[str]:
         layout_refs = []
         source_specs = self.spec.get('sources', {})
         for layout in self.spec.get('layouts', []):
@@ -206,18 +220,19 @@ class _session_state:
             combined_refs, merged_refs = set(), set()
         return list(merged_refs | (set(var_refs) - combined_refs))
 
-    def load_global_sources(self, clear_cache=True):
+    def load_global_sources(self, clear_cache: bool = True):
         """
         Loads global sources shared across all layouts.
         """
-        from .sources import Source
+        from .sources.base import Source
         for name, source_spec in self.spec.get('sources', {}).items():
             if not source_spec.get('shared'):
                 continue
             source_spec = dict(source_spec)
-            filter_specs = source_spec.pop('filters', {})
+            filter_specs: Dict[str, Any] = source_spec.pop('filters', {})
             source = self.global_sources.get(name)
             source_type = Source._get_type(source_spec['type'])
+            reinitialize = False
             if source is not None:
                 # Check if old source is the same as the new source
                 params = {
@@ -229,11 +244,9 @@ class _session_state:
                     if k != 'name'
                 })
                 reinitialize = params == new_spec
-            else:
-                reinitialize = True
             if self.loading_msg is not None:
                 self.loading_msg.object = f'Loading {name} source...'
-            if reinitialize:
+            if reinitialize or source is None:
                 source_spec['name'] = name
                 self.global_sources[name] = source = Source.from_spec(source_spec)
             if source.cache_dir and clear_cache:
@@ -259,9 +272,9 @@ class _session_state:
             )
         return pipelines
 
-    def load_source(self, name, source_spec):
-        from .filters import Filter
-        from .sources import Source
+    def load_source(self, name: str, source_spec: Dict[str, Any]):
+        from .filters.base import Filter
+        from .sources.base import Source
         source_spec = dict(source_spec)
         filter_specs = source_spec.pop('filters', None)
         if self.loading_msg:
@@ -274,7 +287,8 @@ class _session_state:
         self.sources[name] = source
         if not filter_specs:
             return source
-        self.filters[name] = filters = dict(self.filters.get(name, {}))
+        filters: Dict[str, Filter] = dict(self.filters.get(name, {}))
+        self.filters[name] = filters
         tables = set(filter_spec.get('table') for filter_spec in filter_specs.values())
         if None in tables:
             schemas = source.get_schema()
@@ -299,15 +313,18 @@ class _session_state:
         for ext in exts:
             __import__(pn.extension._imports[ext])
 
-    def _resolve_source_ref(self, refs):
+    def _resolve_source_ref(self, refs: Tuple[str] | Tuple[str, str] | Tuple[str, str, str]):
         if len(refs) == 3:
+            refs = cast(Tuple[str, str, str], refs)
             sourceref, table, field = refs
         elif len(refs) == 2:
+            refs = cast(Tuple[str, str], refs)
             sourceref, table = refs
         elif len(refs) == 1:
+            refs = cast(Tuple[str], refs)
             (sourceref,) = refs
 
-        from .sources import Source
+        from .sources.base import Source
         source = Source.from_spec(sourceref)
         if len(refs) == 1:
             return source
@@ -323,18 +340,24 @@ class _session_state:
                              "declare an enum.")
         return field_schema['enum']
 
-    def resolve_reference(self, reference, variables=None):
+    def resolve_reference(self, reference: str, variables: Variables = None):
         if not is_ref(reference):
             raise ValueError('References should be prefixed by $ symbol.')
         from .variables import Variable
-        refs = reference[1:].split('.')
-        vars = variables or self.variables
+        refs = tuple(reference[1:].split('.'))
+        if len(refs) > 3:
+            raise ValueError(
+                f'Cannot resolve reference {reference!r}. Only variable '
+                'and source reference are supported and may have at most '
+                'three levels.'
+            )
+        variables = variables or self.variables
         if refs[0] == 'variables':
-            value = vars[refs[1]]
+            value = variables[refs[1]]
             if isinstance(value, Variable):
                 value = value.value
             return value
-        return self._resolve_source_ref(refs)
+        return self._resolve_source_ref(refs)  # type: ignore
 
     def reset(self):
         self._filters.clear()

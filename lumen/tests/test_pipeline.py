@@ -4,11 +4,11 @@ import pandas as pd
 
 from panel.widgets import Select
 
-from lumen.filters import ConstantFilter
+from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
-from lumen.transforms import Columns
+from lumen.transforms.base import Columns
 from lumen.transforms.sql import SQLColumns, SQLGroupBy
 
 

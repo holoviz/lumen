@@ -8,7 +8,7 @@ application.
 from urllib.parse import parse_qs
 
 import pandas as pd
-import param
+import param  # type: ignore
 
 from tornado import web
 
@@ -195,7 +195,7 @@ class SchemaHandler(web.RequestHandler):
 
 
 def lumen_rest_provider(files, endpoint):
-    from pane.io.rest import _exec_files
+    from panel.io.rest import _exec_files
     _exec_files(files)
     if endpoint:
         prefix = r'^/%s/' % endpoint

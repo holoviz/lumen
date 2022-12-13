@@ -1,26 +1,30 @@
+from __future__ import annotations
+
 import os
 import pathlib
 
+from typing import ClassVar, Type
+
 import panel as pn
-import param
+import param  # type: ignore
 import requests
 import yaml
 
 from panel.reactive import ReactiveHTML
 
-from lumen.sources import Source
+from lumen.sources.base import Source
 from lumen.state import state as lm_state
 from lumen.util import catch_and_notify
 
 from .base import WizardItem
 from .fast import FastComponent
-from .gallery import Gallery, GalleryItem
+from .gallery import Editor, Gallery, GalleryItem
 from .state import state
 
 ASSETS_DIR = pathlib.Path(__file__).parent / 'assets'
 
 
-class SourceEditor(FastComponent):
+class SourceEditor(FastComponent, Editor):
 
     cache_dir = param.String(label="Cache directory (optional)", precedence=1, doc="""
         Enter a relative cache directory.""")
@@ -182,7 +186,7 @@ class SourceGallery(WizardItem, Gallery):
 
     _gallery_item = SourceGalleryItem
 
-    _editor_type = SourceEditor
+    _editor_type: ClassVar[Type[SourceEditor]] = SourceEditor
 
     def __init__(self, **params):
         super().__init__(**params)

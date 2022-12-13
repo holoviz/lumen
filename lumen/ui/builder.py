@@ -3,7 +3,7 @@ import pathlib
 import uuid
 
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.layout.base import ListLike
 from panel.template.base import BasicTemplate

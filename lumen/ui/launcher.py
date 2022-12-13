@@ -2,7 +2,7 @@ import io
 import tempfile
 
 import panel as pn
-import param
+import param  # type: ignore
 import yaml
 
 from ..dashboard import Dashboard

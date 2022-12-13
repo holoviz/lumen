@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from lumen.sources import Source
+from lumen.sources.base import Source
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 

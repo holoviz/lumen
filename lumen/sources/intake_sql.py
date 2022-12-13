@@ -1,4 +1,4 @@
-import param
+import param  # type: ignore
 
 from ..transforms.base import Filter
 from ..transforms.sql import (

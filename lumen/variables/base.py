@@ -1,15 +1,22 @@
+from __future__ import annotations
+
 import os
 
 from functools import partial
+from typing import TYPE_CHECKING, ClassVar, List
 
 import panel as pn
-import param
+import param  # type: ignore
 
 from panel.widgets import Widget as _PnWidget
+from typing_extensions import Literal
 
 from ..base import MultiTypeComponent
 from ..state import state
 from ..util import is_ref, resolve_module_reference
+
+if TYPE_CHECKING:
+    from panel.viewable import Viewable
 
 _PARAM_MAP = {
     dict : param.Dict,
@@ -49,7 +56,7 @@ class Variables(param.Parameterized):
             variables.add_variable(var)
         return variables
 
-    def _convert_to_variable(self, var):
+    def _convert_to_variable(self, var: param.Parameter | _PnWidget) -> 'Variable':
         throttled = False
         if isinstance(var, param.Parameter):
             if isinstance(var.owner, pn.widgets.Widget) and var.name in ('value', 'value_throttled'):
@@ -94,7 +101,7 @@ class Variables(param.Parameterized):
             return old_var
         return var_type(name=var_name, **var_kwargs)
 
-    def add_variable(self, var):
+    def add_variable(self, var: 'Variable' | _PnWidget | param.Parameter) -> 'Variable':
         """
         Adds a new variable to the Variables instance and sets up
         a parameter that can be watched.
@@ -132,16 +139,16 @@ class Variables(param.Parameterized):
         )
         return var
 
-    def _update_value(self, name, event):
+    def _update_value(self, name: str, event: param.parameterized.Event):
         self.param.update({name: event.new})
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str) -> 'Variable':
         if key in self.param:
             return getattr(self, key)
         else:
             raise KeyError(f'No variable named {key!r} has been defined.')
 
-    def panel(self, variables=None):
+    def panel(self, variables: List[str] | None = None) -> pn.Column | None:
         if variables == []:
             return None
         column = pn.Column(name='Variables', sizing_mode='stretch_width')
@@ -184,12 +191,12 @@ class Variable(MultiTypeComponent):
     value = param.Parameter(doc="""
         The materialized value of the variable.""")
 
-    variable_type = None
+    variable_type: ClassVar[str | None] = None
 
     __abstract = True
 
-    _valid_keys = 'params'
-    _validate_params = True
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
+    _validate_params: ClassVar[bool] = True
 
     def __init__(self, **params):
         if 'value' not in params and 'default' in params:
@@ -199,7 +206,7 @@ class Variable(MultiTypeComponent):
         super().__init__(**params)
         self.param.watch(self._update_value_from_default, 'default')
 
-    def _update_value_from_default(self, event):
+    def _update_value_from_default(self, event: param.parameterized.Event):
         if event.old is self.value or self.value is self.param.value.default:
             self.value = event.new
 
@@ -222,7 +229,7 @@ class Variable(MultiTypeComponent):
             resolved_spec[k] = val
         return var_type(refs=refs, **resolved_spec)
 
-    def as_materialized(self):
+    def as_materialized(self) -> 'Constant':
         """
         If the variable is to be materialized by the builder this
         implements the conversion from a variable that references
@@ -231,7 +238,7 @@ class Variable(MultiTypeComponent):
         return Constant(default=self.value)
 
     @property
-    def panel(self):
+    def panel(self) -> Viewable | None:
         """
         Optionally returns a renderable component that allows
         controlling the variable.
@@ -244,7 +251,7 @@ class Constant(Variable):
     `Constant` declares a constant value that can be referenced.
     """
 
-    variable_type = 'constant'
+    variable_type: ClassVar[str] = 'constant'
 
 
 class EnvVariable(Variable):
@@ -255,7 +262,7 @@ class EnvVariable(Variable):
     key = param.String(default=None, constant=True, doc="""
         The name of the environment variable to observe.""")
 
-    variable_type = 'env'
+    variable_type: ClassVar[str] = 'env'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -277,9 +284,9 @@ class Widget(Variable):
         ensuring that no intermediate events are generated, e.g. when
         dragging a slider.""")
 
-    variable_type = 'widget'
+    variable_type: ClassVar[str] = 'widget'
 
-    _valid_keys = None
+    _valid_keys: ClassVar[None] = None
 
     _required_keys = ["kind"]
 
@@ -362,7 +369,9 @@ class Parameter(Variable):
         A parameter instance whose current value will be reflected
         on this variable.""")
 
-    _allows_refs = False
+    variable_type: ClassVar[str] = 'param'
+
+    _allows_refs: ClassVar[bool] = False
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -380,7 +389,7 @@ class URLQuery(Variable):
     key = param.String(default=None, constant=True, doc="""
         The URL query parameter to observe.""")
 
-    variable_type = 'url'
+    variable_type: ClassVar[str] = 'url'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -404,7 +413,7 @@ class Cookie(Variable):
     key = param.String(default=None, constant=True, doc="""
         The cookie to observe.""")
 
-    variable_type = 'cookie'
+    variable_type: ClassVar[str] = 'cookie'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -421,7 +430,7 @@ class UserInfo(Variable):
     key = param.String(default=None, constant=True, doc="""
         The key in the OAuth pn.state.user_info dictionary to observe.""")
 
-    variable_type = 'user'
+    variable_type: ClassVar[str] = 'user'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -438,7 +447,7 @@ class Header(Variable):
     key = param.String(default=None, constant=True, doc="""
         The request header to observe.""")
 
-    variable_type = 'header'
+    variable_type: ClassVar[str] = 'header'
 
     def __init__(self, **params):
         super().__init__(**params)

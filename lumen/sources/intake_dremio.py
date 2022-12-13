@@ -1,4 +1,4 @@
-import param
+import param  # type: ignore
 
 from .intake_sql import IntakeBaseSQLSource
 
@@ -30,7 +30,7 @@ class IntakeDremioSource(IntakeBaseSQLSource):
     source_type = 'intake_dremio'
 
     def __init__(self, **params):
-        from intake_dremio.dremio_cat import DremioCatalog
+        from intake_dremio.dremio_cat import DremioCatalog  # type: ignore
         super().__init__(**params)
         self.cat = DremioCatalog(
             self.uri, cert=self.cert, tls=self.tls, username=self.username,

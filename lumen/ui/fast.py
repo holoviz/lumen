@@ -1,4 +1,8 @@
-import param
+from __future__ import annotations
+
+from typing import Any, ClassVar
+
+import param  # type: ignore
 
 from panel.io.server import init_doc, state
 from panel.layout.base import ListLike, NamedListLike
@@ -8,7 +12,7 @@ from panel.widgets.select import SelectBase
 
 class FastDesignProvider(ListLike, ReactiveHTML):
 
-    _template = '<fast-design-system-provider id="fdsp" use-defaults>${objects}</fast-design-system-provider>'
+    _template: ClassVar[str] = '<fast-design-system-provider id="fdsp" use-defaults>${objects}</fast-design-system-provider>'
 
 
 class FastComponent(ReactiveHTML):
@@ -190,6 +194,10 @@ class FastCard(FastComponent, ListLike):
     def __init__(self, *objects, **params):
         super().__init__(objects=list(objects), **params)
 
+    def clone(self, *objects: Any, **params: Any):
+        params['objects'] = objects
+        return super().clone(**params)
+
 
 class FastDialog(FastComponent, ListLike):
 
@@ -207,6 +215,11 @@ class FastDialog(FastComponent, ListLike):
 
     def _close(self, event):
         self.hidden = True
+
+    def clone(self, *objects: Any, **params: Any):
+        params['objects'] = objects
+        return super().clone(**params)
+
 
 class FastTabs(FastComponent, NamedListLike):
 
@@ -237,6 +250,10 @@ class FastTabs(FastComponent, NamedListLike):
     @param.depends('_activeid', watch=True)
     def _update_active(self):
         self.active = int(self._activeid.split('-')[-1])-1
+
+    def clone(self, *objects: Any, **params: Any):
+        params['objects'] = objects
+        return super().clone(**params)
 
 
 class FastAccordion(FastComponent, NamedListLike):
@@ -280,3 +297,7 @@ class FastAccordion(FastComponent, NamedListLike):
     @property
     def _child_names(self):
         return {'objects': self._names}
+
+    def clone(self, *objects: Any, **params: Any):
+        params['objects'] = objects
+        return super().clone(**params)

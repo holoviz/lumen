@@ -1,9 +1,9 @@
 import os
 import pathlib
 
-import param
+import param  # type: ignore
 
-from lumen.transforms import Transform
+from lumen.transforms.base import Transform
 
 
 class CustomTransform(Transform):
