@@ -864,12 +864,14 @@ class Dashboard(Component, Viewer):
                 pn.pane.HTML(title_html, margin=(20, 20), align='center'),
                 pn.layout.HSpacer(),
                 spinner,
-                background='#00aa41'
+                background='#00aa41', sizing_mode='stretch_width'
             ),
             pn.Row(
                 pn.Column(self._sidebar, width=300),
-                self._layout
-            )
+                self._layout,
+                sizing_mode='stretch_width'
+            ),
+            sizing_mode='stretch_both'
         )
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
