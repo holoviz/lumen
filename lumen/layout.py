@@ -394,10 +394,10 @@ class Layout(Component, Viewer):
     reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data layout's source using a button.""")
 
-    show_title = param.Boolean(default=True, constant=True, doc="""
+    show_title = param.Boolean(default=True, doc="""
         Whether to show the title in Card headers.""")
 
-    title = param.String(doc="A title for this Layout.", constant=True)
+    title = param.String(doc="A title for this Layout.")
 
     refresh_rate = param.Integer(default=None, doc="""
         How frequently to refresh the monitor by querying the adaptor.""")
