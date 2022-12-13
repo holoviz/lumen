@@ -16,7 +16,7 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 
 **[Data visualization](data_visualization/index)**
 * [Define views](data_visualization/views)
-* [Build a dashboard programmatically](data_processing/dashboard_python)
+* [Build a dashboard programmatically](data_visualization/dashboard_python)
 * [Deploy a dashboard](data_visualization/deploy)
 
 **[Data output](data_output/index)**
