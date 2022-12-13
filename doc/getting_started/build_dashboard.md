@@ -23,7 +23,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 ```
 
 Once you have saved your file, open a terminal and navigate to the location of this file.
@@ -48,7 +48,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 ```
 :::
 
@@ -77,7 +77,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 layouts:
   - title: Penguins
@@ -112,7 +112,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 layouts:
   - title: Penguins
@@ -144,7 +144,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 layouts:
   - title: Penguins
     source: penguin_source
@@ -180,7 +180,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -230,7 +230,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -285,7 +285,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -351,7 +351,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:

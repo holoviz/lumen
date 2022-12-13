@@ -20,7 +20,7 @@ The declarative specification approach looks similar to a YAML file hierarchy, b
 ```{pyodide}
 import lumen as lm
 
-data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
+data_url = 'https://datasets.holoviz.org/penguins/v1/penguins.csv'
 
 pipeline = lm.Pipeline.from_spec({
     'source': {
@@ -52,7 +52,7 @@ First, add a valid `Source` to your `Pipeline`. A common choice is `FileSource`,
 ```{pyodide}
 from lumen.sources import FileSource
 
-data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
+data_url = 'https://datasets.holoviz.org/penguins/v1/penguins.csv'
 
 pipeline = lm.Pipeline(source=FileSource(tables={'penguins': data_url}), table='penguins')
 ```

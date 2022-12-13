@@ -96,7 +96,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -217,7 +217,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:

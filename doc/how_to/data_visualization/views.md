@@ -33,7 +33,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 layouts:
   - title: Table
@@ -61,7 +61,7 @@ from lumen.views import Table, hvPlotView
 
 pn.extension("tabulator")
 
-data_url = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv"
+data_url = "https://datasets.holoviz.org/penguins/v1/penguins.csv"
 pipeline = Pipeline.from_spec(
     {
         "source": {"type": "file", "tables": {"penguin_table": data_url}},
