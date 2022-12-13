@@ -112,6 +112,10 @@ class Pipeline(Viewer, Component):
         self._update_widget = pn.Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
         self._init_callbacks()
 
+    def _update_stale(self, event):
+        if event.new:
+            self._stale = event.new
+
     @param.depends('_stale', watch=True)
     def _handle_stale(self):
         self._update_widget.button_type = 'warning' if self._stale else 'success'
@@ -128,6 +132,7 @@ class Pipeline(Viewer, Component):
                     transform.param[fp].objects = list(self.schema)
         if self.pipeline is not None:
             self.pipeline.param.watch(self._update_data, 'data')
+            self.pipeline.param.watch(self._update_stale, '_stale')
 
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()
@@ -234,7 +239,7 @@ class Pipeline(Viewer, Component):
     def _update_data(self, *events: param.parameterized.Event, force: bool = False):
         if self._update_widget.loading:
             return
-        if not force and not self.auto_update and not any(e.name == 'update' for e in events):
+        if not force and not self.auto_update and not self.update:
             self._stale = True
             return
 
@@ -246,6 +251,7 @@ class Pipeline(Viewer, Component):
 
         try:
             if pn.state.curdoc:
+                hold = pn.state.curdoc.callbacks.hold_value
                 pn.state.curdoc.hold()
             self.data = self._compute_data()
         except Exception as e:
@@ -253,9 +259,9 @@ class Pipeline(Viewer, Component):
         else:
             self._stale = False
         finally:
-            if pn.state.curdoc:
-                pn.state.curdoc.unhold()
             self._update_widget.loading = False
+            if pn.state.curdoc and not hold:
+                pn.state.curdoc.unhold()
 
     @classmethod
     def _validate_source(
