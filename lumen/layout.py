@@ -376,22 +376,22 @@ class Layout(Component, Viewer):
         manually using the update event or the update button in the UI."""
     )
 
-    download = param.ClassSelector(class_=Download, default=Download(), doc="""
+    download = param.ClassSelector(class_=Download, constant=True, default=Download(), doc="""
         The download objects determines whether and how the source tables
         can be downloaded.""")
 
-    facet = param.ClassSelector(class_=Facet, doc="""
+    facet = param.ClassSelector(class_=Facet, constant=True, doc="""
         The facet object determines whether and how to facet the cards
         on the layout.""")
 
-    layout = param.ClassSelector(default='column', class_=(str, list, dict), doc="""
+    layout = param.ClassSelector(default='column', class_=(str, list, dict), constant=True, doc="""
         Defines the layout of the views in the monitor layout. Can be
         'column', 'row', 'grid', 'row' or a nested list of indexes
         corresponding to the views, e.g. [[0, 1], [2]] will create
         a Column of one row containing views 0 and 1 and a second Row
         containing view 2.""" )
 
-    reloadable = param.Boolean(default=True, doc="""
+    reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data layout's source using a button.""")
 
     show_title = param.Boolean(default=True, doc="""
@@ -405,13 +405,15 @@ class Layout(Component, Viewer):
     rerender = param.Event(default=False, doc="""
         An event that is triggered whenever the View requests a re-render.""")
 
-    source = param.ClassSelector(class_=Source, doc="""
+    source = param.ClassSelector(class_=Source, constant=True, doc="""
         The Source queries the data from some data source.""")
 
-    tsformat = param.String(default="%m/%d/%Y %H:%M:%S")
+    tsformat = param.String(default="%m/%d/%Y %H:%M:%S", constant=True)
 
-    views = param.ClassSelector(class_=(list, dict), doc="""
+    views = param.ClassSelector(class_=(list, dict), constant=True, doc="""
         List or dictionary of View specifications.""")
+
+    _allows_refs: ClassVar[bool] = False
 
     _header_format: ClassVar[str] = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
