@@ -154,7 +154,7 @@ sources:
   source:
     type: file
     tables:
-      table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 layouts:
 - title: Hello my dear friend {{ USER }}
@@ -197,7 +197,7 @@ sources:
   source:
     type: file
     tables:
-      table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 layouts:
 - title: {{ shell("echo hello from the shell") }}

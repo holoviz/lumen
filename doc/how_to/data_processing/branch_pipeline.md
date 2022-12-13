@@ -20,7 +20,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -57,7 +57,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -92,7 +92,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      penguin_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 pipelines:
   penguin_pipeline:
@@ -133,7 +133,7 @@ Let's start by creating a pipeline up to a branching point. See the How to guide
 from lumen.pipeline import Pipeline
 from lumen.sources import FileSource
 
-data_url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv'
+data_url = 'https://datasets.holoviz.org/penguins/v1/penguins.csv'
 
 pipeline = Pipeline(source=FileSource(tables={'penguins': data_url}), table='penguins')
 

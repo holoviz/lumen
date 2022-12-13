@@ -7,8 +7,8 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 * [Use variables and references](general/variables_and_references)
 
 **[Data intake](data_intake/index)**
+* [Access local files](data_intake/files)
 * [Cache data](data_intake/cache)
-* [Access local files]() (under construction)
 
 **[Data processing](data_processing/index)**
 * [Build a pipeline programmatically](data_processing/pipeline_python)

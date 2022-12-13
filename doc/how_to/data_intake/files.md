@@ -70,7 +70,7 @@ sources:
   remote_source:
     type: file
     tables:
-      remote_table: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      remote_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
 
 layouts:
   - title: Table
@@ -87,7 +87,7 @@ layouts:
 ```{code-block} python
 from lumen.pipeline import Pipeline
 
-data_url = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv"
+data_url = "https://datasets.holoviz.org/penguins/v1/penguins.csv"
 pipeline = Pipeline.from_spec(
     {
         "source": {"type": "file", "tables": {"remote_table": data_url}},
