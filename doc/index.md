@@ -2,10 +2,10 @@
 
 <img src="./_static/diagram.png" width="100%">
 
-::::{grid} 2 2 5 5
+::::{grid} 2 2 6 6
 :gutter: 1
 
-:::{grid-item-card} London Bike Points
+:::{grid-item-card} Bike Sharing
 :link: gallery/bikes
 :link-type: doc
 
@@ -42,6 +42,14 @@
 :link-type: doc
 
 ```{image} ./_static/seattle.png
+```
+:::
+
+:::{grid-item-card} Earthquakes
+:link: gallery/earthquakes
+:link-type: doc
+
+```{image} ./_static/earthquakes.png
 ```
 :::
 
@@ -98,7 +106,7 @@ hidden: true
 Home <self>
 Getting Started <getting_started/index>
 How to <how_to/index>
+Gallery <gallery/index>
 Reference <reference/index>
 Background <background/index>
-Gallery <gallery/index>
 ```

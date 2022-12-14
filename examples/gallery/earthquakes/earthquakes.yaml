@@ -1,0 +1,94 @@
+config:
+  title: Earthquake Dashboard
+  theme: dark
+sources:
+  earthquakes:
+    type: file
+    tables:
+      earthquakes: ["https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv", "csv"]
+pipelines:
+  earthquakes:
+    source: earthquakes
+    table: earthquakes
+    filters:
+      - type: widget
+        field: type
+      - type: widget
+        field: mag
+      - type: widget
+        field: depth
+      - type: param
+        parameter: map.selection_expr
+    transforms:
+      - type: columns
+        columns:
+          - time
+          - longitude
+          - latitude
+          - type
+          - place
+          - mag
+          - depth
+          - rms
+      - type: project_lnglat
+        longitude: longitude
+        latitude: latitude
+layouts:
+  - title: Earthquakes
+    pipeline: earthquakes
+    views:
+      map:
+        type: hvplot
+        kind: points
+        x: longitude
+        y: latitude
+        tiles: ESRI
+        responsive: true
+        height: 500
+        fill_color: null
+        line_color: white
+        xaxis: null
+        yaxis: null
+        selection_group: earthquakes
+        streaming: true
+        hover: false
+      table:
+        type: table
+        hidden_columns:
+          - longitude
+          - latitude
+        page_size: 16
+        pagination: remote
+        sizing_mode: stretch_width
+        show_index: false
+        theme: midnight
+      mag_hist:
+        type: hvplot
+        kind: hist
+        y: mag
+        fill_color: white
+        responsive: true
+        height: 250
+        selection_group: earthquakes
+        streaming: true
+      depth_hist:
+        type: hvplot
+        kind: hist
+        y: depth
+        fill_color: white
+        responsive: true
+        height: 250
+        selection_group: earthquakes
+        streaming: true
+      rms_hist:
+        type: hvplot
+        kind: hist
+        y: rms
+        fill_color: white
+        responsive: true
+        height: 250
+        selection_group: earthquakes
+        streaming: true
+    refresh_rate: 60000
+    sizing_mode: stretch_both
+    layout: [[0, 1], [2, 3, 4]]
