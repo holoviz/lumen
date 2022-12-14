@@ -43,6 +43,14 @@
 ```
 :::
 
+:::{grid-item-card} Earthquakes
+:link: earthquakes
+:link-type: doc
+
+```{image} ../_static/earthquakes.png
+```
+:::
+
 ::::
 
 
