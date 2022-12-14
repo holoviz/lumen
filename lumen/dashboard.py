@@ -45,7 +45,8 @@ def load_yaml(yaml_spec: str, **kwargs) -> Dict[str, Any]:
 
 class Config(Component):
     """
-    `Config` provides high-level configuration options for the Dashboard.
+    `Config` provides high-level configuration options for the
+    :class:`lumen.dashboard.Dashboard`.
     """
 
     auto_update = param.Boolean(default=None, constant=True, doc="""

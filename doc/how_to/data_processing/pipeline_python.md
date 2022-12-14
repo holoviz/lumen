@@ -9,7 +9,7 @@ Although the primary interface for building a Lumen dashboard is the YAML specif
 
 ## Overview
 
-When building with Lumen in Python, the main object that defines a dashboard is the [`Pipeline`](../../reference/Pipeline). With this Pipeline object, you can specify the data source, filters, and transforms. There are two approaches to add these specifications to a `Pipeline` object, **declaratively or programmatically**. While the declarative approach is more compact, the programmatic approach allows you to seperate the pipeline creation steps.
+When building with Lumen in Python, the main object that defines a dashboard is the [Pipeline](lumen.pipeline.Pipeline). With this Pipeline object, you can specify the data source, filters, and transforms. There are two approaches to add these specifications to a `Pipeline` object, **declaratively or programmatically**. While the declarative approach is more compact, the programmatic approach allows you to seperate the pipeline creation steps.
 
 ![Pipeline Diagram](../../_static/pipeline_diagram.png)
 
@@ -47,7 +47,7 @@ The programmatic specification approach uses Lumen objects to build the pipeline
 
 ### Add source
 
-First, add a valid `Source` to your `Pipeline`. A common choice is `FileSource`, which can load CSV, Excel, JSON and Parquet files, but see the [Source Reference](../architecture//source.html#:~:text=Source%20queries%20data.-,Source%20types%23,-class%20lumen.sources) for all options.
+First, add a valid [Source](lumen.sources.base.Source) to your [Pipeline](lumen.pipeline.Pipeline). A common choice is [FileSource](lumen.sources.base.FileSource), which can load CSV, Excel, JSON and Parquet files, but see the [Source Reference](lumen.sources.base.Source) for all options.
 
 ```{pyodide}
 from lumen.sources import FileSource
@@ -70,7 +70,7 @@ pipeline.data.head()
 
 ### Add filter
 
-Next, you can add `widgets` for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to filter the data. See the [Filter Reference](../architecture/filter) for all options.
+Next, you can add `widgets` for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to filter the data. See the [Filter Reference](lumen.filters.base.Filter) for all options.
 
 ```{pyodide}
 pipeline.add_filter('widget', field='species')
@@ -81,7 +81,7 @@ pipeline.add_filter('widget', field='year')
 
 ### Add transform
 
-Now you can apply a `transform` to the data, such as computing the mean or selecting certain columns. See the [Transform Reference](../architecture/transform) for more.
+Now you can apply a `transform` to the data, such as computing the mean or selecting certain columns. See the [Transform Reference](lumen.transforms.base.Transform) for more.
 
 ```{pyodide}
 columns = ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']

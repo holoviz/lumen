@@ -8,12 +8,12 @@ This guide shows you how to use a local or remote file as a source for your dash
 ```
 
 ## Overview
-Lumen can read from multiple [data source types](../../reference/source).
-The [`FileSource`](../../reference/source/FileSource) type supports reading from either local or remote files of various formats: CSV, XLSX, XLS, Parquet, and JSON.
+Lumen can read from multiple [data source types](lumen.source.base.Source).
+The [FileSource](lumen.source.base.FileSource) type supports reading from either local or remote files of various formats: CSV, XLSX, XLS, Parquet, and JSON.
 
 ## Local files
-One of the easiest ways to get a source is by using local files, such as a CSV file.
-Below is an example of how to add a local file as a source.
+
+One of the easiest ways to get a source is by using local files, such as a CSV file. Below is an example of how to add a local file as a source.
 
 ::::{tab-set}
 
@@ -57,6 +57,7 @@ pipeline.data  # preview the data in a notebook
 
 
 ## Remote files
+
 Alternatively, you can access a remote file using a URL.
 
 ::::{tab-set}
