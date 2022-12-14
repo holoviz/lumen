@@ -138,7 +138,7 @@ class Component(param.Parameterized):
             return cls._valid_keys
 
     @classmethod
-    def _validate_keys(cls, spec: Dict[str, Any]):
+    def _validate_keys_(cls, spec: Dict[str, Any]):
         valid_keys = cls._valid_keys_
         for key in spec:
             if valid_keys is None or key in valid_keys:
@@ -148,7 +148,7 @@ class Component(param.Parameterized):
             raise ValidationError(msg, spec, key)
 
     @classmethod
-    def _validate_required(
+    def _validate_required_(
         cls, spec: Dict[str, Any], required: List[str | Tuple[str, ...]] | None = None
     ):
         if required is None:
@@ -263,6 +263,8 @@ class Component(param.Parameterized):
     def _validate_param(cls, key: str, value: Any, spec: Dict[str, Any]):
         pobj = cls.param[key]
         try:
+            if isinstance(pobj, param.Selector) and pobj.names and value in pobj.names:
+                return
             pobj._validate(value)
         except Exception as e:
             msg = f"{cls.__name__} component {key!r} value failed validation: {str(e)}"
@@ -291,7 +293,7 @@ class Component(param.Parameterized):
         )
 
     @classmethod
-    def _validate_spec(
+    def _validate_spec_(
         cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
         validated: Dict[str, Any] = {}
@@ -407,9 +409,9 @@ class Component(param.Parameterized):
         if isinstance(spec, str):
             return spec
         context = {} if context is None else context
-        cls._validate_keys(spec)
-        cls._validate_required(spec)
-        return cls._validate_spec(spec, context)
+        cls._validate_keys_(spec)
+        cls._validate_required_(spec)
+        return cls._validate_spec_(spec, context)
 
 
 class MultiTypeComponent(Component):
@@ -552,6 +554,6 @@ class MultiTypeComponent(Component):
             msg, attr = reverse_match_suggestion('type', list(spec), msg)
             raise ValidationError(msg, spec, attr)
         component_cls = cls._get_type(spec['type'], spec)
-        component_cls._validate_keys(spec)
-        component_cls._validate_required(spec)
-        return component_cls._validate_spec(spec, context)
+        component_cls._validate_keys_(spec)
+        component_cls._validate_required_(spec)
+        return component_cls._validate_spec_(spec, context)
