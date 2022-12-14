@@ -49,13 +49,17 @@ def expand_queries(values, groups=('filters', 'variables')):
 
 class Pipeline(Viewer, Component):
     """
-    `Pipeline` encapsulates filters and transformations applied to a `Source` table.
+    `Pipeline` encapsulates filters and transformations applied to a
+    :class:`lumen.sources.base.Source` table.
 
-    A `Pipeline` ingests data from a `Source` table or another
-    `Pipeline` applying the declared `Filter` and `(SQL)Transform`
-    definitions. It can be used to drive one or more visual outputs or
-    leveraged as a standalone component to encapsulate multiple data
-    processing steps.
+    A `Pipeline` ingests data from a
+    :class:`lumen.sources.base.Source` table or another `Pipeline`
+    applying the declared :class:`lumen.filters.base.Filter`,
+    :class:`lumen.transforms.base.Transform` and
+    :class:`lumen.transforms.sql.SQLTransform` definitions. It can be
+    used to drive one or more visual outputs or leveraged as a
+    standalone component to encapsulate multiple data processing
+    steps.
     """
 
     data = DataFrame(doc="The current data on this source.")
@@ -541,7 +545,7 @@ class Pipeline(Viewer, Component):
         self, queries: Dict[str, Dict[str, List[Any]]] | List[Dict[str, Dict[str, Any]]]
     ) -> None:
         """
-        Populates the cache of the Source with the provided queries.
+        Populates the cache of the :class:`lumen.sources.base.Source` with the provided queries.
 
         Queries can be provided in two formats:
 

@@ -2,7 +2,7 @@
 
 In a previous guide we discovered how we could [build data pipelines in Python](../data_processing/pipeline_python), here we will pick up where we left of and build an entire dashboard in Python.
 
-To start with let us declare the Pipeline we will be working with again and initialize the Panel extension so we can render output and tables.
+To start with let us declare the [Pipeline](lumen.pipeline.Pipeline) we will be working with again and initialize the Panel extension so we can render output and tables.
 
 ```{pyodide}
 import lumen as lm
@@ -30,7 +30,7 @@ pipeline
 
 ## Attaching Views
 
-Attaching a [`View`](../../reference/view/) to a [Pipeline](../../reference/pipeline/) only requires passing the `pipeline` as an argument to the `View` constructor. The `View` will now be linked to the pipeline and update when we change it:
+Attaching a [View](lumen.views.base.View) to a [Pipeline](lumen.pipeline.Pipeline) only requires passing the `pipeline` as an argument to the [View](lumen.views.base.View) constructor. The [View](lumen.views.base.View) will now be linked to the pipeline and update when we change it:
 
 ```{pyodide}
 scatter = lm.views.hvPlotView(
@@ -41,7 +41,7 @@ scatter = lm.views.hvPlotView(
 scatter
 ```
 
-Now let us create one more view, a `Table`:
+Now let us create one more view, a [Table](lumen.views.base.Table):
 
 ```{pyodide}
 table = lm.views.Table(pipeline=pipeline, page_size=10, sizing_mode='stretch_width')
@@ -51,7 +51,7 @@ table
 
 ## Laying out views
 
-Now we could lay these components out using Panel and publish a Panel dashboard but for now we will stick entirely with Lumen components. The Lumen `Layout` component will let us arrange one or more views. Here we will take our two views and put the in layout:
+Now we could lay these components out using Panel and publish a Panel dashboard but for now we will stick entirely with Lumen components. The Lumen [Layout](lumen.layout.Layout) component will let us arrange one or more views. Here we will take our two views and put the in layout:
 
 ```{pyodide}
 layout = lm.Layout(views={'scatter': scatter, 'table': table}, title='Palmer Penguins')
@@ -61,7 +61,7 @@ layout
 
 ## Building the dashboard
 
-Finally we can add our `Layout` to a `Dashboard` instance and give the dashboard a title via the `config` option.
+Finally we can add our [Layout](lumen.layout.Layout) to a [Dashboard](lumen.dashboard.Dashboard) instance and give the dashboard a title via the [config](lumen.dashboard.Config) option.
 
 ```{pyodide}
 lm.Dashboard(config={'title': 'Palmer Penguins'}, layouts=[layout])
@@ -71,5 +71,5 @@ lm.Dashboard(config={'title': 'Palmer Penguins'}, layouts=[layout])
 ---
 class: success
 ---
-A `Dashboard` (like most other components can be previewed by displaying itself in notebook environments or by using `.show()` in a REPL. To serve it as a standalone application use the `.servable()` method and launch the notebook or script with `panel serve app.py`.
+A [Dashboard](lumen.dashboard.Dashboard) (like most other components) can be previewed by displaying itself in notebook environments or by using `.show()` in a REPL. To serve it as a standalone application use the `.servable()` method and launch the notebook or script with `panel serve app.py`.
 ```

@@ -109,11 +109,11 @@ class Download(Component, Viewer):
 
 class View(MultiTypeComponent, Viewer):
     """
-    `View` components provide a visual representation for the data returned by a `Source` or `Pipeline`.
+    `View` components provide a visual representation for the data returned by a :class:`lumen.source.base.Source` or :class:`lumen.pipeline.Pipeline`.
 
     The `View` must return a Panel object or an object that can be
     rendered by Panel. The base class provides methods which query the
-    the provided `Pipeline`.
+    the provided :class:`lumen.pipeline.Pipeline`.
 
     Subclasses should use these methods to query the data and return
     a Viewable Panel object in the `get_panel` method.

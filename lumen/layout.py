@@ -364,10 +364,12 @@ class Download(Component, Viewer):
 
 class Layout(Component, Viewer):
     """
-    `Layout` renders one or more `View` components into a layout.
+    `Layout` renders one or more :class:`lumen.views.base.View` components
+    into a layout.
 
-    Additionally it provides functionality for facetting the `View`
-    objects by grouping the data along some dimension.
+    Additionally it provides functionality for facetting the
+    :class:`lumen.views.base.View` objects by grouping the data along
+    some dimension.
     """
 
     auto_update = param.Boolean(default=True, constant=True, doc="""

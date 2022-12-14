@@ -9,7 +9,6 @@ Whether you are still developing or have already completed your specification fi
 
 Run the code below to start a Lumen server that displays your dashboard in a browser window. Change `<dashboard.yaml>` to the path of your YAML specification file.
 
-
 ``` bash
 lumen serve <dashboard.yaml> --show
 ```

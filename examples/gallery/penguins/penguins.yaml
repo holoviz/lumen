@@ -25,7 +25,7 @@ pipelines:
       expr:
         type: param
         parameter: scatter.selection_expr
-targets:
+layouts:
   - title: Plots
     pipeline: penguins
     views:
