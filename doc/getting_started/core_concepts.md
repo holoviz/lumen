@@ -71,7 +71,7 @@ In addition to these core sections, there is plenty of advanced functionality th
 
 ## Config
 
-The `config` section provides general settings which apply to the whole dashboard to control things like the title, overall layout and theme. The structure is very simple:
+The [config](lumen.dashboard.Config) section provides general settings which apply to the whole dashboard to control things like the title, overall layout and theme. The structure is very simple:
 
 ```{code-block} YAML
 config:
@@ -102,7 +102,7 @@ sources:
     ...: Additional source parameters
 ```
 
-A common choice for a source type is [FileSource](../reference/source/FileSource), which can load CSV, Excel, JSON and Parquet files from either local (filepaths) or remote (URL) locations. In your tutorial, you use a remote CSV source:
+A common choice for a source type is [FileSource](lumen.sources.base.FileSource), which can load CSV, Excel, JSON and Parquet files from either local (filepaths) or remote (URL) locations. In your tutorial, you use a remote CSV source:
 
 ```{code-block} YAML
 sources:
@@ -112,7 +112,7 @@ sources:
       table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
 ```
 
-See the [Source Reference](../reference/source/index) for other source types and for the relevant parameters.
+See the [Source Reference](lumen.source.base.Source) for other source types and for the relevant parameters.
 
 ## Pipelines (data processing)
 
@@ -120,7 +120,7 @@ The `pipelines` section is where you list all the ways that you want the data to
 
 ### Filters
 
-The `filters` of a `Pipeline` allows you or your dashboard's viewers to drill down into just a subset of the data.
+The `filters` of a [Pipeline](lumen.pipeline.Pipeline) allows you or your dashboard's viewers to drill down into just a subset of the data.
 
 ```{code-block} YAML
 pipelines:
@@ -145,11 +145,11 @@ pipelines:
         field: island
 ```
 
-See the [Filter Reference](../reference/filter/index) for other filter types and for the relevant parameters.
+See the [Filter Reference](lumen.filters.base.Filter) for other filter types and for the relevant parameters.
 
 ### Transforms
 
-Within the pipeline section, you can also apply a `transform` to the data, such as selecting only certain columns of the data.
+Within the pipeline section, you can also apply a [transform](lumen.transforms.base.Transform) to the data, such as selecting only certain columns of the data.
 
 ```{code-block} YAML
 pipelines:
@@ -178,7 +178,7 @@ pipelines:
         columns: ['species', 'island', 'sex', 'year', 'bill_length_mm', 'bill_depth_mm']
 ```
 
-See the [Transform Reference](../reference/transform/index) for other transform types and for the relevant parameters.
+See the [Transform Reference](lumen.transforms.base.Transform) for other transform types and for the relevant parameters.
 
 ## Layouts (views)
 
@@ -205,7 +205,7 @@ layouts:
       tables: Allows declaring a subset of tables to download
     pipeline: The pipeline driving the views of this layout. Each View can independently declare a pipeline or all use the shared pipeline defined at the layout level
     views: A list of metrics to monitor and display on the endpoint
-      - pipeline: The Pipeline driving the View
+      - pipeline: The [Pipeline]`lumen.pipeline.Pipeline` driving the View
         type: The type of View to use for rendering the table
         ...: Additional parameters for the View
     layout: The layout inside the card(s), e.g. 'row', 'column' or 'grid'
@@ -218,7 +218,7 @@ layouts:
 ```
 :::
 
-At minimum each `Layout` must declare a `title` and a set of `views`. Each view can be of a different type, but a good starting point is the `hvPlotView`. This view type allows you to produce [many different types of plots](https://hvplot.holoviz.org/reference/index.html) available from the [hvPlot](https://hvplot.holoviz.org/) library, just by specifying the `kind` parameter.
+At minimum each [Layout](lumen.layout.Layout) must declare a `title` and a set of `views`. Each view can be of a different type, but a good starting point is the [hvPlotView](`lumen.views.base.hvPlotView). This view type allows you to produce [many different types of plots](https://hvplot.holoviz.org/reference/index.html) available from the [hvPlot](https://hvplot.holoviz.org/) library, just by specifying the `kind` parameter.
 
 In your tutorial, the final dashboard included two `kinds` - scatter and histogram:
 
@@ -249,7 +249,7 @@ layouts:
         height: 350
 ```
 
-See the [View Reference](../reference/view/index) for other view types and for the relevant parameters.
+See the [View Reference](lumen.views.base.View) for other view types and for the relevant parameters.
 
 ## Advanced Functionality
 
@@ -257,7 +257,7 @@ The following sections are meant to introduce you some of Lumen's advanced funct
 
 ### Defaults
 
-The `defaults` section allows overriding parameter defaults on the [Filter](../reference/filter/index), [Source](../reference/source/index), [Transform](../reference/transform/index) and [View](../reference/view/index) objects.
+The [defaults](lumen.dashboard.Defaults) section allows overriding parameter defaults on the [Filter](lumen.filters.base.Filter), [Source](lumen.sources.base.Source), [Transform](lumen.transforms.base.Transform) and [View](lumen.views.base.View) objects.
 
 ```{code-block} YAML
 defaults:
@@ -288,7 +288,7 @@ For more on `defaults`, check out the `How to override parameter defaults` guide
 
 ### Variables
 
-The `variables` sections allow you to link settings across your entire application. Once a variable has been declared in the `variables` section, you can reference it throughout your specification using the `$variables.<variable_name>` syntax.
+The [variables](lumen.variables.base.Variables) sections allow you to link settings across your entire application. Once a variable has been declared in the `variables` section, you can reference it throughout your specification using the `$variables.<variable_name>` syntax.
 
 ```{code-block} YAML
 variables:
@@ -297,7 +297,7 @@ variables:
       ...: Variable parameters
 ```
 
- For example, you might have a `TextInput` widget where a dashboard user could enter the name of a CSV file with stock data. Establishing such a widget as a `Variable` would allow the dashboard to dynamically update with the new data source.
+ For example, you might have a `TextInput` widget where a dashboard user could enter the name of a CSV file with stock data. Establishing such a widget as a [Variable](lumen.variables.base.Variable) would allow the dashboard to dynamically update with the new data source.
 
 ```{code-block} YAML
 :emphasize-lines: 1-5, 11
@@ -318,9 +318,9 @@ For more on variables, check out the [How to use variables and references](../ho
 
 ### Sources as variables
 
-In addition to the `variables` section, in which you can create arbitrary types of variables, you can also refer to sources with a similar syntax. In some scenarios you might want to refer to a `Source`, a table on a `Source` or a field on a table from elsewhere in the yaml specification.
+In addition to the `variables` section, in which you can create arbitrary types of variables, you can also refer to sources with a similar syntax. In some scenarios you might want to refer to a [Source](lumen.sources.base.Source), a table on a [Source](lumen.sources.base.Source) or a field on a table from elsewhere in the yaml specification.
 
-As an example you may have local CSV file which contains a column of URLs to monitor and feed that information to a `WebsiteSource` which reports whether those URLs are live. Using the `$` syntax we can easily establish such references.
+As an example you may have local CSV file which contains a column of URLs to monitor and feed that information to a [WebsiteSource](lumen.sources.base.WebsiteSource) which reports whether those URLs are live. Using the `$` syntax we can easily establish such references.
 
 ```yaml
 sources:
@@ -332,7 +332,7 @@ sources:
     urls: $csv.websites.url
 ```
 
-The `$csv.websites.url` syntax will look up a `Source` called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the `WebsiteSource`.
+The `$csv.websites.url` syntax will look up a [Source](lumen.sources.base.Source) called 'csv', request a table called 'websites' and then feed the 'url' column in that table to the `urls` parameter of the [WebsiteSource](lumen.sources.base.WebsiteSource).
 
 For more on referring to sources, check out the [How to use variables and references](../how_to/variables_and_references) guide.
 
@@ -356,7 +356,7 @@ For more on templating, check out the [How to use variables and references](../h
 
 ### Authentication
 
-The `auth` field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
+The [`auth`](lumen.dashboard.Auth) field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the `panel.state.user_info` dictionary. To discover how to configure an Auth provider with Panel/Lumen see the [Panel documentation](https://panel.holoviz.org/user_guide/Authentication.html).
 
 As an example the GitHub OAuth provider returns the login of the user that is visiting the dashboard. If we add the following field to the yaml:
 

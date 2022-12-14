@@ -9,12 +9,12 @@ This guide will show you how to define views on your dashboard
 
 ## Overview
 
-A view is the final output of a dashboard, but to be able to create a view, at least one data [source](../../reference/source/index.md) is needed.
+A view is the final output of a dashboard, but to be able to create a view, at least one data [Source](lumen.sources.base.Source) is needed.
 The following example source is a table containing data about individual penguins with various measurements.
-This source could have been [filtered](../../reference/filter/index.md) or [transformed](../../reference/transform/index.md) but is omitted to keep the example simple.
+This source could have been [filtered](lumen.filters.base.Filter) or [transformed](lumen.transforms.base.Transform) but is omitted to keep the example simple.
 
 The views are located in the `layouts` area and can take the form of various visual components.
-Lumen includes many [view types](../../reference/view/index.md) and is built so that you can easily use components from the [Holoviz ecosystem](https://holoviz.org/), such as a [scatter plot from hvPlot](https://hvplot.holoviz.org/reference/pandas/scatter.html) or an [indicator from Panel](https://panel.holoviz.org/reference/index.html#indicators).
+Lumen includes many [View types](lumen.views.base.View) and is built so that you can easily use components from the [Holoviz ecosystem](https://holoviz.org/), such as a [scatter plot from hvPlot](https://hvplot.holoviz.org/reference/pandas/scatter.html) or an [indicator from Panel](https://panel.holoviz.org/reference/index.html#indicators).
 
 ![](../../_static/excalidraw/lumen_dashboard.png)
 

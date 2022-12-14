@@ -9,11 +9,11 @@ This guide shows you how to use one of the advanced features of Lumen: Variables
 
 ## Overview
 
-Variables are one of the most powerful features of Lumen. This guide will give you an overview of three different types of variables and how to reference them in the YAML specification.
+[Variables](lumen.variables.base.Variable) are one of the most powerful features of Lumen. This guide will give you an overview of three different types of variables and how to reference them in the YAML specification.
 
 ## Variables
 
-Variables give Lumen components a lot of flexibility. Variables can be defined in multiple ways. The simplest way to define a variable is in the variables block. When a variable is defined, it can be referenced throughout the rest of the specification. This is done by using `$variables.NAME`, where `NAME` is the unique name of the variable.
+[Variables](lumen.variables.base.Variable) give Lumen components a lot of flexibility. [Variables](lumen.variables.base.Variable) can be defined in multiple ways. The simplest way to define a variable is in the variables block. When a variable is defined, it can be referenced throughout the rest of the specification. This is done by using `$variables.NAME`, where `NAME` is the unique name of the variable.
 
 The data source is a remote dataset containing a `volume` column many magnitudes greater than the rest, making it impossible to see the other time series in the data. Removing `Volume` from the `columns` variable makes the other time series visible.
 
@@ -72,7 +72,13 @@ layouts:
 
 ## Sources as variables
 
-Sources can also be used as a variable, below is a small example of this. The example consists of two sources:
+[Source](lumen.sources.base.Source) components can also be used like a variable. There are three main ways to pass Source information by reference:
+
+1. Passing the source itself by reference `$<source_name>`
+2. Passing a table on the source by reference `$<source_name>.<table_name>`
+3. Passing the unique values in a field by reference `$<source_name>.<table_name>.<field_name>`
+
+Let us explore an example passing field values by reference. In the example below we define two sources:
 
 1. The first is a CSV file with a single column containing different website URLs.
 2. The second is a live source that checks whether the URLs from the first source are alive or dead.
@@ -124,7 +130,6 @@ The reference to the variable is built up as:
 2. The table's name `websites`, which is the filename without an extension.
 3. Which column of the table to look at `url`.
 4. Combine the last three parts, and you get the following variable `$csv.websites.url`.
-
 
 ## External variables (templating)
 
@@ -219,5 +224,5 @@ layouts:
 ---
 class: tip
 ---
-As a rule of thumb, internal variables are referenced with a starting dollar sign `$`, whereas external references use double curly brackets before and after `{{ }}`.
+Internal variables are referenced with a starting dollar sign `$`, whereas external references use double curly brackets before and after `{{ }}`. External references are only resolved when the dashboard is initialized while internal variables can be resolved dynamically.
 :::

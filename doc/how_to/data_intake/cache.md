@@ -4,12 +4,12 @@
 ---
 class: important
 ---
-This guide will show you how to locally cache data to speed up reloading from a remote source.
+This guide will show you how to locally cache data to speed up reloading from a remote [Source](lumen.sources.base.Source).
 ```
 
 ## Caching file
 
-When working with large data in a non-optional file format, creating a local cache can be advantageous to save time when reloading the data. Caching a [source](../../reference/source) is done by using `cache_dir` followed by a directory. If the directory does not exist, it will be created. The data will be saved as [parquet](https://www.databricks.com/glossary/what-is-parquet) files in the cache directory and the schema will be stored as a JSON file.
+When working with large data in a non-optional file format, creating a local cache can be advantageous to save time when reloading the data. Caching a [Source](lumen.source.base.Source) is done by using `cache_dir` followed by a directory. If the directory does not exist, it will be created. The data will be saved as [parquet](https://www.databricks.com/glossary/what-is-parquet) files in the cache directory and the schema will be stored as a JSON file.
 
 Below is an example of caching a 370 MB file that consists of almost 12 million rows.
 
@@ -77,7 +77,7 @@ Lumen's [cache]() can be added to all [source types](../../reference/source).
 
 ## Precaching
 
-Sources that support caching per query can be made to pre-cache specific Filter and SQLTransform combinations. To enable pre-caching you must initialize a `Pipeline` and then either programmatically request to populate the pre-cache OR supply the pre-cache configuration as part of the YAML specification.
+Sources that support caching per query can be made to pre-cache specific [Filter](lumen.filters.base.Filter) and [SQLTransform](lumen.transforms.sql.SQLTransform) combinations. To enable pre-caching you must initialize a [Pipeline](lumen.pipeline.Pipeline) and then either programmatically request to populate the pre-cache OR supply the pre-cache configuration as part of the YAML specification.
 
 A pre-cache definitions can take one of two forms
 

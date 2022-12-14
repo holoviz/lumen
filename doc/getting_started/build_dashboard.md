@@ -16,7 +16,7 @@ Open your favorite text editor and create an empty file called `penguins.yaml`.
 
 ## 2. Add a data source
 
-The first thing that is needed is a source of data. Insert and save the text below to add a remote file source. This will tell Lumen to fetch the [Palmer Penguins dataset](https://allisonhorst.github.io/palmerpenguins/):
+The first thing that is needed is a source of data. Insert and save the text below to add a remote [FileSource](lumen.sources.base.FileSource). This will tell Lumen to fetch the [Palmer Penguins dataset](https://allisonhorst.github.io/palmerpenguins/):
 
 ```{code-block} yaml
 sources:
@@ -63,7 +63,7 @@ So far, this returns an empty dashboard because we haven't yet specified a view 
 
 ## 3. Specify a table view
 
-The simplest view to add is a table with the raw data. This gives us a good idea of what we are working with and the available fields.
+The simplest [View](lumen.views.base.View) to add is a table with the raw data. This gives us a good idea of what we are working with and the available fields.
 
 ::::{tab-set}
 
@@ -98,7 +98,7 @@ layouts:
 
 ## 4. Create a plot view
 
-The table gives us a primer of the data source, but to start understanding patterns in the data, we have to visualize it. There is a wide range of views to chose from but for now we will create an [hvPlot](https://hvplot.holoviz.org/) view. This is as easy as replacing the `table` type with a `hvplot` type.
+The table gives us a primer of the data source, but to start understanding patterns in the data, we have to visualize it. There is a wide range of views to chose from but for now we will create an [hvPlotView](lumen.views.base.hvPlotView) (see [hvPlot](https://hvplot.holoviz.org/) for background on the library). This is as easy as replacing the `table` type with a `hvplot` type.
 
 ::::{tab-set}
 
@@ -334,7 +334,7 @@ layouts:
 
 ## 9. Add a title and theme
 
-Final step - let's use a `config` section to give our dashboard a more descriptive title and change the overall theme to dark. Note that we can also set our table to dark by adding a new *theme* parameter at the bottom.
+Final step - let's use a [config](lumen.dashboard.Config) section to give our dashboard a more descriptive title and change the overall theme to dark. Note that we can also set our table to dark by adding a new *theme* parameter at the bottom.
 
 ::::{tab-set}
 

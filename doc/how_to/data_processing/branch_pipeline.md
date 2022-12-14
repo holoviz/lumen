@@ -6,15 +6,21 @@ This guide shows you how to build branching pipelines, allowing for views of the
 :::
 
 ## Overview
+
 See the Background page on [Pipeline Branching](../../background/pipeline_branching).
 
 Continue reading if you are working in YAML (most likely). If you are working in Python, jump to [Branching in Python](#branching-in-python).
+
 ## Branching in YAML
+
 As we will see, the essential component of branching in YAML is to use the `pipeline:` parameter.
 
 ### Initiating a simple dashboard
+
 Let's first create a simple dashboard without a branch and launch to ensure that things are working properly.
+
 :::{card} penguins.yaml
+
 ```{code-block} yaml
 sources:
   penguin_source:
@@ -39,6 +45,7 @@ layouts:
         show_index: false
         height: 300
 ```
+
 :::
 
 ``` bash
@@ -48,7 +55,8 @@ lumen serve penguins.yaml --show --autoreload
 ![first table, no branch](../../_static/how_to/branch_yaml_00_firstTable.png)
 
 ### Add a branch
-Now let's add a new pipeline that branches from the existing pipeline. We can accomplish this by adding a `pipeline:` parameter that refers back to the name of the first pipeline. In our example, our new pipeline, called `branch_sort`, has a `pipeline:` parameter that points back to `penguin_pipeline`.
+
+Now let's add a new [Pipeline](lumen.pipeline.Pipeline) that branches from the existing pipeline. We can accomplish this by adding a `pipeline:` parameter that refers back to the name of the first pipeline. In our example, our new pipeline, called `branch_sort`, has a `pipeline:` parameter that points back to `penguin_pipeline`.
 
 ```{code-block} yaml
 :emphasize-lines: 14-18
@@ -83,7 +91,8 @@ layouts:
 ```
 
 ### Refer to the branch in a new view
-Finally, we can create a new view that displays the additional data manipulation steps present on our branch. Below, we simply specify a new table view with a `pipeline:` parameter that refers to our new `branch_sort`.
+
+Finally, we can create a new [View](lumen.views.base.View) that displays the additional data manipulation steps present on our branch. Below, we simply specify a new table view with a `pipeline:` parameter that refers to our new `branch_sort`.
 
 ```{code-block} yaml
 :emphasize-lines: 28-31
@@ -124,10 +133,12 @@ layouts:
 
 
 ## Branching in Python
-As we will see below, the primary tool to create a branch of a Lumen pipeline in Python is to use the `pipeline.chain` method.
+
+As we will see below, the primary tool to create a branch of a [Pipeline](lumen.pipeline.Pipeline) in Python is to use the [pipeline.chain](lumen.pipeline.Pipeline.chain) method.
 
 ### Initiating the pipeline
-Let's start by creating a pipeline up to a branching point. See the How to guide - [Build a dashboard in Python](ht_pipeline_python) - for a walk-through of these initial steps.
+
+Let's start by creating a pipeline up to a branching point. See the How to guide - [Build a dashboard in Python](pipeline_python) - for a walk-through of these initial steps.
 
 ```{code-block} python
 from lumen.pipeline import Pipeline
@@ -146,7 +157,8 @@ pipeline.data
 ```
 
 ### Branching the pipeline
-At this point, we will create a branch of our pipeline by using the `pipeline.chain` method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new `Pipeline` variable so that we can refer to it separately from the original `pipeline`.
+
+At this point, we will create a branch of our pipeline by using the [pipeline.chain](lumen.pipeline.Pipeline.chain) method, and apply a new transform that aggregates the data, only on this branch. We assign the result to a new [Pipeline](lumen.pipeline.Pipeline) variable so that we can refer to it separately from the original `pipeline`.
 
 ```{code-block} python
 from lumen.transforms import Aggregate
