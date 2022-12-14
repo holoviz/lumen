@@ -115,7 +115,7 @@ class Config(Component):
         elif '.' not in template:
             raise ValidationError(
                 f'Config template {template!r} not found. Template must be one '
-                'of {list(_TEMPLATES)} or an absolute import path.', spec, template
+                f'of {list(_TEMPLATES)} or an absolute import path.', spec, template
             )
         *paths, name = template.split('.')
         path = '.'.join(paths)
@@ -854,9 +854,9 @@ class Dashboard(Component, Viewer):
         if 'targets' in spec:
             spec['layouts'] = spec.pop('targets')
 
-        cls._validate_keys(spec)
-        cls._validate_required(spec)
-        return cls._validate_spec(spec)
+        cls._validate_keys_(spec)
+        cls._validate_required_(spec)
+        return cls._validate_spec_(spec)
 
     def layout(self):
         """
