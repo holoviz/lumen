@@ -260,16 +260,27 @@ class Source(MultiTypeComponent):
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
+        sha.update(self._get_source_hash().encode('utf-8'))
         sha.update(table.encode('utf-8'))
         if 'sql_transforms' in query:
             sha.update(_generate_hash([hash(t) for t in query.pop('sql_transforms')]))
         sha.update(_generate_hash(query))
         return sha.hexdigest()
 
+    def _get_source_hash(self):
+        sha = hashlib.sha256()
+        for k, v in self.param.values().items():
+            if k in ('root',):
+                continue
+            sha.update(k.encode('utf-8'))
+            sha.update(_generate_hash(v))
+        return sha.hexdigest()
+
     def _get_schema_cache(self) -> Dict[str, Dict[str, Any]]:
         schema = self._schema_cache if self._schema_cache else None
+        sha = self._get_source_hash()
         if self.cache_dir:
-            path = self.root / self.cache_dir / f'{self.name}.json'
+            path = self.root / self.cache_dir / f'{self.name}_{sha}.json'
             if not path.is_file():
                 return schema
             with open(path) as f:
@@ -294,10 +305,11 @@ class Source(MultiTypeComponent):
         self._schema_cache = schema
         if not self.cache_dir:
             return
+        sha = self._get_source_hash()
         path = self.root / self.cache_dir
         path.mkdir(parents=True, exist_ok=True)
         try:
-            with open(path / f'{self.name}.json', 'w') as f:
+            with open(path / f'{self.name}_{sha}.json', 'w') as f:
                 json.dump(schema, f, default=str)
         except Exception as e:
             self.param.warning(
