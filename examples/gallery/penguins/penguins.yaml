@@ -7,7 +7,7 @@ sources:
     type: file
     cache_dir: ./cache
     tables:
-      - https://datasets.holoviz.org/penguins/v1/penguins.csv
+      penguins: https://datasets.holoviz.org/penguins/v1/penguins.csv
 pipelines:
   penguins:
     source: penguins
