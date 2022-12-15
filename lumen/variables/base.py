@@ -33,6 +33,8 @@ class Variables(param.Parameterized):
     components to easily watch changes in a variable.
     """
 
+    _counter: ClassVar[int] = 0
+
     def __init__(self, **params):
         super().__init__(**params)
         self._vars = {}
@@ -42,8 +44,14 @@ class Variables(param.Parameterized):
         return self._vars.keys()
 
     @classmethod
+    def create_variables(cls):
+        new_cls = type(f'Variables{cls._counter}', (cls,), {})()
+        cls._counter += 1
+        return new_cls
+
+    @classmethod
     def from_spec(cls, spec):
-        variables = cls()
+        variables = cls.create_variables()
         if pn.state.curdoc:
             state._variables[pn.state.curdoc] = variables
         for name, var_spec in spec.items():
@@ -134,6 +142,7 @@ class Variables(param.Parameterized):
             variable.param.unwatch(self._watchers.pop(var.name))
         self._vars[var.name] = var
         self.param.add_parameter(var.name, param.Parameter(default=var.value))
+        self.param.update(**{var.name: var.value})
         self._watchers[var.name] = var.param.watch(
             partial(self._update_value, var.name), 'value'
         )
