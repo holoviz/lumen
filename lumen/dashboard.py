@@ -690,10 +690,10 @@ class Dashboard(Component, Viewer):
                          filt.panel is not None) and filt.shared) and filt not in filters:
                         views.append(filt.panel)
                         filters.append(filt)
-        if not self.config.auto_update:
-            views.append(self._update_button)
         if not views or len(self.layouts) == 1:
             return None, None
+        if not self.config.auto_update:
+            views.append(self._update_button)
         return filters, pn.Column(*views, name='Filters', sizing_mode='stretch_width')
 
     def _update_pipelines(self, event: param.parameterized.Event | None = None):
