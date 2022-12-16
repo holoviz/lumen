@@ -31,7 +31,7 @@ layouts:
     views:
       scatter:
         type: hvplot
-        kind: scatter
+        kind: points
         x: bill_length_mm
         y: bill_depth_mm
         color: species
