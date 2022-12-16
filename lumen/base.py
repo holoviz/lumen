@@ -17,6 +17,7 @@ import pandas as pd
 import panel as pn
 import param  # type: ignore
 
+from panel.io.cache import _container_hash, _hash_funcs
 from panel.util import classproperty
 from typing_extensions import Literal
 
@@ -557,3 +558,6 @@ class MultiTypeComponent(Component):
         component_cls._validate_keys_(spec)
         component_cls._validate_required_(spec)
         return component_cls._validate_spec_(spec, context)
+
+
+_hash_funcs[Component] = lambda component: _container_hash(component.to_spec())
