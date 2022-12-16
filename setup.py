@@ -18,7 +18,7 @@ dependencies = [
     "numpy",
     "bokeh",
     "param",
-    "panel >=0.11",
+    "panel >=0.14.2",
     "pandas",
     "hvplot",
     "holoviews >=1.14",
