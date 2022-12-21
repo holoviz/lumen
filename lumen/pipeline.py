@@ -135,8 +135,8 @@ class Pipeline(Viewer, Component):
                 if isinstance(transform.param[fp], param.Selector):
                     transform.param[fp].objects = list(self.schema)
         if self.pipeline is not None:
-            self.pipeline.param.watch(self._update_data, 'data')
             self.pipeline.param.watch(self._update_stale, '_stale')
+            self.pipeline.param.watch(self._update_data, 'data')
 
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()

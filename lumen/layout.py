@@ -161,9 +161,11 @@ class Card(Viewer):
             if 'name' not in view_spec and name:
                 view_spec['name'] = name
             if 'pipeline' in view_spec:
-                pipeline = Pipeline.from_spec(view_spec.pop('pipeline'))
-            elif 'table' in view_spec and view_spec['table'] in pipelines:
-                pipeline = pipelines[view_spec['table']]
+                pname = view_spec.pop('pipeline')
+                if pname in pipelines:
+                    pipeline = pipelines.get(pname)
+                else:
+                    pipeline = Pipeline.from_spec(pname)
             elif len(pipelines) == 1:
                 pipeline = list(pipelines.values())[0]
                 if 'pipeline' in view_spec:
@@ -791,7 +793,7 @@ class Layout(Component, Viewer):
             else:
                 pipeline = Pipeline.from_spec(pipeline_spec)
             source = pipeline.source
-            pipelines[pipeline.table] = pipeline
+            pipelines[pipeline.name] = pipeline
 
         tables = source.get_tables()
 
@@ -805,7 +807,11 @@ class Layout(Component, Viewer):
 
         # Backward compatibility
         for view_spec in view_specs:
-            if 'pipeline' in view_spec or 'pipeline' in spec:
+            if 'pipeline' in view_spec:
+                pname = view_spec['pipeline']
+                pipelines[pname] = Pipeline.from_spec(pname)
+                continue
+            elif 'pipeline' in spec:
                 continue
             elif 'table' in view_spec:
                 table = view_spec['table']
@@ -821,7 +827,9 @@ class Layout(Component, Viewer):
             pspec = {'table': table}
             if filter_specs:
                 pspec['filters'] = filter_specs
-            pipelines[table] = Pipeline.from_spec(pspec, source, source_filters)
+            view_pipeline = Pipeline.from_spec(pspec, source, source_filters)
+            pipelines[view_pipeline.name] = view_pipeline
+            view_spec['pipeline'] = view_pipeline.name
 
         # Resolve download options
         download_spec = spec.pop('download', {})
