@@ -806,7 +806,10 @@ class Layout(Component, Viewer):
         spec['facet'] = Facet.from_spec(facet_spec, schema)
 
         # Backward compatibility
+        processed_views = []
         for view_spec in view_specs:
+            view_spec = dict(view_spec)
+            processed_views.append(view_spec)
             if 'pipeline' in view_spec:
                 pname = view_spec['pipeline']
                 pipelines[pname] = Pipeline.from_spec(pname)
@@ -814,7 +817,7 @@ class Layout(Component, Viewer):
             elif 'pipeline' in spec:
                 continue
             elif 'table' in view_spec:
-                table = view_spec['table']
+                table = view_spec.pop('table')
             elif len(tables) == 1:
                 table = tables[0]
             else:
@@ -830,6 +833,11 @@ class Layout(Component, Viewer):
             view_pipeline = Pipeline.from_spec(pspec, source, source_filters)
             pipelines[view_pipeline.name] = view_pipeline
             view_spec['pipeline'] = view_pipeline.name
+
+        if isinstance(views, dict):
+            spec['views'] = dict(zip(views, processed_views))
+        else:
+            spec['views'] = processed_views
 
         # Resolve download options
         download_spec = spec.pop('download', {})

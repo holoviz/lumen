@@ -8,15 +8,24 @@ from lumen.config import config
 from lumen.dashboard import Dashboard
 from lumen.state import state
 from lumen.validation import ValidationError
-from lumen.views.base import View
 
 
 def test_dashboard_with_local_view(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'dashboard.yml'))
+    dashboard = Dashboard(str(root / 'dashboard.yaml'))
+    dashboard._render_dashboard()
+    view = dashboard.layouts[0]._cards[0].views[0]
+    assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
+
+def test_dashboard_with_local_view_legacy(set_root):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'dashboard_legacy.yaml'))
+    dashboard._render_dashboard()
     layout = dashboard.layouts[0]
-    view = View.from_spec(layout.views[0], layout.source, [])
+    print(layout.get_cards())
+    view = layout._cards[0].views[0]
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 
 def test_dashboard_from_spec():
@@ -34,8 +43,8 @@ def test_dashboard_from_spec():
     dashboard._render_dashboard()
     assert state.spec == spec
     layout = dashboard.layouts[0]
-    view = View.from_spec(layout.views[0], layout.source, [])
-    assert view.view_type == 'table'
+    card = layout._cards[0]
+    assert card.views[0].view_type == 'table'
 
 def test_dashboard_from_spec_invalid():
     with pytest.raises(ValidationError):
@@ -44,7 +53,7 @@ def test_dashboard_from_spec_invalid():
 def test_dashboard_reload_layout(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'dashboard.yml'))
+    dashboard = Dashboard(str(root / 'dashboard.yaml'))
     dashboard._render_dashboard()
 
     reload_button, ts = dashboard._sidebar[-1][-1]
@@ -57,7 +66,7 @@ def test_dashboard_reload_layout(set_root):
 def test_dashboard_with_url_sync(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'sync_query.yml'))
+    dashboard = Dashboard(str(root / 'sync_query.yaml'))
     dashboard._render_dashboard()
     assert pn.state.location.search == '?layout=0'
     pn.state.location.search = '?layout=1'
@@ -66,7 +75,7 @@ def test_dashboard_with_url_sync(set_root, document):
 def test_dashboard_with_url_sync_filters(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'sync_query_filters.yml'))
+    dashboard = Dashboard(str(root / 'sync_query_filters.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
     f1, f2 = list(layout._pipelines.values())[0].filters
@@ -82,7 +91,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
 def test_dashboard_with_sql_source_and_transforms(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'sql_dashboard.yml'))
+    dashboard = Dashboard(str(root / 'sql_dashboard.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
     layout.update()
@@ -98,7 +107,7 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document):
 def test_dashboard_with_transform_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'transform_variable.yml'))
+    dashboard = Dashboard(str(root / 'transform_variable.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
     layout.update()
@@ -114,7 +123,7 @@ def test_dashboard_with_transform_variable(set_root, document):
 def test_dashboard_with_source_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'source_variable.yml'))
+    dashboard = Dashboard(str(root / 'source_variable.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
     layout.update()
@@ -130,7 +139,7 @@ def test_dashboard_with_source_variable(set_root, document):
 def test_dashboard_with_nested_source_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'source_nested_variable.yml'))
+    dashboard = Dashboard(str(root / 'source_nested_variable.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
     layout.update()
@@ -146,7 +155,7 @@ def test_dashboard_with_nested_source_variable(set_root, document):
 def test_dashboard_with_view_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
-    dashboard = Dashboard(str(root / 'view_variable.yml'))
+    dashboard = Dashboard(str(root / 'view_variable.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
     layout.update()
