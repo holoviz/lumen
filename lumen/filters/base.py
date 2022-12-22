@@ -324,12 +324,22 @@ class WidgetFilter(BaseWidgetFilter):
 
     @property
     def query(self) -> Any:
-        if self.widget.value == ' ' and self.empty_select:
+        value = self.widget.value
+        if value == ' ' and self.empty_select:
             return None
-        if not hasattr(self.widget.param.value, 'serialize') or self.widget.value is None:
-            return self.widget.value
+        if self.field in self.schema and self.multi:
+            schema = self.schema[self.field]
+            if isinstance(value, tuple) and len(value) == 2:
+                low, high = value
+                if (low == schema.get('inclusiveMinimum') and
+                    high == schema.get('inclusiveMaximum')):
+                    return
+            elif isinstance(value, list) and schema['type'] == 'enum' and not (set(schema['enum']) - set(value)):
+                return
+        if not hasattr(self.widget.param.value, 'serialize') or value is None:
+            return value
         else:
-            value = self.widget.param.value.serialize(self.widget.value)
+            value = self.widget.param.value.serialize(value)
             if isinstance(value, list) and isinstance(self.widget.value, tuple):
                 return self.widget.value
             return value
