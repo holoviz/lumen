@@ -22,6 +22,7 @@ def test_widget_filter_link_unthrottled():
     )
     widget = wfilter.panel
 
+    assert wfilter.query is None
     assert widget.value == (0, 2)
 
     widget.value = (1, 2)
@@ -54,6 +55,7 @@ def test_widget_filter_link_throttled():
     )
     widget = wfilter.panel
 
+    assert wfilter.query is None
     assert widget.value == (0, 2)
 
     with param.edit_constant(widget):
@@ -80,6 +82,7 @@ def test_widget_filter_explicit_widget():
     assert isinstance(wfilter.widget, RangeSlider)
     assert wfilter.widget.start == 1
     assert wfilter.widget.end == 3
+    assert wfilter.query is None
 
 
 def test_widget_filter_explicit_widget_to_spec():
