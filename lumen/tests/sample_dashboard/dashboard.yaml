@@ -1,0 +1,13 @@
+sources:
+  test:
+    type: 'file'
+    files: ['../sources/test.csv']
+pipelines:
+  test:
+    source: test
+    table: test
+targets:
+  - title: "Test"
+    pipeline: test
+    views:
+      - type: test
