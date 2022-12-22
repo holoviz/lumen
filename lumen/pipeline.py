@@ -7,12 +7,14 @@ from typing import (
     Any, ClassVar, Dict, List, Tuple, Type,
 )
 
+import numpy as np
 import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
 
 from panel.viewable import Viewer
 from panel.widgets import Widget
+from typing_extensions import Literal
 
 from .base import Component
 from .filters.base import Filter, ParamFilter, WidgetFilter
@@ -22,6 +24,33 @@ from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
 from .util import VARIABLE_RE, catch_and_notify, get_dataframe_schema
 from .validation import ValidationError, match_suggestion_message
+
+
+def auto_filters(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, str]]:
+    """
+    Automatically generates filter specifications from a schema.
+
+    Arguments
+    ---------
+    schema:
+      A schema describing the types of various fields.
+
+    Returns
+    -------
+    filter_specs: A list of filter specifications.
+    """
+    filters = {}
+    for field, fschema in schema.items():
+        ftype = fschema['type']
+        if ftype in ('number', 'integer'):
+            fmin = fschema['inclusiveMinimum']
+            fmax = fschema['inclusiveMaximum']
+            if (fmin == fmax or not np.isfinite(fmin) or not np.isfinite(fmax)):
+                continue
+        elif ftype == 'enum' and len(fschema['enum']):
+            continue
+        filters[field] = {'type': 'widget', 'field': field}
+    return filters
 
 
 class DataFrame(param.DataFrame):
@@ -294,10 +323,12 @@ class Pipeline(Viewer, Component):
     @classmethod
     def _validate_filters(
         cls,
-        filter_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str],
+        filter_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str] | Literal['auto'],
         spec: Dict[str, Any],
         context: Dict[str, Any]
     ) -> Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str]:
+        if filter_specs == 'auto':
+            return filter_specs
         for filter_spec in (filter_specs if isinstance(filter_specs, list) else filter_specs.values()):
             if not isinstance(filter_spec, str):
                 continue
@@ -412,6 +443,8 @@ class Pipeline(Viewer, Component):
         filter_specs = spec.pop('filters', {})
         if filter_specs:
             params['schema'] = schema = resolved_source.get_schema(table)
+        if filter_specs == 'auto':
+            filter_specs = auto_filters(schema)
         for filt_spec in (filter_specs.items() if isinstance(filter_specs, dict) else filter_specs):
             if isinstance(filt_spec, tuple):
                 filt_spec = dict(filt_spec[1], table=table, name=filt_spec[0])
