@@ -283,6 +283,17 @@ def test_not_removing_type(penguins_file):
     Pipeline.from_spec(spec)
     assert spec == spec_org
 
+def test_pipeline_auto_filters(penguins_file):
+    spec = {
+        "source": {
+            "type": "file",
+            "tables": {"penguins": penguins_file}
+        },
+        'filters': 'auto'
+    }
+    pipeline = Pipeline.from_spec(spec)
+    assert len(pipeline.filters) == 9
+
 def test_load_chained_pipeline(penguins_file):
     spec = {
         "pipelines": {
