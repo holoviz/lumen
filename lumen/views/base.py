@@ -221,7 +221,7 @@ class View(MultiTypeComponent, Viewer):
         self.selection_expr = event.new
 
     def __bool__(self) -> bool:
-        return self._cache is not None and len(self._cache) > 0
+        return self._requires_source or self._cache is None or len(self._cache) > 0
 
     @catch_and_notify
     def _update_panel(self, *events: param.parameterized.Event):
