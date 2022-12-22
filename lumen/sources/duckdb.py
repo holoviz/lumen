@@ -10,6 +10,23 @@ from .base import Source, cached, cached_schema
 
 
 class DuckDBSource(Source):
+    """
+    DuckDBSource provides a simple wrapper around the DuckDB SQL
+    connector.
+
+    To specify tables to be queried provide a list or dictionary of
+    tables. A SQL expression to fetch the data from the table will
+    then be generated using the `sql_expr`, e.g. if we specify a local
+    table flights.db the default sql_expr `SELECT * FROM {table}` will
+    expand that to `SELECT * FROM flights.db`. If you want to specify
+    a full SQL expression as a table you must change the `sql_expr` to
+    '{table}' ensuring no further templating is applied.
+
+    Note that certain functionality in DuckDB requires modules to be
+    loaded before making a query. These can be specified using the
+    `initializers` parameter, providing the ability to define DuckDb
+    statements to be run when initializing the connection.
+    """
 
     filter_in_sql = param.Boolean(default=True, doc="""
         Whether to apply filters in SQL or in-memory.""")
@@ -42,7 +59,7 @@ class DuckDBSource(Source):
             return list(self.tables)
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 
-    @cached()
+    @cached
     def get(self, table, **query):
         if isinstance(self.tables, dict):
             table = self.tables[table]
@@ -86,13 +103,22 @@ class DuckDBSource(Source):
                 distinct_expr = sql_expr
                 for sql_t in (SQLDistinct(columns=[col]), SQLLimit(limit=1000)):
                     distinct_expr = sql_t.apply(distinct_expr)
-                distinct = self._connection.execute(sql_expr).fetch_df()
-                schema[col]['enum'] = distinct[col].to_list()
+                distinct_expr = ' '.join(distinct_expr.splitlines())
+                distinct = self._connection.execute(distinct_expr).fetch_df()
+                schema[col]['enum'] = distinct[col].tolist()
 
             minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
             minmax_data = self._connection.execute(minmax_expr).fetch_df()
             for col in min_maxes:
-                schema[col]['inclusiveMinimum'] = minmax_data[f'{col}_min'].iloc[0]
-                schema[col]['inclusiveMaximum'] = minmax_data[f'{col}_max'].iloc[0]
+                kind = data[col].dtype.kind
+                if kind in 'iu':
+                    cast = int
+                elif kind == 'f':
+                    cast = float
+                else:
+                    cast = lambda v: v
+                schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
+                schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
             schemas[entry] = schema
         return schemas if table is None else schemas[table]
