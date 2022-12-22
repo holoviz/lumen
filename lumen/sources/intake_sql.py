@@ -101,8 +101,15 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                 self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
             )
             for col in min_maxes:
-                schema[col]['inclusiveMinimum'] = minmax_data[f'{col}_min'].iloc[0]
-                schema[col]['inclusiveMaximum'] = minmax_data[f'{col}_max'].iloc[0]
+                kind = data[col].dtype.kind
+                if kind in 'iu':
+                    cast = int
+                elif kind == 'f':
+                    cast = float
+                else:
+                    cast = lambda v: v
+                schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
+                schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
             schemas[entry] = schema
         return schemas if table is None else schemas[table]
 
