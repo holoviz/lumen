@@ -61,6 +61,7 @@ class DuckDBSource(Source):
 
     @cached
     def get(self, table, **query):
+        query.pop('__dask', None)
         if isinstance(self.tables, dict):
             table = self.tables[table]
         sql_expr = self.sql_expr.format(table=table)
@@ -70,7 +71,7 @@ class DuckDBSource(Source):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        df = self._connection.execute(sql_expr).fetch_df()
+        df = self._connection.execute(sql_expr).fetch_df(date_as_object=True)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
@@ -116,6 +117,8 @@ class DuckDBSource(Source):
                     cast = int
                 elif kind == 'f':
                     cast = float
+                elif kind == 'M':
+                    cast = str
                 else:
                     cast = lambda v: v
                 schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])

@@ -211,7 +211,7 @@ class SQLFilter(SQLTransform):
                     'Filter query will not be applied.'
                 )
                 continue
-            conditions.append(condition)
+            conditions.append(f'({condition})')
         if not conditions:
             return sql_in
 
