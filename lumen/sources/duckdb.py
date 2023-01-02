@@ -1,4 +1,3 @@
-import duckdb
 import param
 
 from ..transforms import Filter
@@ -49,6 +48,8 @@ class DuckDBSource(Source):
     _supports_sql = True
 
     def __init__(self, **params):
+        import duckdb
+
         super().__init__(**params)
         self._connection = duckdb.connect(self.uri)
         for init in self.initializers:
