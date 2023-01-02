@@ -35,7 +35,7 @@ extras_require = {
         'intake-sql',
         'fastparquet',
         'msgpack-python',
-        'python-duckdb',
+        'duckdb',
         'toolz',
         'pytest-cov',
         'codecov',
