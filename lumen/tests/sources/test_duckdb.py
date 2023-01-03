@@ -5,8 +5,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lumen.sources.duckdb import DuckDBSource
 from lumen.transforms.sql import SQLGroupBy
+
+try:
+    from lumen.sources.duckdb import DuckDBSource
+except ImportError:
+    DuckDBSource = None
+
+pytestmark = pytest.mark.skipif(DuckDBSource is None, reason="Duckdb is not installed")
 
 
 @pytest.fixture
