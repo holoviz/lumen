@@ -22,6 +22,7 @@ def duckdb_source():
         initializers=[
             "INSTALL sqlite;",
             "LOAD sqlite;",
+            f"SET home_directory='{root}';"
         ],
         root=root,
         sql_expr='SELECT A, B, C, D::TIMESTAMP AS D FROM {table}',
