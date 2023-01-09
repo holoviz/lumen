@@ -4,6 +4,11 @@ import os
 import pandas as pd
 import pytest
 
+try:
+    import intake_sql  # noqa
+except Exception:
+    pytest.skip('intake-sql not available.')
+
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
 
