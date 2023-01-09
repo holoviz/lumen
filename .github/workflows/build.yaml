@@ -76,12 +76,12 @@ jobs:
           miniconda-version: "latest"
       - name: conda setup
         run: |
-          conda create -n test-environment
+          conda install -c pyviz/label/dev "pyctdev>=0.5"
+          doit ecosystem_setup
+          doit env_create $CHANS_DEV --python=$PYTHON_VERSION
           conda activate test-environment
-          conda config --remove channels defaults
           conda config --env --remove channels defaults
           conda config --env --append channels pyviz/label/dev --append channels conda-forge
-          conda install "python=$PYTHON_VERSION" "pyctdev>=0.5"
       - name: env setup
         run: |
           conda activate test-environment
