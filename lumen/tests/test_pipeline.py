@@ -1,6 +1,12 @@
 import pathlib
 
 import pandas as pd
+import pytest
+
+try:
+    import intake_sql  # noqa
+except Exception:
+    intake_sql = None
 
 from panel.widgets import Select
 
@@ -10,6 +16,8 @@ from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
 from lumen.transforms.base import Columns
 from lumen.transforms.sql import SQLColumns, SQLGroupBy
+
+sql_available = pytest.mark.skipif(intake_sql is None, reason="intake-sql is not installed")
 
 
 def test_pipeline_source_only(make_filesource, mixed_df):
@@ -99,6 +107,7 @@ def test_pipeline_manual_with_transform(make_filesource, mixed_df):
     expected = mixed_df[['B', 'C']]
     pd.testing.assert_frame_equal(pipeline.data, expected)
 
+@sql_available
 def test_pipeline_with_sql_transform(mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
@@ -188,6 +197,7 @@ def test_pipeline_chained_with_transform(make_filesource, mixed_df):
     expected = mixed_df.iloc[2:4][['B', 'C']]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
+@sql_available
 def test_pipeline_collapsed_with_sql_transform(mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
@@ -211,6 +221,7 @@ def test_pipeline_collapsed_with_sql_transform(mixed_df):
     expected = mixed_df.iloc[2:4][['B', 'C']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
+@sql_available
 def test_pipeline_chained_with_sql_transform(mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
@@ -236,6 +247,7 @@ def test_pipeline_chained_with_sql_transform(mixed_df):
     expected = mixed_df[['B', 'C']]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
+@sql_available
 def test_pipeline_chained_manual_update_with_sql_transform(mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
@@ -314,6 +326,7 @@ def test_load_chained_pipeline(penguins_file):
     assert 'penguins_chained' in pipelines
     assert pipelines['penguins_chained'].pipeline is pipelines['penguins']
 
+@sql_available
 def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
