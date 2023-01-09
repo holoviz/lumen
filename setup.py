@@ -28,14 +28,16 @@ dependencies = [
 ]
 
 extras_require = {
+    'sql': [
+        'duckdb',
+        'intake-sql',
+    ],
     'tests': [
         'pytest',
         'flake8',
         'intake',
-        'intake-sql',
         'fastparquet',
         'msgpack-python',
-        'duckdb',
         'toolz',
         'pytest-cov',
         'codecov',
