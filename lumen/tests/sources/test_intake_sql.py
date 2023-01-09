@@ -7,7 +7,7 @@ import pytest
 try:
     import intake_sql  # noqa
 except Exception:
-    pytest.skip('intake-sql not available.')
+    pytest.skip('intake-sql not available.', allow_module_level=True)
 
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
