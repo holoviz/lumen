@@ -9,6 +9,8 @@ from lumen.dashboard import Dashboard
 from lumen.state import state
 from lumen.validation import ValidationError
 
+from .test_pipeline import sql_available
+
 
 def test_dashboard_with_local_view(set_root):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
@@ -88,6 +90,8 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%2C+%22foo3%22%5D'
     assert f2.value == ['foo1', 'foo2', 'foo3']
 
+
+@sql_available
 def test_dashboard_with_sql_source_and_transforms(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
