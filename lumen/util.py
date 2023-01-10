@@ -209,7 +209,7 @@ def merge_schemas(schema, old_schema):
         return dict(old_schema, inclusiveMinimum=merged_min, inclusiveMaximum=merged_max)
 
 
-def resolve_module_reference(reference, component_type):
+def resolve_module_reference(reference, component_type=None):
     cls_name = component_type.__name__
     *modules, ctype = reference.split('.')
     module = '.'.join(modules)
@@ -224,7 +224,7 @@ def resolve_module_reference(reference, component_type):
                          f"resolved. Module '{module}' has no member "
                          f"{ctype}.")
     component = getattr(module, ctype)
-    if not issubclass(component, component_type):
+    if not (isinstance(component, component_type) or issubclass(component, component_type)):
         raise ValueError(f"{cls_name} type '{reference}' did not resolve "
                          f"to a {cls_name} subclass.")
     return component
@@ -295,6 +295,10 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
+                try:
+                    state.config.on_error(e)
+                except Exception:
+                    pass
                 if pn.config.notifications:
                     log.error(
                         f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
