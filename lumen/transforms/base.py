@@ -711,6 +711,78 @@ class RenameAxis(Transform):
         )
 
 
+class Count(Transform):
+    """
+    Counts non-nan values in each column of the DataFrame and returns
+    a new DataFrame with a single row with a count for each original
+    column, see `pandas.DataFrame.count`.
+
+    df.count(axis=<axis>, level=<level>, numeric_only=<numeric_only>).to_frame().T
+    """
+
+    axis = param.ClassSelector(default=0, class_=(int, str), doc="""
+        The axis to rename. 0 or 'index', 1 or 'columns'""")
+
+    level = param.ClassSelector(default=None, class_=(int, list, str), doc="""
+        The indexes to stack.""")
+
+    numeric_only = param.Boolean(default=False, doc="""
+        Include only float, int or boolean data.""")
+
+    transform_type: ClassVar[str] = 'count'
+
+    def apply(self, table: DataFrame) -> DataFrame:
+        return table.count(
+            axis=self.axis, level=self.level, numeric_only=self.numeric_only
+        ).to_frame().T
+
+
+class Sum(Transform):
+    """
+    Sums numeric values in each column of the DataFrame and returns a
+    new DataFrame with a single row containing the sum for each
+    original column, see `pandas.DataFrame.sum`.
+
+    df.count(axis=<axis>, level=<level>).to_frame().T
+    """
+
+    axis = param.ClassSelector(default=0, class_=(int, str), doc="""
+        The axis to rename. 0 or 'index', 1 or 'columns'""")
+
+    level = param.ClassSelector(default=None, class_=(int, list, str), doc="""
+        The indexes to stack.""")
+
+    transform_type: ClassVar[str] = 'sum'
+
+    def apply(self, table: DataFrame) -> DataFrame:
+        return table.sum(
+            axis=self.axis, level=self.level
+        ).to_frame().T
+
+
+class Eval(Transform):
+    """
+    Applies an eval assignment expression to a DataFrame. The
+    expression can reference columns on the original table by
+    referencing `table.<column>` and must assign to a variable that
+    will become a new column in the DataFrame, e.g. to divide a
+    `value` column by one thousand and assign the result to a new column
+    called `kilo_value` you can write an `expr` like:
+
+        kilo_value = table.value / 1000
+
+    See `pandas.eval` for more information.
+    """
+
+    expr = param.String(doc="""
+        The expression to apply to the table.""")
+
+    transform_type: ClassVar[str] = 'eval'
+
+    def apply(self, table: DataFrame) -> DataFrame:
+        return pd.eval(self.expr, target=table)
+
+
 class project_lnglat(Transform):
     """
     `project_lnglat` projects the given longitude/latitude columns to Web Mercator.
