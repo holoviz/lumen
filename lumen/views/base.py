@@ -361,6 +361,13 @@ class View(MultiTypeComponent, Viewer):
 
         view = view_type(refs=refs, **resolved_spec)
 
+        if filters is None:
+            filters = view.pipeline.traverse('filters')
+            for pipeline in state.pipelines.values():
+                for filt in pipeline.traverse('filters'):
+                    if filt not in filters:
+                        filters.append(filt)
+
         # Resolve ParamFilter parameters
         for filt in (filters or []):
             if isinstance(filt, ParamFilter):
