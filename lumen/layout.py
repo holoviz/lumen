@@ -30,6 +30,110 @@ from .validation import ValidationError, match_suggestion_message
 from .views.base import DOWNLOAD_FORMATS, View
 
 
+def resolve_layout_spec(layout_spec, views, layout_cls=pn.Column, title=None):
+    """
+    Recursively resolves a layout specification provided as a list-of-lists.
+
+    The function will recurse over the layout specification and
+    resolve integer and string indexes into the views of a Layout and
+    treat lists as an additonal layer of nesting. The outermost list
+    corresponds to a Column layout and each layer of nesting will
+    alternate between a Row and a Column.
+
+    As an example the following will resolve to a Column of two Rows,
+    where the first row contains one item and the second row contains
+    two items:
+
+        [[0], [1, 2]]
+
+    Since the resolution happens recursively the layout may be
+    arbitrarily nested, e.g. this example will contain a Column where
+    the first item is a Row containing one item and another Column:
+
+        [[0, [1, 2]], [3, 4]]
+
+    This makes it possible to create complex layouts using a simple
+    specification.
+
+    Since views can be declared as a list or a dictionary the views
+    can be referenced with string or integer indexes.
+
+    Arguments
+    ---------
+    layout_spec: list[int | str | list]
+        The nested layout specification containing references to the views container.
+    views: dict[str, View] | list[View]
+        The views to be laid out using the layout_spec
+    layout_cls: Type[Column] | Type[Row]
+        The Panel layout class to nested the views in.
+    title: str
+       The name of the Layout.
+
+    Returns
+    -------
+    The layout resolved from the layout specification.
+    """
+    mode = 'stretch_both' if layout_cls is pn.Column else 'stretch_width'
+    layout = layout_cls(sizing_mode=mode)
+    view_size = len(views)
+    for spec in layout_spec:
+        view = None
+        if isinstance(spec, int):
+            if isinstance(views, dict):
+                raise KeyError(
+                    f'Layout specification for {title!r} layout used '
+                    f'integer index ({spec}) but views were declared as a '
+                    'dictionary.'
+                )
+            elif spec >= view_size:
+                raise IndexError(
+                    f'Layout specification for {title!r} layout references '
+                    f'out-of-bounds index ({spec}) even though the maximum '
+                    f'available index is {view_size - 1}.'
+                )
+            view = views[spec]
+        elif isinstance(spec, str):
+            if isinstance(views, dict):
+                if spec not in views:
+                    raise KeyError(
+                        f'Layout specification for {title} layout references '
+                        'unknown view {spec!r}.'
+                    )
+                view = views[spec]
+            else:
+                matches = [view for view in views if view.name == spec]
+                if matches:
+                    view = matches[0]
+                else:
+                    raise KeyError(
+                        f"Layout could not find named view '{spec}'."
+                    )
+        if view is not None:
+            layout.append(view.panel)
+            continue
+
+        if isinstance(spec, list):
+            inner_cls = pn.Row if layout_cls is pn.Column else pn.Column
+            inner_layout = resolve_layout_spec(
+                spec, views, layout_cls=inner_cls, title=title
+            )
+            layout.append(inner_layout)
+        else:
+            raise ValidationError(
+                'Could not resolve layout specification, found unknown '
+                'layout spec', layout_spec, spec
+            )
+    fixed_width = all(p.sizing_mode in (None, 'fixed') and p.width for p in layout)
+    fixed_height = all(p.sizing_mode in (None, 'fixed') and p.height for p in layout)
+    if fixed_height and fixed_width:
+        layout.sizing_mode = 'fixed'
+    elif fixed_width:
+        layout.sizing_mode = 'fixed' if layout.sizing_mode == 'stretch_width' else 'stretch_height'
+    elif fixed_height:
+        layout.sizing_mode = 'stretch_width'
+    return layout
+
+
 class Card(Viewer):
     """
     A Card renders a layout of multiple views given a layout specification.
@@ -62,42 +166,7 @@ class Card(Viewer):
     def _construct_layout(self):
         layout = self.layout
         if isinstance(layout, list):
-            view_size = len(self.views)
-            item = pn.Column(sizing_mode='stretch_both')
-            for row_spec in layout:
-                row = pn.Row(sizing_mode='stretch_width')
-                for index in row_spec:
-                    if isinstance(index, int):
-                        if isinstance(self.views, dict):
-                            raise KeyError(
-                                f'Layout specification for {self.title!r} layout used '
-                                f'integer index ({index}) but views were declared as a '
-                                'dictionary.'
-                            )
-                        elif index >= view_size:
-                            raise IndexError(
-                                f'Layout specification for {self.title!r} layout references '
-                                f'out-of-bounds index ({index}) even though the maximum '
-                                f'available index is {view_size - 1}.'
-                            )
-                        view = self.views[index]
-                    elif isinstance(self.views, dict):
-                        if index not in self.views:
-                            raise KeyError(
-                                f'Layout specification for {self.title} layout references '
-                                'unknown view {index!r}.'
-                            )
-                        view = self.views[index]
-                    else:
-                        matches = [view for view in self.views if view.name == index]
-                        if matches:
-                            view = matches[0]
-                        else:
-                            raise KeyError(
-                                f"Layout could not find named view '{index}'."
-                            )
-                    row.append(view.panel)
-                item.append(row)
+            item = resolve_layout_spec(layout, self.views, title=self.title)
         else:
             kwargs = dict(self.kwargs)
             if isinstance(layout, dict):
