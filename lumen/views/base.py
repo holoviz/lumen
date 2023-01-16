@@ -167,6 +167,8 @@ class View(MultiTypeComponent, Viewer):
         pipeline = params.pop('pipeline', None)
         if pipeline is None:
             raise ValueError("Views must declare a Pipeline.")
+        if isinstance(params.get("download"), str):
+            params["download"] = Download(format=params["download"])
         fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
