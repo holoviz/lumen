@@ -109,7 +109,7 @@ sources:
   penguin_source:
     type: file
     tables:
-      table_penguin: https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins.csv
+      table_penguin: https://datasets.holoviz.org/penguins/v1/penguins.csv
 ```
 
 See the [Source Reference](lumen.source.base.Source) for other source types and for the relevant parameters.
