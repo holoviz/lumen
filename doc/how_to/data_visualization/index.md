@@ -1,4 +1,4 @@
-# How to - Data Visualization
+# How to - Visualize and Deploy
 
 * [Define views](views)
 * [Build a dashboard programmatically](dashboard_python)
