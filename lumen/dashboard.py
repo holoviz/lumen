@@ -96,6 +96,10 @@ class Config(Component):
         Callback that fires if an error occurs in a dashboard callback.
         The exception is passed as the first argument.""")
 
+    on_update = param.Callable(constant=True, doc="""
+        Callback that fires when a pipeline is updated. The updated
+        pipeline is passed as the first argument.""")
+
     reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data from source(s) using a button.""")
 
@@ -167,6 +171,12 @@ class Config(Component):
         cls, on_loaded: Callable[[], None], spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
         return resolve_module_reference(on_loaded, types.FunctionType)
+
+    @classmethod
+    def _validate_on_update(
+        cls, on_update: Callable[[Pipeline], None], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> str:
+        return resolve_module_reference(on_update, types.FunctionType)
 
     @classmethod
     def _validate_on_session_created(

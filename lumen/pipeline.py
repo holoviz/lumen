@@ -287,6 +287,8 @@ class Pipeline(Viewer, Component):
                 hold = pn.state.curdoc.callbacks.hold_value
                 pn.state.curdoc.hold()
             self.data = self._compute_data()
+            if state.config and state.config.on_update:
+                state.config.on_update(self)
         except Exception as e:
             raise e
         else:
