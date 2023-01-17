@@ -12,4 +12,5 @@
 Define Views<views>
 Visualize Dashboards with Python<dashboard_python>
 Deploy<deploy>
+Add Title<title>
 ```

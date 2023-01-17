@@ -70,6 +70,13 @@ Learn how to build a Lumen Dashboard programmatically with Python.
 Learn how to deploy a visual instantiation of your dashboard.
 :::
 
+:::{grid-item-card} {octicon}`bookmark;2.5em;sd-mr-1` Add Title
+:link: data_visualization/title
+:link-type: doc
+
+Learn how to add titles to visible components with Python.
+:::
+
 ::::
 
 ## Validation
