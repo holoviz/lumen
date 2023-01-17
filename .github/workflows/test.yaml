@@ -49,7 +49,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           channel-priority: flexible
           channels: pyviz/label/dev,bokeh,conda-forge,nodefaults
-          envs: "-o tests -o sql"
+          envs: ${{ contains(matrix.python-version, '3.7') && '-o tests' || '-o tests -o sql' }}
           cache: true
           conda-mamba: mamba
         id: install
