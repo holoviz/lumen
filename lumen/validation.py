@@ -4,12 +4,50 @@ import re
 import textwrap
 
 from difflib import get_close_matches
+from inspect import signature
+from typing import (
+    TYPE_CHECKING, Any, Callable, Sequence,
+)
 
 import yaml
+
+if TYPE_CHECKING:
+    from inspect import Signature
 
 BOLD = '\033[1m'
 END = '\033[0m'
 
+
+def get_param_info(sig: Signature) -> tuple[list[str], list[Any]]:
+    ''' Find parameters with defaults and return them.
+
+    Arguments:
+        sig (Signature) : a function signature
+
+    Returns:
+        tuple(list, list) : parameters with defaults
+
+    '''
+    defaults = []
+    for param in sig.parameters.values():
+        if param.default is not param.empty:
+            defaults.append(param.default)
+    return [name for name in sig.parameters], defaults
+
+def validate_callback(
+    callback: Callable[..., Any], fargs: Sequence[str],
+    what: str ="Callback functions"
+) -> None:
+    '''Bokeh-internal function to check callback signature'''
+    sig = signature(callback)
+    formatted_args = str(sig)
+    error_msg = what + " must have signature func(%s), got func%s"
+
+    all_names, default_values = get_param_info(sig)
+
+    nargs = len(all_names) - len(default_values)
+    if nargs != len(fargs):
+        raise ValueError(error_msg % (", ".join(fargs), formatted_args))
 
 def validate_parameters(params: list[str], expected: list[str], name: str) -> None:
     for p in params:

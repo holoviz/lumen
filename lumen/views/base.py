@@ -783,7 +783,11 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
 
     def get_panel(self):
-        return pn.pane.HoloViews(**self._get_params())
+        params = self._get_params()
+        for s in ('width', 'height'):
+            if f'frame_{s}' in self.kwargs:
+                params[s] = self.kwargs[f'frame_{s}']
+        return pn.pane.HoloViews(**params)
 
     def _get_params(self):
         df = self.get_data()
