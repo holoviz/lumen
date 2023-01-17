@@ -210,23 +210,25 @@ def merge_schemas(schema, old_schema):
 
 
 def resolve_module_reference(reference, component_type=None):
-    cls_name = component_type.__name__
+    cls_name = component_type.__name__ if component_type else 'Component'
     *modules, ctype = reference.split('.')
     module = '.'.join(modules)
     try:
         module = importlib.import_module(module)
     except Exception:
-        raise ValueError(f"{cls_name} type '{reference}' module could "
-                         f"not be resolved. Ensure explicit {cls_name} "
-                         "type references a valid module.")
+        raise ValueError(
+            f"{cls_name} reference {reference!r} could not be resolved. "
+            f"Module {module!r} could not be found."
+        )
     if not hasattr(module, ctype):
-        raise ValueError(f"Source type '{reference}' could not be "
-                         f"resolved. Module '{module}' has no member "
-                         f"{ctype}.")
+        raise ValueError(
+            f"{cls_name} reference {reference!r} could not be resolved. "
+            f"Module {module!r} has no member {ctype}."
+        )
     component = getattr(module, ctype)
-    if not (isinstance(component, component_type) or issubclass(component, component_type)):
-        raise ValueError(f"{cls_name} type '{reference}' did not resolve "
-                         f"to a {cls_name} subclass.")
+    if component_type and not (isinstance(component, component_type) or issubclass(component, component_type)):
+        raise ValueError(f"{cls_name} reference {reference!r} did not resolve "
+                         f"to a {cls_name!r} subclass.")
     return component
 
 def is_ref(value):

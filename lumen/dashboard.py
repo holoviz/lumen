@@ -5,7 +5,6 @@ import importlib
 import importlib.util
 import os
 import traceback
-import types
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
@@ -164,33 +163,33 @@ class Config(Component):
     def _validate_on_error(
         cls, on_error: Callable[[Type[Exception]], None], spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_error, types.FunctionType)
+        return resolve_module_reference(on_error)
 
     @classmethod
     def _validate_on_loaded(
         cls, on_loaded: Callable[[], None], spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_loaded, types.FunctionType)
+        return resolve_module_reference(on_loaded)
 
     @classmethod
     def _validate_on_update(
         cls, on_update: Callable[[Pipeline], None], spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_update, types.FunctionType)
+        return resolve_module_reference(on_update)
 
     @classmethod
     def _validate_on_session_created(
         cls, on_session_created: Callable[[], None], spec: Dict[str, Any],
         context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_session_created, types.FunctionType)
+        return resolve_module_reference(on_session_created)
 
     @classmethod
     def _validate_on_session_destroyed(
         cls, on_session_destroyed: Callable[[BokehSessionContext], None],
         spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_session_destroyed, types.FunctionType)
+        return resolve_module_reference(on_session_destroyed)
 
     @classmethod
     def _validate_theme(
@@ -233,7 +232,14 @@ class Config(Component):
         for key in list(spec):
             if key.startswith('on_'):
                 cb = spec[key]
-                spec[key] = f'{cb.__module__}.{cb.__name__}'
+                ref = f'{cb.__module__}.{cb.__name__}'
+                if ref.startswith('__main__'):
+                    raise ValueError(
+                        f"Cannot serialize 'config.{key}' callback because "
+                        "it was defined in the __main__ scope. Please move the "
+                        "callback into an importable module."
+                    )
+                spec[key] = ref
         return spec
 
     def __init__(self, **params):
