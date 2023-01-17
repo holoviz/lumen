@@ -1,13 +1,14 @@
-# How to - Data Processing
-
-* [Build a pipeline in Python](pipeline_python)
-* [Branch a pipeline](branch_pipeline)
+.. raw:: html
+    <head>
+        <meta http-equiv='refresh' content='0; URL=../index.html#data-processing'>
+    </head>
+# Data Processing
 
 ```{toctree}
 :titlesonly:
 :hidden:
 :maxdepth: 1
 
-Build a pipeline in Python<pipeline_python>
-Branch a pipeline<branch_pipeline>
+Build Pipelines with Python<pipeline_python>
+Branch a Pipeline<branch_pipeline>
 ```

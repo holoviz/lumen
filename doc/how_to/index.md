@@ -2,39 +2,148 @@
 
 Lumen's How to Guides provide step by step recipes for solving essential problems and tasks. They are more advanced than the Getting Started material and assume some knowledge of how Lumen works.
 
-**[General](general/index)**
-* [Validate a specification file](general/validate)
-* [Use variables and references](general/variables_and_references)
+## Data Intake
 
-**[Data intake](data_intake/index)**
-* [Access local files](data_intake/files)
-* [Cache data](data_intake/cache)
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
 
-**[Data processing](data_processing/index)**
-* [Build a pipeline programmatically](data_processing/pipeline_python)
-* [Branch a pipeline](data_processing/branch_pipeline)
+:::{grid-item-card} {octicon}`link-external;2.5em;sd-mr-1` Access Files
+:link: data_intake/files
+:link-type: doc
 
-**[Data visualization](data_visualization/index)**
-* [Define views](data_visualization/views)
-* [Build a dashboard programmatically](data_visualization/dashboard_python)
-* [Deploy a dashboard](data_visualization/deploy)
+Learn how to use a local or remote file as a source for your dashboard.
+:::
 
-**[Data output](data_output/index)**
-* [Download data from dashboard](data_output/download_data)
+:::{grid-item-card} {octicon}`database;2.5em;sd-mr-1` Cache Data
+:link: data_intake/cache
+:link-type: doc
 
-**[Advanced topics](advanced/index)**
-* [Access custom components](advanced/local_components)
-* [Configuring authentication](advanced/auth)
+Learn how to locally cache data to speed up reloading from a remote Source.
+:::
+
+::::
+
+## Data Processing
+
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
+
+:::{grid-item-card} {octicon}`git-commit;2.5em;sd-mr-1` Build Pipelines with Python
+:link: data_processing/pipeline_python
+:link-type: doc
+
+Learn the basics of how to build a Lumen Pipeline programmatically with Python.
+:::
+
+:::{grid-item-card} {octicon}`git-branch;2.5em;sd-mr-1` Branch a Pipeline
+:link: data_processing/branch_pipeline
+:link-type: doc
+
+Learn how to build branching pipelines, allowing for views of the same source data at different steps in processing.
+:::
+
+::::
+
+## Visualize and Deploy
+
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
+
+:::{grid-item-card} {octicon}`image;2.5em;sd-mr-1` Define Views
+:link: data_visualization/views
+:link-type: doc
+
+Learn how to define views on your dashboard.
+:::
+
+:::{grid-item-card} {octicon}`graph;2.5em;sd-mr-1` Visualize Dashboards with Python
+:link: data_visualization/dashboard_python
+:link-type: doc
+
+Learn how to build a Lumen Dashboard programmatically with Python.
+:::
+
+:::{grid-item-card} {octicon}`package-dependents;2.5em;sd-mr-1` Deploy
+:link: data_visualization/deploy
+:link-type: doc
+
+Learn how to deploy a visual instantiation of your dashboard.
+:::
+
+::::
+
+## Validation
+
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
+
+:::{grid-item-card} {octicon}`bug;2.5em;sd-mr-1` Validate Specification
+:link: validation/validate
+:link-type: doc
+
+Learn how to validate the YAML file that specifies a Lumen dashboard.
+:::
+
+::::
+
+## Data Output
+
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
+
+:::{grid-item-card} {octicon}`download;2.5em;sd-mr-1` Enable Data Download
+:link: data_output/download_data
+:link-type: doc
+
+Learn how to enable your dashboard's viewer to download data.
+:::
+
+::::
+
+## Advanced Topics
+
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
+
+:::{grid-item-card} {octicon}`link;2.5em;sd-mr-1` Reference Variables
+:link: advanced/variables_and_references
+:link-type: doc
+
+How to use variables and references to link objects across the YAML file.
+:::
+
+:::{grid-item-card} {octicon}`upload;2.5em;sd-mr-1` Access Custom Components
+:link: advanced/local_components
+:link-type: doc
+
+Learn how to access local files that build custom components.
+:::
+
+:::{grid-item-card} {octicon}`unlock;2.5em;sd-mr-1` Configure Authentication
+:link: advanced/auth
+:link-type: doc
+
+Learn how to configure authentication for your dashboard.
+:::
+
+:::{grid-item-card} {octicon}`zap;2.5em;sd-mr-1` Define Callbacks
+:link: advanced/callbacks
+:link-type: doc
+
+Learn how to perform custom actions with callbacks.
+:::
+
+::::
 
 ```{toctree}
 :titlesonly:
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 
-General<general/index>
-Data intake<data_intake/index>
-Data processing<data_processing/index>
-Data visualization<data_visualization/index>
-Data output<data_output/index>
-Advanced topics<advanced/index>
+Data Intake<data_intake/index>
+Data Processing<data_processing/index>
+Visualize and Deploy<data_visualization/index>
+Validation<validation/index>
+Data Output<data_output/index>
+Advanced Topics<advanced/index>
 ```
