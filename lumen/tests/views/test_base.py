@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import pandas as pd
+import panel as pn
+import pytest
 
 from lumen.panel import DownloadButton
 from lumen.sources.base import FileSource
@@ -198,3 +200,41 @@ def test_hvplot_view_to_spec(set_root):
         'y': 'B',
         'alpha': 0.3
     }
+
+@pytest.mark.parametrize("view_type", ("table", "hvplot"))
+def test_view_title(set_root, view_type):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': view_type,
+        'table': 'test',
+        'title': 'Test title',
+    }
+
+    view = View.from_spec(view, source)
+
+    title = view.panel[0]
+    assert isinstance(title, pn.pane.HTML)
+
+
+@pytest.mark.parametrize("view_type", ("table", "hvplot"))
+def test_view_title_download(set_root, view_type):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': view_type,
+        'table': 'test',
+        'title': 'Test title',
+        'download': 'csv',
+    }
+
+    view = View.from_spec(view, source)
+
+    title = view.panel[0][0]
+    assert isinstance(title, pn.pane.HTML)
+
+    button = view.panel[0][1]
+    assert isinstance(button, DownloadButton)
+
+    button._on_click()
+    assert button.data.startswith('data:text/plain;charset=UTF-8;base64')
