@@ -1,11 +1,13 @@
-# How to - Data Output
-
-* [Download data from dashboard](download_data)
+.. raw:: html
+    <head>
+        <meta http-equiv='refresh' content='0; URL=../index.html#data-output'>
+    </head>
+# Data Output
 
 ```{toctree}
 :titlesonly:
 :hidden:
 :maxdepth: 1
 
-Download data from dashboard<download_data>
+Enable Data Download<download_data>
 ```
