@@ -90,7 +90,7 @@ class Config(Component):
         Callback that fires when a user session is destroyed.""")
 
     on_loaded = param.Callable(constant=True, doc="""
-        Callback that fires when a session is fully loaded.""")
+        Callback that fires when a user frontend session is fully loaded.""")
 
     on_error = param.Callable(constant=True, doc="""
         Callback that fires if an error occurs in a dashboard callback.
@@ -230,6 +230,10 @@ class Config(Component):
             spec['template'] = {v: k for k, v in _TEMPLATES.items()}.get(tmpl, f'{tmpl.__module__}.{tmpl.__name__}')
         if 'theme' in spec:
             spec['theme'] = {v: k for k, v in _THEMES.items()}[spec['theme']]
+        for key in list(spec):
+            if key.startswith('on_'):
+                cb = spec[key]
+                spec[key] = f'{cb.__module__}.{cb.__name__}'
         return spec
 
     def __init__(self, **params):
