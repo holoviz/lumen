@@ -109,7 +109,8 @@ class Download(Component, Viewer):
 
 class View(MultiTypeComponent, Viewer):
     """
-    `View` components provide a visual representation for the data returned by a :class:`lumen.source.base.Source` or :class:`lumen.pipeline.Pipeline`.
+    `View` components provide a visual representation for the data returned
+    by a :class:`lumen.source.base.Source` or :class:`lumen.pipeline.Pipeline`.
 
     The `View` must return a Panel object or an object that can be
     rendered by Panel. The base class provides methods which query the
@@ -135,6 +136,9 @@ class View(MultiTypeComponent, Viewer):
     selection_group = param.String(default=None, doc="""
         Declares a selection group the plot is part of. This feature
         requires the separate HoloViews library.""")
+
+    title = param.String(default=None, doc="""
+        The title of the view.""")
 
     field = param.Selector(doc="The field being visualized.")
 
@@ -489,8 +493,19 @@ class View(MultiTypeComponent, Viewer):
                 panel = panel.layout[0]
             else:
                 panel = panel._layout
-        if self.download:
-            return pn.Column(self.download, panel, sizing_mode='stretch_width')
+        if self.title:
+            title_pane = pn.pane.HTML(
+                f'<h3 align="center", style="margin-top: 0; margin-bottom: 0;">{self.title}</h3>',
+                sizing_mode="stretch_width"
+            )
+        if self.download and self.title:
+            download_pane = pn.panel(self.download)
+            download_pane.sizing_mode = "fixed"
+            return pn.Column(pn.Row(title_pane, download_pane), panel)
+        elif self.download:
+            return pn.Column(self.download, panel, sizing_mode="stretch_both")
+        elif self.title:
+            return pn.Column(title_pane, panel)
         return panel
 
     @property
