@@ -501,11 +501,13 @@ class View(MultiTypeComponent, Viewer):
         if self.download and self.title:
             download_pane = pn.panel(self.download)
             download_pane.sizing_mode = "fixed"
-            return pn.Column(pn.Row(title_pane, download_pane), panel)
+            return pn.Column(
+                pn.Row(title_pane, download_pane), panel, sizing_mode=panel.sizing_mode
+            )
         elif self.download:
             return pn.Column(self.download, panel, sizing_mode="stretch_both")
         elif self.title:
-            return pn.Column(title_pane, panel)
+            return pn.Column(title_pane, panel, sizing_mode=panel.sizing_mode)
         return panel
 
     @property
