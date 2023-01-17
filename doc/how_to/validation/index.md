@@ -1,12 +1,13 @@
-# How to - Validation
-
-* [Validate a specification file](validate)
+.. raw:: html
+    <head>
+        <meta http-equiv='refresh' content='0; URL=../index.html#validation'>
+    </head>
+# Validation
 
 ```{toctree}
 :titlesonly:
 :hidden:
 :maxdepth: 1
 
-Validate a specification file<validate>
-
+Validate Specification<validate>
 ```

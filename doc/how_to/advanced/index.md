@@ -1,15 +1,15 @@
-# How to - Advanced topics
-
-* [Access custom components](local_components)
-* [Configuring Authentication](auth)
-* [Using variables and references](variables_and_references)
+.. raw:: html
+    <head>
+        <meta http-equiv='refresh' content='0; URL=../index.html#advanced-topics'>
+    </head>
+# Advanced Topics
 
 ```{toctree}
 :titlesonly:
 :hidden:
 :maxdepth: 1
 
-Access custom components<local_components>
-Configuring authentication<auth>
-Using Variables and References<variables_and_references>
+Access Custom Components<local_components>
+Configure Authentication<auth>
+Reference Variables<variables_and_references>
 ```

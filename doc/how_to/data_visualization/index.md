@@ -1,15 +1,15 @@
-# How to - Visualize and Deploy
-
-* [Define views](views)
-* [Build a dashboard programmatically](dashboard_python)
-* [Deploy a dashboard](deploy)
+.. raw:: html
+    <head>
+        <meta http-equiv='refresh' content='0; URL=../index.html#visualize-and-deploy'>
+    </head>
+# Visualize and Deploy
 
 ```{toctree}
 :titlesonly:
 :hidden:
 :maxdepth: 1
 
-Define views<views>
-Build a dashboard programmatically<dashboard_python>
-Deploy a dashboard<deploy>
+Define Views<views>
+Visualize Dashboards with Python<dashboard_python>
+Deploy<deploy>
 ```
