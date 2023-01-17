@@ -33,7 +33,9 @@ from .sources.base import RESTSource, Source  # noqa
 from .state import state
 from .transforms.base import Transform  # noqa
 from .util import catch_and_notify, expand_spec, resolve_module_reference
-from .validation import ValidationError, match_suggestion_message
+from .validation import (
+    ValidationError, match_suggestion_message, validate_callback,
+)
 from .variables.base import Variable, Variables
 from .views.base import View  # noqa
 
@@ -160,36 +162,55 @@ class Config(Component):
         return template
 
     @classmethod
+    def _validate_callback(cls, callback: Callable[..., Any] | str) -> Callable[Any, None]:
+        if isinstance(callback, str):
+            return resolve_module_reference(callback)
+        return callback
+
+    @classmethod
     def _validate_on_error(
-        cls, on_error: Callable[[Type[Exception]], None], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, on_error: Callable[[Type[Exception]], None] | str,
+        spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_error)
+        cb = cls._validate_callback(on_error)
+        validate_callback(cb, ('exception',), what='on_error callback')
+        return cb
 
     @classmethod
     def _validate_on_loaded(
-        cls, on_loaded: Callable[[], None], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, on_loaded: Callable[[], None] | str, spec: Dict[str, Any],
+        context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_loaded)
+        cb = cls._validate_callback(on_loaded)
+        validate_callback(cb, (), what='on_loaded callback')
+        return cb
 
     @classmethod
     def _validate_on_update(
-        cls, on_update: Callable[[Pipeline], None], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, on_update: Callable[[Pipeline], None] | str, spec: Dict[str, Any],
+        context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_update)
+        cb = cls._validate_callback(on_update)
+        validate_callback(cb, ('pipeline',), what='on_update callback')
+        return cb
 
     @classmethod
     def _validate_on_session_created(
-        cls, on_session_created: Callable[[], None], spec: Dict[str, Any],
+        cls, on_session_created: Callable[[], None] | str, spec: Dict[str, Any],
         context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_session_created)
+        cb = cls._validate_callback(on_session_created)
+        validate_callback(cb, (), what='on_session_created callback')
+        return cb
 
     @classmethod
     def _validate_on_session_destroyed(
-        cls, on_session_destroyed: Callable[[BokehSessionContext], None],
+        cls, on_session_destroyed: Callable[[BokehSessionContext], None] | str,
         spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
-        return resolve_module_reference(on_session_destroyed)
+        cb = cls._validate_callback(on_session_destroyed)
+        validate_callback(cb, ('session_context',), what='on_session_destroyed callback')
+        return cb
 
     @classmethod
     def _validate_theme(
@@ -218,6 +239,9 @@ class Config(Component):
             spec['theme'] = _THEMES[spec['theme']]
         if 'layout' in spec:
             spec['layout'] = _LAYOUTS[spec['layout']]
+        for key in list(spec):
+            if key.startswith('on_'):
+                spec[key] = getattr(cls, f'_validate_{key}')(spec[key], spec, {})
         return cls(**spec)
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -249,7 +273,10 @@ class Config(Component):
             loading_color=self.loading_color
         )
         if self.on_session_destroyed:
-            pn.state.on_session_destroyed(self.on_session_destroyed)
+            try:
+                pn.state.on_session_destroyed(self.on_session_destroyed)
+            except RuntimeError:
+                pass
 
     def construct_template(self):
         params = {'title': self.title, 'theme': self.theme}
