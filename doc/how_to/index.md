@@ -126,6 +126,13 @@ Learn how to access local files that build custom components.
 Learn how to configure authentication for your dashboard.
 :::
 
+:::{grid-item-card} {octicon}`zap;2.5em;sd-mr-1` Define Callbacks
+:link: advanced/callbacks
+:link-type: doc
+
+Learn how to perform custom actions with callbacks.
+:::
+
 ::::
 
 ```{toctree}

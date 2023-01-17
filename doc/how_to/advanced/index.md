@@ -12,4 +12,5 @@
 Access Custom Components<local_components>
 Configure Authentication<auth>
 Reference Variables<variables_and_references>
+Declare Callbacks<callbacks>
 ```

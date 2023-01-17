@@ -8,7 +8,7 @@ import traceback
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
-    Any, ClassVar, Dict, List, Tuple, Type,
+    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Tuple, Type,
 )
 
 import panel as pn
@@ -33,9 +33,14 @@ from .sources.base import RESTSource, Source  # noqa
 from .state import state
 from .transforms.base import Transform  # noqa
 from .util import catch_and_notify, expand_spec, resolve_module_reference
-from .validation import ValidationError, match_suggestion_message
+from .validation import (
+    ValidationError, match_suggestion_message, validate_callback,
+)
 from .variables.base import Variable, Variables
 from .views.base import View  # noqa
+
+if TYPE_CHECKING:
+    from bokeh.server.contexts import BokehSessionContext
 
 
 def load_yaml(yaml_spec: str, **kwargs) -> Dict[str, Any]:
@@ -78,6 +83,23 @@ class Config(Component):
 
     ncols = param.Integer(default=3, bounds=(1, None), constant=True, doc="""
         Number of columns to lay out layouts in.""")
+
+    on_session_created = param.Callable(constant=True, doc="""
+        Callback that fires when a user session is created.""")
+
+    on_session_destroyed = param.Callable(constant=True, doc="""
+        Callback that fires when a user session is destroyed.""")
+
+    on_loaded = param.Callable(constant=True, doc="""
+        Callback that fires when a user frontend session is fully loaded.""")
+
+    on_error = param.Callable(constant=True, doc="""
+        Callback that fires if an error occurs in a dashboard callback.
+        The exception is passed as the first argument.""")
+
+    on_update = param.Callable(constant=True, doc="""
+        Callback that fires when a pipeline is updated. The updated
+        pipeline is passed as the first argument.""")
 
     reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data from source(s) using a button.""")
@@ -140,6 +162,57 @@ class Config(Component):
         return template
 
     @classmethod
+    def _validate_callback(cls, callback: Callable[..., Any] | str) -> Callable[Any, None]:
+        if isinstance(callback, str):
+            return resolve_module_reference(callback)
+        return callback
+
+    @classmethod
+    def _validate_on_error(
+        cls, on_error: Callable[[Type[Exception]], None] | str,
+        spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> str:
+        cb = cls._validate_callback(on_error)
+        validate_callback(cb, ('exception',), what='on_error callback')
+        return cb
+
+    @classmethod
+    def _validate_on_loaded(
+        cls, on_loaded: Callable[[], None] | str, spec: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> str:
+        cb = cls._validate_callback(on_loaded)
+        validate_callback(cb, (), what='on_loaded callback')
+        return cb
+
+    @classmethod
+    def _validate_on_update(
+        cls, on_update: Callable[[Pipeline], None] | str, spec: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> str:
+        cb = cls._validate_callback(on_update)
+        validate_callback(cb, ('pipeline',), what='on_update callback')
+        return cb
+
+    @classmethod
+    def _validate_on_session_created(
+        cls, on_session_created: Callable[[], None] | str, spec: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> str:
+        cb = cls._validate_callback(on_session_created)
+        validate_callback(cb, (), what='on_session_created callback')
+        return cb
+
+    @classmethod
+    def _validate_on_session_destroyed(
+        cls, on_session_destroyed: Callable[[BokehSessionContext], None] | str,
+        spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> str:
+        cb = cls._validate_callback(on_session_destroyed)
+        validate_callback(cb, ('session_context',), what='on_session_destroyed callback')
+        return cb
+
+    @classmethod
     def _validate_theme(
         cls, theme: str, spec: Dict[str, Any], context: Dict[str, Any]
     ) -> str:
@@ -166,6 +239,9 @@ class Config(Component):
             spec['theme'] = _THEMES[spec['theme']]
         if 'layout' in spec:
             spec['layout'] = _LAYOUTS[spec['layout']]
+        for key in list(spec):
+            if key.startswith('on_'):
+                spec[key] = getattr(cls, f'_validate_{key}')(spec[key], spec, {})
         return cls(**spec)
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -177,6 +253,17 @@ class Config(Component):
             spec['template'] = {v: k for k, v in _TEMPLATES.items()}.get(tmpl, f'{tmpl.__module__}.{tmpl.__name__}')
         if 'theme' in spec:
             spec['theme'] = {v: k for k, v in _THEMES.items()}[spec['theme']]
+        for key in list(spec):
+            if key.startswith('on_'):
+                cb = spec[key]
+                ref = f'{cb.__module__}.{cb.__name__}'
+                if ref.startswith('__main__'):
+                    raise ValueError(
+                        f"Cannot serialize 'config.{key}' callback because "
+                        "it was defined in the __main__ scope. Please move the "
+                        "callback into an importable module."
+                    )
+                spec[key] = ref
         return spec
 
     def __init__(self, **params):
@@ -185,6 +272,11 @@ class Config(Component):
             loading_spinner=self.loading_spinner,
             loading_color=self.loading_color
         )
+        if self.on_session_destroyed:
+            try:
+                pn.state.on_session_destroyed(self.on_session_destroyed)
+            except RuntimeError:
+                pass
 
     def construct_template(self):
         params = {'title': self.title, 'theme': self.theme}
@@ -352,7 +444,10 @@ class Dashboard(Component, Viewer):
     # Specification configuration
     _allows_refs = False
 
-    _valid_keys = ['variables', 'auth', 'defaults', 'config', 'sources', 'pipelines', 'layouts']
+    _valid_keys = [
+        'variables', 'auth', 'defaults', 'config', 'sources',
+        'pipelines', 'layouts'
+    ]
 
     def __init__(self, specification=None, **params):
         self._load_global = params.pop('load_global', True)
@@ -413,8 +508,14 @@ class Dashboard(Component, Viewer):
         state.config = self.config
         if pn.state._is_pyodide:
             self._render_dashboard()
+            if self.config.on_loaded:
+                self.config.on_loaded()
         else:
             pn.state.onload(self._render_dashboard)
+            if self.config.on_loaded:
+                pn.state.onload(self.config.on_loaded)
+        if self.config.on_session_created:
+            self.config.on_session_created()
 
     def _init_config(self):
         pn.config.notifications = True
