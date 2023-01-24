@@ -127,6 +127,10 @@ class View(MultiTypeComponent, Viewer):
         The download objects determines whether and how the source tables
         can be downloaded.""")
 
+    loading_indicator = param.Boolean(default=True, constant=True, doc="""
+        Whether to display a loading indicator on the View when the
+        Pipeline is refreshing the data.""")
+
     pipeline = param.ClassSelector(class_=Pipeline, doc="""
         The data pipeline that drives the View.""")
 
@@ -178,6 +182,8 @@ class View(MultiTypeComponent, Viewer):
             if isinstance(self.param[fp], param.Selector):
                 self.param[fp].objects = fields
         pipeline.param.watch(self.update, 'data')
+        if self.loading_indicator:
+            pipeline._update_widget.param.watch(self._update_loading, 'loading')
         super().__init__(pipeline=pipeline, refs=refs, **params)
         self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'name')])
         self.download.view = self
@@ -189,6 +195,9 @@ class View(MultiTypeComponent, Viewer):
         if not self._initialized:
             self.update()
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
+
+    def _update_loading(self, event):
+        self._panel.loading = event.new
 
     def _update_ref(self, pname: str, ref: str, *events: param.parameterized.Event) -> None:
         # Note: Do not trigger update in View if Pipeline references
