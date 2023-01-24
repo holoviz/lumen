@@ -37,7 +37,7 @@ from .validation import (
     ValidationError, match_suggestion_message, validate_callback,
 )
 from .variables.base import Variable, Variables
-from .views.base import View  # noqa
+from .views.base import Download, View  # noqa
 
 if TYPE_CHECKING:
     from bokeh.server.contexts import BokehSessionContext
@@ -290,6 +290,8 @@ class Defaults(Component):
     `Defaults` to apply to the component classes.
     """
 
+    download = param.Dict(default={}, doc="Defaults for the Download object")
+
     filters = param.List(doc="Defaults for Filter objects.", class_=dict)
 
     sources = param.List(doc="Defaults for Source objects.", class_=dict)
@@ -338,6 +340,30 @@ class Defaults(Component):
         return defaults
 
     @classmethod
+    def _validate_download(
+        cls, download_defaults: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
+    ):
+        if not isinstance(download_defaults, dict):
+            msg = f'Defaults for Download component must be declared as a dictionary, not as a {type(download_defaults)}.'
+            raise ValidationError(msg, spec, 'download:')
+        for p in download_defaults:
+            if p in Download.param:
+                pobj = Download.param[p]
+                try:
+                    pobj._validate(download_defaults[p])
+                except Exception as e:
+                    msg = f"The default for Download {p!r} parameter failed validation: {str(e)}"
+                    raise ValidationError(msg, download_defaults, p)
+                continue
+            msg = (
+                f'Default for Download {p!r} parameter cannot be set as there '
+                'is no such parameter.'
+            )
+            msg = match_suggestion_message(p, list(Download.param), msg)
+            raise ValidationError(msg, download_defaults, p)
+        return download_defaults
+
+    @classmethod
     def _validate_filters(
         cls, filter_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
     ):
@@ -362,6 +388,7 @@ class Defaults(Component):
         return cls._validate_defaults(View, view_defaults, spec)
 
     def apply(self):
+        Download.param.update(self.download)
         for obj, defaults in ((Filter, self.filters), (Source, self.sources),
                               (Transform, self.transforms), (View, self.views)):
             for default in defaults:
