@@ -197,7 +197,8 @@ class View(MultiTypeComponent, Viewer):
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
     def _update_loading(self, event):
-        self._panel.loading = event.new
+        if self._panel is not None:
+            self._panel.loading = event.new
 
     def _update_ref(self, pname: str, ref: str, *events: param.parameterized.Event) -> None:
         # Note: Do not trigger update in View if Pipeline references
