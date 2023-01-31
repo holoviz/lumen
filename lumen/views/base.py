@@ -52,11 +52,14 @@ class Download(Component, Viewer):
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
 
+    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+      The format to download the data in.""")
+
     hide = param.Boolean(default=False, doc="""
       Whether the download button hides when not in focus.""")
 
-    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
-      The format to download the data in.""")
+    index = param.Boolean(default=True, doc="""
+      Whether the downloaded table has an index.""")
 
     kwargs = param.Dict(default={}, doc="""
       Keyword arguments passed to the serialization function, e.g.
@@ -89,13 +92,13 @@ class Download(Component, Viewer):
             io = BytesIO()
         data = self.view.get_data()
         if self.format == 'csv':
-            data.to_csv(io, **self.kwargs)
+            data.to_csv(io, index=self.index, **self.kwargs)
         elif self.format == 'json':
-            data.to_json(io, **self.kwargs)
+            data.to_json(io, index=self.index, **self.kwargs)
         elif self.format == 'xlsx':
-            data.to_excel(io, **self.kwargs)
+            data.to_excel(io, index=self.index, **self.kwargs)
         elif self.format == 'parquet':
-            data.to_parquet(io, **self.kwargs)
+            data.to_parquet(io, index=self.index, **self.kwargs)
         io.seek(0)
         return io
 
