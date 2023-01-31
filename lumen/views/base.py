@@ -33,7 +33,7 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference, slugify,
 )
 from ..validation import ValidationError
 
@@ -51,6 +51,12 @@ class Download(Component, Viewer):
 
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
+
+    filename = param.String(default=None, doc="""filenamefil
+      The filename of the downloaded table.
+      File extension is added automatic based on the format.
+      If filename is not added, it will be based on the name of the view.
+      """)
 
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
       The format to download the data in.""")
@@ -103,7 +109,11 @@ class Download(Component, Viewer):
         return io
 
     def __panel__(self) -> DownloadButton:
-        filename = f'{self.view.pipeline.table}.{self.format}'
+        if self.filename:
+            filename = self.filename
+        else:
+            filename = slugify(self.view.title or self.view.pipeline.table)
+        filename = f'{filename}.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
             size=18, hide=self.hide
