@@ -7,6 +7,7 @@ import re
 import sys
 import unicodedata
 
+from contextlib import contextmanager
 from functools import wraps
 from logging import getLogger
 from subprocess import check_output
@@ -17,6 +18,7 @@ import panel as pn
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
+from panel.io.document import unlocked
 
 log = getLogger(__name__)
 
@@ -316,6 +318,27 @@ def catch_and_notify(message=None):
 
     return decorator
 
+@contextmanager
+def immediate_dispatch(doc=None):
+    """
+    Utility to trigger immediate dispatch of events even when Document
+    events are currently on hold.
+    """
+    doc = doc or state.curdoc
+
+    # Skip if not in a server context
+    if not doc._session_context:
+        yield
+        return
+
+    old_events = doc.callbacks._held_events
+    hold = doc.callbacks._hold
+    doc.callbacks._held_events = []
+    doc.callbacks.unhold()
+    with unlocked():
+        yield
+    doc.callbacks._hold = hold
+    doc.callbacks._held_events = old_events
 
 def slugify(value, allow_unicode=False) -> str:
     """
