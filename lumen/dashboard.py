@@ -678,7 +678,7 @@ class Dashboard(Component, Viewer):
             self._header.append(self._menu_button)
         if self.config.reloadable:
             self._header.append(self._reload_button)
-        if self.config.editable:
+        if False:#self.config.editable:
             self._header.append(self._edit_button)
         if 'auth' in state.spec:
             logout = IconButton(
@@ -715,16 +715,12 @@ class Dashboard(Component, Viewer):
             self._layout.param.watch(self._activate_filters, 'active')
 
     def _create_modal(self):
-        self._editor = pn.widgets.Ace(
-            value=self._yaml, filename=self._yaml_file,
-            sizing_mode='stretch_both', min_height=600,
-            theme='monokai'
-        )
+        self._editor = pn.panel('Editor')
         self._edit_button = pn.widgets.Button(
             name='✎', width=50, css_classes=['reload'], margin=0,
             align='center'
         )
-        self._editor.param.watch(self._edit, 'value')
+        #self._editor.param.watch(self._edit, 'value')
         self._edit_button.js_on_click(code="""
         var modal = document.getElementById("pn-Modal")
         modal.style.display = "block"
