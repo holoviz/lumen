@@ -536,13 +536,13 @@ class Dashboard(Component, Viewer):
         if pn.state._is_pyodide:
             self._render_dashboard()
             if self.config.on_loaded:
-                self.config.on_loaded()
+                pn.state.execute(self.config.on_loaded)
         else:
             pn.state.onload(self._render_dashboard)
             if self.config.on_loaded:
                 pn.state.onload(self.config.on_loaded)
         if self.config.on_session_created:
-            self.config.on_session_created()
+            pn.state.execute(self.config.on_session_created)
 
     def _init_config(self):
         pn.config.notifications = True
@@ -678,7 +678,7 @@ class Dashboard(Component, Viewer):
             self._header.append(self._menu_button)
         if self.config.reloadable:
             self._header.append(self._reload_button)
-        if self.config.editable:
+        if False:#self.config.editable:
             self._header.append(self._edit_button)
         if 'auth' in state.spec:
             logout = IconButton(
@@ -715,16 +715,12 @@ class Dashboard(Component, Viewer):
             self._layout.param.watch(self._activate_filters, 'active')
 
     def _create_modal(self):
-        self._editor = pn.widgets.Ace(
-            value=self._yaml, filename=self._yaml_file,
-            sizing_mode='stretch_both', min_height=600,
-            theme='monokai'
-        )
+        self._editor = pn.panel('Editor')
         self._edit_button = pn.widgets.Button(
             name='✎', width=50, css_classes=['reload'], margin=0,
             align='center'
         )
-        self._editor.param.watch(self._edit, 'value')
+        #self._editor.param.watch(self._edit, 'value')
         self._edit_button.js_on_click(code="""
         var modal = document.getElementById("pn-Modal")
         modal.style.display = "block"

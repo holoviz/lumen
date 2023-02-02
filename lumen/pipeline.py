@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+from functools import partial
 from itertools import product
 from typing import (
     Any, ClassVar, Dict, List, Tuple, Type,
@@ -288,7 +289,7 @@ class Pipeline(Viewer, Component):
                 pn.state.curdoc.hold()
             self.data = self._compute_data()
             if state.config and state.config.on_update:
-                state.config.on_update(self)
+                pn.state.execute(partial(state.config.on_update, self))
         except Exception as e:
             raise e
         else:
