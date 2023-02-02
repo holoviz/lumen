@@ -238,3 +238,32 @@ def test_view_title_download(set_root, view_type):
 
     button._on_click()
     assert button.data.startswith('data:text/plain;charset=UTF-8;base64')
+
+    assert view.download.filename is None
+    assert view.download.format == 'csv'
+
+
+@pytest.mark.parametrize("view_type", ("table", "hvplot"))
+def test_view_title_download_filename(set_root, view_type):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': view_type,
+        'table': 'test',
+        'title': 'Test title',
+        'download': 'example.csv',
+    }
+
+    view = View.from_spec(view, source)
+
+    title = view.panel[0][0]
+    assert isinstance(title, pn.pane.HTML)
+
+    button = view.panel[0][1]
+    assert isinstance(button, DownloadButton)
+
+    button._on_click()
+    assert button.data.startswith('data:text/plain;charset=UTF-8;base64')
+
+    assert view.download.filename == 'example'
+    assert view.download.format == 'csv'
