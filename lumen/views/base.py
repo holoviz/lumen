@@ -34,7 +34,7 @@ from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
     VARIABLE_RE, catch_and_notify, immediate_dispatch, is_ref,
-    resolve_module_reference, slugify
+    resolve_module_reference, slugify,
 )
 from ..validation import ValidationError
 
