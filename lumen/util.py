@@ -301,7 +301,7 @@ def catch_and_notify(message=None):
                 return func(*args, **kwargs)
             except Exception as e:
                 from .state import state
-                if state.config.on_error:
+                if state.config and state.config.on_error:
                     pn.state.execute(partial(state.config.on_error, e))
                 if pn.config.notifications:
                     log.error(
