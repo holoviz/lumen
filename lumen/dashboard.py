@@ -71,11 +71,11 @@ class Config(Component):
                             check_on_set=False, doc="""
         Overall layout of the dashboard.""")
 
-    loading_spinner = param.Selector(default='dots', constant=True, objects=[
+    loading_spinner = param.Selector(default='arc', constant=True, objects=[
         'arc', 'arcs', 'bar', 'dots', 'petal'], doc="""
         Loading indicator to use when component loading parameter is set.""")
 
-    loading_color = param.Color(default='#00aa41', constant=True, doc="""
+    loading_color = param.Color(default='#0072B5', constant=True, doc="""
         Color of the loading indicator.""")
 
     logo = param.String(default=None, constant=True, doc="""
