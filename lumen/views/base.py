@@ -33,7 +33,7 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference, slugify,
 )
 from ..validation import ValidationError
 
@@ -52,11 +52,19 @@ class Download(Component, Viewer):
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
 
-    hide = param.Boolean(default=False, doc="""
-      Whether the download button hides when not in focus.""")
+    filename = param.String(default=None, doc="""
+      The filename of the downloaded table.
+      File extension is added automatic based on the format.
+      If filename is not defined, it will be the name of the orignal table of the view.""")
 
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
       The format to download the data in.""")
+
+    hide = param.Boolean(default=False, doc="""
+      Whether the download button hides when not in focus.""")
+
+    index = param.Boolean(default=True, doc="""
+      Whether the downloaded table has an index.""")
 
     kwargs = param.Dict(default={}, doc="""
       Keyword arguments passed to the serialization function, e.g.
@@ -89,18 +97,19 @@ class Download(Component, Viewer):
             io = BytesIO()
         data = self.view.get_data()
         if self.format == 'csv':
-            data.to_csv(io, **self.kwargs)
+            data.to_csv(io, index=self.index, **self.kwargs)
         elif self.format == 'json':
-            data.to_json(io, **self.kwargs)
+            data.to_json(io, index=self.index, **self.kwargs)
         elif self.format == 'xlsx':
-            data.to_excel(io, **self.kwargs)
+            data.to_excel(io, index=self.index, **self.kwargs)
         elif self.format == 'parquet':
-            data.to_parquet(io, **self.kwargs)
+            data.to_parquet(io, index=self.index, **self.kwargs)
         io.seek(0)
         return io
 
     def __panel__(self) -> DownloadButton:
-        filename = f'{self.view.pipeline.table}.{self.format}'
+        filename = self.filename or slugify(self.view.pipeline.table)
+        filename = f'{filename}.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
             size=18, hide=self.hide
@@ -176,7 +185,9 @@ class View(MultiTypeComponent, Viewer):
         if pipeline is None:
             raise ValueError("Views must declare a Pipeline.")
         if isinstance(params.get("download"), str):
-            params["download"] = Download(format=params["download"])
+            *filenames, ext = params.get("download").split(".")
+            filename = ".".join(filenames) or None
+            params["download"] = Download(filename=filename, format=ext)
         fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
@@ -372,7 +383,9 @@ class View(MultiTypeComponent, Viewer):
         # Resolve download options
         download_spec = spec.pop('download', {})
         if isinstance(download_spec, str):
-            download_spec = {'format': download_spec}
+            *filenames, ext = download_spec.split('.')
+            filename = '.'.join(filenames) or None
+            download_spec = {'filename': filename, 'format': ext}
         resolved_spec['download'] = Download.from_spec(download_spec)
 
         view = view_type(refs=refs, **resolved_spec)

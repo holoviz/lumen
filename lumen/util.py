@@ -5,6 +5,7 @@ import importlib
 import os
 import re
 import sys
+import unicodedata
 
 from functools import wraps
 from logging import getLogger
@@ -314,3 +315,25 @@ def catch_and_notify(message=None):
         return decorator(function)
 
     return decorator
+
+
+def slugify(value, allow_unicode=False) -> str:
+    """
+    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+    dashes to single dashes. Remove characters that aren't alphanumerics,
+    underscores, or hyphens. Convert to lowercase. Also strip leading and
+    trailing whitespace, dashes, and underscores.
+
+    From: https://docs.djangoproject.com/en/4.0/_modules/django/utils/text/#slugify
+    """
+    value = str(value)
+    if allow_unicode:
+        value = unicodedata.normalize("NFKC", value)
+    else:
+        value = (
+            unicodedata.normalize("NFKD", value)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+    value = re.sub(r"[^\w\s-]", "", value.lower())
+    return re.sub(r"[-\s]+", "-", value).strip("-_")
