@@ -33,7 +33,8 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, immediate_dispatch, is_ref,
+    resolve_module_reference,
 )
 from ..validation import ValidationError
 
@@ -198,7 +199,8 @@ class View(MultiTypeComponent, Viewer):
 
     def _update_loading(self, event):
         if self._panel is not None:
-            self._panel.loading = event.new
+            with immediate_dispatch():
+                self._panel.loading = event.new
 
     def _update_ref(self, pname: str, ref: str, *events: param.parameterized.Event) -> None:
         # Note: Do not trigger update in View if Pipeline references

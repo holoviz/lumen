@@ -6,6 +6,7 @@ import os
 import re
 import sys
 
+from contextlib import contextmanager
 from functools import wraps
 from logging import getLogger
 from subprocess import check_output
@@ -314,3 +315,24 @@ def catch_and_notify(message=None):
         return decorator(function)
 
     return decorator
+
+@contextmanager
+def immediate_dispatch(doc=None):
+    """
+    Utility to trigger immediate dispatch of events even when Document
+    events are currently on hold.
+    """
+    doc = doc or state.curdoc
+
+    # Skip if not in a server context
+    if not doc._session_context:
+        yield
+        return
+
+    old_events = doc.callbacks._held_events
+    hold = doc.callbacks._hold
+    doc.callbacks._held_events = []
+    yield
+    doc.callbacks.unhold()
+    doc.callbacks._hold = hold
+    doc.callbacks._held_events = old_events
