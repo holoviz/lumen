@@ -134,19 +134,19 @@ def _j_getshell(x):
 def _j_getheaders(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
-    return state.headers.get(x, '')
+    return pn.state.headers.get(x, '')
 
 def _j_getcookies(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
-    return state.cookies.get(x, '')
+    return pn.state.cookies.get(x, '')
 
 def _j_getoauth(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
-    if state.user_info is None:
+    if pn.state.user_info is None:
         return ''
-    return state.user_info.get(x, '')
+    return pn.state.user_info.get(x, '')
 
 def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
                 getcookies=True, getoauth=True):
@@ -300,6 +300,7 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
+                from .state import state
                 if state.config.on_error:
                     pn.state.execute(partial(state.config.on_error, e))
                 if pn.config.notifications:
