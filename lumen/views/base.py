@@ -52,11 +52,10 @@ class Download(Component, Viewer):
     color = param.Color(default='grey', allow_None=True, doc="""
       The color of the download button.""")
 
-    filename = param.String(default=None, doc="""filenamefil
+    filename = param.String(default=None, doc="""
       The filename of the downloaded table.
       File extension is added automatic based on the format.
-      If filename is not added, it will be based on the name of the view.
-      """)
+      If filename is not defined, it will be the name of the orignal table of the view.""")
 
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
       The format to download the data in.""")
@@ -109,10 +108,7 @@ class Download(Component, Viewer):
         return io
 
     def __panel__(self) -> DownloadButton:
-        if self.filename:
-            filename = self.filename
-        else:
-            filename = slugify(self.view.title or self.view.pipeline.table)
+        filename = self.filename or slugify(self.view.pipeline.table)
         filename = f'{filename}.{self.format}'
         return DownloadButton(
             callback=self._table_data, filename=filename, color=self.color,
@@ -189,7 +185,9 @@ class View(MultiTypeComponent, Viewer):
         if pipeline is None:
             raise ValueError("Views must declare a Pipeline.")
         if isinstance(params.get("download"), str):
-            params["download"] = Download(format=params["download"])
+            *filenames, ext = params.get("download").split(".")
+            filename = ".".join(filenames) or None
+            params["download"] = Download(filename=filename, format=ext)
         fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
@@ -385,7 +383,9 @@ class View(MultiTypeComponent, Viewer):
         # Resolve download options
         download_spec = spec.pop('download', {})
         if isinstance(download_spec, str):
-            download_spec = {'format': download_spec}
+            *filenames, ext = download_spec.split('.')
+            filename = '.'.join(filenames) or None
+            download_spec = {'filename': filename, 'format': ext}
         resolved_spec['download'] = Download.from_spec(download_spec)
 
         view = view_type(refs=refs, **resolved_spec)
