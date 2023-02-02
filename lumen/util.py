@@ -18,6 +18,7 @@ import panel as pn
 from jinja2 import DebugUndefined, Environment, Undefined
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
+from panel.io.document import unlocked
 
 log = getLogger(__name__)
 
@@ -333,8 +334,9 @@ def immediate_dispatch(doc=None):
     old_events = doc.callbacks._held_events
     hold = doc.callbacks._hold
     doc.callbacks._held_events = []
-    yield
     doc.callbacks.unhold()
+    with unlocked():
+        yield
     doc.callbacks._hold = hold
     doc.callbacks._held_events = old_events
 
