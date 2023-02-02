@@ -536,13 +536,13 @@ class Dashboard(Component, Viewer):
         if pn.state._is_pyodide:
             self._render_dashboard()
             if self.config.on_loaded:
-                self.config.on_loaded()
+                pn.state.execute(self.config.on_loaded)
         else:
             pn.state.onload(self._render_dashboard)
             if self.config.on_loaded:
                 pn.state.onload(self.config.on_loaded)
         if self.config.on_session_created:
-            self.config.on_session_created()
+            pn.state.execute(self.config.on_session_created)
 
     def _init_config(self):
         pn.config.notifications = True

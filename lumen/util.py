@@ -8,7 +8,7 @@ import sys
 import unicodedata
 
 from contextlib import contextmanager
-from functools import wraps
+from functools import partial, wraps
 from logging import getLogger
 from subprocess import check_output
 
@@ -300,10 +300,8 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                try:
-                    state.config.on_error(e)
-                except Exception:
-                    pass
+                if state.config.on_error:
+                    pn.state.execute(partial(state.config.on_error, e))
                 if pn.config.notifications:
                     log.error(
                         f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
