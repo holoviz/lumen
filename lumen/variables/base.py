@@ -52,8 +52,11 @@ class Variables(param.Parameterized):
     @classmethod
     def from_spec(cls, spec):
         variables = cls.create_variables()
-        if pn.state.curdoc:
-            state._variables[pn.state.curdoc] = variables
+        doc = pn.state.curdoc
+        if doc and doc._session_context:
+            state._variables[doc] = variables
+        else:
+            state._variable = variables
         for name, var_spec in spec.items():
             if not isinstance(var_spec, dict):
                 var_spec = {
