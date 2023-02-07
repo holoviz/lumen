@@ -326,7 +326,7 @@ def immediate_dispatch(doc=None):
     doc = doc or state.curdoc
 
     # Skip if not in a server context
-    if not doc._session_context:
+    if not doc or not doc._session_context:
         yield
         return
 
