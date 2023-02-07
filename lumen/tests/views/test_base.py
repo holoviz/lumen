@@ -15,6 +15,23 @@ def test_resolve_module_type():
     assert View._get_type('lumen.views.base.View') is View
 
 
+def test_view_hvplot_limit(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = {
+        'type': 'hvplot',
+        'table': 'test',
+        'x': 'A',
+        'y': 'B',
+        'kind': 'scatter',
+        'limit': 2
+    }
+
+    view = View.from_spec(view, source, [])
+    data = view.get_data()
+    assert data.shape == (2, 4)
+
+
 def test_view_hvplot_basis(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})

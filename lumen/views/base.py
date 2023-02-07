@@ -141,6 +141,9 @@ class View(MultiTypeComponent, Viewer):
         Whether to display a loading indicator on the View when the
         Pipeline is refreshing the data.""")
 
+    limit = param.Integer(default=None, doc="""
+        Limits the number of rows that are rendered.""")
+
     pipeline = param.ClassSelector(class_=Pipeline, doc="""
         The data pipeline that drives the View.""")
 
@@ -427,6 +430,8 @@ class View(MultiTypeComponent, Viewer):
         if self.pipeline.data is None:
             self.pipeline._update_data()
         self._cache = data = self.pipeline.data
+        if self.limit is not None:
+            data = data.iloc[:self.limit]
         return data.copy()
 
     def get_value(self, field: str | None = None):
@@ -450,7 +455,7 @@ class View(MultiTypeComponent, Viewer):
             the queried field.
         """
         data = self.get_data()
-        if not len(data) or field is not None and field not in data.columns:
+        if not len(data) or (field is not None and field not in data.columns):
             return None
         row = data.iloc[-1]
         return row[self.field if field is None else field]
