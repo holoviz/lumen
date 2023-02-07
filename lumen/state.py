@@ -123,9 +123,10 @@ class _session_state:
         from .variables import Variables
         if self._variable is None:
             self._variable = Variables.create_variables()
-        if pn.state.curdoc is None:
+        doc = pn.state.curdoc
+        if doc is None or doc._session_context is None:
             return self._variable  # type: ignore
-        elif pn.state.curdoc not in self._variables:
+        elif doc not in self._variables:
             self._variables[pn.state.curdoc] = variables = Variables.create_variables()
             for var in self._variable._vars.values():  # type: ignore
                 variables.add_variable(var)
