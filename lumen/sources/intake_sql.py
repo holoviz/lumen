@@ -20,6 +20,8 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
+    _distinct_limit = 5000
+
     __abstract = True
 
     def _apply_transforms(self, source, sql_transforms):
@@ -90,9 +92,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
             for col in enums:
-                distinct_transforms = [
-                    SQLDistinct(columns=[col]), SQLLimit(limit=1000)
-                ]
+                distinct_transforms = [SQLDistinct(columns=[col])]
                 distinct = self._read(
                     self._apply_transforms(source, distinct_transforms)
                 )
