@@ -20,8 +20,6 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
-    _distinct_limit = 5000
-
     __abstract = True
 
     def _apply_transforms(self, source, sql_transforms):
