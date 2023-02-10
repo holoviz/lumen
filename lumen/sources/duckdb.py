@@ -101,7 +101,7 @@ class DuckDBSource(Source):
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
             for col in enums:
-                distinct_expr = sql_expr.apply(SQLDistinct(columns=[col]))
+                distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
                 distinct_expr = ' '.join(distinct_expr.splitlines())
                 distinct = self._connection.execute(distinct_expr).fetch_df()
                 schema[col]['enum'] = distinct[col].tolist()
