@@ -6,6 +6,7 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 import panel as pn
+import yaml
 
 from .util import extract_refs, is_ref
 
@@ -145,7 +146,7 @@ class _session_state:
 
     def to_spec(
         self, auth=None, config=None, defaults=None,
-        pipelines={}, sources={}, layouts=[], variables=None
+        pipelines={}, sources={}, layouts=[], variables=None,
     ):
         """
         Exports the full specification of the supplied components including
@@ -202,6 +203,22 @@ class _session_state:
                 layout.to_spec(context) for layout in layouts
             ]
         return context
+
+    def save_spec(self, filename, **to_spec_kwargs):
+        """Exports the full specification of the supplied components including
+        the variable definitions to a file.
+
+
+        Parameters
+        ----------
+        filename: str | None
+        to_spec_kwargs: parameters passed to lumen.state.to_spec.
+
+        """
+        context = self.to_spec(**to_spec_kwargs)
+
+        with open(filename, 'w') as f:
+            yaml.dump(context, f)
 
     @property
     def global_refs(self) -> List[str]:
