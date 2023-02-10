@@ -198,7 +198,8 @@ class SQLFilter(SQLTransform):
                 if not val:
                     continue
                 non_null = [v for v in val if v is not None]
-                condition = f"{col} IN ({', '.join(map(repr, non_null))})"
+                str_non_null = "', '".join(n.replace("'", '\\\'') for n in non_null)
+                condition = f"{col} IN ('{str_non_null}')"
                 if not non_null:
                     condition = f'{col} IS NULL'
                 elif len(val) != len(non_null):

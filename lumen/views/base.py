@@ -1070,4 +1070,4 @@ class AltairView(View):
         return pn.pane.Vega(**self._get_params())
 
 
-__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)]
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
