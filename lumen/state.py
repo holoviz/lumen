@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import yaml
+
 from typing import (
     TYPE_CHECKING, Any, Dict, List, Tuple, cast,
 )
@@ -145,11 +147,13 @@ class _session_state:
 
     def to_spec(
         self, auth=None, config=None, defaults=None,
-        pipelines={}, sources={}, layouts=[], variables=None
+        pipelines={}, sources={}, layouts=[], variables=None,
+        filename=None
     ):
         """
         Exports the full specification of the supplied components including
-        the variable definitions.
+        the variable definitions. If filename is given the specification is saved
+        to that file.
 
         Parameters
         ----------
@@ -160,6 +164,7 @@ class _session_state:
         pipelines: Dict[str, Pipeline]
         sources: Dict[str, Source]
         layouts: list[Layout]
+        filename: str | None
 
         Returns
         -------
@@ -201,6 +206,9 @@ class _session_state:
             context['layouts'] = [
                 layout.to_spec(context) for layout in layouts
             ]
+        if filename:
+            with open(filename, 'w') as f:
+                yaml.dump(context, f)
         return context
 
     @property
