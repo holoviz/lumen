@@ -147,12 +147,10 @@ class _session_state:
     def to_spec(
         self, auth=None, config=None, defaults=None,
         pipelines={}, sources={}, layouts=[], variables=None,
-        filename=None
     ):
         """
         Exports the full specification of the supplied components including
-        the variable definitions. If filename is given the specification is saved
-        to that file.
+        the variable definitions.
 
         Parameters
         ----------
@@ -163,7 +161,6 @@ class _session_state:
         pipelines: Dict[str, Pipeline]
         sources: Dict[str, Source]
         layouts: list[Layout]
-        filename: str | None
 
         Returns
         -------
@@ -205,10 +202,23 @@ class _session_state:
             context['layouts'] = [
                 layout.to_spec(context) for layout in layouts
             ]
-        if filename:
-            with open(filename, 'w') as f:
-                yaml.dump(context, f)
         return context
+
+    def save_spec(self, filename, **to_spec_kwargs):
+        """Exports the full specification of the supplied components including
+        the variable definitions to a file.
+
+
+        Parameters
+        ----------
+        filename: str | None
+        to_spec_kwargs: parameters passed to lumen.state.to_spec.
+
+        """
+        context = self.to_spec(**to_spec_kwargs)
+
+        with open(filename, 'w') as f:
+            yaml.dump(context, f)
 
     @property
     def global_refs(self) -> List[str]:
