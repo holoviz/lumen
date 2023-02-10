@@ -90,9 +90,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
             for col in enums:
-                distinct_transforms = [
-                    SQLDistinct(columns=[col]), SQLLimit(limit=1000)
-                ]
+                distinct_transforms = [SQLDistinct(columns=[col])]
                 distinct = self._read(
                     self._apply_transforms(source, distinct_transforms)
                 )
