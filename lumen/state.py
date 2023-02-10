@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import yaml
-
 from typing import (
     TYPE_CHECKING, Any, Dict, List, Tuple, cast,
 )
 from weakref import WeakKeyDictionary
 
 import panel as pn
+import yaml
 
 from .util import extract_refs, is_ref
 
