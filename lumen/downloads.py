@@ -61,6 +61,9 @@ class Download(MultiTypeComponent, Viewer):
     def validate(cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None):
         if isinstance(spec, str):
             spec = {'format': spec}
+        if 'type' not in spec:
+            spec['type'] = 'default'
+
         return super().validate(spec, context)
 
     def __bool__(self) -> bool:
@@ -93,7 +96,13 @@ class Download(MultiTypeComponent, Viewer):
         )
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'MultiTypeComponent':
+    def from_spec(cls, spec: Dict[str, Any] | str) -> MultiTypeComponent | None:
         spec = dict(spec)
         cls_type = spec.pop("type", "default")
         return cls._get_type(cls_type)(**spec)
+
+    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        spec = super().to_spec(context)
+        if len(spec) == 1 and "type" in spec:
+            return {}
+        return spec
