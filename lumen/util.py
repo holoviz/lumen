@@ -12,15 +12,19 @@ from functools import partial, wraps
 from logging import getLogger
 from subprocess import check_output
 
+import bokeh
 import pandas as pd
 import panel as pn
 
 from jinja2 import DebugUndefined, Environment, Undefined
+from packaging.version import Version
 from pandas.core.dtypes.dtypes import CategoricalDtype
 from panel import state
 from panel.io.document import unlocked
 
 log = getLogger(__name__)
+
+bokeh3 = Version(bokeh.__version__) > Version("3.0")
 
 VARIABLE_RE = re.compile(r'\$variables\.([a-zA-Z_]\w*)')
 

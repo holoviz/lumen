@@ -356,6 +356,7 @@ class Widget(Variable):
             if (
                 pval is pobj.default or pname in spec or
                 (pname == 'name' and not pval) or pname == 'value_throttled'
+                or pname == 'design'  # Design is Panel 1.0 only
             ):
                 continue
             try:

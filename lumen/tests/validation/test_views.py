@@ -5,15 +5,15 @@ from lumen.views.base import Download, View
 
 
 @pytest.mark.parametrize(
-    "spec,msg",
+    "spec,output",
     (
         (
             "csv",
-            None,
+            {"format": "csv", "type": "default"},
         ),
         (
             {"format": "csv"},
-            None,
+            {"format": "csv", "type": "default"},
         ),
         (
             {"formats": "csv"},
@@ -26,15 +26,15 @@ from lumen.views.base import Download, View
     ),
     ids=["correct1", "correct2", "missing_required", "wrong_format"],
 )
-def test_target_Download(spec, msg):
-    if msg is None:
+def test_target_Download(spec, output):
+    if isinstance(output, dict):
         if isinstance(spec, str):
-            assert Download.validate(spec) == {"format": spec}
+            assert Download.validate(spec) == output
         else:
-            assert Download.validate(spec.copy()) == spec
+            assert Download.validate(spec.copy()) == output
 
     else:
-        with pytest.raises(ValidationError, match=msg):
+        with pytest.raises(ValidationError, match=output):
             Download.validate(spec)
 
 
