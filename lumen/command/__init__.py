@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import ast
 import os
@@ -6,11 +8,13 @@ import sys
 import bokeh.command.util  # type: ignore
 
 from bokeh.application.handlers.code import CodeHandler  # type: ignore
+from bokeh.document import Document
 from bokeh.command.util import (  # type: ignore
     build_single_handler_application as _build_application, die,
 )
 from panel.command import Serve, main as _pn_main, transform_cmds
 from panel.io.server import Application
+from panel.io.state import set_curdoc
 
 from .. import __version__
 from ..config import config
@@ -51,6 +55,11 @@ class YamlHandler(CodeHandler):
         if warm:
             config.load_local_modules()
             state.load_global_sources(clear_cache=not config.dev)
+
+    def modify_document(self, doc: Document) -> None:
+        # Temporary fix for issues with --warm flag
+        with set_curdoc(doc):
+            super().modify_document(doc)
 
 
 def build_single_handler_application(path, argv):
