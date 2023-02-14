@@ -465,6 +465,21 @@ class MultiTypeComponent(Component):
         return f'{cls.__module__}.{cls.__name__}'
 
     @classmethod
+    def _import_module(cls, component_type: str):
+        base_type = cls._base_type
+        try:
+            import_name = f'lumen.{base_type.__name__.lower()}s.{component_type}'
+            __import__(import_name)
+        except ImportError as e:
+            if e.name != import_name:
+                msg = (
+                    f"In order to use the {base_type.__name__.lower()} "
+                    f"component '{component_type}', the '{e.name}' package "
+                    "must be installed."
+                )
+                raise ImportError(msg)
+
+    @classmethod
     def _get_type(
         cls, component_type: str, spec: Dict[str, Any] | None = None
     ) -> Type['MultiTypeComponent']:
@@ -477,17 +492,7 @@ class MultiTypeComponent(Component):
         if '.' in component_type:
             return resolve_module_reference(component_type, base_type)
 
-        try:
-            import_name = f'lumen.{base_type.__name__.lower()}s.{component_type}'
-            __import__(import_name)
-        except ImportError as e:
-            if e.name != import_name:
-                msg = (
-                    f"In order to use the {base_type.__name__.lower()} "
-                    f"component '{component_type}', the '{e.name}' package "
-                    "must be installed."
-                )
-                raise ImportError(msg)
+        cls._import_module(component_type)
 
         subcls_types = set()
         for subcls in param.concrete_descendents(cls).values():
@@ -513,7 +518,8 @@ class MultiTypeComponent(Component):
                 "MultiTypeComponent cannot be materialized by reference. Please pass "
                 "full specification for the MultiTypeComponent."
             )
-        component_cls = cls._get_type(spec['type'], spec)
+        spec = dict(spec)
+        component_cls = cls._get_type(spec.pop('type'), spec)
         return component_cls(**spec)
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
