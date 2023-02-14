@@ -6,6 +6,7 @@ from panel.widgets import IntSlider, TextInput
 
 from lumen.base import Component
 from lumen.state import state
+from lumen.util import bokeh3
 from lumen.variables import (
     Parameter, Variable, Variables, Widget,
 )
@@ -128,27 +129,23 @@ def test_widget_variable_linking_throttled():
     assert var._widget.value == 4
 
 def test_widget_variable_intslider_to_spec():
-    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider', 'throttled': False, 'start': 10, 'end': 53})
+    input_spec = {'type': 'widget', 'kind': 'IntSlider', 'throttled': False, 'start': 10, 'end': 53}
+    excepted_spec = {'value': 10, **input_spec}
+    output_spec = Variable.from_spec(input_spec).to_spec()
 
-    assert var.to_spec() == {
-        'type': 'widget',
-        'kind': 'IntSlider',
-        'throttled': False,
-        'start': 10,
-        'end': 53,
-        'value': 10
-    }
+    if bokeh3:
+        output_spec.pop("design", None)
+
+    assert excepted_spec == output_spec
 
 def test_widget_variable_select_to_spec():
-    var = Variable.from_spec({'type': 'widget', 'kind': 'Select', 'options': ['A', 'B', 'C']})
+    input_spec = {'type': 'widget', 'kind': 'Select', 'options': ['A', 'B', 'C']}
+    excepted_spec = {'value': 'A', **input_spec}
+    output_spec = Variable.from_spec(input_spec).to_spec()
 
-    assert var.to_spec() == {
-        'type': 'widget',
-        'kind': 'Select',
-        'options': ['A', 'B', 'C'],
-        'value': 'A'
-    }
-
+    if bokeh3:
+        output_spec.pop("design", None)
+    assert excepted_spec == output_spec
 
 def test_intslider_value_initialize():
     var = Widget(kind="IntSlider", value=20)
