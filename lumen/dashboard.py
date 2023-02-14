@@ -703,8 +703,6 @@ class Dashboard(Component, Viewer):
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
         styles = {'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
-
-        
         style_params = {'styles': styles} if bokeh3 else {'style': styles}
         state.loading_msg = pn.pane.HTML(
             'Loading...', align='center', width=400, height=400, **style_params
