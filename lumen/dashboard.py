@@ -704,14 +704,11 @@ class Dashboard(Component, Viewer):
         self._layout = self.config.layout(**layout_kwargs)
         styles = {'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
 
-        if bokeh3:
-            state.loading_msg = pn.pane.HTML(
-                'Loading...', align='center', styles=styles, width=400, height=400
-            )
-        else:
-            state.loading_msg = pn.pane.HTML(
-                'Loading...', align='center', style=styles, width=400, height=400
-            )
+        
+        style_params = {'styles': styles} if bokeh3 else {'style': styles}
+        state.loading_msg = pn.pane.HTML(
+            'Loading...', align='center', width=400, height=400, **style_params
+        )
 
         self._loading = pn.Column(
             pn.layout.HSpacer(), state.loading_msg, pn.layout.HSpacer(),
