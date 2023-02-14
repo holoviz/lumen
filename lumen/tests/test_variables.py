@@ -128,27 +128,16 @@ def test_widget_variable_linking_throttled():
     assert var._widget.value == 4
 
 def test_widget_variable_intslider_to_spec():
-    var = Variable.from_spec({'type': 'widget', 'kind': 'IntSlider', 'throttled': False, 'start': 10, 'end': 53})
-
-    assert var.to_spec() == {
-        'type': 'widget',
-        'kind': 'IntSlider',
-        'throttled': False,
-        'start': 10,
-        'end': 53,
-        'value': 10
-    }
+    input_spec = {'type': 'widget', 'kind': 'IntSlider', 'throttled': False, 'start': 10, 'end': 53}
+    excepted_spec = {'value': 10, **input_spec}
+    output_spec = Variable.from_spec(input_spec).to_spec()
+    assert excepted_spec == output_spec
 
 def test_widget_variable_select_to_spec():
-    var = Variable.from_spec({'type': 'widget', 'kind': 'Select', 'options': ['A', 'B', 'C']})
-
-    assert var.to_spec() == {
-        'type': 'widget',
-        'kind': 'Select',
-        'options': ['A', 'B', 'C'],
-        'value': 'A'
-    }
-
+    input_spec = {'type': 'widget', 'kind': 'Select', 'options': ['A', 'B', 'C']}
+    excepted_spec = {'value': 'A', **input_spec}
+    output_spec = Variable.from_spec(input_spec).to_spec()
+    assert excepted_spec == output_spec
 
 def test_intslider_value_initialize():
     var = Widget(kind="IntSlider", value=20)

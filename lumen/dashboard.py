@@ -32,7 +32,9 @@ from .pipeline import Pipeline
 from .sources.base import RESTSource, Source  # noqa
 from .state import state
 from .transforms.base import Transform  # noqa
-from .util import catch_and_notify, expand_spec, resolve_module_reference
+from .util import (
+    bokeh3, catch_and_notify, expand_spec, resolve_module_reference,
+)
 from .validation import (
     ValidationError, match_suggestion_message, validate_callback,
 )
@@ -700,10 +702,12 @@ class Dashboard(Component, Viewer):
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
-        style = {'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
+        styles = {'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
+        style_params = {'styles': styles} if bokeh3 else {'style': styles}
         state.loading_msg = pn.pane.HTML(
-            'Loading...', align='center', style=style, width=400, height=400
+            'Loading...', align='center', width=400, height=400, **style_params
         )
+
         self._loading = pn.Column(
             pn.layout.HSpacer(), state.loading_msg, pn.layout.HSpacer(),
             sizing_mode='stretch_both'
