@@ -20,7 +20,7 @@ from panel.template.base import BasicTemplate
 from panel.viewable import Viewable, Viewer
 from typing_extensions import Literal
 
-from .auth import AuthPlugin
+from .auth import Auth
 from .base import Component, MultiTypeComponent
 from .config import (
     _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, config,
@@ -397,11 +397,11 @@ class Defaults(Component):
                 obj_type.param.set_param(**params)
 
 
-class Auth(Component):
+class AuthSpec(Component):
     """
-    `Auth` allows specifying a spec that is validated against panel.state.user_info.
+    `AuthSpec` allows specifying a spec that is validated against panel.state.user_info.
 
-    To enable `Auth` you must configure an OAuth provider when deploying
+    To enable `AuthSpec` you must configure an OAuth provider when deploying
     an application with `panel.serve`.
     """
 
@@ -415,17 +415,17 @@ class Auth(Component):
     _allows_refs: ClassVar[bool] = False
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Auth':
+    def from_spec(cls, spec: Dict[str, Any] | str) -> 'AuthSpec':
         if isinstance(spec, str):
             raise ValueError(
-                "Auth cannot be materialized by reference. Please pass "
-                "full specification for Auth."
+                "AuthSpec cannot be materialized by reference. Please pass "
+                "full specification for AuthSpec."
             )
         spec = dict(spec)
         case_sensitive = spec.pop('case_sensitive', cls.case_sensitive)
         plugins = spec.pop('plugins', [])
         for plugin_spec in plugins:
-            plugin = AuthPlugin.from_spec(plugin_spec)
+            plugin = Auth.from_spec(plugin_spec)
             spec = plugin.transform(spec)
         return cls(spec=spec, case_sensitive=case_sensitive)
 
@@ -453,11 +453,38 @@ class Auth(Component):
                 authorized &= any(uv == v for v in value for uv in user_value)
         return authorized
 
+    @classmethod
+    def validate(
+        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
+    ) -> Dict[str, Any] | str:
+        """
+        Validates the component specification given the validation context.
+
+        Arguments
+        -----------
+        spec: dict | str
+          The specification for the component being validated (or a referene to the component)
+        context: dict
+          Validation context contains the specification of all previously validated components,
+          e.g. to allow resolving of references.
+
+        Returns
+        --------
+        Validated specification.
+        """
+        spec = super().validate(spec, context)
+        plugins = [
+            Auth.validate(plugin, context) for plugin in spec.get('plugins', [])
+        ]
+        if plugins:
+            spec['plugins'] = plugins
+        return spec
+
 
 class Dashboard(Component, Viewer):
 
-    auth = param.ClassSelector(default=Auth(), class_=Auth, doc="""
-        Auth object which validates the auth spec against pn.state.user_info.""")
+    auth = param.ClassSelector(default=AuthSpec(), class_=AuthSpec, doc="""
+        AuthSpec object which validates the auth spec against pn.state.user_info.""")
 
     config = param.ClassSelector(default=Config(), class_=Config, doc="""
         High-level configuration options for the dashboard.""")
@@ -515,7 +542,7 @@ class Dashboard(Component, Viewer):
         self._rendered = []
 
         # Initialize high-level settings
-        self.auth = Auth.from_spec(state.spec.get('auth', {}))
+        self.auth = AuthSpec.from_spec(state.spec.get('auth', {}))
         self.config = Config.from_spec(state.spec.get('config', {}))
         self.defaults = Defaults.from_spec(state.spec.get('defaults', {}))
         if load_vars:

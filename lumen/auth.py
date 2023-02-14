@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from collections import defaultdict
 from typing import (
     Any, ClassVar, Dict, List, Type,
@@ -8,10 +10,12 @@ from typing import (
 import param  # type: ignore
 import yaml
 
+from .base import MultiTypeComponent
+from .config import config
 from .util import resolve_module_reference
 
 
-class AuthPlugin(param.Parameterized):
+class Auth(MultiTypeComponent):
     """
     An AuthPlugin is given the auth specfication and can apply arbitrary
     transforms to it.
@@ -20,29 +24,14 @@ class AuthPlugin(param.Parameterized):
     auth_type: ClassVar[str | None] = None
 
     @classmethod
-    def _get_type(cls, auth_type: str) -> Type['AuthPlugin']:
-        if '.' in auth_type:
-            return resolve_module_reference(auth_type, AuthPlugin)
-        try:
-            __import__(f'lumen.auth.{auth_type}')
-        except Exception:
-            pass
-        for auth in param.concrete_descendents(cls).values():
-            if auth.auth_type == auth_type:
-                return auth
-        raise ValueError(f"No AuthPlugin for auth_type '{auth_type}' could be found.")
-
-    @classmethod
-    def from_spec(cls, spec: Dict[str, Any]) -> 'AuthPlugin':
-        spec = dict(spec)
-        auth_plugin = cls._get_type(spec.pop('type'))
-        return auth_plugin(**spec)
+    def _import_module(cls, component_type: str):
+        pass
 
     def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         return dict(spec)
 
 
-class YamlAuthMapperPlugin(AuthPlugin):
+class YamlAuthMapperPlugin(Auth):
     """
     The YamlAuthMapperPlugin uses a Yaml file to map auth keys
     allowing more concise declarations for individual dashboards, e.g.
@@ -78,9 +67,15 @@ class YamlAuthMapperPlugin(AuthPlugin):
 
     auth_type: ClassVar[str] = 'yaml'
 
+    @classmethod
+    def _validate_yaml_file(cls, yaml_file, spec, context):
+        if config.root:
+            yaml_file = os.path.join(config.root, yaml_file)
+        return yaml_file
+
     def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         spec = dict(spec)
-        with open(self.yaml_file) as f:
+        with open(os.path.join(config.root, self.yaml_file)) as f:
             text = f.read()
         mapping = yaml.load(text, Loader=yaml.Loader)
         new: Dict[str, List[str]] = defaultdict(list)
