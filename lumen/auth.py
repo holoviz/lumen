@@ -4,7 +4,7 @@ import os
 
 from collections import defaultdict
 from typing import (
-    Any, ClassVar, Dict, List, Type,
+    Any, ClassVar, Dict, List,
 )
 
 import param  # type: ignore
@@ -12,7 +12,6 @@ import yaml
 
 from .base import MultiTypeComponent
 from .config import config
-from .util import resolve_module_reference
 
 
 class Auth(MultiTypeComponent):
@@ -75,7 +74,7 @@ class YamlAuthMapperPlugin(Auth):
 
     def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         spec = dict(spec)
-        with open(os.path.join(config.root, self.yaml_file)) as f:
+        with open(self.yaml_file) as f:
             text = f.read()
         mapping = yaml.load(text, Loader=yaml.Loader)
         new: Dict[str, List[str]] = defaultdict(list)
