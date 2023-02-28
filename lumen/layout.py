@@ -73,8 +73,7 @@ def resolve_layout_spec(layout_spec, views, layout_cls=pn.Column, title=None):
     -------
     The layout resolved from the layout specification.
     """
-    mode = 'stretch_both' if layout_cls is pn.Column else 'stretch_width'
-    layout = layout_cls(sizing_mode=mode)
+    layout = layout_cls(sizing_mode='stretch_width')
     view_size = len(views)
     for spec in layout_spec:
         view = None

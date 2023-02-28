@@ -723,7 +723,7 @@ class Dashboard(Component, Viewer):
             ])
 
     def _create_main(self):
-        layout_kwargs = {'sizing_mode': 'stretch_both', 'margin': 10}
+        layout_kwargs = {'sizing_mode': 'stretch_width', 'min_height': 400}
         if self.config.layout is pn.Tabs:
             layout_kwargs['dynamic'] = True
         elif self.config.layout is pn.GridBox:
@@ -740,7 +740,7 @@ class Dashboard(Component, Viewer):
             sizing_mode='stretch_both'
         )
         self._main = pn.Column(
-            self._loading, loading=True, sizing_mode='stretch_both',
+            self._loading, loading=True, sizing_mode='stretch_width',
         )
         if isinstance(self._layout, pn.Tabs):
             self._layout.param.watch(self._activate_filters, 'active')
@@ -1021,12 +1021,15 @@ class Dashboard(Component, Viewer):
         pn.state.sync_busy(spinner)
 
         title_html = f'<div style="color: white; font-size: 2em;">{self.config.title}</div>'
+        styles = {'background': '#00aa41'}
+        header_params = dict(styles=styles) if bokeh3 else styles
         return pn.Column(
             pn.Row(
                 pn.pane.HTML(title_html, margin=(20, 20), align='center'),
                 pn.layout.HSpacer(),
                 spinner,
-                background='#00aa41', sizing_mode='stretch_width'
+                sizing_mode='stretch_width',
+                **header_params
             ),
             pn.Row(
                 pn.Column(self._sidebar, width=300),
