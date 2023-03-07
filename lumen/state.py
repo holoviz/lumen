@@ -169,9 +169,9 @@ class _session_state:
         variables = variables or self.variables
         context = {}
         if auth:
-            from .dashboard import Auth
+            from .dashboard import AuthSpec
             if isinstance(auth, dict):
-                context['auth'] = Auth.validate(auth)
+                context['auth'] = AuthSpec.validate(auth)
             else:
                 context['auth'] = auth.to_spec()
         if config:
@@ -350,8 +350,9 @@ class _session_state:
             return source.get(table)
         table_schema = source.get_schema(table)
         if field not in table_schema:
-            raise ValueError(f"Field '{field}' was not found in "
-                             f"'{sourceref}' table '{table}'.")
+            raise ValueError(
+                f"Field '{field}' was not found in '{sourceref}' table '{table}'."
+            )
         field_schema = table_schema[field]
         if 'enum' not in field_schema:
             raise ValueError(f"Field '{field}' schema does not "
