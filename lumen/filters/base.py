@@ -269,6 +269,9 @@ class WidgetFilter(BaseWidgetFilter):
     empty_select = param.Boolean(default=True, doc="""
         Add an option to Select widgets to indicate no filtering.""")
 
+    max_options = param.Integer(default=500, doc="""
+        Maximum number of options to render.""")
+
     multi = param.Boolean(default=True, doc="""
         Whether to use a single-value or multi-value selection widget,
         e.g. for a numeric value this could be a regular slider or a
@@ -295,6 +298,18 @@ class WidgetFilter(BaseWidgetFilter):
             if self.widget.options[0] != ' ':
                 self.widget.options.insert(0, ' ')
             self.widget.value = ' '
+        if 'options' in self.widget.param and len(self.widget.options) > self.max_options:
+            options = self.widget.options
+            if isinstance(options, dict):
+                options = dict(list(options.items())[:self.max_options])
+            else:
+                options = options[:self.max_options]
+            self.param.warning(
+                'Filter {self.label!r} of type {type(self).__name__} was given {len(self.widget.options)} '
+                'options but were limited by max_options={self.max_options}. Check whether a different widget '
+                'type would be more sensible or raise the max_options. '
+            )
+            self.widget.options = options
         self.widget.name = self.label
         self.widget.visible = self.visible
         self.widget.disabled = self.disabled
