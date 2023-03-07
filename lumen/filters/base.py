@@ -305,8 +305,8 @@ class WidgetFilter(BaseWidgetFilter):
             else:
                 options = options[:self.max_options]
             self.param.warning(
-                'Filter {self.label!r} of type {type(self).__name__} was given {len(self.widget.options)} '
-                'options but were limited by max_options={self.max_options}. Check whether a different widget '
+                f'Filter {self.label!r} of type {type(self).__name__} was given {len(self.widget.options)} '
+                f'options but were limited by max_options={self.max_options}. Check whether a different widget '
                 'type would be more sensible or raise the max_options. '
             )
             self.widget.options = options
