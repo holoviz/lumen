@@ -724,7 +724,7 @@ class Dashboard(Component, Viewer):
 
     def _create_main(self):
         layout_kwargs = {'sizing_mode': 'stretch_width', 'min_height': 400}
-        if self.config.layout is pn.Tabs and bokeh3:
+        if self.config.layout is pn.Tabs and not bokeh3:
             layout_kwargs['dynamic'] = True
         elif self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
