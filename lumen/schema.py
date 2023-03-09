@@ -77,8 +77,8 @@ class JSONSchema(pn.pane.PaneBase):
                 wtype = self._bounded_number_range_widget
             else:
                 wtype = self._bounded_number_widget
-            return wtype, {'start': schema['inclusiveMinimum'],
-                           'end': schema['inclusiveMaximum']}
+            return wtype, {'start': float(schema['inclusiveMinimum']),
+                           'end': float(schema['inclusiveMaximum'])}
         else:
             return self._unbounded_number_widget, {}
 
@@ -88,8 +88,8 @@ class JSONSchema(pn.pane.PaneBase):
                 wtype = self._bounded_int_range_widget
             else:
                 wtype = self._bounded_int_widget
-            return wtype, {'start': schema['inclusiveMinimum'],
-                           'end': schema['inclusiveMaximum']}
+            return wtype, {'start': int(schema['inclusiveMinimum']),
+                           'end': int(schema['inclusiveMaximum'])}
         else:
             return self._unbounded_int_widget, {'step': 1}
 

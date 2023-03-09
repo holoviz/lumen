@@ -8,10 +8,10 @@ import sys
 import bokeh.command.util  # type: ignore
 
 from bokeh.application.handlers.code import CodeHandler  # type: ignore
-from bokeh.document import Document
 from bokeh.command.util import (  # type: ignore
     build_single_handler_application as _build_application, die,
 )
+from bokeh.document import Document
 from panel.command import Serve, main as _pn_main, transform_cmds
 from panel.io.server import Application
 from panel.io.state import set_curdoc
