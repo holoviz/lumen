@@ -61,7 +61,7 @@ class Component(param.Parameterized):
 
     def __init__(self, **params):
         self._refs = params.pop('refs', {})
-        expected = list(self.param.params())
+        expected = list(self.param)
         validate_parameters(params, expected, type(self).name)
         if self._allows_refs:
             params = self._extract_refs(params, self._refs)

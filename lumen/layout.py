@@ -175,7 +175,7 @@ class Card(Viewer):
             if layout == 'grid' and 'ncols' not in kwargs:
                 kwargs['ncols'] = 2
             layout_type = _LAYOUTS[layout]
-            layout_params = list(layout_type.param.params())
+            layout_params = list(layout_type.param)
             kwargs = {k: v for k, v in kwargs.items() if k in layout_params}
             item = layout_type(*(view.panel for view in self.views), **kwargs)
         return item

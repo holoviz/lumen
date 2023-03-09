@@ -17,7 +17,7 @@ def get_setup_version(reponame):
 dependencies = [
     "numpy",
     "bokeh",
-    "param",
+    "param >=1.9.0",
     "panel >=0.14.2",
     "pandas",
     "hvplot",
