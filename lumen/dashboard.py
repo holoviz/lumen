@@ -682,7 +682,7 @@ class Dashboard(Component, Viewer):
     def _create_header(self):
         self._header = pn.Row()
         self._reload_button = IconButton(
-            icon='fa-sync', size=18, margin=0
+            icon='fa-sync', size=18, align=('end', 'center')
         )
         self._reload_button.on_click(self._reload)
         menu_items = []
@@ -707,11 +707,11 @@ class Dashboard(Component, Viewer):
             self._header.append(self._menu_button)
         if self.config.reloadable:
             self._header.append(self._reload_button)
-        if False:#self.config.editable:
+        if self.config.editable:
             self._header.append(self._edit_button)
         if 'auth' in state.spec:
             logout = IconButton(
-                icon='fa-sign-out-alt', size=18, margin=0
+                icon='fa-sign-out-alt', size=18, align=('end', 'center'),
             )
             logout.js_on_click(code="""
             window.location.href = '/logout'
@@ -746,12 +746,19 @@ class Dashboard(Component, Viewer):
             self._layout.param.watch(self._activate_filters, 'active')
 
     def _create_modal(self):
-        self._editor = pn.panel('Editor')
+        if not self.config.editable:
+            self._modal = pn.Column()
+            return
+        self._editor = pn.widgets.Ace(
+            value=self._yaml, filename=self._yaml_file,
+            sizing_mode='stretch_both', min_height=600,
+            theme='monokai'
+        )
         self._edit_button = pn.widgets.Button(
             name='✎', width=50, css_classes=['reload'], margin=0,
             align='center'
         )
-        #self._editor.param.watch(self._edit, 'value')
+        self._editor.param.watch(self._edit, 'value')
         self._edit_button.js_on_click(code="""
         var modal = document.getElementById("pn-Modal")
         modal.style.display = "block"
@@ -767,7 +774,8 @@ class Dashboard(Component, Viewer):
         self._update_button.on_click(self._update_pipelines)
 
     def _populate_template(self):
-        self._template.modal[:] = [self._modal]
+        if self.config.editable:
+            self._template.modal[:] = [self._modal]
         self._template.main[:] = [self._main]
         self._template.header[:] = [self._header]
         self._template.sidebar[:] = [self._sidebar]
