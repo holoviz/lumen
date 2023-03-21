@@ -682,7 +682,7 @@ class Dashboard(Component, Viewer):
     def _create_header(self):
         self._header = pn.Row()
         self._reload_button = IconButton(
-            icon='fa-sync', size=18, margin=0
+            icon='fa-sync', size=18, align=('end', 'center')
         )
         self._reload_button.on_click(self._reload)
         menu_items = []
@@ -711,7 +711,7 @@ class Dashboard(Component, Viewer):
             self._header.append(self._edit_button)
         if 'auth' in state.spec:
             logout = IconButton(
-                icon='fa-sign-out-alt', size=18, margin=0
+                icon='fa-sign-out-alt', size=18, align=('end', 'center'),
             )
             logout.js_on_click(code="""
             window.location.href = '/logout'
