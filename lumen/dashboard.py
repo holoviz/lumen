@@ -707,7 +707,7 @@ class Dashboard(Component, Viewer):
             self._header.append(self._menu_button)
         if self.config.reloadable:
             self._header.append(self._reload_button)
-        if False:#self.config.editable:
+        if self.config.editable:
             self._header.append(self._edit_button)
         if 'auth' in state.spec:
             logout = IconButton(
