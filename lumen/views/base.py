@@ -119,7 +119,7 @@ class View(MultiTypeComponent, Viewer):
         if isinstance(params.get("download"), str):
             *filenames, ext = params.get("download").split(".")
             filename = ".".join(filenames) or None
-            params["download"] = Download(filename=filename, format=ext)
+            params["download"] = type(self.download)(filename=filename, format=ext)
         fields = list(pipeline.schema)
         for fp in self._field_params:
             if isinstance(self.param[fp], param.Selector):
