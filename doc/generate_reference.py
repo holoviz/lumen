@@ -80,7 +80,7 @@ def format_object(obj):
 
 def extract_type(pobj):
     if isinstance(pobj, param.Path):
-        return Union[str, pathlib.Path]
+        return typing.Union[str, pathlib.Path]
     elif isinstance(pobj, param.String):
         return str
     if isinstance(pobj, param.Integer):
