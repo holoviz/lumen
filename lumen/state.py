@@ -218,7 +218,7 @@ class _session_state:
         context = self.to_spec(**to_spec_kwargs)
 
         with open(filename, 'w') as f:
-            yaml.dump(context, f)
+            yaml.dump(context, f, sort_keys=False)
 
     @property
     def global_refs(self) -> List[str]:
