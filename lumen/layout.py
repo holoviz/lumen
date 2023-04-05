@@ -482,6 +482,9 @@ class Layout(Component, Viewer):
 
     tsformat = param.String(default="%m/%d/%Y %H:%M:%S", constant=True)
 
+    description = param.String(default=None, doc="""
+        A description about the app will be added to the top of the sidebar""")
+
     views = param.ClassSelector(class_=(list, dict), constant=True, doc="""
         List or dictionary of View specifications.""")
 
@@ -493,7 +496,7 @@ class Layout(Component, Viewer):
 
     _valid_keys: ClassVar[List[str]] = [
         'config', 'facet_layout', 'sort', # Deprecated
-        'layout', 'refresh_rate', 'reloadable', 'show_title', 'title', 'tsformat', # Simple
+        'layout', 'refresh_rate', 'reloadable', 'show_title', 'title', 'tsformat', 'description', # Simple
         'views', 'source', 'filters', 'pipeline', 'facet', 'download' # Objects
     ] + list(Layoutable.param)
 
@@ -598,6 +601,12 @@ class Layout(Component, Viewer):
     def get_filter_panel(self, skip=None, apply_button: bool=True) -> pn.Column:
         skip = list(skip or [])
         views: List[Any] = []
+
+        if self.description:
+            views.extend([
+                self.description,
+                pn.layout.Divider()
+            ])
 
         # Variable controls
         global_refs = state.global_refs
