@@ -765,7 +765,7 @@ class Sum(Transform):
         if pd_version < Version('2.0.0'):
             kwargs['level'] = self.level
         return table.sum(
-            axis=self.axis, level=self.level, **kwargs
+            axis=self.axis, **kwargs
         ).to_frame().T
 
 
