@@ -736,7 +736,7 @@ class Count(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         kwargs = {}
-        if pd_version < '2.0.0':
+        if pd_version < Version('2.0.0'):
             kwargs['level'] = self.level
         return table.count(
             axis=self.axis, numeric_only=self.numeric_only, **kwargs
@@ -762,7 +762,7 @@ class Sum(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         kwargs = {}
-        if pd_version < '2.0.0':
+        if pd_version < Version('2.0.0'):
             kwargs['level'] = self.level
         return table.sum(
             axis=self.axis, level=self.level, **kwargs
