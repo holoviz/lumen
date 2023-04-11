@@ -15,11 +15,14 @@ import pandas as pd
 import panel as pn
 import param  # type: ignore
 
+from packaging.version import Version
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
 from ..state import state
 from ..util import is_ref
+
+pd_version = Version(pd.__version__)
 
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
@@ -732,8 +735,11 @@ class Count(Transform):
     transform_type: ClassVar[str] = 'count'
 
     def apply(self, table: DataFrame) -> DataFrame:
+        kwargs = {}
+        if pd_version < Version('2.0.0'):
+            kwargs['level'] = self.level
         return table.count(
-            axis=self.axis, level=self.level, numeric_only=self.numeric_only
+            axis=self.axis, numeric_only=self.numeric_only, **kwargs
         ).to_frame().T
 
 
@@ -755,8 +761,11 @@ class Sum(Transform):
     transform_type: ClassVar[str] = 'sum'
 
     def apply(self, table: DataFrame) -> DataFrame:
+        kwargs = {}
+        if pd_version < Version('2.0.0'):
+            kwargs['level'] = self.level
         return table.sum(
-            axis=self.axis, level=self.level
+            axis=self.axis, **kwargs
         ).to_frame().T
 
 
