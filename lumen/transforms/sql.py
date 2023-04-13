@@ -179,6 +179,9 @@ class SQLFilter(SQLTransform):
         for col, val in self.conditions:
             if val is None:
                 condition = f'{col} IS NULL'
+            elif isinstance(val, str):
+                val_sanitize = val.replace("'", '\\\'')
+                condition = f"{col} = '{val_sanitize}'"
             elif np.isscalar(val):
                 condition = f'{col} = {val!r}'
             elif isinstance(val, dt.datetime):
