@@ -34,7 +34,6 @@ extras_require = {
         'sqlalchemy <2',  # Don't work with pandas yet
     ],
     'tests': [
-        'pandas <2',   # Dask release compatible with pandas 2.0 and bokeh > 3 not available yet
         'pytest',
         'flake8',
         'intake',
