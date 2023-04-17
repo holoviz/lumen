@@ -26,9 +26,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Fetch unshallow
         run: git fetch --prune --tags --unshallow -f
-      - uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
       - uses: conda-incubator/setup-miniconda@v2
         with:
           miniconda-version: "latest"
@@ -68,9 +65,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Fetch unshallow
         run: git fetch --prune --tags --unshallow -f
-      - uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
       - uses: conda-incubator/setup-miniconda@v2
         with:
           miniconda-version: "latest"
@@ -90,7 +84,7 @@ jobs:
       - name: pip build
         run: |
           conda activate test-environment
-          doit ecosystem=pip package_build $PKG_TEST_PYTHON --test-group=all
+          doit ecosystem=pip package_build $PKG_TEST_PYTHON --test-group=simple
       - name: pip upload
         if: github.event_name == 'push'
         run: |

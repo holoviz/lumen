@@ -34,7 +34,6 @@ extras_require = {
         'sqlalchemy <2',  # Don't work with pandas yet
     ],
     'tests': [
-        'pandas <2',   # Dask release compatible with pandas 2.0 and bokeh > 3 not available yet
         'pytest',
         'flake8',
         'intake',
@@ -85,6 +84,7 @@ setup_args = dict(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         "Operating System :: OS Independent",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
