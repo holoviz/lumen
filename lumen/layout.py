@@ -711,7 +711,7 @@ class Layout(Component, Viewer):
         if update_views:
             self._rerender_cards(cards)
             rerender = True
-        if set(cards) != set(self._cards):
+        if cards != self._cards:
             self._cards[:] = cards
             rerender = True
         if rerender:
