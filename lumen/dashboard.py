@@ -818,23 +818,6 @@ class Dashboard(Component, Viewer):
 
     def _set_loading(self, name: str = ''):
         state.loading_msg.object = f'<b>Reloading {name}...</b>'
-        if isinstance(self._layout, pn.GridBox):
-            items = [pn.pane.HTML(width=self._layout[i].width) # type: ignore
-                     for i in range(self._layout.ncols) if i < len(self._layout)]
-            index = int(min(self._layout.ncols, (len(self._layout)-1)) / 2)
-            if items:
-                items[index] = self._loading
-            else:
-                items = [self._loading]
-        elif isinstance(self._layout, pn.Tabs):
-            items = list(zip(self._layout._names, list(self._layout.objects))) # type: ignore
-            tab_name = items[self._layout.active][0]
-            if name and tab_name != name:
-                return
-            items[self._layout.active] = (tab_name, self._loading)
-        else:
-            items = [self._loading]
-        self._layout[:] = items
         self._main.loading = True
 
     def _open_modal(self, event: param.parameterized.Event):
