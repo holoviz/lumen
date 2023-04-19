@@ -321,6 +321,8 @@ class Component(param.Parameterized):
             elif is_ref(val):
                 cls._validate_ref(key, val, spec, context)
             elif key in cls.param:
+                if isinstance(val, str) and val.startswith('@'):
+                    continue
                 cls._validate_param(key, val, spec)
             validated[key] = val
         return validated
