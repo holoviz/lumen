@@ -120,6 +120,9 @@ class Config(Component):
                            check_on_set=False, doc="""
         The Panel template theme to style the dashboard with.""")
 
+    show_traceback = param.Boolean(default=True, doc="""
+        Whether to show the traceback if an error happens.""")
+
     _valid_keys: ClassVar[Literal['params']] = 'params'
     _validate_params: ClassVar[bool] = True
 
@@ -593,11 +596,19 @@ class Dashboard(Component, Viewer):
         except Exception as e:
             self.param.warning(f'Rendering dashboard raised following error:\n\n {type(e).__name__}: {e}')
             self._main.loading = False
-            tb = html.escape(traceback.format_exc())
-            alert = pn.pane.HTML(
-                f'<b>{type(e).__name__}</b>: {e}</br><pre style="overflow-y: scroll">{tb}</pre>',
-                css_classes=['alert', 'alert-danger'], sizing_mode='stretch_width'
-            )
+            if self.config.show_traceback:
+                tb = html.escape(traceback.format_exc())
+                alert = pn.pane.Alert(
+                    f'<b>{type(e).__name__}</b>: {e}</br><pre style="overflow-y: scroll">{tb}</pre>',
+                    alert_type="danger", sizing_mode='stretch_width'
+                )
+            else:
+                alert = pn.pane.Alert("""
+                    <div style="display: flex; justify-content: center; align-items: center; min-height:300px">
+                        <h2>Something went wrong</h2>
+                    </div>""",
+                    alert_type="danger", sizing_mode='stretch_width',
+                )
             self._main[:] = [alert]
         if isinstance(self._layout, pn.Tabs) and self.config.sync_with_url:
             pn.state.location.sync(self._layout, {'active': 'layout'})
