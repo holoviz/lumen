@@ -47,7 +47,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
 
-      - uses: pyviz-dev/holoviz_tasks/install@v0.1a12
+      - uses: holoviz-dev/holoviz_tasks/install@v0.1a12
         with:
           name: test_suite
           python-version: ${{ matrix.python-version }}
