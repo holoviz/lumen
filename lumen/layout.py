@@ -544,7 +544,7 @@ class Layout(Component, Viewer):
             self._update_button.loading = False
 
     def _sync_component(self, component, *events: param.parameterized.Event):
-        component.param.set_param(**{event.name: event.new for event in events})
+        component.param.update(**{event.name: event.new for event in events})
 
     def _construct_cards(self):
         controls, all_transforms = [], []
@@ -960,7 +960,7 @@ class Layout(Component, Viewer):
         if self._cards:
             content = self._cards
             if len(self._cards) == 1 and not self.show_title:
-                self._cards[0]._card.param.set_param(
+                self._cards[0]._card.param.update(
                     hide_header=True, sizing_mode='stretch_width', margin=0
                 )
         else:
