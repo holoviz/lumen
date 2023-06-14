@@ -297,13 +297,13 @@ class Defaults(Component):
 
     download = param.Dict(default={}, doc="Defaults for the Download object")
 
-    filters = param.List(doc="Defaults for Filter objects.", class_=dict)
+    filters = param.List(doc="Defaults for Filter objects.", item_type=dict)
 
-    sources = param.List(doc="Defaults for Source objects.", class_=dict)
+    sources = param.List(doc="Defaults for Source objects.", item_type=dict)
 
-    transforms = param.List(doc="Defaults for Transform objects.", class_=dict)
+    transforms = param.List(doc="Defaults for Transform objects.", item_type=dict)
 
-    views = param.List(doc="Defaults for View objects.", class_=dict)
+    views = param.List(doc="Defaults for View objects.", item_type=dict)
 
     _valid_keys: ClassVar[Literal['params']] = 'params'
     _validate_params: ClassVar[bool] = True

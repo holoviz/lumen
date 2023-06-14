@@ -252,7 +252,7 @@ class Card(Viewer):
 
 class Facet(Component):
 
-    by = param.List(default=[], class_=FacetFilter, doc="""
+    by = param.List(default=[], item_type=FacetFilter, doc="""
         Fields to facet by.""")
 
     layout = param.ClassSelector(default=None, class_=(str, dict), doc="""
