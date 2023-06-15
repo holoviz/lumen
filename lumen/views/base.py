@@ -198,7 +198,7 @@ class View(MultiTypeComponent, Viewer):
             except NotImplementedError:
                 updates = self._get_params()
                 if updates is not None:
-                    self._panel.param.set_param(**updates)
+                    self._panel.param.update(**updates)
                     return False
         self._panel = self.get_panel()
         return True
