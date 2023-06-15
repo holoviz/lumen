@@ -197,7 +197,7 @@ def test_dashboard_Defaults(defaults, msg):
         ),
         (
             {"var1": {"type": "constant", "value": "$variables.bar"}},
-            "Constant component 'value' references undeclared variable '\$variables",
+            r"Constant component 'value' references undeclared variable '\$variables",
         ),
     ),
     ids=[
