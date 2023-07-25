@@ -14,6 +14,7 @@ from lumen.sources.base import FileSource, Source
 from lumen.state import state
 from lumen.variables.base import Variables
 
+pd.set_option('mode.string_storage', 'pyarrow')
 
 @pytest.fixture
 def set_root():
@@ -59,7 +60,9 @@ def make_variable_filesource():
 
 @pytest.fixture
 def mixed_df():
-    yield pd._testing.makeMixedDataFrame()
+    df = pd._testing.makeMixedDataFrame()
+    df['C'] = df.C.astype("string")
+    yield df
 
 @pytest.fixture
 def yaml_file():

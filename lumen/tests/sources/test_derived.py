@@ -13,9 +13,8 @@ def original(make_filesource):
 
 
 @pytest.fixture
-def expected_table():
-    df = pd._testing.makeMixedDataFrame()
-    return df.iloc[:3]
+def expected_table(mixed_df):
+    return mixed_df.iloc[:3]
 
 
 @pytest.fixture
@@ -79,11 +78,10 @@ def test_derived_mirror_source_apply(
     pd.testing.assert_frame_equal(derived.get('test'), expected_table)
 
 
-def test_derived_tables_source(original, tables_mode_spec):
+def test_derived_tables_source(original, tables_mode_spec, mixed_df):
     derived = Source.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(derived.get('derived'), df)
+    pd.testing.assert_frame_equal(derived.get('derived'), mixed_df)
     assert original.get_schema('test') == derived.get_schema('derived')
 
 

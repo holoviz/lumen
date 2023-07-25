@@ -17,10 +17,10 @@ def source():
 
 
 @pytest.fixture
-def source_tables():
-    df_test = pd._testing.makeMixedDataFrame()
-    df_test_sql = pd._testing.makeMixedDataFrame()
-    df_test_sql_none = pd._testing.makeMixedDataFrame()
+def source_tables(mixed_df):
+    df_test = mixed_df.copy()
+    df_test_sql = mixed_df.copy()
+    df_test_sql_none = mixed_df.copy()
     df_test_sql_none['C'] = ['foo1', None, 'foo3', None, 'foo5']
     tables = {
         'test': df_test,
@@ -35,18 +35,16 @@ def test_intake_resolve_module_type():
     assert IntakeSource.source_type == 'intake'
 
 
-def test_intake_source_from_file(source):
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test'), df)
+def test_intake_source_from_file(source, mixed_df):
+    pd.testing.assert_frame_equal(source.get('test'), mixed_df)
 
 
-def test_intake_source_from_dict():
+def test_intake_source_from_dict(mixed_df):
     root = os.path.dirname(__file__)
     with open(os.path.join(root, 'catalog.yml')) as f:
         catalog = yaml.load(f, Loader=yaml.Loader)
     source = IntakeSource(catalog=catalog, root=root)
-    df = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(source.get('test'), df)
+    pd.testing.assert_frame_equal(source.get('test'), mixed_df)
 
 
 @pytest.mark.parametrize(

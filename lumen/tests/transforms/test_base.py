@@ -48,24 +48,22 @@ def test_transform_control_options_by_reference(make_filesource):
     assert transform.param.value.objects == ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
 
 
-def test_count_transform():
-    df = pd._testing.makeMixedDataFrame()
+def test_count_transform(mixed_df):
+    count_df = Count.apply_to(mixed_df)
 
-    count_df = Count.apply_to(df)
-
-    pd.testing.assert_frame_equal(count_df, df.count().to_frame().T)
+    pd.testing.assert_frame_equal(count_df, mixed_df.count().to_frame().T)
 
 
-def test_sum_transform():
-    df = pd._testing.makeMixedDataFrame()[['A']]
+def test_sum_transform(mixed_df):
+    df = mixed_df[['A']]
 
     sum_df = Sum.apply_to(df)
 
     pd.testing.assert_frame_equal(sum_df, df.sum().to_frame().T)
 
 
-def test_eval_transform():
-    df = pd._testing.makeMixedDataFrame()[['A']]
+def test_eval_transform(mixed_df):
+    df = mixed_df[['A']]
 
     eval_df = Eval.apply_to(df, expr='B = table.A * 2')
 
