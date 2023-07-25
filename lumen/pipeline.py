@@ -13,6 +13,7 @@ import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
 
+from panel.io.document import unlocked
 from panel.viewable import Viewer
 from panel.widgets import Widget
 from typing_extensions import Literal
@@ -289,21 +290,12 @@ class Pipeline(Viewer, Component):
         for f in self.filters+self.transforms+self.sql_transforms:
             f._sync_refs()
 
-        try:
-            if pn.state.curdoc:
-                hold = pn.state.curdoc.callbacks.hold_value
-                pn.state.curdoc.hold()
+        with unlocked():
             self.data = self._compute_data()
-            if state.config and state.config.on_update:
-                pn.state.execute(partial(state.config.on_update, self))
-        except Exception as e:
-            raise e
-        else:
-            self._stale = False
-        finally:
-            self._update_widget.loading = False
-            if pn.state.curdoc and not hold:
-                pn.state.curdoc.unhold()
+        if state.config and state.config.on_update:
+            pn.state.execute(partial(state.config.on_update, self))
+        self._stale = False
+        self._update_widget.loading = False
 
     @classmethod
     def _validate_source(
