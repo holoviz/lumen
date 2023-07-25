@@ -60,8 +60,14 @@ class DataFrame(param.DataFrame):
     """
 
     def __get__(self, obj, objtype):
-        if obj is not None and (obj.__dict__.get(self._internal_name) is None or (obj._stale and obj.auto_update)):
-            obj._update_data(force=True)
+        if obj is not None:
+            # Param 1.x compat
+            if hasattr(self, '_internal_name'):
+                internal_is_None = obj.__dict__.get(self._internal_name) is None
+            else:
+                internal_is_None = obj._param__private.values.get(self.name) is None
+            if internal_is_None or (obj._stale and obj.auto_update):
+                obj._update_data(force=True)
         return super().__get__(obj, objtype)
 
 
