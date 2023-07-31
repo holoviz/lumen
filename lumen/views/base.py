@@ -17,6 +17,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
+from packaging.version import Version
 from panel.pane.base import PaneBase
 from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
@@ -729,7 +730,14 @@ class hvPlotView(hvPlotBaseView):
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         plot = plot.opts(**self.opts) if self.opts else plot
-        if self.selection_group or 'selection_expr' in self._param_watchers:
+
+        # Param 2 compatibility
+        if Version(param.__version__) <= Version('2.0.0a2'):
+            watchers = self._param_watchers
+        else:
+            watchers = self.param.watchers
+
+        if self.selection_group or 'selection_expr' in watchers:
             plot = self._link_plot(plot)
         return plot
 
