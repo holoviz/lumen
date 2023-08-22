@@ -17,8 +17,6 @@ pipelines:
         field: mag
       - type: widget
         field: depth
-      - type: param
-        parameter: map.selection_expr
     transforms:
       - type: columns
         columns:
@@ -33,12 +31,17 @@ pipelines:
       - type: project_lnglat
         longitude: longitude
         latitude: latitude
+  selected:
+    pipeline: earthquakes
+    filters:
+      - type: param
+        parameter: map.selection_expr
 layouts:
   - title: Earthquakes
-    pipeline: earthquakes
     views:
       map:
         type: hvplot
+        pipeline: earthquakes
         kind: points
         x: longitude
         y: latitude
@@ -54,6 +57,7 @@ layouts:
         hover: false
       table:
         type: table
+        pipeline: selected
         hidden_columns:
           - longitude
           - latitude
@@ -64,6 +68,7 @@ layouts:
         theme: midnight
       mag_hist:
         type: hvplot
+        pipeline: earthquakes
         kind: hist
         y: mag
         fill_color: white
@@ -73,6 +78,7 @@ layouts:
         streaming: true
       depth_hist:
         type: hvplot
+        pipeline: selected
         kind: hist
         y: depth
         fill_color: white
@@ -82,6 +88,7 @@ layouts:
         streaming: true
       rms_hist:
         type: hvplot
+        pipeline: earthquakes
         kind: hist
         y: rms
         fill_color: white
