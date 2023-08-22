@@ -18,10 +18,10 @@ dependencies = [
     "numpy",
     "bokeh",
     "param >=1.9.0",
-    "panel >=0.14.2",
+    "panel >=1.2.1",
     "pandas",
     "hvplot",
-    "holoviews >=1.14",
+    "holoviews >=1.17.1",
     "packaging",
     "intake",
     "jinja2 >3.0"
@@ -45,10 +45,7 @@ extras_require = {
         'pre-commit',
     ],
     'doc': [
-        'pydata-sphinx-theme <=0.10',
-        'nbsite >=0.8.0rc5',
-        'sphinx-design',
-        'sphinx-copybutton',
+        'nbsite >=0.8.2',
     ]
 }
 
