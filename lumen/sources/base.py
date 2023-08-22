@@ -33,19 +33,20 @@ from ..transforms.base import Filter as FilterTransform, Transform
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
 
-DataFrameTypes: Tuple[Type, ...]
-try:
-    import dask.dataframe as dd
-    DataFrameTypes = (pd.DataFrame, dd.DataFrame)
-except ImportError:
-    dd = None  # type: ignore
-    DataFrameTypes = (pd.DataFrame,)
-
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
+
     DataFrame = Union[pd.DataFrame, dDataFrame]
     Series = Union[pd.Series, dSeries]
+
+    DataFrameTypes: Tuple[Type, ...]
+    try:
+        import dask.dataframe as dd
+        DataFrameTypes = (pd.DataFrame, dd.DataFrame)
+    except ImportError:
+        dd = None  # type: ignore
+        DataFrameTypes = (pd.DataFrame,)
 
 
 
@@ -141,6 +142,9 @@ class Source(MultiTypeComponent):
     caching which can be enabled if a `cache_dir` is provided. Data
     cached to disk is stored as parquet files.
     """
+
+    cache_with_dask = param.Boolean(default=True, doc="""
+        Whether to read and write cache files with dask if available.""")
 
     cache_per_query = param.Boolean(default=True, doc="""
         Whether to query the whole dataset or individual queries.""")
@@ -323,6 +327,13 @@ class Source(MultiTypeComponent):
         if key in self._cache:
             return self._cache[key], not bool(query)
         elif self.cache_dir:
+            if self.cache_with_dask:
+                try:
+                    import dask.dataframe as dd
+                except Exception:
+                    dd = None
+            else:
+                dd = None
             if query:
                 filename = f'{key}_{table}.parq'
             else:
@@ -344,6 +355,13 @@ class Source(MultiTypeComponent):
         key = self._get_key(table, **query)
         self._cache[key] = data
         if self.cache_dir and write_to_file:
+            if self.cache_with_dask:
+                try:
+                    import dask.dataframe as dd
+                except Exception:
+                    dd = None
+            else:
+                dd = None
             path = self.root / self.cache_dir
             path.mkdir(parents=True, exist_ok=True)
             if query:
