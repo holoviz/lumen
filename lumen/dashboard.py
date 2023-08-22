@@ -760,7 +760,7 @@ class Dashboard(Component, Viewer):
         if not self.config.editable:
             self._modal = pn.Column()
             return
-        self._editor = pn.widgets.Ace(
+        self._editor = pn.widgets.CodeEditor(
             value=self._yaml, filename=self._yaml_file,
             sizing_mode='stretch_both', min_height=600,
             theme='monokai'

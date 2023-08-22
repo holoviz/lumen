@@ -108,7 +108,7 @@ def test_pipeline_manual_with_transform(make_filesource, mixed_df):
     pd.testing.assert_frame_equal(pipeline.data, expected)
 
 @sql_available
-def test_pipeline_with_sql_transform(mixed_df):
+def test_pipeline_with_sql_transform(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -117,12 +117,12 @@ def test_pipeline_with_sql_transform(mixed_df):
     transform = SQLColumns(columns=['A', 'B'])
     pipeline = Pipeline(source=source, table='test_sql', sql_transforms=[transform])
 
-    df = mixed_df[['A', 'B']]
+    df = mixed_df_object_type[['A', 'B']]
     pd.testing.assert_frame_equal(pipeline.data, df)
 
     # Update
     transform.columns = ['B', 'C']
-    df = mixed_df[['B', 'C']]
+    df = mixed_df_object_type[['B', 'C']]
     pd.testing.assert_frame_equal(pipeline.data, df)
 
 def test_pipeline_chained_with_filter(make_filesource, mixed_df):
@@ -198,7 +198,7 @@ def test_pipeline_chained_with_transform(make_filesource, mixed_df):
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
 @sql_available
-def test_pipeline_collapsed_with_sql_transform(mixed_df):
+def test_pipeline_collapsed_with_sql_transform(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -209,20 +209,20 @@ def test_pipeline_collapsed_with_sql_transform(mixed_df):
     transform = SQLColumns(columns=['A', 'B'])
     pipeline2 = pipeline1.chain(sql_transforms=[transform])
 
-    expected = mixed_df.iloc[1:3][['A', 'B']].reset_index(drop=True)
+    expected = mixed_df_object_type.iloc[1:3][['A', 'B']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
     # Update
     cfilter.value = (2, 3)
-    expected = mixed_df.iloc[2:4][['A', 'B']].reset_index(drop=True)
+    expected = mixed_df_object_type.iloc[2:4][['A', 'B']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
     transform.columns = ['B', 'C']
-    expected = mixed_df.iloc[2:4][['B', 'C']].reset_index(drop=True)
+    expected = mixed_df_object_type.iloc[2:4][['B', 'C']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
 @sql_available
-def test_pipeline_chained_with_sql_transform(mixed_df):
+def test_pipeline_chained_with_sql_transform(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -235,20 +235,20 @@ def test_pipeline_chained_with_sql_transform(mixed_df):
     cfilter2 = ConstantFilter(field='B', value=(0, 2))
     pipeline3 = pipeline2.chain(filters=[cfilter2])
 
-    expected = mixed_df.iloc[1:3][['A', 'B']]
+    expected = mixed_df_object_type.iloc[1:3][['A', 'B']]
     pd.testing.assert_frame_equal(pipeline3.data, expected)
 
     # Update
     cfilter1.value = (1, 3)
-    expected = mixed_df.iloc[1:4][['A', 'B']]
+    expected = mixed_df_object_type.iloc[1:4][['A', 'B']]
     pd.testing.assert_frame_equal(pipeline3.data, expected)
 
     transform1.columns = ['B', 'C']
-    expected = mixed_df[['B', 'C']]
+    expected = mixed_df_object_type[['B', 'C']]
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
 @sql_available
-def test_pipeline_chained_manual_update_with_sql_transform(mixed_df):
+def test_pipeline_chained_manual_update_with_sql_transform(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -264,26 +264,26 @@ def test_pipeline_chained_manual_update_with_sql_transform(mixed_df):
     cfilter2 = ConstantFilter(field='B', value=(0, 2))
     pipeline3 = pipeline2.chain(filters=[cfilter2], auto_update=False, name='Pipeline 3')
 
-    expected = mixed_df.iloc[1:3][['A', 'B']]
+    expected = mixed_df_object_type.iloc[1:3][['A', 'B']]
     pd.testing.assert_frame_equal(pipeline3.data, expected)
 
     # Update
     cfilter1.value = (1, 3)
     pd.testing.assert_frame_equal(pipeline3.data, expected)
     pipeline3.param.trigger('update')
-    expected = mixed_df.iloc[1:4][['A', 'B']]
+    expected = mixed_df_object_type.iloc[1:4][['A', 'B']]
     pd.testing.assert_frame_equal(pipeline3.data, expected)
 
     transform1.columns = ['B', 'C']
     pd.testing.assert_frame_equal(pipeline3.data, expected)
     pipeline3.param.trigger('update')
-    expected = mixed_df[['B', 'C']]
+    expected = mixed_df_object_type[['B', 'C']]
     pd.testing.assert_frame_equal(pipeline3.data, expected)
 
     cfilter2.value = (0, 0)
     pd.testing.assert_frame_equal(pipeline3.data, expected)
     pipeline3.param.trigger('update')
-    expected = mixed_df.iloc[::2][['B', 'C']]
+    expected = mixed_df_object_type.iloc[::2][['B', 'C']]
     pd.testing.assert_frame_equal(pipeline3.data, expected)
 
 def test_not_removing_type(penguins_file):
@@ -327,7 +327,7 @@ def test_load_chained_pipeline(penguins_file):
     assert pipelines['penguins_chained'].pipeline is pipelines['penguins']
 
 @sql_available
-def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df):
+def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -337,10 +337,10 @@ def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df):
     transform = SQLGroupBy(aggregates={'AVG': sel}, by=['C'])
     pipeline = Pipeline(source=source, table='test_sql', sql_transforms=[transform])
 
-    df = mixed_df[['C', 'A']]
+    df = mixed_df_object_type[['C', 'A']]
     pd.testing.assert_frame_equal(pipeline.data, df)
 
     # Update
     sel.value = 'B'
-    df = mixed_df[['C', 'B']]
+    df = mixed_df_object_type[['C', 'B']]
     pd.testing.assert_frame_equal(pipeline.data, df)
