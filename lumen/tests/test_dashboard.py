@@ -92,7 +92,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
 
 
 @sql_available
-def test_dashboard_with_sql_source_and_transforms(set_root, document, mixed_df):
+def test_dashboard_with_sql_source_and_transforms(set_root, document, mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'sql_dashboard.yaml'))
@@ -101,11 +101,11 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document, mixed_df):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    pd.testing.assert_frame_equal(table.value, mixed_df)
+    pd.testing.assert_frame_equal(table.value, mixed_df_object_type)
 
     dashboard._sidebar[0][0][0]._widgets['limit'].value = 2
 
-    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[:2])
+    pd.testing.assert_frame_equal(table.value, mixed_df_object_type.iloc[:2])
 
 def test_dashboard_with_transform_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'

@@ -65,6 +65,11 @@ def mixed_df():
     yield df
 
 @pytest.fixture
+def mixed_df_object_type():
+    df = pd._testing.makeMixedDataFrame()
+    yield df
+
+@pytest.fixture
 def yaml_file():
     tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
     yield tf
