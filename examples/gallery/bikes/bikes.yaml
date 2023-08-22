@@ -33,8 +33,6 @@ pipelines:
     source: station_occupancy
     table: station_occupancy
     filters:
-      - type: param
-        parameter: locations.selection_expr
       - type: widget
         field: bikesCount
       - type: widget
@@ -51,12 +49,17 @@ pipelines:
       - type: project_lnglat
         latitude: lat
         longitude: lon
+  selected:
+    pipeline: station_occupancy
+    filters:
+      - type: param
+        parameter: locations.selection_expr
 layouts:
   - title: "Occupancy"
-    pipeline: station_occupancy
     views:
       locations:
         type: hvplot
+        pipeline: station_occupancy
         kind: points
         x: lon
         y: lat
@@ -72,6 +75,7 @@ layouts:
         selection_group: bikes
       table:
         type: table
+        pipeline: selected
         height: 500
         margin: [0, 100]
         hidden_columns: [lat, lon]
@@ -79,6 +83,7 @@ layouts:
         sizing_mode: stretch_width
       count_hist:
         type: hvplot
+        pipeline: station_occupancy
         kind: hist
         y: bikesCount
         responsive: true
@@ -87,6 +92,7 @@ layouts:
         selection_group: bikes
       total_hist:
         type: hvplot
+        pipeline: station_occupancy
         kind: hist
         y: totalDocks
         responsive: true
