@@ -54,8 +54,8 @@ jobs:
         shell: bash -l {0}
     env:
       CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
-      PKG_TEST_PYTHON: "--test-python=py38"
-      PYTHON_VERSION: "3.8"
+      PKG_TEST_PYTHON: "--test-python=py39"
+      PYTHON_VERSION: "3.9"
       MPLBACKEND: "Agg"
       PPU: ${{ secrets.PPU }}
       PPP: ${{ secrets.PPP }}

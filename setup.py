@@ -18,10 +18,10 @@ dependencies = [
     "numpy",
     "bokeh",
     "param >=1.9.0",
-    "panel >=1.2.1",
+    "panel >=1.2.0",
     "pandas",
     "hvplot",
-    "holoviews >=1.17.1",
+    "holoviews >=1.17.0",
     "packaging",
     "intake",
     "jinja2 >3.0"
