@@ -23,7 +23,9 @@ from .sources.base import Source
 from .state import state
 from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
-from .util import VARIABLE_RE, catch_and_notify, get_dataframe_schema
+from .util import (
+    VARIABLE_RE, catch_and_notify, get_dataframe_schema, is_ref,
+)
 from .validation import ValidationError, match_suggestion_message
 
 
@@ -440,11 +442,12 @@ class Pipeline(Viewer, Component):
             if hasattr(resolved_source, '_get_source'):
                 # Certain sources perform fuzzy matching so we use the
                 # internal API to see if the table has a match
-                resolved_source._get_source(table)
+                resolved_table = state.resolve_reference(table) if is_ref(table) else table
+                resolved_source._get_source(resolved_table)
             else:
                 raise ValidationError(
                     "The Pipeline specification references a table that is not "
-                    "available on the specified source. ", spec
+                    "available on the specified source.", spec
                 )
 
         # Resolve filters
