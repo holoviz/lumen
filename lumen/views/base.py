@@ -8,7 +8,7 @@ import sys
 
 from io import BytesIO, StringIO
 from typing import (
-    IO, TYPE_CHECKING, Any, ClassVar, Dict, List,
+    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Type,
 )
 from weakref import WeakKeyDictionary
 
@@ -102,6 +102,8 @@ class View(MultiTypeComponent, Viewer):
 
     _supports_selections: ClassVar[bool] = False
 
+    _panel_type: ClassVar[Type[Viewable] | None] = None
+
     __abstract = True
 
     def __init__(self, **params):
@@ -144,6 +146,11 @@ class View(MultiTypeComponent, Viewer):
         if self._panel is not None:
             with immediate_dispatch():
                 self._panel.loading = event.new
+
+    def _normalize_params(self, params):
+        if self._panel_type is None:
+            return params
+        return {p: self._panel_type.param[p].deserialize(v) for p, v in params.items()}
 
     def _update_ref(self, pname: str, ref: str, *events: param.parameterized.Event) -> None:
         # Note: Do not trigger update in View if Pipeline references
@@ -197,7 +204,7 @@ class View(MultiTypeComponent, Viewer):
                 self._stream()
                 return False
             except NotImplementedError:
-                updates = self._get_params()
+                updates = self._normalize_params(self._get_params())
                 if updates is not None:
                     self._panel.param.update(**updates)
                     return False
@@ -581,8 +588,10 @@ class StringView(View):
 
     view_type: ClassVar[str] = 'string'
 
+    _panel_type = pn.pane.HTML
+
     def get_panel(self) -> pn.pane.HTML:
-        return pn.pane.HTML(**self._get_params())
+        return pn.pane.HTML(**self._normalize_params(self._get_params()))
 
     def _get_params(self) -> Dict[str, Any]:
         value = self.get_value()
@@ -614,8 +623,12 @@ class IndicatorView(View):
         name = params.get('label', params.get('field', ''))
         self.kwargs['name'] = name
 
+    @property
+    def _panel_type(self):
+        return self.indicator
+
     def get_panel(self):
-        return self.indicator(**self._get_params())
+        return self.indicator(**self._normalize_params(self._get_params()))
 
     def _get_params(self) -> Dict[str, Any]:
         params = dict(self.kwargs)
@@ -709,6 +722,8 @@ class hvPlotView(hvPlotBaseView):
 
     _ignore_kwargs = ['tables']
 
+    _panel_type = pn.pane.HoloViews
+
     _supports_selections = True
 
     def __init__(self, **params):
@@ -770,7 +785,7 @@ class hvPlotView(hvPlotBaseView):
         for s in ('width', 'height'):
             if f'frame_{s}' in self.kwargs:
                 params[s] = self.kwargs[f'frame_{s}']
-        return pn.pane.HoloViews(**params)
+        return self._panel_type(**params)
 
     def _get_params(self):
         df = self.get_data()
@@ -824,8 +839,10 @@ class Table(View):
 
     _extension = 'tabulator'
 
+    _panel_type = pn.widgets.tables.Tabulator
+
     def get_panel(self):
-        return pn.widgets.tables.Tabulator(**self._get_params())
+        return self._panel_type(**self._normalize_params(self._get_params()))
 
     def _get_params(self):
         return dict(value=self.get_data(), disabled=True, page_size=self.page_size,
@@ -848,6 +865,8 @@ class DownloadView(View):
       data.to_csv(file_obj, **kwargs).""")
 
     view_type = 'download'
+
+    _panel_type = pn.widgets.FileDownload
 
     _required_keys = ["format"]
 
@@ -874,7 +893,7 @@ class DownloadView(View):
         return io
 
     def get_panel(self) -> pn.widgets.FileDownload:
-        return pn.widgets.FileDownload(**self._get_params())
+        return self._panel_type(**self._normalize_params(self._get_params()))
 
     def _get_params(self) -> Dict[str, Any]:
         filename = f'{self.filename}.{self.format}'
@@ -925,6 +944,8 @@ class PerspectiveView(View):
 
     _field_params = ['columns', 'computed_columns', 'column_pivots', 'row_pivots']
 
+    _panel_type = pn.pane.Perspective
+
     def _get_params(self) -> Dict[str, Any]:
         df = self.get_data()
         param_values = dict(self.param.get_param_values())
@@ -933,7 +954,7 @@ class PerspectiveView(View):
         return dict(object=df, toggle_config=False, **kwargs)
 
     def get_panel(self) -> pn.pane.Perspective:
-        return pn.pane.Perspective(**self._get_params())
+        return self._panel_type(**self._normalize_params(self._get_params()))
 
 
 class AltairView(View):
@@ -967,6 +988,8 @@ class AltairView(View):
     view_type = 'altair'
 
     _extension = 'vega'
+
+    _panel_type = pn.pane.Vega
 
     def _transform_encoding(self, encoding: str, value: Any) -> Any:
         import altair as alt  # type: ignore
@@ -1003,7 +1026,7 @@ class AltairView(View):
         return dict(object=encoded, **self.kwargs)
 
     def get_panel(self) -> pn.pane.Vega:
-        return pn.pane.Vega(**self._get_params())
+        return pn.pane.Vega(**self._normalize_params(self._get_params()))
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
