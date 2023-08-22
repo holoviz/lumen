@@ -575,11 +575,14 @@ class Layout(Component, Viewer):
             # Only the controls for the first facet is shown so link
             # the other facets to the controls of the first
             for v1, v2 in zip(linked_views, card.views):
-                v1.param.watch(partial(self._sync_component, v2), v1.refs)
+                if v1.controls:
+                    v1.param.watch(partial(self._sync_component, v2), v1.controls)
                 for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
-                    t1.param.watch(partial(self._sync_component, t2), t1.refs)
+                    if t1.controls:
+                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
                 for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
-                    t1.param.watch(partial(self._sync_component, t2), t1.refs)
+                    if t1.controls:
+                        t1.param.watch(partial(self._sync_component, t2), t1.controls)
         self._view_controls = pn.Column(*controls, sizing_mode='stretch_width')
 
     ##################################################################

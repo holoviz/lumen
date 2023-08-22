@@ -173,14 +173,6 @@ class Transform(MultiTypeComponent):
             margin=(-10, 0, 5, 0)
         )
 
-    @property
-    def refs(self) -> List[str]:
-        refs = super().refs
-        for c in self.controls:
-            if c not in refs:
-                refs.append(c)
-        return refs
-
 
 class Filter(Transform):
     """
