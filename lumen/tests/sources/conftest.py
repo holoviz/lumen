@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+pd.set_option('mode.string_storage', 'pyarrow')
 
 @pytest.fixture
 def source_tables():

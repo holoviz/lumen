@@ -92,7 +92,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
 
 
 @sql_available
-def test_dashboard_with_sql_source_and_transforms(set_root, document):
+def test_dashboard_with_sql_source_and_transforms(set_root, document, mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'sql_dashboard.yaml'))
@@ -101,14 +101,13 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    expected = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(table.value, expected)
+    pd.testing.assert_frame_equal(table.value, mixed_df_object_type)
 
     dashboard._sidebar[0][0][0]._widgets['limit'].value = 2
 
-    pd.testing.assert_frame_equal(table.value, expected.iloc[:2])
+    pd.testing.assert_frame_equal(table.value, mixed_df_object_type.iloc[:2])
 
-def test_dashboard_with_transform_variable(set_root, document):
+def test_dashboard_with_transform_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'transform_variable.yaml'))
@@ -117,14 +116,13 @@ def test_dashboard_with_transform_variable(set_root, document):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    expected = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(table.value, expected)
+    pd.testing.assert_frame_equal(table.value, mixed_df)
 
     state.variables.length = 2
 
-    pd.testing.assert_frame_equal(table.value, expected.iloc[:2])
+    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[:2])
 
-def test_dashboard_with_source_variable(set_root, document):
+def test_dashboard_with_source_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'source_variable.yaml'))
@@ -133,14 +131,13 @@ def test_dashboard_with_source_variable(set_root, document):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    expected = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(table.value, expected)
+    pd.testing.assert_frame_equal(table.value, mixed_df)
 
     state.variables.tables = {'test': '../sources/test2.csv'}
 
-    pd.testing.assert_frame_equal(table.value, expected.iloc[::-1].reset_index(drop=True))
+    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[::-1].reset_index(drop=True))
 
-def test_dashboard_with_nested_source_variable(set_root, document):
+def test_dashboard_with_nested_source_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
     dashboard = Dashboard(str(root / 'source_nested_variable.yaml'))
@@ -149,12 +146,11 @@ def test_dashboard_with_nested_source_variable(set_root, document):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    expected = pd._testing.makeMixedDataFrame()
-    pd.testing.assert_frame_equal(table.value, expected)
+    pd.testing.assert_frame_equal(table.value, mixed_df)
 
     state.variables.ticker = '../sources/test2.csv'
 
-    pd.testing.assert_frame_equal(table.value, expected.iloc[::-1].reset_index(drop=True))
+    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[::-1].reset_index(drop=True))
 
 def test_dashboard_with_view_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'

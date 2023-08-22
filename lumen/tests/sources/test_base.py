@@ -16,10 +16,9 @@ def source(make_filesource):
     root = os.path.dirname(__file__)
     return make_filesource(root)
 
-
 @pytest.fixture
-def expected_df(column_value_type):
-    df = pd._testing.makeMixedDataFrame()
+def expected_df(mixed_df, column_value_type):
+    df = mixed_df
     column, value, type = column_value_type
 
     if type == 'single_value':
@@ -165,12 +164,12 @@ def test_file_source_get_tables(source):
     assert tables == ['test']
 
 
-def test_file_source_variable(make_variable_filesource):
+def test_file_source_variable(make_variable_filesource, mixed_df):
     root = os.path.dirname(__file__)
     source = make_variable_filesource(root)
     state.variables.tables = {'test': 'test2.csv'}
     df = source.get('test')
-    expected = pd._testing.makeMixedDataFrame().iloc[::-1].reset_index(drop=True)
+    expected = mixed_df.iloc[::-1].reset_index(drop=True)
     pd.testing.assert_frame_equal(df, expected)
 
 
