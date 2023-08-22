@@ -476,14 +476,6 @@ class View(MultiTypeComponent, Viewer):
             return pn.Column(title_pane, panel, sizing_mode=panel.sizing_mode)
         return panel
 
-    @property
-    def refs(self) -> List[str]:
-        refs = super().refs
-        for c in self.controls:
-            if c not in refs:
-                refs.append(c)
-        return refs
-
     ##################################################################
     # Component subclassable API
     ##################################################################
