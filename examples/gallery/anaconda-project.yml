@@ -24,6 +24,7 @@ packages:
   - altair
   - numba::llvmlite
   - python-duckdb
+  - intake-parquet
   - s3fs
 
 env_specs:
