@@ -15,8 +15,8 @@ sources:
               skiprows: 3
               names: ['time', 'precip']
               parse_dates: ['time']
-          storage_options:
-            anon: true
+            storage_options:
+              anon: true
 pipelines:
   rockies:
     source: rockies
@@ -40,4 +40,3 @@ layouts:
         by: [model, emissions]
         min_height: 200
         responsive: true
-    sizing_mode: stretch_width
