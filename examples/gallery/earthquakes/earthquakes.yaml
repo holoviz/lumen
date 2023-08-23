@@ -78,7 +78,7 @@ layouts:
         streaming: true
       depth_hist:
         type: hvplot
-        pipeline: selected
+        pipeline: earthquakes
         kind: hist
         y: depth
         fill_color: white
