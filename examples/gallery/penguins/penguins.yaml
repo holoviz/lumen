@@ -5,6 +5,7 @@ config:
 sources:
   penguins:
     type: file
+    cache_per_query: false
     cache_dir: ./cache
     tables:
       penguins: https://datasets.holoviz.org/penguins/v1/penguins.csv
@@ -64,7 +65,6 @@ layouts:
         selection_group: penguin
     layout: [[scatter], [depth_hist, length_hist, mass_hist]]
     sizing_mode: stretch_width
-    height: 800
   - title: Table
     pipeline: selected
     views:
@@ -74,3 +74,5 @@ layouts:
         show_index: false
         theme: midnight
         sizing_mode: stretch_both
+        pagination: remote
+        page_size: 50
