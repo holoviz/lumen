@@ -2,19 +2,14 @@ config:
   title: "NYC Taxi Trips"
 sources:
   nyc_taxi:
-    type: intake
+    type: duckdb
     shared: true
-    catalog:
-      sources:
-        nyc_taxi:
-          description: NYC Taxi Trip data
-          driver: parquet
-          args:
-            urlpath: 'https://s3.amazonaws.com/datashader-data/nyc_taxi_wide.parq'
-          cache:
-            - type: file
-              regex: '{{ CATALOG_DIR }}/data'
-              argkey: urlpath
+    uri: ":memory:"
+    tables:
+      nyc_taxi: "read_parquet('s3://datasets.holoviz.org/nyc_taxi/v2/nyc_taxi_wide.parq')"
+    initializers:
+      - "INSTALL httpfs;"
+      - "LOAD httpfs;"
 layouts:
   - title: Trip Data
     source: nyc_taxi

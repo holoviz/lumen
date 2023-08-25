@@ -4,6 +4,7 @@ config:
 sources:
   earthquakes:
     type: file
+    cache_per_query: false
     tables:
       earthquakes: ["https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv", "csv"]
 pipelines:
@@ -97,5 +98,4 @@ layouts:
         selection_group: earthquakes
         streaming: true
     refresh_rate: 60000
-    sizing_mode: stretch_both
     layout: [[0, 1], [2, 3, 4]]

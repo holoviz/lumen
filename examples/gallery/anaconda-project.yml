@@ -26,6 +26,7 @@ packages:
   - python-duckdb
   - intake-parquet
   - s3fs
+  - spatialpandas
 
 env_specs:
   default: {}

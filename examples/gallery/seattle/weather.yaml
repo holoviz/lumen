@@ -4,6 +4,7 @@ config:
 sources:
   seattle:
     type: file
+    cache_per_query: false
     tables:
       weather: https://raw.githubusercontent.com/vega/vega/main/docs/data/seattle-weather.csv
     kwargs:
@@ -38,7 +39,6 @@ layouts:
               scheme: inferno
         properties:
           width: container
-        height: 300
       - type: altair
         x:
           shorthand: monthdate(date):T
