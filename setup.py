@@ -43,6 +43,7 @@ extras_require = {
         'pytest-cov',
         'codecov',
         'pre-commit',
+        'matplotlib >=3.4',  # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
     ],
     'doc': [
         'nbsite >=0.8.2',

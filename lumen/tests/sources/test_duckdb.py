@@ -15,6 +15,26 @@ except ImportError:
 pytestmark = pytest.mark.skipif(DuckDBSource is None, reason="Duckdb is not installed")
 
 
+def assert_frame_equal_ignore_null_like(a, b):
+    """
+    From Pandas 2.1 we are getting this FutureWarning:
+        Mismatched null-like values nan and None found. In a future version,
+        pandas equality-testing functions (e.g. assert_frame_equal)
+        will consider these not-matching and raise.
+
+    Here we are converting all null-like values to np.nan.
+
+    Could be that in future release we get a keyword argument to ignore
+    this strict behavior
+
+    Reference: https://github.com/pandas-dev/pandas/pull/52081
+
+    """
+    a = a.fillna(np.nan)
+    b = b.fillna(np.nan)
+    pd.testing.assert_frame_equal(a, b)
+
+
 @pytest.fixture
 def duckdb_source():
     root = os.path.dirname(__file__)
@@ -43,7 +63,10 @@ def test_duckdb_get_tables(duckdb_source, source_tables):
     tables = duckdb_source.get_tables()
     assert not len(set(tables) - set(source_tables.keys()))
     for table in tables:
-        pd.testing.assert_frame_equal(duckdb_source.get(table), source_tables[table])
+        assert_frame_equal_ignore_null_like(
+            duckdb_source.get(table),
+            source_tables[table],
+        )
 
 
 def test_duckdb_get_schema(duckdb_source):
@@ -103,7 +126,7 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = duckdb_source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
+    assert_frame_equal_ignore_null_like(filtered, expected_filtered_df.reset_index(drop=True))
 
 
 def test_duckdb_transforms(duckdb_source, source_tables):
