@@ -30,7 +30,7 @@ class ViewsEditor(WizardItem):
 
     pipelines = param.List(label='Select a pipeline')
 
-    views = param.List()
+    views = param.List(allow_None=True)
 
     _template = """
     <span style="font-size: 2em">View Editor</span>
@@ -202,7 +202,7 @@ class ViewGallery(WizardItem, Gallery):
 
     path = param.Foldername()
 
-    spec = param.List()
+    spec = param.List(allow_None=True)
 
     views = param.List(default=[], precedence=-1, doc="""
         The list of views added to the dashboard.""")
