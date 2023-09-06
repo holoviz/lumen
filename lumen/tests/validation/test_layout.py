@@ -48,7 +48,7 @@ def test_layout_Facet(spec, msg):
         ),
         (
             {"format": "csvs"},
-            "Download component 'format' value failed validation: csvs",
+            "Download component 'format' value failed validation: .*?csvs",
         ),
     ),
     ids=["correct1", "correct2", "wrong_format"],

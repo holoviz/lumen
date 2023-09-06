@@ -21,7 +21,7 @@ from lumen.views.base import Download, View
         ),
         (
             {"format": "csvs"},
-            "Download component 'format' value failed validation: csvs",
+            "Download component 'format' value failed validation: .*?csvs",
         ),
     ),
     ids=["correct1", "correct2", "missing_required", "wrong_format"],
@@ -51,7 +51,7 @@ def test_target_Download(spec, output):
         ),
         (
             {"type": "download", "format": "csvs"},
-            "DownloadView component 'format' value failed validation: csvs",
+            "DownloadView component 'format' value failed validation: .*?csvs",
         ),
         (
             {"format": "csv"},
