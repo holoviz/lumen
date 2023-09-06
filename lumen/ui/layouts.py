@@ -218,7 +218,7 @@ class LayoutsEditor(WizardItem):
 
     title = param.String(default="")
 
-    spec = param.List(precedence=-1)
+    spec = param.List(allow_None=True, precedence=-1)
 
     sources = param.List(doc="Select a source")
 
