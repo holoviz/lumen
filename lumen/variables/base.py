@@ -13,7 +13,7 @@ from typing_extensions import Literal
 
 from ..base import MultiTypeComponent
 from ..state import state
-from ..util import is_ref, resolve_module_reference
+from ..util import disallow_refs, is_ref, resolve_module_reference
 
 if TYPE_CHECKING:
     from panel.viewable import Viewable
@@ -378,7 +378,8 @@ class Parameter(Variable):
     `Parameter` variables reflect the current value of a parameter.
     """
 
-    parameter = param.ClassSelector(class_=param.Parameter, constant=True, doc="""
+    parameter = param.ClassSelector(class_=param.Parameter, constant=True,
+        **disallow_refs, doc="""
         A parameter instance whose current value will be reflected
         on this variable.""")
 
