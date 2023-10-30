@@ -63,8 +63,12 @@ class Filter(MultiTypeComponent):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if state.config and state.config.sync_with_url and self.sync_with_url and pn.state.location:
+        if self._sync_with_url:
             pn.state.location.sync(self, {'value': self.field}, on_error=self._url_sync_error)
+
+    @property
+    def _sync_with_url(self) -> bool:
+        return bool(state.config and state.config.sync_with_url and self.sync_with_url and pn.state.location)
 
     @classproperty
     def _required_keys(cls) -> List[str | Tuple[str, ...]]:  # type: ignore
@@ -316,6 +320,8 @@ class WidgetFilter(BaseWidgetFilter):
         self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
         if self.default is not None:
             self.widget.value = self.default
+        if self._sync_with_url:
+            pn.state.location.sync(self.widget, {'value': self.field}, on_error=self._url_sync_error)
 
     @classmethod
     def _validate_widget(cls, widget: str, spec: Dict[str, Any], context: Dict[str, Any]) -> str:
