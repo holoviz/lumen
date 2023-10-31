@@ -143,7 +143,7 @@ class View(MultiTypeComponent, Viewer):
         return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
 
     def _update_loading(self, event):
-        if self._panel is not None:
+        if hasattr(self._panel, 'loading'):
             with immediate_dispatch():
                 self._panel.loading = event.new
 
