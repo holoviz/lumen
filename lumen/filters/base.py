@@ -318,10 +318,10 @@ class WidgetFilter(BaseWidgetFilter):
         self.widget.visible = self.visible
         self.widget.disabled = self.disabled
         self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
-        if self.default is not None:
-            self.widget.value = self.default
         if self._sync_with_url:
             pn.state.location.sync(self.widget, {'value': self.field}, on_error=self._url_sync_error)
+        if self.default is not None and not self.widget.value:
+            self.widget.value = self.default
 
     @classmethod
     def _validate_widget(cls, widget: str, spec: Dict[str, Any], context: Dict[str, Any]) -> str:
