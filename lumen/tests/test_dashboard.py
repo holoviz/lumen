@@ -82,7 +82,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     layout = dashboard.layouts[0]
     f1, f2 = list(layout._pipelines.values())[0].filters
     f1.value = (0.1, 0.7)
-    assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D&C=%5B%5D'
+    assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
     assert f1.value == (0.3, 0.8)
     f2.value = ['foo1', 'foo2']
@@ -98,7 +98,7 @@ def test_dashboard_with_url_sync_filters_with_default(set_root, document):
     layout = dashboard.layouts[0]
     f1, f2 = list(layout._pipelines.values())[0].filters
     f1.value = (0.1, 0.7)
-    assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D&C=%5B%27foo1%27%5D'
+    assert pn.state.location.search == '?C=%5B%27foo1%27%5D&A=%5B0.1%2C+0.7%5D'
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
     assert f1.value == (0.3, 0.8)
     assert f2.value == ['foo1']
@@ -119,7 +119,7 @@ def test_dashboard_with_url_sync_filters_with_overwritten_default(set_root, docu
     f1, f2 = list(layout._pipelines.values())[0].filters
     f1.value = (0.1, 0.7)
     f2.value = []  # overwriting default with empty list
-    assert pn.state.location.search == '?A=%5B0.1%2C+0.7%5D&C=%5B%5D'
+    assert pn.state.location.search == '?C=%5B%5D&A=%5B0.1%2C+0.7%5D'
     assert f2.widget.value == []
 
 @sql_available
