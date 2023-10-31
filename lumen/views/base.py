@@ -93,19 +93,24 @@ class View(MultiTypeComponent, Viewer):
     # Panel extension to load to render this View
     _extension: ClassVar[str | None] = None
 
-    _internal_params: ClassVar[List[str]] = ['rerender']
-
     # Parameters which reference fields in the table
     _field_params: ClassVar[List[str]] = ['field']
 
-    _requires_source: ClassVar[bool] = True
-
-    _selections: ClassVar[WeakKeyDictionary[Document, link_selections]] = WeakKeyDictionary()
-
-    _supports_selections: ClassVar[bool] = False
-
+    # Optionally declares the Panel types used to render this View
     _panel_type: ClassVar[Type[Viewable] | None] = None
 
+    # Whether this View can be rendered without a data source
+    _requires_source: ClassVar[bool] = True
+
+    # Internal cache of link_selections objects
+    _selections: ClassVar[WeakKeyDictionary[Document, link_selections]] = WeakKeyDictionary()
+
+    # Whether this source supports linked selections
+    _supports_selections: ClassVar[bool] = False
+
+    # Validation attributes
+    _internal_params: ClassVar[List[str]] = ['name', 'rerender']
+    _legacy_params: ClassVar[List[str]] = ['sql_transforms', 'source', 'table', 'transforms']
     _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     __abstract = True

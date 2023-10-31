@@ -51,7 +51,7 @@ from lumen.validation import ValidationError
         ),
         (
             {"type": "file", "tables": {"penguins": "url.csv"}},
-            [{"type": "widget", "fields": "species"}],
+            [{"type": "widget"}],
             [{"type": "aggregate", "method": "mean", "by": ["species", "sex", "year"]}],
             "The WidgetFilter component requires 'field' parameter to be defined",
         ),

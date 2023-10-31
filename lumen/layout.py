@@ -264,8 +264,9 @@ class Facet(Component):
     sort = param.ListSelector(default=[], objects=[], doc="""
         List of fields to sort by.""")
 
-    _valid_keys: ClassVar[Literal['params']] = 'params'
+    # Validation attributes
     _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['by']
+    _valid_keys: ClassVar[Literal['params']] = 'params'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -492,8 +493,9 @@ class Layout(Component, Viewer):
 
     _header_format: ClassVar[str] = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
+    # Validation attributes
+    _legacy_params: ClassVar[List[str]] = ['table']
     _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['title', 'views']
-
     _valid_keys: ClassVar[List[str]] = [
         'config', 'facet_layout', 'sort', # Deprecated
         'layout', 'refresh_rate', 'reloadable', 'show_title', 'title', 'tsformat', 'description', # Simple
