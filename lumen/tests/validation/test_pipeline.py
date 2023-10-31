@@ -100,3 +100,8 @@ def test_pipeline_Pipeline(source, filters, transforms, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Pipeline.validate(spec)
+
+
+def test_pipeline_key_validation():
+    with pytest.raises(ValidationError, match="Pipeline component specification contained unknown key 'transfomers'"):
+        Pipeline.validate({'source': None, 'transfomers': []})

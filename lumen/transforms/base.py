@@ -7,7 +7,7 @@ import datetime as dt
 import hashlib
 
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Tuple, Union,
+    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Tuple, Union,
 )
 
 import numpy as np
@@ -42,6 +42,8 @@ class Transform(MultiTypeComponent):
     transform_type: ClassVar[str | None] = None
 
     _field_params: ClassVar[List[str]] = []
+
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     __abstract = True
 

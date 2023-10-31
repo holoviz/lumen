@@ -29,3 +29,7 @@ def test_transforms_Transform(spec, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Transform.validate(spec)
+
+def test_transform_key_validation():
+    with pytest.raises(ValidationError, match="Iloc component specification contained unknown key 'strt'"):
+        Transform.validate({'type': 'iloc', 'strt': 3})

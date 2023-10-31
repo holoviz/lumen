@@ -14,7 +14,7 @@ from itertools import product
 from os.path import basename
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING, Any, ClassVar, Dict, List, Tuple, Type, Union,
+    TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Tuple, Type, Union,
 )
 from urllib.parse import quote, urlparse
 
@@ -169,6 +169,9 @@ class Source(MultiTypeComponent):
 
     # Declare whether source supports SQL transforms
     _supports_sql: ClassVar[bool] = False
+
+    # Valid keys incude all parameters (except _internal_params)
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     @property
     def _reload_params(self) -> List[str]:

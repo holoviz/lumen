@@ -8,7 +8,7 @@ import sys
 
 from io import BytesIO, StringIO
 from typing import (
-    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Type,
+    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Type,
 )
 from weakref import WeakKeyDictionary
 
@@ -93,6 +93,8 @@ class View(MultiTypeComponent, Viewer):
     # Panel extension to load to render this View
     _extension: ClassVar[str | None] = None
 
+    _internal_params: ClassVar[List[str]] = ['rerender']
+
     # Parameters which reference fields in the table
     _field_params: ClassVar[List[str]] = ['field']
 
@@ -103,6 +105,8 @@ class View(MultiTypeComponent, Viewer):
     _supports_selections: ClassVar[bool] = False
 
     _panel_type: ClassVar[Type[Viewable] | None] = None
+
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     __abstract = True
 

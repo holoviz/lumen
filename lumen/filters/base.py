@@ -7,7 +7,7 @@ from __future__ import annotations
 import types
 
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Tuple, Type,
+    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Tuple, Type,
 )
 
 import bokeh  # type: ignore
@@ -60,6 +60,7 @@ class Filter(MultiTypeComponent):
     # Specification configuration
     _internal_params: ClassVar[List[str]] = ['name', 'schema']
     _requires_field: ClassVar[bool] = True
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, **params):
         super().__init__(**params)
