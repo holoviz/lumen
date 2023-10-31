@@ -320,7 +320,7 @@ class WidgetFilter(BaseWidgetFilter):
         self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
         if self._sync_with_url:
             pn.state.location.sync(self.widget, {'value': self.field}, on_error=self._url_sync_error)
-        if self.default is not None and not self.widget.value:
+        if self.default is not None and self.value is None:
             self.widget.value = self.default
 
     @classmethod
