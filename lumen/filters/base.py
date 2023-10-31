@@ -63,6 +63,9 @@ class Filter(MultiTypeComponent):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._setup_sync()
+
+    def _setup_sync(self):
         if self._sync_with_url:
             pn.state.location.sync(self, {'value': self.field}, on_error=self._url_sync_error)
 
@@ -241,6 +244,14 @@ class BaseWidgetFilter(Filter):
 
     __abstract = True
 
+    def __init__(self, **params):
+        self.widget = None
+        super().__init__(**params)
+
+    def _setup_sync(self):
+        if self._sync_with_url and self.widget is not None:
+            pn.state.location.sync(self.widget, {'value': self.field}, on_error=self._url_sync_error)
+
     def _url_sync_error(self, values):
         value = values['value']
         if value is self.widget.value:
@@ -323,6 +334,7 @@ class WidgetFilter(BaseWidgetFilter):
             self.widget.value = val
         elif self.default is not None:
             self.widget.value = self.default
+        self._setup_sync()
 
     @classmethod
     def _validate_widget(cls, widget: str, spec: Dict[str, Any], context: Dict[str, Any]) -> str:
@@ -407,6 +419,7 @@ class BinFilter(BaseWidgetFilter):
             value = tuple(self.default)
         self.widget = widget(name=self.label, options=options, value=value)
         self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
+        self._setup_sync()
 
     @property
     def query(self) -> Any:
@@ -443,6 +456,7 @@ class BaseDateFilter(BaseWidgetFilter):
             self.param.set_param(**param_overrides)
         self.widget = widget_type(**self._widget_kwargs(as_date=self._as_date))
         self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
+        self._setup_sync()
 
     def _widget_kwargs(self, as_date: bool) -> Dict[str, Any]:
         field_schema = self.schema.get(self.field, {})
