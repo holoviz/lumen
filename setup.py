@@ -46,6 +46,7 @@ extras_require = {
         'matplotlib >=3.4',  # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
         'pytest-github-actions-annotate-failures',
         'pytest-xdist',
+        'pytest-randomly',
     ],
     'doc': [
         'nbsite >=0.8.2',
