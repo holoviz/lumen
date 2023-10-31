@@ -90,6 +90,37 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%2C+%22foo3%22%5D'
     assert f2.value == ['foo1', 'foo2', 'foo3']
 
+def test_dashboard_with_url_sync_filters_with_default(set_root, document):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'sync_query_filters_default.yaml'))
+    dashboard._render_dashboard()
+    layout = dashboard.layouts[0]
+    f1, f2 = list(layout._pipelines.values())[0].filters
+    f1.value = (0.1, 0.7)
+    assert pn.state.location.search == '?C=%5B%27foo1%27%5D&A=%5B0.1%2C+0.7%5D'
+    pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
+    assert f1.value == (0.3, 0.8)
+    assert f2.value == ['foo1']
+    assert f1.widget.value == (0.3, 0.8)
+    assert f2.widget.value == ['foo1']
+    f2.value = ['foo1', 'foo2']
+    assert pn.state.location.search == '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%5D'
+    pn.state.location.search = '?A=%5B0.3%2C+0.8%5D&C=%5B%22foo1%22%2C+%22foo2%22%2C+%22foo3%22%5D'
+    assert f2.value == ['foo1', 'foo2', 'foo3']
+    assert f2.widget.value == ['foo1', 'foo2', 'foo3']
+
+def test_dashboard_with_url_sync_filters_with_overwritten_default(set_root, document):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'sync_query_filters_default.yaml'))
+    dashboard._render_dashboard()
+    layout = dashboard.layouts[0]
+    f1, f2 = list(layout._pipelines.values())[0].filters
+    f1.value = (0.1, 0.7)
+    f2.value = []  # overwriting default with empty list
+    assert pn.state.location.search == '?C=%5B%5D&A=%5B0.1%2C+0.7%5D'
+    assert f2.widget.value == []
 
 @sql_available
 def test_dashboard_with_sql_source_and_transforms(set_root, document, mixed_df_object_type):
