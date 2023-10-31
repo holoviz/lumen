@@ -140,7 +140,7 @@ class Component(param.Parameterized):
             valid = [p for p in cls.param if p not in cls._internal_params]
         else:
             valid = cls._valid_keys
-        return valid + cls._legacy_params
+        return valid if valid is None else valid + cls._legacy_params
 
     @classmethod
     def _validate_keys_(cls, spec: Dict[str, Any]):
