@@ -230,7 +230,7 @@ class Card(Viewer):
                 view_spec['name'] = name
             if 'pipeline' in view_spec:
                 pname = view_spec.pop('pipeline')
-                if pname in pipelines:
+                if isinstance(pname, str) and pname in pipelines:
                     pipeline = pipelines.get(pname)
                 else:
                     pipeline = Pipeline.from_spec(pname)
@@ -891,8 +891,12 @@ class Layout(Component, Viewer):
             view_spec = dict(view_spec)
             processed_views.append(view_spec)
             if 'pipeline' in view_spec:
-                pname = view_spec['pipeline']
-                pipelines[pname] = Pipeline.from_spec(pname)
+                pipeline = view_spec['pipeline']
+                if isinstance(pipeline, str):
+                    pipelines[pipeline] = Pipeline.from_spec(pipeline)
+                else:
+                    pname = pipeline.get('name', f'Pipeline{id(view_spec)}')
+                    pipelines[pname] = pipeline
                 continue
             elif 'pipeline' in spec:
                 continue
