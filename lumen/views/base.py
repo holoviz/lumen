@@ -8,7 +8,7 @@ import sys
 
 from io import BytesIO, StringIO
 from typing import (
-    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Type,
+    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Type,
 )
 from weakref import WeakKeyDictionary
 
@@ -96,13 +96,22 @@ class View(MultiTypeComponent, Viewer):
     # Parameters which reference fields in the table
     _field_params: ClassVar[List[str]] = ['field']
 
+    # Optionally declares the Panel types used to render this View
+    _panel_type: ClassVar[Type[Viewable] | None] = None
+
+    # Whether this View can be rendered without a data source
     _requires_source: ClassVar[bool] = True
 
+    # Internal cache of link_selections objects
     _selections: ClassVar[WeakKeyDictionary[Document, link_selections]] = WeakKeyDictionary()
 
+    # Whether this source supports linked selections
     _supports_selections: ClassVar[bool] = False
 
-    _panel_type: ClassVar[Type[Viewable] | None] = None
+    # Validation attributes
+    _internal_params: ClassVar[List[str]] = ['name', 'rerender']
+    _legacy_params: ClassVar[List[str]] = ['sql_transforms', 'source', 'table', 'transforms']
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     __abstract = True
 

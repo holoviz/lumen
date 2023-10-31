@@ -33,7 +33,7 @@ def test_dashboard_with_local_view_legacy(set_root):
 def test_dashboard_from_spec():
     spec = {
         'sources': {
-            'test': {'type': 'file', 'files': ['./sources/test.csv']}
+            'test': {'type': 'file', 'tables': ['./sources/test.csv']}
         },
         'layouts': [{
             'title': 'Test',

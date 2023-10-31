@@ -51,7 +51,7 @@ from lumen.validation import ValidationError
         ),
         (
             {"type": "file", "tables": {"penguins": "url.csv"}},
-            [{"type": "widget", "fields": "species"}],
+            [{"type": "widget"}],
             [{"type": "aggregate", "method": "mean", "by": ["species", "sex", "year"]}],
             "The WidgetFilter component requires 'field' parameter to be defined",
         ),
@@ -100,3 +100,8 @@ def test_pipeline_Pipeline(source, filters, transforms, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Pipeline.validate(spec)
+
+
+def test_pipeline_key_validation():
+    with pytest.raises(ValidationError, match="Pipeline component specification contained unknown key 'transfomers'"):
+        Pipeline.validate({'source': None, 'transfomers': []})

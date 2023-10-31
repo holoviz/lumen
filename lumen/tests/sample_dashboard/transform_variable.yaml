@@ -5,7 +5,7 @@ variables:
 sources:
   test:
     type: 'file'
-    files: ['../sources/test.csv']
+    tables: ['../sources/test.csv']
     kwargs:
       parse_dates: ['D']
 targets:

@@ -57,3 +57,8 @@ def test_source_Source(spec, context, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Source.validate(spec, context)
+
+
+def test_source_key_validation():
+    with pytest.raises(ValidationError, match="FileSource component specification contained unknown key 'tablas'"):
+        Source.validate({'type': 'file', 'tablas': {}})

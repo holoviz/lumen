@@ -49,6 +49,9 @@ class Component(param.Parameterized):
     # component specification
     _internal_params: ClassVar[List[str]] = ['name']
 
+    # Deprecated parameters that are still allowed as spec keys
+    _legacy_params: ClassVar[List[str]] = []
+
     # Keys that must be declared declared as a list of strings or
     # tuples of strings if one of multiple must be defined.
     _required_keys: ClassVar[List[str | Tuple[str, ...]]] = []
@@ -134,9 +137,10 @@ class Component(param.Parameterized):
     @classproperty
     def _valid_keys_(cls) -> List[str] | None:
         if cls._valid_keys == 'params':
-            return [p for p in cls.param if p not in cls._internal_params]
+            valid = [p for p in cls.param if p not in cls._internal_params]
         else:
-            return cls._valid_keys
+            valid = cls._valid_keys
+        return valid if valid is None else valid + cls._legacy_params
 
     @classmethod
     def _validate_keys_(cls, spec: Dict[str, Any]):
@@ -451,7 +455,7 @@ class MultiTypeComponent(Component):
 
         if valid is not None and 'type' not in valid:
             valid.append('type')
-        return valid
+        return valid if valid is None else valid + cls._legacy_params
 
     @classproperty
     def _base_type(cls):
