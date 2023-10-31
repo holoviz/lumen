@@ -145,6 +145,7 @@ class Pipeline(Viewer, Component):
 
     _internal_params: ClassVar[List[str]] = ['data', 'name', 'schema', '_stale']
     _required_fields: ClassVar[List[str | Tuple[str, str]]] = [('source', 'pipeline')]
+    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, *, source, table, **params):
         if 'schema' not in params:

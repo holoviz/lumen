@@ -16,7 +16,7 @@ from lumen.views.base import Download, View
             {"format": "csv", "type": "default"},
         ),
         (
-            {"formats": "csv"},
+            {},
             "The Download component requires 'format' parameter to be defined",
         ),
         (
@@ -46,7 +46,7 @@ def test_target_Download(spec, output):
             None,
         ),
         (
-            {"type": "download", "formats": "csv"},
+            {"type": "download"},
             "The DownloadView component requires 'format' parameter to be defined",
         ),
         (
@@ -71,3 +71,8 @@ def test_target_View(spec, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             View.validate(spec)
+
+
+def test_filter_key_validation():
+    with pytest.raises(ValidationError, match="Table component specification contained unknown key 'feld'"):
+        View.validate({'type': 'table', 'feld': 'foo'})

@@ -104,3 +104,8 @@ def test_layout_Layout(spec, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Layout.validate(spec, context)
+
+
+def test_layout_key_validation():
+    with pytest.raises(ValidationError, match="Layout component specification contained unknown key 'src'"):
+        Layout.validate({'title': 'Table', 'src': 'penguins'})

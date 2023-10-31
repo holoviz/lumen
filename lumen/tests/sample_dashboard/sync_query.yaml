@@ -4,7 +4,7 @@ config:
 sources:
   test:
     type: 'file'
-    files: ['../sources/test.csv']
+    tables: ['../sources/test.csv']
 targets:
   - title: "Test 1"
     source: test

@@ -1,7 +1,7 @@
 sources:
   test:
     type: 'file'
-    files: ['../sources/test.csv']
+    tables: ['../sources/test.csv']
 pipelines:
   test:
     source: test

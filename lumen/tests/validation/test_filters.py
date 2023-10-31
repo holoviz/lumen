@@ -20,7 +20,7 @@ from lumen.validation import ValidationError
             "The ConstantFilter component requires 'field' parameter to be defined",
         ),
         (
-            {"type": "widget", "fields": "island"},
+            {"type": "widget"},
             "The WidgetFilter component requires 'field' parameter to be defined",
         ),
         (
@@ -41,3 +41,8 @@ def test_filter_Filter(spec, msg):
     else:
         with pytest.raises(ValidationError, match=msg):
             Filter.validate(spec)
+
+
+def test_filter_key_validation():
+    with pytest.raises(ValidationError, match="ConstantFilter component specification contained unknown key 'feld'"):
+        Filter.validate({'type': 'constant', 'feld': 'foo'})
