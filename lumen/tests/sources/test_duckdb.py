@@ -45,7 +45,7 @@ def duckdb_source():
             f"SET home_directory='{root}';"
         ],
         root=root,
-        sql_expr='SELECT A, B, C, D::TIMESTAMP AS D FROM {table}',
+        sql_expr='SELECT A, B, C, D::TIMESTAMP_NS AS D FROM {table}',
         tables={
             'test_sql': f"sqlite_scan('{root + '/test.db'}', 'mixed')",
             'test_sql_with_none': f"sqlite_scan('{root + '/test.db'}', 'mixed_none')",
@@ -81,15 +81,18 @@ def test_duckdb_get_schema(duckdb_source):
             'type': 'string'
         }
     }
-    assert duckdb_source.get_schema('test_sql') == expected_sql
+    source = duckdb_source.get_schema('test_sql')
+    source["C"]["enum"].sort()
+    assert source == expected_sql
     assert list(duckdb_source._schema_cache.keys()) == ['test_sql']
 
 
 def test_duckdb_get_schema_with_none(duckdb_source):
+    enum = ['foo1', None, 'foo3', 'foo5']
     expected_sql = {
         'A': {'inclusiveMaximum': 4.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
         'B': {'inclusiveMaximum': 1.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
-        'C': {'enum': ['foo1', np.nan, 'foo3', 'foo5'], 'type': 'string'},
+        'C': {'enum': enum, 'type': 'string'},
         'D': {
             'format': 'datetime',
             'inclusiveMaximum': '2009-01-07 00:00:00',
@@ -97,7 +100,9 @@ def test_duckdb_get_schema_with_none(duckdb_source):
             'type': 'string'
         }
     }
-    assert duckdb_source.get_schema('test_sql_with_none') == expected_sql
+    source = duckdb_source.get_schema('test_sql_with_none')
+    source["C"]["enum"].sort(key=enum.index)
+    assert source == expected_sql
     assert list(duckdb_source._schema_cache.keys()) == ['test_sql_with_none']
 
 
