@@ -70,7 +70,7 @@ class View(MultiTypeComponent, Viewer):
         Whether to display a loading indicator on the View when the
         Pipeline is refreshing the data.""")
 
-    limit = param.Integer(default=None, doc="""
+    limit = param.Integer(default=None, bounds=(0, None), doc="""
         Limits the number of rows that are rendered.""")
 
     pipeline = param.ClassSelector(class_=Pipeline, doc="""
