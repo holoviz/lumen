@@ -15,6 +15,7 @@ from subprocess import check_output
 import bokeh
 import pandas as pd
 import panel as pn
+import param
 
 from jinja2 import DebugUndefined, Environment, Undefined
 from packaging.version import Version
@@ -25,6 +26,9 @@ from panel.io.document import unlocked
 log = getLogger(__name__)
 
 bokeh3 = Version(bokeh.__version__) > Version("3.0")
+param2 = Version(param.__version__) > Version("2.0rc1")
+
+disallow_refs = {'allow_refs': False} if param2 else {}
 
 VARIABLE_RE = re.compile(r'\$variables\.([a-zA-Z_]\w*)')
 
