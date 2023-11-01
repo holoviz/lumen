@@ -60,6 +60,7 @@ def make_variable_filesource():
 
 @pytest.fixture
 def mixed_df():
+    pytest.importorskip("pyarrow", "7.0", "Pyarrow is not out on Python 3.12 yet")
     df = pd._testing.makeMixedDataFrame()
     df['C'] = df.C.astype("string")
     yield df
