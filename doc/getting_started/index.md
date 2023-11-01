@@ -26,6 +26,13 @@ How to build a Lumen dashboard
 Get an overview of the core concepts of Lumen
 :::
 
+:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Pipelines
+:link: pipelines
+:link-type: doc
+
+Get an overview of the core concepts of Lumen
+:::
+
 ::::
 
 ```{toctree}
@@ -35,4 +42,5 @@ hidden: true
 installation
 build_dashboard
 core_concepts
+pipelines
 ```
