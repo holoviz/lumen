@@ -147,12 +147,19 @@ class Pipeline(Viewer, Component):
     _required_fields: ClassVar[List[str | Tuple[str, str]]] = [('source', 'pipeline')]
     _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
 
-    def __init__(self, *, source, table, **params):
-        if 'schema' not in params:
-            params['schema'] = source.get_schema(table)
+    def __init__(self, *, source, table, schema=None, filters=None, **params):
+        if schema is None:
+            schema = source.get_schema(table)
+        if filters == 'auto':
+            filters = [
+                Filter.from_spec(filt, source_schema={table: schema})
+                for filt in auto_filters(schema).values()
+            ]
+        elif filters is None:
+            filters = []
         if any(isinstance(t, SQLTransform) for t in params.get('transforms', [])):
             raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
-        super().__init__(source=source, table=table, **params)
+        super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
         self._update_widget = pn.Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
         self._init_callbacks()
 
