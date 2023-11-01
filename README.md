@@ -6,7 +6,7 @@
 
 |    |    |
 | --- | --- |
-| Build Status | [![Linux/MacOS/Windows Build Status](https://github.com/holoviz/lumen/workflows/pytest/badge.svg)](https://github.com/holoviz/lumen/actions/workflows/test.yml)
+| Build Status | [![Linux/MacOS/Windows Build Status](https://github.com/holoviz/lumen/actions/workflows/test.yaml/badge.svg)](https://github.com/holoviz/lumen/actions/workflows/test.yaml)
 | Coverage | [![codecov](https://codecov.io/gh/holoviz/lumen/branch/main/graph/badge.svg)](https://codecov.io/gh/holoviz/lumen) |
 | Latest dev release | [![Github tag](https://img.shields.io/github/v/tag/holoviz/lumen.svg?label=tag&colorB=11ccbb)](https://github.com/holoviz/lumen/tags) [![dev-site](https://img.shields.io/website-up-down-green-red/https/holoviz-dev.github.io/lumen.svg?label=dev%20website)](https://holoviz-dev.github.io/lumen/) |
 | Latest release | [![Github release](https://img.shields.io/github/release/holoviz/lumen.svg?label=tag&colorB=11ccbb)](https://github.com/holoviz/lumen/releases) [![PyPI version](https://img.shields.io/pypi/v/lumen.svg?colorB=cc77dd)](https://pypi.python.org/pypi/lumen) [![lumen version](https://img.shields.io/conda/v/pyviz/lumen.svg?colorB=4488ff&style=flat)](https://anaconda.org/pyviz/lumen) [![conda-forge version](https://img.shields.io/conda/v/conda-forge/lumen.svg?label=conda%7Cconda-forge&colorB=4488ff)](https://anaconda.org/conda-forge/lumen) [![defaults version](https://img.shields.io/conda/v/anaconda/lumen.svg?label=conda%7Cdefaults&style=flat&colorB=4488ff)](https://anaconda.org/anaconda/lumen) |
@@ -36,12 +36,13 @@ The core strengths of Lumen include:
        <td><a href="https://lumen.holoviz.org/gallery/nyc_taxi.html"><b>NYC Taxi</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/nyc_taxi.png" /></a></td>
      </tr>
      <tr>
-	   <td><a href="https://lumen.holoviz.org/gallery/penguins.html"><b>Palmer Penguins</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/penguins.png" /></a></td>
-       <td><a href="https://lumen.holoviz.org/gallery/precip.html"><b>Precipitation</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/precip.png" /></a></td>
+       <td><a href="https://lumen.holoviz.org/gallery/penguins.html"><b>Palmer Penguins</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/penguins.png" /></a></td>
+       <td><a href="https://lumen.holoviz.org/gallery/earthquakes.html"><b>USGS Earthquakes</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/earthquakes.png" /></a></td>
      </tr>
-	 <tr>
-	   <td><a href="https://lumen.holoviz.org/gallery/seattle.html"><b>Seattle Weather</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/seattle.png" /></a></td>
-	</tr>
+     <tr>
+       <td><a href="https://lumen.holoviz.org/gallery/seattle.html"><b>Seattle Weather</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/seattle.png" /></a></td>
+       <td><a href="https://lumen.holoviz.org/gallery/windturbines.html"><b>Windturbines</b><br><img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/windturbines.png" /></a></td>
+     </tr>
    </table>
 
 ## Getting started
