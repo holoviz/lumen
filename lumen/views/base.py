@@ -23,6 +23,7 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
 )
 from panel.param import Param
+from panel.util import classproperty
 from panel.viewable import Viewable, Viewer
 
 from ..base import MultiTypeComponent
@@ -145,6 +146,17 @@ class View(MultiTypeComponent, Viewer):
         if self.selection_group:
             self._init_link_selections()
         self._initialized = False
+
+    @classproperty
+    def _valid_keys_(cls) -> List[str] | None:
+        try:
+            panel_type = cls._panel_type
+        except Exception:
+            panel_type = None
+        if panel_type is None:
+            return None
+        valid = super()._valid_keys_()
+        return valid + list(panel_type.param)
 
     def __panel__(self) -> Viewable:
         if not self._initialized:
@@ -561,7 +573,7 @@ class Panel(View):
             return spec
         spec = self.spec.copy()
         ptype = resolve_module_reference(spec.pop('type'), Viewable)
-        params = {}
+        params = dict(self.kwargs)
         for p, v in spec.items():
             if isinstance(v, dict) and 'type' in v:
                 v = self._resolve_spec(v)
@@ -731,6 +743,10 @@ class hvPlotView(hvPlotBaseView):
         self._data_stream = None
         self._linked_objs = []
         super().__init__(**params)
+
+    @classproperty
+    def _valid_keys_(cls):
+        return super(hvPlotView, cls)._valid_keys_
 
     def get_plot(self, df):
         processed = {}
