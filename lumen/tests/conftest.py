@@ -1,5 +1,4 @@
 import os
-import sys
 import tempfile
 
 from unittest.mock import Mock
@@ -9,7 +8,6 @@ import panel as pn
 import pytest
 
 from bokeh.document import Document  # type: ignore
-from packaging.version import Version
 
 from lumen.config import config
 from lumen.sources.base import FileSource, Source
@@ -62,9 +60,7 @@ def make_variable_filesource():
 
 @pytest.fixture
 def mixed_df():
-    import pyarrow
-    if Version(pyarrow.__version__) < Version("7.0") and sys.version_info[1] == 12:
-        pytest.skip("Pyarrow is not out on Python 3.12 yet")
+    pytest.importorskip("pyarrow", "7.0", "Pyarrow is not out on Python 3.12 yet")
     df = pd._testing.makeMixedDataFrame()
     df['C'] = df.C.astype("string")
     yield df
