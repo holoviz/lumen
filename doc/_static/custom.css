@@ -3,6 +3,15 @@
     --pst-color-link: deeppink;
 }
 
+@media (min-width: 960px)
+.bd-page-width {
+    max-width: 132rem;
+}
+
+.bd-main .bd-content .bd-article-container {
+    max-width: 88rem;
+}
+
 .navbar-light {
     background-color: #fff !important;
     box-shadow: 0 0.125rem 0.25rem 0 rgb(0 0 0 / 11%);
