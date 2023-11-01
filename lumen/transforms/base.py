@@ -327,8 +327,15 @@ class Aggregate(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         grouped = table.groupby(self.by)
+        [c for c in table.select_dtypes(include='number').columns if c not in self.by]
         if self.columns:
-            grouped = grouped[self.columns]
+            cols = self.columns
+        else:
+            cols = [
+                c for c in table.select_dtypes(include='number').columns
+                if c not in self.by
+            ]
+        grouped = grouped[cols]
         agg = getattr(grouped, self.method)(**self.kwargs)
         return agg if self.with_index else agg.reset_index()
 
