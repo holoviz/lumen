@@ -19,7 +19,7 @@ jobs:
       run:
         shell: bash -l {0}
     env:
-      CHANS_DEV: "-c pyviz/label/dev -c conda-forge"
+      CHANS_DEV: "-c pyviz/label/dev"
       MPLBACKEND: "Agg"
       PYCTDEV_SELF_CHANNEL: "pyviz/label/dev"
     steps:
