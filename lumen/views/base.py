@@ -682,6 +682,10 @@ class hvPlotBaseView(View):
             params['groupby'] = [params['groupby']]
         super().__init__(**params)
 
+    @classproperty
+    def _valid_keys_(cls):
+        return None
+
 
 class hvPlotUIView(hvPlotBaseView):
     """
@@ -743,10 +747,6 @@ class hvPlotView(hvPlotBaseView):
         self._data_stream = None
         self._linked_objs = []
         super().__init__(**params)
-
-    @classproperty
-    def _valid_keys_(cls):
-        return super(hvPlotView, cls)._valid_keys_
 
     def get_plot(self, df):
         processed = {}
