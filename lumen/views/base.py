@@ -155,7 +155,7 @@ class View(MultiTypeComponent, Viewer):
             panel_type = None
         if panel_type is None:
             return None
-        valid = super()._valid_keys_()
+        valid = super()._valid_keys_
         return valid + list(panel_type.param)
 
     def __panel__(self) -> Viewable:
