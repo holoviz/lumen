@@ -125,7 +125,6 @@ html_theme_options = {
             "icon": "fab fa-discourse",
         },
     ],
-    "navbar_end": ["navbar-icon-links"],
     "pygment_light_style": "material",
     "pygment_dark_style": "material"
 }

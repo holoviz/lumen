@@ -91,6 +91,7 @@ pre[id^='codecell'] {
     color: #f8f8f2;
     box-shadow: none;
     padding: 1.5em;
+    white-space: pre-wrap;
 }
 
 button.copybtn {
@@ -113,3 +114,4 @@ button.copybtn:hover {
 ul.current.nav.bd-sidenav {
     padding: 0;
 }
+
