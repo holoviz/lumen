@@ -40,11 +40,13 @@ extras_require = {
         'fastparquet',
         'msgpack-python',
         'toolz',
-        'pytest-cov',
-        'codecov',
         'pre-commit',
         'matplotlib >=3.4',  # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
+    ],
+    'tests_ci' : [
         'pytest-github-actions-annotate-failures',
+        'pytest-cov',
+        'codecov',
     ],
     'doc': [
         'nbsite >=0.8.2',

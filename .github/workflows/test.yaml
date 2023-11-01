@@ -43,7 +43,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           channel-priority: flexible
           channels: pyviz/label/dev,bokeh,conda-forge,nodefaults
-          envs: -o tests -o sql
+          envs: -o tests -o sql -o tests_ci
           cache: true
         id: install
       - name: doit test_unit
