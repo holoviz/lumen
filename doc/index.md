@@ -29,11 +29,11 @@
 ```
 :::
 
-:::{grid-item-card} Precipitation
-:link: gallery/precip
+:::{grid-item-card} Windturbines
+:link: gallery/windturbines
 :link-type: doc
 
-```{image} ./_static/precip.png
+```{image} ./_static/windturbines.png
 ```
 :::
 
