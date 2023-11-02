@@ -3,9 +3,10 @@
     --pst-color-link: deeppink;
 }
 
-@media (min-width: 960px)
-.bd-page-width {
-    max-width: 132rem;
+@media (min-width: 960px) {
+    .bd-page-width {
+        max-width: 132rem;
+    }
 }
 
 .bd-main .bd-content .bd-article-container {
