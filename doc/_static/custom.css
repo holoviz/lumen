@@ -5,12 +5,16 @@
 
 @media (min-width: 960px) {
     .bd-page-width {
-        max-width: 132rem;
+        max-width: 120rem;
     }
 }
 
+.bd-sidebar-primary {
+    max-width: 24rem;
+}
+
 .bd-main .bd-content .bd-article-container {
-    max-width: 88rem;
+    max-width: 80rem;
 }
 
 .navbar-light {
