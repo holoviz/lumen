@@ -32,9 +32,7 @@ from .pipeline import Pipeline
 from .sources.base import RESTSource, Source  # noqa
 from .state import state
 from .transforms.base import Transform  # noqa
-from .util import (
-    bokeh3, catch_and_notify, expand_spec, resolve_module_reference,
-)
+from .util import catch_and_notify, expand_spec, resolve_module_reference
 from .validation import (
     ValidationError, match_suggestion_message, validate_callback,
 )
@@ -735,13 +733,11 @@ class Dashboard(Component, Viewer):
 
     def _create_main(self):
         layout_kwargs = {'sizing_mode': 'stretch_width', 'min_height': 400}
-        if self.config.layout is pn.Tabs and not bokeh3:
-            layout_kwargs['dynamic'] = True
-        elif self.config.layout is pn.GridBox:
+        if self.config.layout is pn.GridBox:
             layout_kwargs['ncols'] = self.config.ncols
         self._layout = self.config.layout(**layout_kwargs)
         styles = {'text-align': 'center', 'font-size': '1.8em', 'font-weight': 'bold'}
-        style_params = {'styles': styles} if bokeh3 else {'style': styles}
+        style_params = {'styles': styles}
         state.loading_msg = pn.pane.HTML(
             'Loading...', align='center', width=400, height=400, **style_params
         )
@@ -1043,8 +1039,8 @@ class Dashboard(Component, Viewer):
         pn.state.sync_busy(spinner)
 
         title_html = f'<div style="color: white; font-size: 2em;">{self.config.title}</div>'
-        styles = {'background': '#00aa41'}
-        header_params = dict(styles=styles) if bokeh3 else styles
+        styles = {'background': '#0072b5'}
+        header_params = dict(styles=styles)
         return pn.Column(
             pn.Row(
                 pn.pane.HTML(title_html, margin=(20, 20), align='center'),
@@ -1054,8 +1050,8 @@ class Dashboard(Component, Viewer):
                 **header_params
             ),
             pn.Row(
-                pn.Column(self._sidebar, width=300),
-                self._layout,
+                pn.Row(self._sidebar, max_width=320),
+                pn.Row(self._layout, margin=(5, 5, 5, 20)),
                 sizing_mode='stretch_width'
             ),
             sizing_mode='stretch_both'

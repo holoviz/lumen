@@ -1,5 +1,13 @@
 # {octicon}`git-commit;2em;sd-mr-1` Building a data pipeline
 
+
+```{pyodide}
+import lumen
+import panel as pn
+
+pn.extension('tabulator')
+```
+
 Lumen dashboards are a powerful, declarative way to write data-driven applications and dashboards. However Lumen components also provide a powerful abstraction that can be leveraged independently of a full dashboard YAML specification. Specifically the `Pipeline` component offers an extremely powerful basis for building data transformations that can either be used to power analysis pipelines or to drive visual components we can render in a notebook or a custom Panel dashboard. In this section we will discover how to leverage pipelines in this way.
 
 First however we need to understand how Pipelines work, specifically the order in which operations are applied. In particular we need to distinguish between operations that are applied by the `Source` and operations that are applied to **data** returned by the `Source`. This is because various `Source` types support data queries and in the case of SQL based `Source` may also support arbitrary SQL transforms. This means that the `Pipeline` will first call the `Source.get` method with state of the `Filter` and `SQLTransform` components allowing the `Source` to optimize the filter queries and transforms and return the data, once the data is returned as a `DataFrame` the declared `Transform` stages will be applied in sequence.
