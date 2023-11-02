@@ -8,7 +8,7 @@ To start with let us declare the [Pipeline](lumen.pipeline.Pipeline) we will be 
 import lumen as lm
 import panel as pn
 
-pn.extension('tabulator')
+pn.extension('tabulator', design='material')
 
 pipeline = lm.Pipeline.from_spec({
     'source': {
