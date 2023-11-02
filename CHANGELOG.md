@@ -31,6 +31,7 @@ This release updates Lumen for compatibility with latest Panel and Param release
 - Fix how Layouts resolve internal pipelines ([#418](https://github.com/holoviz/lumen/pull/418))
 - Correctly sync `WidgetFilter` with url ([#491](https://github.com/holoviz/lumen/pull/491))
 - Allow roundtrip of `Layout` `to_spec` and `from_spec` ([#495](https://github.com/holoviz/lumen/pull/495))
+- Ensure Lumen yaml paths can be correctly resolved on Windows ([af86b04](https://github.com/holoviz/lumen/commit/af86b044345b5b087689c63fe735f3504ebb6d6b))
 
 ### Compatibility
 
@@ -128,19 +129,6 @@ Additionally this release adds support for validating a specification without ac
 - Improve support for exporting `View` and `Target` to_spec ([#365](https://github.com/holoviz/lumen/pull/365))
 - Allow declaring per query caching behavior at Source level ([#367](https://github.com/holoviz/lumen/pull/367))
 - Ensure views are rendered lazily ([#381](https://github.com/holoviz/lumen/pull/381))
-
-### UI
-
-38:  ec05670 Add Lumen GUI ([#168](https://github.com/holoviz/lumen/pull/168))
-39:  b2bfd0e Bundle Fast components for now ([#169](https://github.com/holoviz/lumen/pull/169))
-41:  88fa6e2 Add intake_dremio source editor ([#170](https://github.com/holoviz/lumen/pull/170))
-40:  b86d58e Fix path handling in UI ([#171](https://github.com/holoviz/lumen/pull/171))
-42:  206e876 Make Source previews lazy ([#172](https://github.com/holoviz/lumen/pull/172))
-43:  a3abee6 Enhancements for the GUI ([#173](https://github.com/holoviz/lumen/pull/173))
-Various improvements for Lumen UI ([#183](https://github.com/holoviz/lumen/pull/183))
-- Allow launching UI from CLI ([#228](https://github.com/holoviz/lumen/pull/228))
-- Add VariableEditor ([#253](https://github.com/holoviz/lumen/pull/253))
-- Update UI after introducing Pipeline ([#307](https://github.com/holoviz/lumen/pull/307))
 
 ### Bug fixes
 
