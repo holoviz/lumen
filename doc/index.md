@@ -74,7 +74,7 @@ The core strengths of Lumen include:
 
 Build reusable components to drive your visual analytics that can be reused even by team members who are not Python experts.
 
-::::{grid} 1 2 2 3
+::::{grid} 1 2 2 4
 :gutter: 1 1 1 2
 
 :::{grid-item-card} {octicon}`desktop-download;2em;sd-mr-1` Installation
@@ -98,6 +98,14 @@ How to build a Lumen dashboard
 Get an overview of the core concepts of Lumen
 :::
 
+:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Data Pipelines
+:link: getting_started/pipelines
+:link-type: doc
+
+Discover how to build powerful data pipelines with with Lumen.
+:::
+
+::::
 
 ```{toctree}
 ---
