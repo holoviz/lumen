@@ -235,6 +235,6 @@ This is the first "public" release of Lumen.
 
 ## Version 0.1.0
 
-This is the first public release of the Lumen project, which provides a framework to build dashboards from a simple yaml specification. It is designed to query information from any source, filter it in various ways and then provide views of that information, which can be anything from a simply indicator to a table or plot.
+This is the first public release of the Lumen project, which provides a framework to build dashboards from a simple yaml specification. It is designed to query information from any source, filter it in various ways and then provide views of that information, which can be anything from a simple indicator to a table or plot.
 
 For now the Lumen project is available only from conda and can be installed with `conda install -c pyviz/label/dev lumen`.
