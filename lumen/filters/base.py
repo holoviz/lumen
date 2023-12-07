@@ -293,7 +293,7 @@ class WidgetFilter(BaseWidgetFilter):
         e.g. for a numeric value this could be a regular slider or a
         range slider.""")
 
-    widget = param.ClassSelector(class_=pn.widgets.Widget, doc="""
+    widget = param.ClassSelector(class_=pn.widgets.Widget, allow_refs=False, doc="""
         The widget instance. When declared in a specification a full
         module path to a Panel widget class can be provided to override
         the default inferred widget.""")
