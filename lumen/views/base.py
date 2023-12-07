@@ -161,7 +161,9 @@ class View(MultiTypeComponent, Viewer):
     def __panel__(self) -> Viewable:
         if not self._initialized:
             self.update()
-        return pn.panel(pn.bind(lambda e: self.panel, self.param.rerender))
+        bound = pn.param.ParamFunction(pn.bind(lambda e: self.panel, self.param.rerender))
+        bound._internal = False
+        return bound
 
     def _update_loading(self, event):
         if hasattr(self._panel, 'loading'):
