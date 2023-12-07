@@ -1,0 +1,668 @@
+
+<!DOCTYPE html>
+
+<html data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="width=device-width, initial-scale=1" name="viewport"/>
+<link href="../../site.webmanifest" rel="manifest"/>
+<title>Access custom components — Lumen 1.3.4 documentation</title>
+<script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+<!-- Loaded before other Sphinx assets -->
+<link href="../../_static/styles/theme.css?digest=e353d410970836974a52" rel="stylesheet"/>
+<link href="../../_static/styles/bootstrap.css?digest=e353d410970836974a52" rel="stylesheet"/>
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=e353d410970836974a52" rel="stylesheet"/>
+<link href="../../_static/vendor/fontawesome/6.1.2/css/all.min.css?digest=e353d410970836974a52" rel="stylesheet"/>
+<link as="font" crossorigin="" href="../../_static/vendor/fontawesome/6.1.2/webfonts/fa-solid-900.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="../../_static/vendor/fontawesome/6.1.2/webfonts/fa-brands-400.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="../../_static/vendor/fontawesome/6.1.2/webfonts/fa-regular-400.woff2" rel="preload" type="font/woff2"/>
+<link href="../../_static/pygments.css?v=a746c00c" rel="stylesheet" type="text/css"/>
+<link href="../../_static/mystnb.4510f1fc1dee50b3e5859aac5469c37c29e427902b24a333a5f9fcb2f0b3ac41.css" rel="stylesheet" type="text/css"/>
+<link href="../../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../../_static/custom.css?v=aacd715d" rel="stylesheet" type="text/css"/>
+<link href="../../_static/dataframe.css?v=302d74fa" rel="stylesheet" type="text/css"/>
+<link href="../../_static/design-style.1e8bd061cd6da7fc9cf755528e8ffc24.min.css?v=0a3b3ea7" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/card.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/plotly.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/gridstack.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/json.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/gridbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/chat_feed.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/perspective-datatable.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/chat_reaction_icons.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/listpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/chat_copy_icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/loading.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/alerts.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/editable_slider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/booleanstatus.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/debugger.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/widgets.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/widgetbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/dataframe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/progress.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/floatpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/button.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/layout.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/loadingspinner.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/chat_interface.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/katex.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/chat_message.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/pyscript.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/swipe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/markdown.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/select.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/gridspec.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/divider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.3.4/dist/css/regular_table.css" rel="stylesheet" type="text/css"/>
+<!-- Pre-loaded scripts that we'll load fully later -->
+<link as="script" href="../../_static/scripts/bootstrap.js?digest=e353d410970836974a52" rel="preload"/>
+<link as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=e353d410970836974a52" rel="preload"/>
+<script src="../../_static/documentation_options.js?v=2b7d2ab1"></script>
+<script src="../../_static/doctools.js?v=888ff710"></script>
+<script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../../_static/copybutton.js?v=f281be69"></script>
+<script src="../../_static/design-tabs.js?v=36754332"></script>
+<script src="../../_static/ServiceHandler.js"></script>
+<link href="../../_static/favicon.ico" rel="icon"/>
+<link href="../../genindex.html" rel="index" title="Index"/>
+<link href="../../search.html" rel="search" title="Search"/>
+<link href="auth.html" rel="next" title="Configuring Authentication"/>
+<link href="index.html" rel="prev" title="Advanced Topics"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="en" name="docsearch:language"/>
+</head>
+<body data-bs-root-margin="0px 0px -60%" data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-default-mode="light" data-offset="180">
+<a class="skip-link" href="#main-content">Skip to main content</a>
+<input class="sidebar-toggle" id="__primary" name="__primary" type="checkbox"/>
+<label class="overlay overlay-primary" for="__primary"></label>
+<input class="sidebar-toggle" id="__secondary" name="__secondary" type="checkbox"/>
+<label class="overlay overlay-secondary" for="__secondary"></label>
+<div class="search-button__wrapper">
+<div class="search-button__overlay"></div>
+<div class="search-button__search-container">
+<form action="../../search.html" class="bd-search d-flex align-items-center" method="get">
+<i class="fa-solid fa-magnifying-glass"></i>
+<input aria-label="Search the docs ..." autocapitalize="off" autocomplete="off" autocorrect="off" class="form-control" id="search-input" name="q" placeholder="Search the docs ..." spellcheck="false" type="search"/>
+<span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+</div>
+<nav class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+<label class="sidebar-toggle primary-toggle" for="__primary">
+<span class="fa-solid fa-bars"></span>
+</label>
+<div class="navbar-header-items__start">
+<div class="navbar-item">
+<a class="navbar-brand logo" href="../../index.html">
+<img alt="Logo image" class="logo__image only-light" src="../../_static/logo_horizontal.png"/>
+<script>document.write(`<img src="../../_static/logo_horizontal.png" class="logo__image only-dark" alt="Logo image"/>`);</script>
+</a></div>
+</div>
+<div class="col-lg-9 navbar-header-items">
+<div class="me-auto navbar-header-items__center">
+<div class="navbar-item"><nav class="navbar-nav">
+<p aria-label="Site Navigation" aria-level="1" class="sidebar-header-items__title" role="heading">
+    Site Navigation
+  </p>
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../index.html">
+                        Home
+                      </a>
+</li>
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../getting_started/index.html">
+                        Getting Started
+                      </a>
+</li>
+<li class="nav-item current active">
+<a class="nav-link nav-internal" href="../index.html">
+                        How to
+                      </a>
+</li>
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../gallery/index.html">
+                        Gallery
+                      </a>
+</li>
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../reference/index.html">
+                        Reference
+                      </a>
+</li>
+<div class="nav-item dropdown">
+<button aria-expanded="false" aria-haspopup="true" class="btn dropdown-toggle nav-item" data-bs-toggle="dropdown" type="button">
+                    More
+                </button>
+<div class="dropdown-menu">
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../background/index.html">
+                        Background
+                      </a>
+</li>
+</div>
+</div>
+</ul>
+</nav></div>
+</div>
+<div class="navbar-header-items__end">
+<div class="navbar-item navbar-persistent--container">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+  </button>
+`);
+</script>
+</div>
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="theme-switch-button btn btn-sm btn-outline-primary navbar-btn rounded-circle" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch" data-mode="light"><i class="fa-solid fa-sun"></i></span>
+    <span class="theme-switch" data-mode="dark"><i class="fa-solid fa-moon"></i></span>
+    <span class="theme-switch" data-mode="auto"><i class="fa-solid fa-circle-half-stroke"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i class="fa-brands fa-square-github"></i></span>
+<label class="sr-only">GitHub</label></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i class="fab fa-discourse"></i></span>
+<label class="sr-only">Discourse</label></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="navbar-persistent--mobile">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+  </button>
+`);
+</script>
+</div>
+<label class="sidebar-toggle secondary-toggle" for="__secondary">
+<span class="fa-solid fa-outdent"></span>
+</label>
+</div>
+</nav>
+<div class="bd-container">
+<div class="bd-container__inner bd-page-width">
+<div class="bd-sidebar-primary bd-sidebar">
+<div class="sidebar-header-items sidebar-primary__section">
+<div class="sidebar-header-items__center">
+<div class="navbar-item"><nav class="navbar-nav">
+<p aria-label="Site Navigation" aria-level="1" class="sidebar-header-items__title" role="heading">
+    Site Navigation
+  </p>
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../index.html">
+                        Home
+                      </a>
+</li>
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../getting_started/index.html">
+                        Getting Started
+                      </a>
+</li>
+<li class="nav-item current active">
+<a class="nav-link nav-internal" href="../index.html">
+                        How to
+                      </a>
+</li>
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../gallery/index.html">
+                        Gallery
+                      </a>
+</li>
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../reference/index.html">
+                        Reference
+                      </a>
+</li>
+<div class="nav-item dropdown">
+<button aria-expanded="false" aria-haspopup="true" class="btn dropdown-toggle nav-item" data-bs-toggle="dropdown" type="button">
+                    More
+                </button>
+<div class="dropdown-menu">
+<li class="nav-item">
+<a class="nav-link nav-internal" href="../../background/index.html">
+                        Background
+                      </a>
+</li>
+</div>
+</div>
+</ul>
+</nav></div>
+</div>
+<div class="sidebar-header-items__end">
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="theme-switch-button btn btn-sm btn-outline-primary navbar-btn rounded-circle" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch" data-mode="light"><i class="fa-solid fa-sun"></i></span>
+    <span class="theme-switch" data-mode="dark"><i class="fa-solid fa-moon"></i></span>
+    <span class="theme-switch" data-mode="auto"><i class="fa-solid fa-circle-half-stroke"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i class="fa-brands fa-square-github"></i></span>
+<label class="sr-only">GitHub</label></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i class="fab fa-discourse"></i></span>
+<label class="sr-only">Discourse</label></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="sidebar-primary-items__start sidebar-primary__section">
+<div class="sidebar-primary-item"><nav aria-label="Section Navigation" class="bd-docs-nav bd-links">
+<p aria-level="1" class="bd-links__title" role="heading">Section Navigation</p>
+<div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_intake/index.html">Data Intake</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_intake/files.html">Access Files</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_intake/cache.html">Cache Data</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_processing/index.html">Data Processing</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_processing/pipeline_python.html">Build Pipelines with Python</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_processing/branch_pipeline.html">Branch a Pipeline</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_visualization/index.html">Visualize and Deploy</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_visualization/views.html">Define Views</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_visualization/dashboard_python.html">Visualize Dashboards with Python</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_visualization/deploy.html">Deploy</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../validation/index.html">Validation</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-4"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../validation/validate.html">Validate Specification</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_output/index.html">Data Output</a><input class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-5"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_output/download_data.html">Enable Data Download</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Advanced Topics</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-6"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Access Custom Components</a></li>
+<li class="toctree-l2"><a class="reference internal" href="auth.html">Configure Authentication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="variables_and_references.html">Reference Variables</a></li>
+<li class="toctree-l2"><a class="reference internal" href="callbacks.html">Declare Callbacks</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+</div>
+<div class="sidebar-primary-items__end sidebar-primary__section">
+</div>
+<div id="rtd-footer-container"></div>
+</div>
+<main class="bd-main" id="main-content">
+<div class="bd-content">
+<div class="bd-article-container">
+<div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+<div class="header-article-items__start">
+<div class="header-article-item">
+<nav aria-label="Breadcrumbs">
+<ul aria-label="Breadcrumb" class="bd-breadcrumbs" role="navigation">
+<li class="breadcrumb-item breadcrumb-home">
+<a aria-label="Home" class="nav-link" href="../../index.html">
+<i class="fa-solid fa-home"></i>
+</a>
+</li>
+<li class="breadcrumb-item"><a class="nav-link" href="../index.html">How to Guides</a></li>
+<li class="breadcrumb-item"><a class="nav-link" href="index.html">Advanced Topics</a></li>
+<li aria-current="page" class="breadcrumb-item active">Access custom components</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+</div>
+<div id="searchbox"></div>
+<article class="bd-article" role="main">
+<section id="access-custom-components">
+<h1>Access custom components<a class="headerlink" href="#access-custom-components" title="Link to this heading">#</a></h1>
+<div class="important admonition">
+<p class="admonition-title">What does this guide solve?</p>
+<p>This guide will show you how to access local files that build custom components.</p>
+</div>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>While Lumen ships with a wide range of components, users may also define custom components in files which live alongside the YAML file. There are two approaches to reference these local custom components.</p>
+<p>The first approach is to save your custom components to files with specific names that Lumen will automatically import. With this approach, you can just refer to your components in the YAML specification using their simple string name (for example, <code class="docutils literal notranslate"><span class="pre">texteditor</span></code>).</p>
+<p>The second approach is to save your custom components to your own folder and filenames. With this approach, you can refer to your components using their module path (for example, <code class="docutils literal notranslate"><span class="pre">my_library.my_module.TextEditor</span></code>).</p>
+<p>In the custom component examples below, we will add a transform for <a class="reference external" href="https://en.wikipedia.org/wiki/Category:Stable_sorts">stable sorting</a>, and a view for a <a class="reference external" href="https://panel.holoviz.org/reference/widgets/TextEditor.html#widgets-gallery-texteditor">rich text editor</a>.</p>
+</section>
+<section id="approach-1-using-imported-files">
+<h2>Approach 1: Using imported files<a class="headerlink" href="#approach-1-using-imported-files" title="Link to this heading">#</a></h2>
+<p>Lumen will automatically import <code class="docutils literal notranslate"><span class="pre">filters.py</span></code>, <code class="docutils literal notranslate"><span class="pre">sources.py</span></code>, <code class="docutils literal notranslate"><span class="pre">transforms.py</span></code>, and <code class="docutils literal notranslate"><span class="pre">views.py</span></code> if these files exist alongside the YAML dashboard specification.</p>
+<p>For example, if you created a custom transform and a custom view, all you have to do is save the custom transform to <code class="docutils literal notranslate"><span class="pre">transforms.py</span></code> and the custom view to <code class="docutils literal notranslate"><span class="pre">views.py</span></code>, and then place them in the same directory as your YAML specification. Now you can reference these local components within your specification using their simple string name, and they will be applied when you launch your dashboard.</p>
+<p>Here are our example custom component files:</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio"/>
+<label class="sd-tab-label" for="sd-tab-item-0">
+transforms.py</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">param</span>
+<span class="kn">from</span> <span class="nn">lumen</span> <span class="kn">import</span> <span class="n">Transform</span>
+
+<span class="k">class</span> <span class="nc">StableSort</span><span class="p">(</span><span class="n">Transform</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Uses a stable sorting algorithm on one or more columns.</span>
+
+<span class="sd">    See `pandas.DataFrame.sort_values` with kind='stable'</span>
+
+<span class="sd">    df.sort_values(&lt;by&gt;, ascending=&lt;ascending&gt;, kind='stable')</span>
+<span class="sd">    """</span>
+
+    <span class="n">by</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">ListSelector</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="p">[],</span> <span class="n">doc</span><span class="o">=</span><span class="s2">"""</span>
+<span class="s2">       Columns or indexes to sort by."""</span><span class="p">)</span>
+
+    <span class="n">ascending</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">ClassSelector</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">class_</span><span class="o">=</span><span class="p">(</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">list</span><span class="p">),</span> <span class="n">doc</span><span class="o">=</span><span class="s2">"""</span>
+<span class="s2">       Sort ascending vs. descending. Specify list for multiple sort</span>
+<span class="s2">       orders. If this is a list of bools, must match the length of</span>
+<span class="s2">       the by."""</span><span class="p">)</span>
+
+    <span class="n">transform_type</span> <span class="o">=</span> <span class="s1">'stablesort'</span>
+
+    <span class="n">_field_params</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'by'</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">apply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">table</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">table</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">by</span><span class="p">,</span> <span class="n">ascending</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">ascending</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s1">'stable'</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio"/>
+<label class="sd-tab-label" for="sd-tab-item-1">
+views.py</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">lumen</span> <span class="kn">import</span> <span class="n">View</span>
+<span class="kn">import</span> <span class="nn">panel</span> <span class="k">as</span> <span class="nn">pn</span>
+
+<span class="k">class</span> <span class="nc">TextEditor</span><span class="p">(</span><span class="n">View</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Provides a rich text editor.</span>
+
+<span class="sd">    See https://panel.holoviz.org/reference/widgets/TextEditor.html#widgets-gallery-texteditor</span>
+<span class="sd">    """</span>
+
+    <span class="n">view_type</span> <span class="o">=</span> <span class="s1">'texteditor'</span>
+
+    <span class="n">_extension</span> <span class="o">=</span> <span class="s1">'texteditor'</span>
+
+    <span class="k">def</span> <span class="nf">get_panel</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">pn</span><span class="o">.</span><span class="n">widgets</span><span class="o">.</span><span class="n">TextEditor</span><span class="p">(</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_get_params</span><span class="p">())</span>
+
+    <span class="k">def</span> <span class="nf">_get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">sizing_mode</span><span class="o">=</span><span class="s1">'stretch_width'</span><span class="p">,</span> <span class="n">placeholder</span><span class="o">=</span><span class="s1">'Enter some text'</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+</div>
+<p>And here is our example YAML specification (dashboard.yaml) that references these local custom component files:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">config</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Palmer Penguins</span>
+
+<span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_source</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file</span>
+<span class="w">    </span><span class="nt">tables</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">penguin_table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://datasets.holoviz.org/penguins/v1/penguins.csv</span>
+
+<span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_pipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_source</span>
+<span class="w">    </span><span class="nt">table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_table</span>
+<span class="w">    </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sex</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">island</span>
+<span class="w">    </span><span class="nt">transforms</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">columns</span>
+<span class="w">        </span><span class="nt">columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'species'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'island'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'sex'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'year'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'bill_length_mm'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'bill_depth_mm'</span><span class="p p-Indicator">]</span>
+<span class="hll"><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_module.StableSor</span>
+</span><span class="hll"><span class="w">        </span><span class="nt">by</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">island</span>
+</span>
+<span class="nt">layouts</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Penguins</span>
+<span class="w">    </span><span class="nt">pipeline</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_pipeline</span>
+<span class="w">    </span><span class="nt">layout</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">]]</span>
+<span class="w">    </span><span class="nt">sizing_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stretch_width</span>
+<span class="w">    </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">800</span>
+<span class="w">    </span><span class="nt">views</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">x</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_length_mm</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_depth_mm</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scatter</span>
+<span class="w">        </span><span class="nt">color</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">species</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">400</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hist</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_length_mm</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">table</span>
+<span class="w">        </span><span class="nt">show_index</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<span class="hll"><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">texteditor</span>
+</span><span class="hll"><span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">250</span>
+</span></pre></div>
+</div>
+<p>Now launch the dashboard with:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>lumen<span class="w"> </span>serve<span class="w"> </span>dashboard.yaml<span class="w"> </span>--show
+</pre></div>
+</div>
+<p><img alt="" src="../../_images/local_components_app.png"/></p>
+</section>
+<section id="approach-2-using-module-paths">
+<h2>Approach 2: Using module paths<a class="headerlink" href="#approach-2-using-module-paths" title="Link to this heading">#</a></h2>
+<p>Lumen will import custom components from your own modules (folders and files) if referenced in the YAML specification using dot notation (for example, <code class="docutils literal notranslate"><span class="pre">my_library.my_module.TextEditor</span></code>). If using this approach, the root of the module path (for example, <code class="docutils literal notranslate"><span class="pre">my_library</span></code>) needs to be in the same folder as the YAML specification.</p>
+<p>Here is our example custom component file. In this case, we combined the components into one file, but they could have been in different module paths:</p>
+<p><strong>my_library/my_module.py</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">param</span>
+<span class="kn">from</span> <span class="nn">lumen</span> <span class="kn">import</span> <span class="n">Transform</span><span class="p">,</span> <span class="n">View</span>
+<span class="kn">import</span> <span class="nn">panel</span> <span class="k">as</span> <span class="nn">pn</span>
+
+<span class="k">class</span> <span class="nc">StableSort</span><span class="p">(</span><span class="n">Transform</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Uses a stable sorting algorithm on one or more columns.</span>
+
+<span class="sd">    See `pandas.DataFrame.sort_values` with kind='stable'</span>
+
+<span class="sd">    df.sort_values(&lt;by&gt;, ascending=&lt;ascending&gt;, kind='stable')</span>
+<span class="sd">    """</span>
+
+    <span class="n">by</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">ListSelector</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="p">[],</span> <span class="n">doc</span><span class="o">=</span><span class="s2">"""</span>
+<span class="s2">       Columns or indexes to sort by."""</span><span class="p">)</span>
+
+    <span class="n">ascending</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">ClassSelector</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">class_</span><span class="o">=</span><span class="p">(</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">list</span><span class="p">),</span> <span class="n">doc</span><span class="o">=</span><span class="s2">"""</span>
+<span class="s2">       Sort ascending vs. descending. Specify list for multiple sort</span>
+<span class="s2">       orders. If this is a list of bools, must match the length of</span>
+<span class="s2">       the by."""</span><span class="p">)</span>
+
+    <span class="n">transform_type</span> <span class="o">=</span> <span class="s1">'stablesort'</span>
+
+    <span class="n">_field_params</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'by'</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">apply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">table</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">table</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">by</span><span class="p">,</span> <span class="n">ascending</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">ascending</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s1">'stable'</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">TextEditor</span><span class="p">(</span><span class="n">View</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Provides a rich text editor.</span>
+
+<span class="sd">    See https://panel.holoviz.org/reference/widgets/TextEditor.html#widgets-gallery-texteditor</span>
+<span class="sd">    """</span>
+
+    <span class="n">view_type</span> <span class="o">=</span> <span class="s1">'texteditor'</span>
+
+    <span class="n">_extension</span> <span class="o">=</span> <span class="s1">'texteditor'</span>
+
+    <span class="k">def</span> <span class="nf">get_panel</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">pn</span><span class="o">.</span><span class="n">widgets</span><span class="o">.</span><span class="n">TextEditor</span><span class="p">(</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_get_params</span><span class="p">())</span>
+
+    <span class="k">def</span> <span class="nf">_get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">sizing_mode</span><span class="o">=</span><span class="s1">'stretch_width'</span><span class="p">,</span> <span class="n">placeholder</span><span class="o">=</span><span class="s1">'Enter some text'</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>And here is our example YAML specification (dashboard.yaml) that references these local custom components:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">config</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Palmer Penguins</span>
+
+<span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_source</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file</span>
+<span class="w">    </span><span class="nt">tables</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">penguin_table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://datasets.holoviz.org/penguins/v1/penguins.csv</span>
+
+<span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_pipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_source</span>
+<span class="w">    </span><span class="nt">table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_table</span>
+<span class="w">    </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sex</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">island</span>
+<span class="w">    </span><span class="nt">transforms</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">columns</span>
+<span class="w">        </span><span class="nt">columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'species'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'island'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'sex'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'year'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'bill_length_mm'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'bill_depth_mm'</span><span class="p p-Indicator">]</span>
+<span class="hll"><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_library.my_module.StableSort</span>
+</span><span class="hll"><span class="w">        </span><span class="nt">by</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">island</span>
+</span>
+<span class="nt">layouts</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Penguins</span>
+<span class="w">    </span><span class="nt">pipeline</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_pipeline</span>
+<span class="w">    </span><span class="nt">layout</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">]]</span>
+<span class="w">    </span><span class="nt">sizing_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stretch_width</span>
+<span class="w">    </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">800</span>
+<span class="w">    </span><span class="nt">views</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">x</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_length_mm</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_depth_mm</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scatter</span>
+<span class="w">        </span><span class="nt">color</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">species</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">400</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hist</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_length_mm</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">table</span>
+<span class="w">        </span><span class="nt">show_index</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<span class="hll"><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_library.my_module.TextEditor</span>
+</span><span class="hll"><span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">250</span>
+</span></pre></div>
+</div>
+<p>Now launch the dashboard with:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>lumen<span class="w"> </span>serve<span class="w"> </span>dashboard.yaml<span class="w"> </span>--show
+</pre></div>
+</div>
+<p><img alt="" src="../../_images/local_components_app.png"/></p>
+</section>
+<section id="related-resources">
+<h2>Related Resources<a class="headerlink" href="#related-resources" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p>See <a class="reference internal" href="index.html"><span class="std std-doc">how to</span></a> guides on building custom components</p></li>
+</ul>
+</section>
+</section>
+</article>
+<footer class="bd-footer-article">
+<div class="footer-article-items footer-article__inner">
+<div class="footer-article-item"><!-- Previous / next buttons -->
+<div class="prev-next-area">
+<a class="left-prev" href="index.html" title="previous page">
+<i class="fa-solid fa-angle-left"></i>
+<div class="prev-next-info">
+<p class="prev-next-subtitle">previous</p>
+<p class="prev-next-title">Advanced Topics</p>
+</div>
+</a>
+<a class="right-next" href="auth.html" title="next page">
+<div class="prev-next-info">
+<p class="prev-next-subtitle">next</p>
+<p class="prev-next-title">Configuring Authentication</p>
+</div>
+<i class="fa-solid fa-angle-right"></i>
+</a>
+</div></div>
+</div>
+</footer>
+</div>
+<div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="sidebar-secondary-item">
+<div class="page-toc tocsection onthispage">
+<i class="fa-solid fa-list"></i> On this page
+  </div>
+<nav class="bd-toc-nav page-toc">
+<ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#approach-1-using-imported-files">Approach 1: Using imported files</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#approach-2-using-module-paths">Approach 2: Using module paths</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#related-resources">Related Resources</a></li>
+</ul>
+</nav></div>
+<div class="sidebar-secondary-item">
+<div class="tocsection sourcelink">
+<a href="../../_sources/how_to/advanced/local_components.md.txt">
+<i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+</div>
+</div>
+</div></div>
+</div>
+<footer class="bd-footer-content">
+</footer>
+</main>
+</div>
+</div>
+<!-- Scripts loaded after <body> so the DOM is not blocked -->
+<script src="../../_static/scripts/bootstrap.js?digest=e353d410970836974a52"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=e353d410970836974a52"></script>
+<footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+<div class="footer-items__start">
+<div class="footer-item">
+<p class="copyright">
+    
+      © Copyright 2020-2023, HoloViz Developers.
+      <br/>
+</p>
+</div>
+<div class="footer-item">
+<p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    <br/>
+</p>
+</div>
+</div>
+<div class="footer-items__end">
+<div class="footer-item"><p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.13.3.
+</p></div>
+</div>
+</div>
+</footer>
+</body>
+</html>
