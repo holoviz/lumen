@@ -1,7 +1,5 @@
 config:
-  template:
-    type: vanilla
-    collapsed_sidebar: true
+  template: vanilla
 sources:
   test:
     type: 'file'

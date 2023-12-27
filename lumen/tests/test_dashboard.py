@@ -219,6 +219,17 @@ def test_dashboard_with_view_and_transform_variable(set_root, document):
 
     assert plot.object.vdims == ['Y']
 
+
+def test_dashboard_with_template_string(set_root, document):
+    root = pathlib.Path(__file__).parent / 'sample_dashboard'
+    set_root(str(root))
+    dashboard = Dashboard(str(root / 'template.yaml'))
+    dashboard._render_dashboard()
+    assert isinstance(dashboard._template, pn.template.VanillaTemplate)
+
+    assert dashboard.to_spec()['config']['template'] == {'type': 'vanilla'}
+
+
 def test_dashboard_with_template_params(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
     set_root(str(root))
@@ -226,3 +237,5 @@ def test_dashboard_with_template_params(set_root, document):
     dashboard._render_dashboard()
     assert isinstance(dashboard._template, pn.template.VanillaTemplate)
     assert dashboard._template.collapsed_sidebar
+
+    assert dashboard.to_spec()['config']['template'] == {'type': 'vanilla', 'collapsed_sidebar': True}

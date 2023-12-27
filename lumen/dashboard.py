@@ -110,12 +110,8 @@ class Config(Component):
     title = param.String(default="Lumen Dashboard", constant=True, doc="""
         The title of the dashboard.""")
 
-    template = param.Selector(default=_TEMPLATES['material'], constant=True, objects=_TEMPLATES,
-                              check_on_set=False, doc="""
+    template = param.Parameter(default=_TEMPLATES['material'], constant=True, doc="""
         The Panel template to render the dashboard into.""")
-
-    template_params = param.Dict(default={}, constant=True, doc="""
-        Parameters to pass to the template.""")
 
     theme = param.Selector(default=_THEMES['default'], objects=_THEMES, constant=True,
                            check_on_set=False, doc="""
@@ -128,6 +124,16 @@ class Config(Component):
     _validate_params: ClassVar[bool] = True
 
     @classmethod
+    def _extract_template_type(cls, template) -> Tuple[str, Dict[str, Any]]:
+        if isinstance(template, dict):
+            template_type = template.get("type", "material")
+            template_params = template.copy()
+        else:
+            template_type = template
+            template_params = {"type": template}
+        return template_type, template_params
+
+    @classmethod
     def _validate_layout(cls, layout, spec, context):
         if layout not in _LAYOUTS:
             msg = f'Config layout {layout!r} could not be found. Layout must be one of {list(_LAYOUTS)}.'
@@ -136,10 +142,16 @@ class Config(Component):
 
     @classmethod
     def _validate_template(
-        cls, template: str, spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> str:
+        cls, template: str | Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        template, template_params = cls._extract_template_type(template)
         if template in _TEMPLATES:
-            return template
+            return template_params
+        elif not isinstance(template, str):
+            raise ValidationError(
+                f'Config template {template!r} is not a valid Panel template.',
+                spec, template
+            )
         elif '.' not in template:
             raise ValidationError(
                 f'Config template {template!r} not found. Template must be one '
@@ -165,7 +177,8 @@ class Config(Component):
                 f'Config template \'{path}.{name}\' is not a valid Panel template.',
                 spec, 'template'
             )
-        return template
+        template_params["type"] = template_cls
+        return template_params
 
     @classmethod
     def _validate_callback(cls, callback: Callable[..., Any] | str) -> Callable[Any, None]:
@@ -235,12 +248,14 @@ class Config(Component):
                 "full specification for the Config."
             )
         if 'template' in spec:
-            template = spec['template']
+            template, template_params = cls._extract_template_type(spec['template'])
             if template in _TEMPLATES:
                 template_cls = _TEMPLATES[template]
             else:
                 template_cls = resolve_module_reference(template, BasicTemplate)
-            spec['template'] = template_cls
+            template_params['type'] = template_cls
+            spec['template'] = template_params
+
         if 'theme' in spec:
             spec['theme'] = _THEMES[spec['theme']]
         if 'layout' in spec:
@@ -248,6 +263,7 @@ class Config(Component):
         for key in list(spec):
             if key.startswith('on_'):
                 spec[key] = getattr(cls, f'_validate_{key}')(spec[key], spec, {})
+
         return cls(**spec)
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -255,8 +271,11 @@ class Config(Component):
         if 'layout' in spec:
             spec['layout'] = {v: k for k, v in _LAYOUTS.items()}[spec['layout']]
         if 'template' in spec:
-            tmpl = spec['template']
-            spec['template'] = {v: k for k, v in _TEMPLATES.items()}.get(tmpl, f'{tmpl.__module__}.{tmpl.__name__}')
+            template = spec['template']
+            template, template_params = self._extract_template_type(template)
+            template_params["type"] = {v: k for k, v in _TEMPLATES.items()}.get(
+                template, f'{template.__module__}.{template.__name__}')
+            spec['template'] = template_params
         if 'theme' in spec:
             spec['theme'] = {v: k for k, v in _THEMES.items()}[spec['theme']]
         for key in list(spec):
@@ -285,11 +304,12 @@ class Config(Component):
                 pass
 
     def construct_template(self):
-        params = {'title': self.title, 'theme': self.theme}
+        template, template_params = self._extract_template_type(self.template)
+        template_params.update({'title': self.title, 'theme': self.theme})
         if self.logo:
-            params['logo'] = self.config.logo
-        params.update(**self.template_params)
-        return self.template(**params)
+            template_params['logo'] = self.config.logo
+        template_params.pop('type')
+        return template(**template_params)
 
 
 class Defaults(Component):
