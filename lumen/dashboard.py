@@ -140,7 +140,7 @@ class Config(Component):
     ) -> str:
         if template in _TEMPLATES:
             return template
-        elif '.' not in template: 
+        elif '.' not in template:
             raise ValidationError(
                 f'Config template {template!r} not found. Template must be one '
                 f'of {list(_TEMPLATES)} or an absolute import path.', spec, template
