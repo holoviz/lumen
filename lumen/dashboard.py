@@ -114,6 +114,9 @@ class Config(Component):
                               check_on_set=False, doc="""
         The Panel template to render the dashboard into.""")
 
+    template_params = param.Dict(default={}, constant=True, doc="""
+        Parameters to pass to the template.""")
+
     theme = param.Selector(default=_THEMES['default'], objects=_THEMES, constant=True,
                            check_on_set=False, doc="""
         The Panel template theme to style the dashboard with.""")
@@ -137,7 +140,7 @@ class Config(Component):
     ) -> str:
         if template in _TEMPLATES:
             return template
-        elif '.' not in template:
+        elif '.' not in template: 
             raise ValidationError(
                 f'Config template {template!r} not found. Template must be one '
                 f'of {list(_TEMPLATES)} or an absolute import path.', spec, template
@@ -285,6 +288,7 @@ class Config(Component):
         params = {'title': self.title, 'theme': self.theme}
         if self.logo:
             params['logo'] = self.config.logo
+        params.update(**self.template_params)
         return self.template(**params)
 
 
