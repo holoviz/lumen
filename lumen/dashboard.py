@@ -23,7 +23,7 @@ from typing_extensions import Literal
 from .auth import Auth
 from .base import Component, MultiTypeComponent
 from .config import (
-    _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, config,
+    _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, Template, config,
 )
 from .filters.base import ConstantFilter, Filter, WidgetFilter  # noqa
 from .layout import Layout
@@ -110,7 +110,7 @@ class Config(Component):
     title = param.String(default="Lumen Dashboard", constant=True, doc="""
         The title of the dashboard.""")
 
-    template = param.Parameter(default=_TEMPLATES['material'], constant=True, doc="""
+    template = Template(default=_TEMPLATES['material'], constant=True, doc="""
         The Panel template to render the dashboard into.""")
 
     theme = param.Selector(default=_THEMES['default'], objects=_THEMES, constant=True,
@@ -154,11 +154,6 @@ class Config(Component):
         template, template_params = cls._extract_template_type(template)
         if template in _TEMPLATES:
             return cls._serialize_template(template_params)
-        elif not isinstance(template, str):
-            raise ValidationError(
-                f'Config template {template!r} is not a valid Panel template.',
-                spec, template
-            )
         elif '.' not in template:
             raise ValidationError(
                 f'Config template {template!r} not found. Template must be one '
