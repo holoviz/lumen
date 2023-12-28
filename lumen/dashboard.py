@@ -124,14 +124,21 @@ class Config(Component):
     _validate_params: ClassVar[bool] = True
 
     @classmethod
-    def _extract_template_type(cls, template) -> Tuple[str, Dict[str, Any]]:
+    def _extract_template_type(cls, template: str | Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         if isinstance(template, dict):
-            template_type = template.get("type", "material")
+            template_type = template.get("type", _TEMPLATES["material"])
             template_params = template.copy()
         else:
             template_type = template
             template_params = {"type": template}
         return template_type, template_params
+
+    @classmethod
+    def _serialize_template(cls, template_params: Dict[str, Any]) -> str | Dict[str, Any]:
+        if len(template_params) == 1:
+            return template_params["type"]
+        else:
+            return template_params
 
     @classmethod
     def _validate_layout(cls, layout, spec, context):
@@ -146,7 +153,7 @@ class Config(Component):
     ) -> Dict[str, Any]:
         template, template_params = cls._extract_template_type(template)
         if template in _TEMPLATES:
-            return template_params
+            return cls._serialize_template(template_params)
         elif not isinstance(template, str):
             raise ValidationError(
                 f'Config template {template!r} is not a valid Panel template.',
@@ -178,7 +185,7 @@ class Config(Component):
                 spec, 'template'
             )
         template_params["type"] = template_cls
-        return template_params
+        return cls._serialize_template(template_params)
 
     @classmethod
     def _validate_callback(cls, callback: Callable[..., Any] | str) -> Callable[Any, None]:
@@ -254,7 +261,7 @@ class Config(Component):
             else:
                 template_cls = resolve_module_reference(template, BasicTemplate)
             template_params['type'] = template_cls
-            spec['template'] = template_params
+            spec['template'] = cls._serialize_template(template_params)
 
         if 'theme' in spec:
             spec['theme'] = _THEMES[spec['theme']]
@@ -273,9 +280,9 @@ class Config(Component):
         if 'template' in spec:
             template = spec['template']
             template, template_params = self._extract_template_type(template)
-            template_params["type"] = {v: k for k, v in _TEMPLATES.items()}.get(
+            template_params['type'] = {v: k for k, v in _TEMPLATES.items()}.get(
                 template, f'{template.__module__}.{template.__name__}')
-            spec['template'] = template_params
+            spec['template'] = self._serialize_template(template_params)
         if 'theme' in spec:
             spec['theme'] = {v: k for k, v in _THEMES.items()}[spec['theme']]
         for key in list(spec):

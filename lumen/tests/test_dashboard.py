@@ -227,7 +227,7 @@ def test_dashboard_with_template_string(set_root, document):
     dashboard._render_dashboard()
     assert isinstance(dashboard._template, pn.template.VanillaTemplate)
 
-    assert dashboard.to_spec()['config']['template'] == {'type': 'vanilla'}
+    assert dashboard.to_spec()['config']['template'] == "vanilla"
 
 
 def test_dashboard_with_template_params(set_root, document):
