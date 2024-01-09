@@ -55,8 +55,14 @@ class IntakeDremioSource(IntakeBaseDremioSource):
 
 class IntakeDremioSQLSource(IntakeBaseDremioSource):
     """
-    `IntakeDremioSQLSource` allows querying Dremio catalog tables and views
-    using SQL queries.
+    `IntakeDremioSQLSource` allows querying a subset of
+    Dremio catalog tables and views via custom SQL expressions.
+
+    When provided with the `uri` of the Dremio server and credentials
+    to authenticate with the Dremio instance, unlike `IntakeDremioSource`,
+    only the tables specified in the `tables` parameter can be used.
+
+    Requires the intake-dremio package to be installed.
     """
 
     tables = param.Dict(default={}, doc="""
