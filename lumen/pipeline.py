@@ -159,6 +159,7 @@ class Pipeline(Viewer, Component):
             filters = []
         if any(isinstance(t, SQLTransform) for t in params.get('transforms', [])):
             raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
+        self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
         self._update_widget = pn.Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
         self._init_callbacks()
@@ -288,7 +289,7 @@ class Pipeline(Viewer, Component):
 
     @catch_and_notify
     def _update_data(self, *events: param.parameterized.Event, force: bool = False):
-        if self._update_widget.loading:
+        if self._update_widget is None or self._update_widget.loading:
             return
         if not force and not self.auto_update and not self.update:
             self._stale = True
