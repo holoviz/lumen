@@ -1,0 +1,19 @@
+config:
+  template:
+    type: vanilla
+    collapsed_sidebar: true
+sources:
+  test:
+    type: 'file'
+    tables: ['../sources/test.csv']
+targets:
+  - title: "Test 1"
+    source: test
+    views:
+      - table: test
+        type: test
+  - title: "Test 2"
+    source: test
+    views:
+      - table: test
+        type: test

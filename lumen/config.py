@@ -65,6 +65,25 @@ _THEMES = {'default': DefaultTheme, 'dark': DarkTheme}
 _THEMES = ConfigDict("Theme", **_THEMES)
 
 
+class Template(param.Parameter):
+    """
+    A Parameter type to validate template types,
+    including dict, str, and Template classes.
+    """
+
+    def __init__(self, default=_TEMPLATES['material'], **params):
+        super().__init__(default=default, **params)
+        self._validate(default)
+
+    def _validate(self, val):
+        self._validate_value(val, self.allow_None)
+
+    def _validate_value(self, val, allow_None):
+        if isinstance(val, (dict, str)) or issubclass(val, BasicTemplate):
+            return
+        raise ValueError(f"Template type {type(val).__name__} not recognized.")
+
+
 class _config(param.Parameterized):
     """
     Stores shared configuration for the entire Lumen application.
