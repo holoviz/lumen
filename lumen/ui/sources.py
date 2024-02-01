@@ -31,7 +31,7 @@ class SourceEditor(FastComponent, Editor):
 
     form = param.Parameter()
 
-    preview = param.Parameter()
+    preview = param.Parameter(allow_refs=False)
 
     source_type = param.String(default="")
 
@@ -75,19 +75,20 @@ class SourceEditor(FastComponent, Editor):
         return super().__new__(cls)
 
     def __init__(self, **params):
+        params.pop('type', None)
         spec = params.pop('spec', {})
         params.update(**{
             k: v for k, v in spec.items() if k in self.param and k not in params
         })
         self._source = None
         self._thumbnail = params.pop('thumbnail', None)
-        super().__init__(spec=spec, **params)
-        self.form = pn.Column(sizing_mode='stretch_width')
         theme = 'midnight' if getattr(pn.config, 'theme', 'default') == 'dark' else 'simple'
-        self.preview = pn.widgets.Tabulator(
+        params['preview'] = pn.widgets.Tabulator(
             sizing_mode='stretch_width', pagination='remote', page_size=12,
             theme=theme, height=400
         )
+        super().__init__(spec=spec, **params)
+        self.form = pn.Column(sizing_mode='stretch_width')
         self._select_table = pn.widgets.Select(
             name='Select table', margin=0, sizing_mode='stretch_width'
         )
@@ -171,11 +172,11 @@ class SourceGallery(WizardItem, Gallery):
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items.values() %}
-      <fast-card id="source-container" style="width: 350px; height: 400px;">
+      <fast-card id="source-container" style="width: 350px; height: 400px; margin: 0.2em;">
         ${item}
       </fast-card>
     {% endfor %}
-      <fast-card id="sources-container-new" style="height: 400px; width: 350px; padding: 1em;">
+      <fast-card id="sources-container-new" style="height: 400px; width: 350px; padding: 1em; margin: 0.2em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Add new source</span>
           <i id="add-button" onclick="${_open_modal}" class="fa fa-plus" style="font-size: 14em; margin: 0.2em auto;" aria-hidden="true"></i>
@@ -272,7 +273,7 @@ class IntakeSourceEditor(SourceEditor):
         </div>
         <div style="display: grid;">
           <label for="shared"><b>{{ param.shared.label }}</b></label>
-          <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
+          <fast-checkbox id="shared" checked=${shared}></fast-checkbox>
         </div>
       </div>
     </form>
@@ -356,8 +357,8 @@ class IntakeDremioSourceEditor(SourceEditor):
             <fast-text-field id="password" type="password" placeholder="Enter password" value="${password}">
             </fast-text-field>
           </div>
-          <fast-checkbox id="load_schema" checked="${load_schema}">Load schema</fast-checkbox>
-          <fast-checkbox id="tls" checked="${tls}">Enable TLS</fast-checkbox>
+          <fast-checkbox id="load_schema" checked=${load_schema}>Load schema</fast-checkbox>
+          <fast-checkbox id="tls" checked=${tls}>Enable TLS</fast-checkbox>
           <div style="display: grid;">
             <label for="cert"><b>Certificate</b></label>
             <fast-text-field id="cert" disabled=${tls} placeholder="Enter path to a certificate" value="${cert}">
@@ -373,7 +374,7 @@ class IntakeDremioSourceEditor(SourceEditor):
         </div>
         <div style="display: grid;">
           <label for="shared"><b>{{ param.shared.label }}</b></label>
-          <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
+          <fast-checkbox id="shared" checked=${shared}></fast-checkbox>
         </div>
       </div>
     </form>
@@ -463,7 +464,7 @@ class FileSourceEditor(SourceEditor):
       </div>
       <div style="display: grid;">
         <label for="shared"><b>{{ param.shared.label }}</b></label>
-        <fast-checkbox id="shared" value="${shared}"></fast-checkbox>
+        <fast-checkbox id="shared" checked=${shared}></fast-checkbox>
       </div>
     </div>
     <div style="display: flex; justify-content:flex-end; margin-right: 2em;">
@@ -506,7 +507,8 @@ class FileSourceEditor(SourceEditor):
         remove = table.param.watch(self._remove_table, 'remove')
         update = table.param.watch(self._update_spec, 'uri')
         self._table_watchers[table.name] = (remove, update)
-        self.table_editors += [table]
+        self.table_editors.append(table)
+        self.param.trigger('table_editors')
         self.resize += 1
 
     @catch_and_notify
@@ -565,7 +567,7 @@ class SourcesEditor(WizardItem):
       </form>
       <div id="sources" style="flex: 75%; margin-left: 1em; margin-right: 1em;">
         {% for source in sources.values() %}
-        <div id="source-container">${source}</div>
+        <div id="source-container" style="overflow: auto;">${source}</div>
         <fast-divider></faster-divider>
         {% endfor %}
       </div>

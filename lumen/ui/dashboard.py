@@ -51,11 +51,11 @@ class DashboardGallery(WizardItem, Gallery):
     </fast-button>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items.values() %}
-      <fast-card id="dashboard-container" class="gallery-item" style="height: 290px; width: 350px; padding: 1em;">
+      <fast-card id="dashboard-container" class="gallery-item" style="height: 290px; width: 350px; padding: 1em; margin: 0.2em;">
         ${item}
       </fast-card>
     {% endfor %}
-      <fast-card id="dashboard-container-new" class="gallery-item" style="height: 290px; width: 350px; padding: 1em;">
+      <fast-card id="dashboard-container-new" class="gallery-item" style="height: 290px; width: 350px; padding: 1em; margin: 0.2em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Create new dashboard</span>
           <i id="add-button" onclick="${_create_new}" class="fa fa-plus" style="font-size: 12em; margin: 0.2em auto;" aria-hidden="true"></i>

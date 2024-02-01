@@ -72,7 +72,7 @@ class LauncherGallery(WizardItem, Gallery):
     <fast-divider style="margin: 1em 0;"></fast-divider>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items.values() %}
-      <fast-card id="launcher-container" class="gallery-item" style="height: 290px; width: 350px; padding: 1em;">
+      <fast-card id="launcher-container" class="gallery-item" style="height: 290px; width: 350px; padding: 1em; margin: 0.2em;">
         ${item}
       </fast-card>
     {% endfor %}
