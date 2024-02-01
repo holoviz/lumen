@@ -310,6 +310,7 @@ class TableViewEditor(ViewEditor):
         pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]
         if 'sizing_mode' not in kwargs:
             kwargs['sizing_mode'] = 'stretch_width'
+        kwargs.pop('type', None)
         self.tabulator = pn.widgets.Tabulator(
             pipeline.data, pagination='remote', page_size=12, height=400, **kwargs
         )
@@ -344,6 +345,7 @@ class PerspectiveViewEditor(ViewEditor):
 
     def render(self):
         kwargs = dict(self.spec)
+        kwargs.pop('type', None)
         pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]
         self.view = pn.pane.Perspective(pipeline, **dict(self._defaults, **kwargs))
         self.view.param.watch(self._update_spec, list(self.view.param))
