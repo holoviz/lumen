@@ -30,7 +30,7 @@ class PipelineEditor(FastComponent):
 
     transforms = param.List(precedence=-1)
 
-    preview = param.Parameter()
+    preview = param.Parameter(allow_refs=False)
 
     sizing_mode = param.String(default='stretch_width')
 
