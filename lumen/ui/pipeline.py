@@ -314,7 +314,7 @@ class PipelinesEditor(WizardItem):
       </form>
       <div id="pipelines" style="flex: 70%; margin-left: 1em; margin-right: 2em;">
         {% for pipeline in pipelines.values() %}
-        <div id="pipeline-container">${pipeline}</div>
+        <div id="pipeline-container" style="overflow: auto;">${pipeline}</div>
         <fast-divider></faster-divider>
         {% endfor %}
       </div>
@@ -406,11 +406,11 @@ class PipelineGallery(WizardItem, Gallery):
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
       {% for item in items.values() %}
-      <fast-card id="pipeline-container" style="width: 350px; height: 400px;">
+      <fast-card id="pipeline-container" style="width: 350px; height: 400px; margin: 0.2em;">
         ${item}
       </fast-card>
       {% endfor %}
-      <fast-card id="pipelines-container-new" style="height: 400px; width: 350px; padding: 1em;">
+      <fast-card id="pipelines-container-new" style="height: 400px; width: 350px; padding: 1em; margin: 0.2em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Add new pipeline</span>
           <i id="add-button" onclick="${_open_modal}" class="fa fa-plus" style="font-size: 14em; margin: 0.2em auto;" aria-hidden="true"></i>
