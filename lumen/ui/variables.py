@@ -166,7 +166,8 @@ class VariablesEditor(WizardItem):
         self._variables.add_variable(variable)
         if 'key' in variable.param and not variable.key:
             variable.key = variable.name
-        variable.default = variable.value
+        with param.edit_constant(variable):
+            variable.default = variable.value
         params = [
             p for p in variable.param if p not in (
                 'name', 'materialize', 'required', 'secure', 'value'
