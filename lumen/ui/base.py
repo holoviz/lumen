@@ -2,6 +2,7 @@ import panel as pn
 import param  # type: ignore
 
 from panel.reactive import ReactiveHTML
+from panel.viewable import Viewable
 
 from .fast import FastDivider
 
@@ -89,6 +90,10 @@ class Wizard(ReactiveHTML):
             self.next_disable = True
         self.loading = False
 
+    def select(self, selector=None):
+        items = super().select(selector)
+        items += [o for v in self.items if isinstance(v, Viewable) for o in v.select(selector)]
+        return items
 
 
 class WizardItem(ReactiveHTML):
@@ -113,3 +118,13 @@ class WizardItem(ReactiveHTML):
 
     def _update_spec(self, *events):
         pass
+
+    def select(self, selector=None):
+        items = super().select(selector)
+        for values in self.param.objects().values():
+            if isinstance(values, (list, dict)):
+                values = values.values() if isinstance(values, dict) else values
+                items += [o for v in values if isinstance(v, Viewable) for o in v.select(selector)]
+            elif isinstance(values, Viewable):
+                items += values.select(selector)
+        return items

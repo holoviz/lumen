@@ -120,7 +120,7 @@ class FastCheckbox(FastComponent):
 
     _child_config = {'name': 'template'}
 
-    _template = '<fast-checkbox id="fast-checkbox" value="${value}">${name}</fast-checkbox>'
+    _template = '<fast-checkbox id="fast-checkbox" checked="${value}">${name}</fast-checkbox>'
 
 
 class FastRadioGroup(FastComponent, SelectBase):

@@ -50,7 +50,7 @@ class LayoutEditor(ReactiveHTML):
           <fast-tooltip anchor="layout-type-${id}">{{ param.layout_type.doc }}</fast-tooltip>
         </div>
       </form>
-      <div id="layout" style="flex: auto; margin-left: 1em;">${layout}</div>
+      <div id="layout" style="flex: auto; margin-left: 1em; overflow: auto;">${layout}</div>
     </div>
     """
 
@@ -176,11 +176,11 @@ class LayoutGallery(WizardItem, Gallery):
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items.values() %}
-      <fast-card id="layout-container" style="width: 350px; height: 400px;">
+      <fast-card id="layout-container" style="width: 350px; height: 400px; margin: 0.2em;">
         ${item}
       </fast-card>
     {% endfor %}
-      <fast-card id="view-container-new" style="height: 400px; width: 350px; padding: 1em;">
+      <fast-card id="view-container-new" style="height: 400px; width: 350px; padding: 1em; margin: 0.2em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Create new layout group</span>
           <i id="add-button" onclick="${_open_modal}" class="fa fa-plus" style="font-size: 14em; margin: 0.2em auto;" aria-hidden="true"></i>

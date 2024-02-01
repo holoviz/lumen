@@ -22,7 +22,7 @@ class ViewsEditor(WizardItem):
     Declare the views for your dashboard.
     """
 
-    spec = param.List(default=[], precedence=-1)
+    spec = param.List(default=[], precedence=-1, allow_None=True)
 
     pipeline  = param.String()
 
@@ -213,11 +213,11 @@ class ViewGallery(WizardItem, Gallery):
     <span style="font-size: 1.2em; font-weight: bold;">{{ __doc__ }}</p>
     <div id="items" style="margin: 1em 0; display: flex; flex-wrap: wrap; gap: 1em;">
     {% for item in items %}
-      <fast-card id="view-container" class="gallery-item" style="width: 350px; height: 400px;">
+      <fast-card id="view-container" class="gallery-item" style="width: 350px; height: 400px; margin: 0.2em;">
         ${item}
       </fast-card>
     {% endfor %}
-      <fast-card id="view-container-new" class="gallery-item" style="height: 400px; width: 350px; padding: 1em;">
+      <fast-card id="view-container-new" class="gallery-item" style="height: 400px; width: 350px; padding: 1em; margin: 0.2em;">
         <div style="display: grid;">
           <span style="font-size: 1.25em; font-weight: bold;">Add new view</span>
           <i id="add-button" onclick="${_create_new}" class="fa fa-plus" style="font-size: 14em; margin: 0.2em auto;" aria-hidden="true"></i>
