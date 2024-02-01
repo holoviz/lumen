@@ -164,9 +164,9 @@ class VariablesEditor(WizardItem):
         enabled = spec.pop('enabled', enable)
         variable = Variable.from_spec(spec, self._variables)
         self._variables.add_variable(variable)
-        if 'key' in variable.param and not variable.key:
-            variable.key = variable.name
         with param.edit_constant(variable):
+            if 'key' in variable.param and not variable.key:
+                variable.key = variable.name
             variable.default = variable.value
         params = [
             p for p in variable.param if p not in (
