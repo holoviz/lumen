@@ -309,7 +309,7 @@ class Aggregate(Transform):
     by = param.ListSelector(doc="""
         Columns or indexes to group by.""")
 
-    columns = param.ListSelector(doc="""
+    columns = param.ListSelector(allow_None=True, doc="""
         Columns to aggregate.""")
 
     with_index = param.Boolean(default=True, doc="""
@@ -327,7 +327,6 @@ class Aggregate(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         grouped = table.groupby(self.by)
-        [c for c in table.select_dtypes(include='number').columns if c not in self.by]
         if self.columns:
             cols = self.columns
         else:
@@ -502,7 +501,9 @@ class Compute(Transform):
     transform_type: ClassVar[str] = 'compute'
 
     def apply(self, table: DataFrame) -> DataFrame:
-        return table.compute()
+        if hasattr(table, 'compute'):
+            return table.compute()
+        return table
 
 
 class Pivot(Transform):
