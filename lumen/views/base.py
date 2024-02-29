@@ -669,6 +669,8 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
+    _field_params = ['x', 'y', 'by', 'groupby']
+
     __abstract = True
 
     def __init__(self, **params):
@@ -736,8 +738,6 @@ class hvPlotView(hvPlotBaseView):
         on the plot.""")
 
     view_type = 'hvplot'
-
-    _field_params = ['x', 'y', 'by', 'groupby']
 
     _ignore_kwargs = ['tables']
 
