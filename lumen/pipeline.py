@@ -520,14 +520,14 @@ class Pipeline(Viewer, Component):
         """
         if isinstance(transform, str):
             transform = Transform._get_type(transform)(**kwargs)
+            fields = list(self.schema)
+            for fparam in transform._field_params:
+                transform.param[fparam].objects = fields
+                transform.param.update(**{fparam: kwargs.get(fparam, fields)})
         if isinstance(transform, SQLTransform):
             self.sql_transforms.append(transform)
         else:
             self.transforms.append(transform)
-        fields = list(self.schema)
-        for fparam in transform._field_params:
-            transform.param[fparam].objects = fields
-            transform.param.update(**{fparam: kwargs.get(fparam, fields)})
         transform.param.watch(self._update_data, list(transform.param))
         self._stale = True
 
