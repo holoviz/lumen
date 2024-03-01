@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Type
 
 import panel as pn
 import param
@@ -129,7 +129,7 @@ class TableAgent(LumenBaseAgent):
     The TableAgent is responsible for selecting between a set of tables based on the user prompt.
     """
 
-    system_prompt = param.String(default='Find the closest match to one of the available tables.')
+    system_prompt = param.String(default='You are an agent responsible for finding the correct table based on the user prompt.')
 
     response_model = param.ClassSelector(default=Table, class_=BaseModel, is_instance=False)
 
@@ -198,24 +198,19 @@ class PipelineAgent(LumenBaseAgent):
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
 
-    def answer(self, messages: list | str) -> Transform:
-        table = memory['current_table']
-        system_prompt = self._system_prompt_with_context(messages)
+    def _find_transform(self, messages: list | str, system_prompt: str) -> Type[Transform] | None:
         picker_prompt = self._transform_picker_prompt()
-        if self.debug:
-            print(f'{self.name} is being instructed that it should {picker_prompt}')
-
-        # Find the transform type
         transforms = self._available_transforms
         transform_model = create_model("Transform", transform=(Literal[tuple(transforms)], ...))
-        transform_type = self.llm.invoke(
+        transform_name = self.llm.invoke(
             messages, system=system_prompt+picker_prompt, response_model=transform_model
         ).transform
         if self.debug:
-            print(f'{self.name} thought {transform_type=!r} would be the right thing to do.')
+            print(f'{self.name} thought {transform_name=!r} would be the right thing to do.')
+        return transforms[transform_name] if transform_name else None
 
-        # Find parameters
-        transform = transforms[transform_type]
+    def _construct_transform(self, messages: list | str, transform: Type[Transform], system_prompt: str) -> Transform:
+        table = memory['current_table']
         excluded = transform._internal_params+['controls', 'type']
         schema = memory['current_source'].get_schema(table)
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[transform.__name__]
@@ -225,27 +220,29 @@ class PipelineAgent(LumenBaseAgent):
         kwargs = self.llm.invoke(
             messages, system=system_prompt+transform_prompt, response_model=model, allow_partial=False
         )
+        return transform(**dict(kwargs))
 
-        # Instantiate
-        spec = dict(kwargs)
-        memory['current_transform'] = dict(
-            spec, type=transform.transform_type
-        )
-        if self.debug:
-            print(f'{self.name} settled on {spec=!r}.')
-        transform = transform(**spec)
+    def answer(self, messages: list | str) -> Transform:
+        system_prompt = self._system_prompt_with_context(messages)
+        transform_type = self._find_transform(messages, system_prompt)
         if 'current_pipeline' in memory:
             pipeline = memory['current_pipeline']
-            if pipeline.transforms and type(pipeline.transforms[-1]) is type(transform):
-                pipeline.transforms[-1] = transform
-            else:
-                pipeline.add_transform(transform)
         else:
-            memory['current_pipeline'] = pipeline = Pipeline(
+            pipeline = Pipeline(
                 source=memory['current_source'],
-                table=memory['current_table'],
-                transforms=[transform]
+                table=memory['current_table']
             )
+        memory['current_pipeline'] = pipeline
+        if not transform_type:
+            return pipeline
+        transform = self._construct_transform(messages, transform_type, system_prompt)
+        memory['current_transform'] = spec = transform.to_spec()
+        if self.debug:
+            print(f'{self.name} settled on {spec=!r}.')
+        if pipeline.transforms and type(pipeline.transforms[-1]) is type(transform):
+            pipeline.transforms[-1] = transform
+        else:
+            pipeline.add_transform(transform)
         return pipeline
 
     def invoke(self, messages: list | str):
