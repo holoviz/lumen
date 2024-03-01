@@ -35,10 +35,11 @@ class Assistant(Viewer):
             interface = ChatInterface(callback=self._chat_invoke, callback_exception='verbose')
         else:
             interface.callback = self._chat_invoke
+        llm = llm or self.llm
         instantiated = []
         for agent in (agents or self.agents):
             if not isinstance(agent, Agent):
-                kwargs = {'llm': self.llm} if agent.llm is None else {}
+                kwargs = {'llm': llm} if agent.llm is None else {}
                 agent = agent(interface=interface, **kwargs)
             instantiated.append(agent)
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
@@ -75,7 +76,6 @@ class Assistant(Viewer):
         selected = subagent = agents[agent]
         agent_chain = []
         while (unmet_dependencies:=tuple(r for r in subagent.requires if r not in memory)):
-            # Improve logic to allow multi-level resolution
             subagents = [
                 agent for agent in self.agents if any(ur in agent.provides for ur in unmet_dependencies)
             ]
