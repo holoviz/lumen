@@ -12,8 +12,12 @@ from .models import String
 
 class Llm(param.Parameterized):
 
+    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON])
+
     # Allows defining a dictionary of default models.
     _models = {}
+
+    retry = param.Integer(default=2)
 
     __abstract = True
 
@@ -30,7 +34,7 @@ class Llm(param.Parameterized):
         self._client = None
 
     def _create_client(self, create):
-        return patch(create=create, mode=Mode.JSON_SCHEMA)
+        return patch(create=create, mode=self.mode)
 
     @property
     def _client_kwargs(self):
@@ -60,7 +64,14 @@ class Llm(param.Parameterized):
                 response_model = Partial[response_model]
             kwargs['response_model'] = response_model
 
-        output = client(messages=messages, **kwargs)
+        for r in range(self.retry):
+            try:
+                output = client(messages=messages, **kwargs)
+                break
+            except Exception as e:
+                if r == (self.retry-1):
+                    raise e
+                messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
         if response_model is String:
             output = String(output=output)
         return output
@@ -144,6 +155,8 @@ class OpenAI(Llm):
 
     model_name = param.String()
 
+    organization = param.String()
+
     _models = {
         'gpt-4': {
             'model_name': 'gpt-4'
@@ -164,6 +177,21 @@ class OpenAI(Llm):
             model_kwargs['base_url'] = self.base_url
         if self.api_key:
             model_kwargs['api_key'] = self.api_key
+        if self.organization:
+            model_kwargs['organization'] = self.organization
         self._model = openai.OpenAI(**model_kwargs)
         self._raw_client = self._model.chat.completions.create
         self._client = self._create_client(self._raw_client)
+
+
+class AILauncher(OpenAI):
+
+    base_url = param.String(default="http://localhost:8080/v1")
+
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
+    _models = {
+        'default': {
+            'model_name': 'gpt-3.5-turbo'
+        }
+    }
