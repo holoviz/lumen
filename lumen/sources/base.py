@@ -494,6 +494,33 @@ class RESTSource(Source):
         return df
 
 
+class InMemorySource(Source):
+    """
+    `InMemorySource` can be used to work with in-memory data.
+    """
+
+    tables = param.Dict(default={})
+
+    def get_tables(self) -> list[str]:
+        return list(self.tables)
+
+    def get_schema(self, table: str | None = None) -> Dict[str, Any]:
+        if table:
+            df = self.get(table)
+            return get_dataframe_schema(df)
+        else:
+            return {t: get_dataframe_schema(self.get(t)) for t in self.get_tables()}
+
+    def get(self, table: str, **query) -> pd.DataFrame:
+        dask = query.pop('__dask', False)
+        table = self.tables.get(table)
+        df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        return df if dask or not hasattr(df, 'compute') else df.compute()
+
+    def add_table(self, name, table):
+        self.tables[name] = table
+
+
 class FileSource(Source):
     """
     `FileSource` loads CSV, Excel and Parquet files using pandas and dask `read_*` functions.
