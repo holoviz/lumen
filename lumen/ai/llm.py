@@ -3,6 +3,7 @@ from functools import partial
 import panel as pn
 import param
 
+from instructor import Maybe
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
@@ -14,10 +15,10 @@ class Llm(param.Parameterized):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON])
 
+    retry = param.Integer(default=2)
+
     # Allows defining a dictionary of default models.
     _models = {}
-
-    retry = param.Integer(default=2)
 
     __abstract = True
 
@@ -64,14 +65,22 @@ class Llm(param.Parameterized):
                 response_model = Partial[response_model]
             kwargs['response_model'] = response_model
 
+        errored = False
         for r in range(self.retry):
             try:
                 output = client(messages=messages, **kwargs)
                 break
             except Exception as e:
-                if r == (self.retry-1):
-                    raise e
+                print(e)
+                if 'response_model' in kwargs:
+                    errored = True
+                    kwargs['response_model'] = Maybe(response_model)
                 messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
+        if errored:
+            if output.error:
+                output = output.result
+            else:
+                output = output.result
         if response_model is String:
             output = String(output=output)
         return output
@@ -154,6 +163,8 @@ class OpenAI(Llm):
     base_url = param.String()
 
     model_name = param.String()
+
+    mode = param.Selector(default=Mode.FUNCTIONS)
 
     organization = param.String()
 
