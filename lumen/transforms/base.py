@@ -456,7 +456,7 @@ class Unstack(Transform):
 
 class Iloc(Transform):
     """
-    `Iloc` applies integer slicing to the data, see `pandas.DataFrame.iloc`.
+    `Iloc` allows selecting the data with integer indexing, see `pandas.DataFrame.iloc`.
 
     `df.iloc[<start>:<end>]`
     """
