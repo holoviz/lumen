@@ -1,5 +1,8 @@
+import io
+
 from typing import Literal, Type
 
+import pandas as pd
 import panel as pn
 import param
 import yaml
@@ -11,6 +14,7 @@ from pydantic import BaseModel, create_model
 from ..base import Component
 from ..dashboard import load_yaml
 from ..pipeline import Pipeline
+from ..sources import FileSource, InMemorySource
 from ..transforms.sql import SQLTransform, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
@@ -75,6 +79,71 @@ class Agent(Viewer):
                 chunk, user=self.user, message=message, replace=True
             )
         return message
+
+
+class SourceAgent(Agent):
+    """
+    The SourceAgent allows a user to provide an input source.
+
+    Should only be used if the user explicitly requests adding a source
+    or no source is in memory.
+    """
+
+    requires = param.List(default=[], readonly=True)
+
+    provides = param.List(default=['current_source'], readonly=True)
+
+    on_init = param.Boolean(default=True)
+
+    def invoke(self, messages: list[str] | str):
+        name = pn.widgets.TextInput(name='Name your table', align='center')
+        upload = pn.widgets.FileInput(align='end')
+        url = pn.widgets.TextInput(name='Add a file from a URL')
+        add = pn.widgets.Button(name='Add table', icon='table-plus', disabled=True, align='center', button_type='success')
+        tables = pn.Tabs(sizing_mode='stretch_width')
+        mem_source = InMemorySource()
+        file_source = FileSource()
+        def add_table(event):
+            if upload.value:
+                if upload.filename.endswith('csv'):
+                    df = pd.read_csv(io.StringIO(upload.value.decode('utf-8')), parse_dates=True)
+                    for col in ('date', 'Date'):
+                        if col in df.columns:
+                            df[col] = pd.to_datetime(df[col])
+                elif upload.filename.endswith(('.parq', '.parquet')):
+                    df = pd.read_parquet(io.BytesIO(upload.value.decode('utf-8')))
+                mem_source.add_table(name.value, df)
+                memory['current_source'] = mem_source
+            elif url.value:
+                file_source.tables[name.value] = url.value
+                memory['current_source'] = file_source
+            name.value = ''
+            url.value = ''
+            upload.value = None
+            src = memory['current_source']
+            tables[:] = [(t, pn.widgets.Tabulator(src.get(t))) for t in src.get_tables()]
+
+        def add_name(event):
+            if not name.value and event.new:
+                name.value = event.new.split('.')[0]
+
+        upload.param.watch(add_name, 'filename')
+        def enable_add(event):
+            add.disabled = not bool(name.value and (upload.value or url.value))
+        name.param.watch(enable_add, 'value')
+        upload.param.watch(enable_add, 'value')
+        url.param.watch(enable_add, 'value')
+        add.on_click(add_table)
+        menu = pn.Column(pn.Row(
+            name,
+            pn.Tabs(
+                ('Upload', upload),
+                ('URL', url)
+            ),
+            add,
+            sizing_mode='stretch_width'
+        ), tables)
+        self.interface.send(menu, respond=False, user='SourceAgent')
 
 
 class ChatAgent(Agent):
