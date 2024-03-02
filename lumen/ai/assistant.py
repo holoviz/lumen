@@ -5,6 +5,8 @@ from typing import Literal, Type
 import param
 
 from panel.chat import ChatInterface
+from panel.layout import Column, Tabs
+from panel.pane import Markdown
 from panel.viewable import Viewer
 from pydantic import create_model
 
@@ -43,12 +45,23 @@ class Assistant(Viewer):
                 agent = agent(interface=interface, **kwargs)
             instantiated.append(agent)
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
+        self._current_agent = Markdown('## No agent active', margin=0)
+        self._controls = Column(
+            self._current_agent,
+            Tabs(
+                ('Memory', memory)
+            )
+        )
+        self._invoke_on_init()
+
+    def _invoke_on_init(self):
+        self.invoke('Initializing chat')
 
     def _generate_picker_prompt(self, agents):
-        prompt = "Select most relevant agent for the user's query:\n" + "\n".join(
-            f"- {agent.name}: {agent.__doc__.strip()}" for agent in self.agents
+        prompt = 'Current you have the following items in memory: {list(memory)}'
+        prompt += "\nSelect most relevant agent for the user's query:\n" + "\n".join(
+            f"- {agent.name}: {agent.__doc__.strip()}" for agent in agents
         )
-        print(prompt)
         return prompt
 
     def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
@@ -56,12 +69,19 @@ class Assistant(Viewer):
 
     def _choose_agent(self, messages: list | str, agents: list[Agent]):
         agent_names = tuple(sagent.name for sagent in agents)
+        if len(agent_names) == 1:
+            return agent_names[0]
         agent_model = create_model("Agent", agent=(Literal[agent_names], ...))
-        return self.llm.invoke(
-            messages=messages,
-            system=self._generate_picker_prompt(agents),
-            response_model=agent_model,
-        ).agent
+        self._current_agent.object = '## **Current Agent**: Lumen.ai'
+        for _ in range(3):
+            out = self.llm.invoke(
+                messages=messages,
+                system=self._generate_picker_prompt(agents),
+                response_model=agent_model,
+                allow_partial=False
+            )
+            if out:
+                return out.agent
 
     def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
@@ -85,12 +105,20 @@ class Assistant(Viewer):
             if not (unmet_dependencies:= tuple(r for r in subagent.requires if r not in memory)):
                 break
         for (subagent, deps) in agent_chain[::-1]:
-            print(f"Assistant decided the {agent} will provide {deps}.")
+            print(f"Assistant decided the {subagent} will provide {deps}.")
+            self._current_agent.object = f'## **Current Agent**: {subagent.name}'
             subagent.answer(messages)
         return selected
 
     def invoke(self, messages: list | str) -> str:
-        return self._get_agent(messages).invoke(messages)
+        agent = self._get_agent(messages)
+        self._current_agent.object = f'## **Current Agent**: {agent.name}'
+        result = agent.invoke(messages)
+        self._current_agent.object = '## No agent active'
+        return result
+
+    def controls(self):
+        return self._controls
 
     def __panel__(self):
         return self.interface
