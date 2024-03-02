@@ -216,7 +216,7 @@ class TableAgent(LumenBaseAgent):
                 print(f'{self.name} is being instructed that it should {system_prompt}')
             table_model = create_model("Table", table=(Literal[tables], ...))
             table = self.llm.invoke(
-                messages, system=system_prompt, response_model=table_model
+                messages, system=system_prompt, response_model=table_model, allow_partial=False
             ).table
         memory["current_table"] = table
         if self.debug:
@@ -233,7 +233,7 @@ class PipelineAgent(LumenBaseAgent):
     """
     The Pipeline agent generates a data pipeline by applying transformations to the data.
 
-    If the user asks to calculate or aggregate the data this is your best best.
+    If the user asks to calculate, aggregate, select or perform some other operation on the data this is your best best.
     """
 
     system_prompt = param.String(default="Generate the appropriate data transformation.")
@@ -243,11 +243,11 @@ class PipelineAgent(LumenBaseAgent):
     provides = param.List(default=['current_pipeline'], readonly=True)
 
     @property
-    def _available_transforms(self):
+    def _available_transforms(self) -> dict[str, Type[Transform]]:
         transforms = param.concrete_descendents(Transform)
         return {
             name: transform for name, transform in transforms.items()
-            if not isinstance(transform, SQLTransform)
+            if not issubclass(transform, SQLTransform)
         }
 
     def _transform_picker_prompt(self) -> str:
@@ -259,8 +259,7 @@ class PipelineAgent(LumenBaseAgent):
         return prompt
 
     def _transform_prompt(self, model: BaseModel, transform: Transform, table: str, schema: dict) -> str:
-        doc = transform.__doc__.split('\n\n')[0]
-        prompt = f'{doc}'
+        prompt = f'{transform.__doc__}'
         prompt += f'\nThe arguments must conform to the following schema:\n\n```{model.model_json_schema()}```'
         prompt += f'\n\nThe data follows the following JSON schema:\n\n```{str(schema)}```'
         if 'current_transform' in memory:
@@ -281,7 +280,7 @@ class PipelineAgent(LumenBaseAgent):
     def _construct_transform(self, messages: list | str, transform: Type[Transform], system_prompt: str) -> Transform:
         table = memory['current_table']
         excluded = transform._internal_params+['controls', 'type']
-        schema = memory['current_source'].get_schema(table)
+        schema = memory['current_source'].get_schema(table)['items']['properties']
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[transform.__name__]
         transform_prompt = self._transform_prompt(model, transform, table, schema)
         if self.debug:
@@ -312,6 +311,15 @@ class PipelineAgent(LumenBaseAgent):
             pipeline.transforms[-1] = transform
         else:
             pipeline.add_transform(transform)
+        try:
+            pipeline._update_data(force=True)
+        except Exception as e:
+            self.interface.send(
+                f'Generated invalid transform resulting in following error: {e}',
+                user=self.name
+            )
+            pipeline.transforms = pipeline.transforms[:-1]
+            pipeline._stale = True
         return pipeline
 
     def invoke(self, messages: list | str):
@@ -348,11 +356,11 @@ class hvPlotAgent(LumenBaseAgent):
 
         # Find parameters
         view = hvPlotUIView
-        schema = memory['current_source'].get_schema(table)
+        schema = memory['current_source'].get_schema(table)['items']['properties']
         excluded = view._internal_params+[
             'controls', 'type', 'source', 'pipeline', 'transforms',
             'sql_transforms', 'download', 'field', 'groupby', 'by',
-            'selection_group'
+            'selection_group', 'limit'
         ]
         model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
         view_prompt = self._view_prompt(model, view, table, schema)
