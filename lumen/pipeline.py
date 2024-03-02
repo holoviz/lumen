@@ -523,12 +523,15 @@ class Pipeline(Viewer, Component):
         filt: Transform
            The Transform instance to add.
         """
+        fields = list(self.schema)
         if isinstance(transform, str):
             transform = Transform._get_type(transform)(**kwargs)
-            fields = list(self.schema)
             for fparam in transform._field_params:
                 transform.param[fparam].objects = fields
                 transform.param.update(**{fparam: kwargs.get(fparam, fields)})
+        else:
+            for fparam in transform._field_params:
+                transform.param[fparam].objects = fields
         if isinstance(transform, SQLTransform):
             self.sql_transforms.append(transform)
         else:
