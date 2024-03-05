@@ -440,7 +440,6 @@ class Source(MultiTypeComponent):
                 continue
             df = self.get(name, __dask=True)
             schemas[name] = get_dataframe_schema(df)['items']['properties']
-
         try:
             return schemas if table is None else schemas[table]
         except KeyError as e:
@@ -507,9 +506,9 @@ class InMemorySource(Source):
     def get_schema(self, table: str | None = None) -> Dict[str, Any]:
         if table:
             df = self.get(table)
-            return get_dataframe_schema(df)
+            return get_dataframe_schema(df)['items']['properties']
         else:
-            return {t: get_dataframe_schema(self.get(t)) for t in self.get_tables()}
+            return {t: get_dataframe_schema(self.get(t))['items']['properties'] for t in self.get_tables()}
 
     def get(self, table: str, **query) -> pd.DataFrame:
         dask = query.pop('__dask', False)
