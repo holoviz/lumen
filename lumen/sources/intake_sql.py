@@ -40,6 +40,9 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             ) from e
         return source
 
+    def get_sql_expr(self, table):
+        return self._get_source(table)._sql_expr
+
     @cached
     def get(self, table, **query):
         '''

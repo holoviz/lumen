@@ -191,7 +191,7 @@ class Pipeline(Viewer, Component):
         self._update_data()
 
     def __panel__(self) -> pn.Row:
-        return pn.Row(self.control_panel, self.param.data)
+        return pn.Row(self.control_panel, pn.widgets.Tabulator(self.param.data, pagination='remote'))
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """
@@ -287,6 +287,11 @@ class Pipeline(Viewer, Component):
         for transform in self.transforms:
             data = transform.apply(data)
         return data
+
+    def get_schema(self):
+        if self._stale:
+            self._update_data(force=True)
+        return get_dataframe_schema(self.data)['items']['properties']
 
     @catch_and_notify
     def _update_data(self, *events: param.parameterized.Event, force: bool = False):

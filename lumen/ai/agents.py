@@ -20,7 +20,7 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import String, Table
+from .models import Sql, String, Table
 from .translate import param_to_pydantic
 
 
@@ -176,7 +176,7 @@ class LumenBaseAgent(Agent):
             value=yaml.dump(spec), language="yaml",
             min_height=300, sizing_mode="stretch_both",
         )
-        dashboard_placeholder = pn.Column()
+        dashboard_placeholder = pn.Column(sizing_mode='stretch_width')
         tabs = pn.Tabs(
             ("YAML", code_editor),
             ("Dashboard", dashboard_placeholder),
@@ -227,6 +227,83 @@ class TableAgent(LumenBaseAgent):
         table = self.answer(messages)
         pipeline = Pipeline(source=memory['current_source'], table=table)
         self._render_lumen(pipeline)
+
+
+class SQLAgent(LumenBaseAgent):
+    """
+    The SQLAgent is responsible for modifying SQL queries based on the user prompt.
+    """
+
+    system_prompt = param.String(default='You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.')
+
+    requires = param.List(default=['current_table', 'current_source'], readonly=True)
+
+    def _render_sql(self, query):
+        source = memory['current_source']
+        async def _render_sql_result(query, active):
+            print("!!!", query, active)
+            if active == 0:
+                yield pn.indicators.LoadingSpinner(
+                    value=True, name="Executing SQL query...", height=50, width=50
+                )
+
+            table = memory['current_table']
+            source.tables[table] = query
+            memory['current_pipeline'] = pipeline = Pipeline(source=source, table=table)
+            yield pipeline
+
+        code_editor = pn.widgets.CodeEditor(
+            value=query,
+            language="sql",
+            height=200,
+            sizing_mode="stretch_width",
+        )
+        results = pn.Column()
+        tabs = pn.Tabs(
+            ("SQL", code_editor),
+            ("Result", results),
+        )
+        results.objects = [pn.bind(_render_sql_result, code_editor, tabs)]
+        self.interface.stream(tabs, user="SQL", replace=True)
+
+    def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
+        prompt = f'The SQL expression for the table {table!r} is {sql!r}.'
+        prompt += f'\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{str(schema)}```'
+        return prompt
+
+    def answer(self, messages: list | str):
+        message = None
+        source = memory['current_source']
+        table = memory['current_table']
+        if not hasattr(source, 'get_sql_expr'):
+            return None
+        sql_expr = source.get_sql_expr(table)
+        system_prompt = self._system_prompt_with_context(messages)
+        schema = source.get_schema(table)
+        sql_prompt = self._sql_prompt(sql_expr, table, schema)
+        for chunk in self.llm.stream(
+            messages, system=system_prompt+sql_prompt, response_model=Sql, field="query"
+        ):
+            if chunk:
+                message = self.interface.stream(
+                    f"```sql\n{chunk}\n```",
+                    user="SQL",
+                    message=message,
+                    replace=True,
+                )
+        if message.object is None:
+            return
+        sql_out = message.object.replace('```sql', '').replace('```', '').strip()
+        if f'FROM {table}' in sql_out:
+            sql_in = sql_expr.replace('SELECT * from ', '')
+            sql_out = sql_out.replace(f'FROM {table}', f'FROM {sql_in}')
+            print(table, sql_in, sql_out)
+        memory['current_sql'] = sql_out
+        return sql_out
+
+    def invoke(self, messages: list | str):
+        sql = self.answer(messages)
+        self._render_sql(sql)
 
 
 class PipelineAgent(LumenBaseAgent):
@@ -280,7 +357,7 @@ class PipelineAgent(LumenBaseAgent):
     def _construct_transform(self, messages: list | str, transform: Type[Transform], system_prompt: str) -> Transform:
         table = memory['current_table']
         excluded = transform._internal_params+['controls', 'type']
-        schema = memory['current_source'].get_schema(table)['items']['properties']
+        schema = memory['current_source'].get_schema(table)
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[transform.__name__]
         transform_prompt = self._transform_prompt(model, transform, table, schema)
         if self.debug:
@@ -356,7 +433,7 @@ class hvPlotAgent(LumenBaseAgent):
 
         # Find parameters
         view = hvPlotUIView
-        schema = memory['current_source'].get_schema(table)['items']['properties']
+        schema = pipeline.get_schema()
         excluded = view._internal_params+[
             'controls', 'type', 'source', 'pipeline', 'transforms',
             'sql_transforms', 'download', 'field', 'groupby', 'by',
@@ -372,6 +449,7 @@ class hvPlotAgent(LumenBaseAgent):
 
         # Instantiate
         spec = dict(kwargs)
+        spec['responsive'] = True
         memory['current_view'] = dict(spec, type=view.view_type)
         if self.debug:
             print(f'{self.name} settled on {spec=!r}.')

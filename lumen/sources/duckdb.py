@@ -59,12 +59,19 @@ class DuckDBSource(Source):
             return list(self.tables)
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 
+    def get_sql_expr(self, table: str):
+        if isinstance(self.tables, dict):
+            table = self.tables[table]
+        if 'select ' in table.lower():
+            sql_expr = table
+        else:
+            sql_expr = self.sql_expr.format(table=table)
+        return sql_expr
+
     @cached
     def get(self, table, **query):
         query.pop('__dask', None)
-        if isinstance(self.tables, dict):
-            table = self.tables[table]
-        sql_expr = self.sql_expr.format(table=table)
+        sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
         conditions = list(query.items())
         if self.filter_in_sql:
@@ -81,8 +88,6 @@ class DuckDBSource(Source):
         if table is None:
             tables = self.get_tables()
         else:
-            if isinstance(self.tables, dict):
-                table = self.tables[table]
             tables = [table]
 
         schemas = {}
@@ -91,7 +96,7 @@ class DuckDBSource(Source):
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
-            sql_expr = self.sql_expr.format(table=table)
+            sql_expr = self.get_sql_expr(entry)
             data = self._connection.execute(limit.apply(sql_expr)).fetch_df()
             schema = get_dataframe_schema(data)['items']['properties']
             enums, min_maxes = [], []
