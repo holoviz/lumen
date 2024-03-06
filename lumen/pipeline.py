@@ -14,6 +14,7 @@ import param  # type: ignore
 import tqdm  # type: ignore
 
 from panel.io.document import unlocked
+from panel.io.state import state as pn_state
 from panel.viewable import Viewer
 from panel.widgets import Widget
 from typing_extensions import Literal
@@ -301,8 +302,12 @@ class Pipeline(Viewer, Component):
         for f in self.filters+self.transforms+self.sql_transforms:
             f._sync_refs()
 
-        with unlocked():
-            self.data = self._compute_data()
+        new_data = self._compute_data()
+        if pn_state._unblocked(pn_state.curdoc):
+            with unlocked():
+                self.data = new_data
+        else:
+            self.data = new_data
         if state.config and state.config.on_update:
             pn.state.execute(partial(state.config.on_update, self))
         self._stale = False
