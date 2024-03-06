@@ -18,6 +18,7 @@ import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
 from packaging.version import Version
+from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
 from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
@@ -35,8 +36,7 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, immediate_dispatch, is_ref,
-    resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
 )
 from ..validation import ValidationError
 

@@ -7,7 +7,6 @@ import re
 import sys
 import unicodedata
 
-from contextlib import contextmanager
 from functools import partial, wraps
 from logging import getLogger
 from subprocess import check_output
@@ -20,8 +19,7 @@ import param
 from jinja2 import DebugUndefined, Environment, Undefined
 from packaging.version import Version
 from pandas.core.dtypes.dtypes import CategoricalDtype
-from panel import state
-from panel.io.document import unlocked
+from panel.io.state import state
 
 log = getLogger(__name__)
 
@@ -142,19 +140,19 @@ def _j_getshell(x):
 def _j_getheaders(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
-    return pn.state.headers.get(x, '')
+    return state.headers.get(x, '')
 
 def _j_getcookies(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
-    return pn.state.cookies.get(x, '')
+    return state.cookies.get(x, '')
 
 def _j_getoauth(x):
     if isinstance(x, Undefined):
         x = x._undefined_name
-    if pn.state.user_info is None:
+    if state.user_info is None:
         return ''
-    return pn.state.user_info.get(x, '')
+    return state.user_info.get(x, '')
 
 def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
                 getcookies=True, getoauth=True):
@@ -308,14 +306,14 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                from .state import state
-                if state.config and state.config.on_error:
-                    pn.state.execute(partial(state.config.on_error, e))
+                from .state import state as session_state
+                if session_state.config and session_state.config.on_error:
+                    state.execute(partial(state.config.on_error, e))
                 if pn.config.notifications:
                     log.error(
                         f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
                     )
-                    pn.state.notifications.error(message.format(e=e))
+                    state.notifications.error(message.format(e=e))
                 else:
                     raise e
         return wrapper
@@ -324,28 +322,6 @@ def catch_and_notify(message=None):
         return decorator(function)
 
     return decorator
-
-@contextmanager
-def immediate_dispatch(doc=None):
-    """
-    Utility to trigger immediate dispatch of events even when Document
-    events are currently on hold.
-    """
-    doc = doc or state.curdoc
-
-    # Skip if not in a server context
-    if not doc or not doc._session_context:
-        yield
-        return
-
-    old_events = doc.callbacks._held_events
-    hold = doc.callbacks._hold
-    doc.callbacks._held_events = []
-    doc.callbacks.unhold()
-    with unlocked():
-        yield
-    doc.callbacks._hold = hold
-    doc.callbacks._held_events = old_events
 
 def slugify(value, allow_unicode=False) -> str:
     """
