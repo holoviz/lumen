@@ -11,7 +11,7 @@ from panel.viewable import Viewer
 from pydantic import create_model
 
 from .agents import Agent, ChatAgent
-from .llm import Llama, Llm
+from .llm import OutlinesLlama, Llama, Llm
 from .memory import memory
 
 
@@ -22,7 +22,7 @@ class Assistant(Viewer):
 
     agents = param.List(default=[ChatAgent])
 
-    llm = param.ClassSelector(class_=Llm, default=Llama(model='default'))
+    llm = param.ClassSelector(class_=Llm, default=OutlinesLlama(model='default'))
 
     interface = param.ClassSelector(class_=ChatInterface)
 

@@ -161,14 +161,14 @@ class LumenBaseAgent(Agent):
     user = param.String(default='Lumen')
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
-        def _render_component(spec, active):
+        async def _render_component(spec, active):
             if active == 0:
-                return pn.indicators.LoadingSpinner(
+                yield pn.indicators.LoadingSpinner(
                     value=True, name="Rendering component...", height=50, width=50
                 )
             # store the spec in the cache instead of memory to save tokens
             memory["current_spec"] = spec
-            return type(component).from_spec(load_yaml(spec))
+            yield type(component).from_spec(load_yaml(spec))
 
         # layout widgets
         spec = component.to_spec()

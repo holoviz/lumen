@@ -13,7 +13,9 @@ from .models import String
 
 class Llm(param.Parameterized):
 
-    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON])
+    mode = param.Selector(
+        default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON]
+    )
 
     retry = param.Integer(default=2)
 
@@ -47,7 +49,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel = String,
         allow_partial: bool = True,
-        **kwargs
+        **kwargs,
     ) -> BaseModel:
         if self._client is None:
             self._init_model()
@@ -63,7 +65,7 @@ class Llm(param.Parameterized):
             client = self._client
             if allow_partial:
                 response_model = Partial[response_model]
-            kwargs['response_model'] = response_model
+            kwargs["response_model"] = response_model
 
         errored = False
         for r in range(self.retry):
@@ -72,10 +74,15 @@ class Llm(param.Parameterized):
                 break
             except Exception as e:
                 print(e)
-                if 'response_model' in kwargs:
+                if "response_model" in kwargs:
                     errored = True
-                    kwargs['response_model'] = Maybe(response_model)
-                messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
+                    kwargs["response_model"] = Maybe(response_model)
+                messages = messages + [
+                    {
+                        "role": "system",
+                        "content": f"You just encountered the following error, make sure you don't repeat it: {e}",
+                    }
+                ]
         if errored:
             if output.error:
                 output = output.result
@@ -91,7 +98,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel = String,
         field: str = "output",
-        **kwargs
+        **kwargs,
     ):
         if self._client is None:
             self._init_model()
@@ -100,7 +107,7 @@ class Llm(param.Parameterized):
             system=system,
             response_model=response_model,
             stream=True,
-            **dict(self._client_kwargs, **kwargs)
+            **dict(self._client_kwargs, **kwargs),
         ):
             yield getattr(chunk, field)
 
@@ -135,22 +142,23 @@ class Llama(Llm):
 
     @property
     def _client_kwargs(self):
-        return {'temperature': self.temperature}
+        return {"temperature": self.temperature}
 
     def _init_model(self):
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
         from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
+
         draft_model = LlamaPromptLookupDecoding(num_pred_tokens=10)
         self._model = pn.state.as_cached(
-            'Llama',
+            "Llama",
             partial(Llama, draft_model=draft_model),
             model_path=hf_hub_download(self.repo, self.model_file),
             n_gpu_layers=-1,
             n_ctx=8192,
             chat_format=self.chat_format,
             logits_all=False,
-            verbose=False
+            verbose=False,
         )
         self._raw_client = self._model.create_chat_completion_openai_v1
         self._client = self._create_client(self._raw_client)
@@ -169,30 +177,62 @@ class OpenAI(Llm):
     organization = param.String()
 
     _models = {
-        'gpt-4': {
-            'model_name': 'gpt-4'
-        },
-        'gpt-3.5-turbo': {
-            'model_name': 'gpt-3.5-turbo'
-        }
+        "gpt-4": {"model_name": "gpt-4"},
+        "gpt-3.5-turbo": {"model_name": "gpt-3.5-turbo"},
     }
 
     @property
     def _client_kwargs(self):
-        return {'model': self.model_name}
+        return {"model": self.model_name}
 
     def _init_model(self):
         import openai
+
         model_kwargs = {}
         if self.base_url:
-            model_kwargs['base_url'] = self.base_url
+            model_kwargs["base_url"] = self.base_url
         if self.api_key:
-            model_kwargs['api_key'] = self.api_key
+            model_kwargs["api_key"] = self.api_key
         if self.organization:
-            model_kwargs['organization'] = self.organization
+            model_kwargs["organization"] = self.organization
         self._model = openai.OpenAI(**model_kwargs)
         self._raw_client = self._model.chat.completions.create
         self._client = self._create_client(self._raw_client)
+
+
+class OutlinesLlama(Llama):
+
+    mode = param.Selector(default=Mode.JSON)
+
+    def _create_client(self, create):
+        return create
+
+    def _init_model(self):
+        from outlines import models
+        from huggingface_hub import hf_hub_download
+        from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
+
+        draft_model = LlamaPromptLookupDecoding(num_pred_tokens=10)
+        self._model = pn.state.as_cached(
+            "Llama",
+            partial(models.LlamaCpp, draft_model=draft_model),
+            model_path=hf_hub_download(self.repo, self.model_file),
+            n_gpu_layers=-1,
+            n_ctx=8192,
+            chat_format=self.chat_format,
+            logits_all=False,
+            verbose=False,
+        )
+        self._raw_client = self._model.create_chat_completion_openai_v1
+        self._client = self._create_client(self._model)
+
+    def _create_client(self, create):
+        from outlines import generate
+
+        if self.mode == Mode.JSON:
+            return partial(generate.json, create)
+        else:
+            return partial(generate.text, create)
 
 
 class AILauncher(OpenAI):
@@ -201,8 +241,4 @@ class AILauncher(OpenAI):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
-    _models = {
-        'default': {
-            'model_name': 'gpt-3.5-turbo'
-        }
-    }
+    _models = {"default": {"model_name": "gpt-3.5-turbo"}}
