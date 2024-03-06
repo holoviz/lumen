@@ -84,11 +84,8 @@ def parameter_to_field(
         field_info.default = parameter.default
     elif param_type is param.ClassSelector:
         type_ = _get_model(parameter.class_, created_models)
-        # if isinstance(type_, tuple):
-        #     type_ = Union[tuple([PARAM_TYPE_MAPPING.get(t, t) for t in type_])]
         if isinstance(type_, tuple):
-            # Union currently unsupported.
-            type_ = type_[0]
+            type_ = Union[tuple([PARAM_TYPE_MAPPING.get(t, t) for t in type_])]
         if parameter.default is not None:
             default_factory = parameter.default
             if not callable(default_factory):
@@ -251,10 +248,5 @@ def pydantic_to_param(model: BaseModel) -> param.Parameterized:
         else:
             kwargs[key] = value
 
-    # work around for not being able to provide a list of filters
-    filters = kwargs.pop("filters", None)
     parameterized = model.__parameterized__(**kwargs)
-    if filters:
-        for filter in filters:
-            parameterized.add_filter("widget", field=filter.field)
     return parameterized
