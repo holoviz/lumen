@@ -220,14 +220,19 @@ class LumenBaseAgent(Agent):
     user = param.String(default="Lumen")
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
-        def _render_component(spec, active):
+        async def _render_component(spec, active):
             if active == 0:
-                return pn.indicators.LoadingSpinner(
+                yield pn.indicators.LoadingSpinner(
                     value=True, name="Rendering component...", height=50, width=50
                 )
             # store the spec in the cache instead of memory to save tokens
             memory["current_spec"] = spec
-            return type(component).from_spec(load_yaml(spec))
+            try:
+                yield type(component).from_spec(load_yaml(spec))
+            except Exception as e:
+                yield pn.pane.Alert(
+                    f"Error rendering component: {e}", alert_type="danger"
+                )
 
         # layout widgets
         spec = yaml.safe_dump(component.to_spec())
@@ -300,7 +305,6 @@ class SQLAgent(LumenBaseAgent):
         source = memory["current_source"]
 
         async def _render_sql_result(query, active):
-            print("!!!", query, active)
             if active == 0:
                 yield pn.indicators.LoadingSpinner(
                     value=True, name="Executing SQL query...", height=50, width=50
@@ -308,10 +312,14 @@ class SQLAgent(LumenBaseAgent):
 
             table = memory["current_table"]
             source.tables[table] = query
-            memory["current_pipeline"] = pipeline = Pipeline(source=source, table=table)
-            yield pipeline
+            try:
+                memory["current_pipeline"] = pipeline = Pipeline(source=source, table=table)
+                yield pipeline
+            except Exception as e:
+                yield pn.pane.Alert(
+                    f"Error executing SQL query: {e}", alert_type="danger"
+                )
 
-        print(query)
         tabs = self._link_code_editor(query, _render_sql_result, "sql")
         self.interface.stream(tabs, user="SQL", replace=True)
 
@@ -395,9 +403,8 @@ class PipelineAgent(LumenBaseAgent):
         self, model: BaseModel, transform: Transform, table: str, schema: dict
     ) -> str:
         prompt = f"{transform.__doc__}"
-        prompt += f"\nThe arguments must conform to the following schema:\n\n```{model.model_json_schema()}```"
         prompt += (
-            f"\n\nThe data follows the following JSON schema:\n\n```{str(schema)}```"
+            f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
         )
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
@@ -498,9 +505,8 @@ class hvPlotAgent(LumenBaseAgent):
     ) -> str:
         doc = view.__doc__.split("\n\n")[0]
         prompt = f"{doc}"
-        prompt += f"\nThe arguments must conform to the following schema:\n\n```{model.model_json_schema()}```"
         prompt += (
-            f"\n\nThe data follows the following JSON schema:\n\n```{str(schema)}```"
+            f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
         )
         if "current_view" in memory:
             prompt += f"The previous view specification was: {memory['current_view']}"
