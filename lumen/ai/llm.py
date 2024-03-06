@@ -68,12 +68,16 @@ class Llm(param.Parameterized):
             kwargs["response_model"] = response_model
 
         errored = False
+        output = None
         for r in range(self.retry):
             try:
                 output = client(messages=messages, **kwargs)
                 break
             except Exception as e:
-                print(e)
+                if output is None:
+                    raise e
+                else:
+                    print(e)
                 if "response_model" in kwargs:
                     errored = True
                     kwargs["response_model"] = Maybe(response_model)
@@ -83,7 +87,7 @@ class Llm(param.Parameterized):
                         "content": f"You just encountered the following error, make sure you don't repeat it: {e}",
                     }
                 ]
-        if errored:
+        if errored and output is not None:
             if output.error:
                 output = output.result
             else:
@@ -210,12 +214,11 @@ class OutlinesLlama(Llama):
     def _init_model(self):
         from outlines import models
         from huggingface_hub import hf_hub_download
+        from llama_cpp import Llama
         from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
 
         draft_model = LlamaPromptLookupDecoding(num_pred_tokens=10)
-        self._model = pn.state.as_cached(
-            "Llama",
-            partial(models.LlamaCpp, draft_model=draft_model),
+        llama_kwargs = dict(
             model_path=hf_hub_download(self.repo, self.model_file),
             n_gpu_layers=-1,
             n_ctx=8192,
@@ -223,16 +226,32 @@ class OutlinesLlama(Llama):
             logits_all=False,
             verbose=False,
         )
-        self._raw_client = self._model.create_chat_completion_openai_v1
+        llama = Llama(**llama_kwargs)
+        # can't use llama object https://github.com/outlines-dev/outlines/issues/730
+        self._model = pn.state.as_cached(
+            "Llama", partial(models.LlamaCpp, draft_model=draft_model), **llama_kwargs
+        )
+        self._raw_client = llama.create_chat_completion_openai_v1
         self._client = self._create_client(self._model)
 
-    def _create_client(self, create):
+    def _generate_json(
+        self,
+        create: "models.LlamaCpp",
+        messages: list | str,
+        system: str = "",
+        **kwargs,
+    ):
         from outlines import generate
 
-        if self.mode == Mode.JSON:
-            return partial(generate.json, create)
-        else:
-            return partial(generate.text, create)
+        generator = generate.json(create, kwargs.pop("response_model"))
+        message = "\n\n".join(
+            [f"System: {system}"]
+            + [f"{message['role']}: {message['content']}" for message in messages],
+        )
+        return generator(message, temperature=0.3)
+
+    def _create_client(self, create):
+        return partial(self._generate_json, create)
 
 
 class AILauncher(OpenAI):
