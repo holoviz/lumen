@@ -1,5 +1,7 @@
 from functools import partial
 
+from llama_cpp import ChatCompletionChunk
+
 import panel as pn
 import param
 
@@ -51,6 +53,7 @@ class Llm(param.Parameterized):
     ) -> BaseModel:
         if self._client is None:
             self._init_model()
+
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         if system:
@@ -71,18 +74,14 @@ class Llm(param.Parameterized):
                 output = client(messages=messages, **kwargs)
                 break
             except Exception as e:
-                print(e)
                 if 'response_model' in kwargs:
                     errored = True
                     kwargs['response_model'] = Maybe(response_model)
                 messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
+
         if errored:
-            if output.error:
-                output = output.result
-            else:
-                output = output.result
-        if response_model is String:
-            output = String(output=output)
+            output = output.result
+
         return output
 
     def stream(
@@ -95,6 +94,8 @@ class Llm(param.Parameterized):
     ):
         if self._client is None:
             self._init_model()
+
+        string = ""
         for chunk in self.invoke(
             messages,
             system=system,
@@ -102,7 +103,13 @@ class Llm(param.Parameterized):
             stream=True,
             **dict(self._client_kwargs, **kwargs)
         ):
-            yield getattr(chunk, field)
+            if response_model is String:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    string += delta
+                yield string
+            else:
+                yield getattr(chunk, field)
 
 
 class Llama(Llm):
@@ -164,7 +171,7 @@ class OpenAI(Llm):
 
     model_name = param.String()
 
-    mode = param.Selector(default=Mode.FUNCTIONS)
+    mode = param.Selector(default=Mode.FUNCTIONS, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS])
 
     organization = param.String()
 

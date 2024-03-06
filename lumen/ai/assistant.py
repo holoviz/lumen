@@ -52,7 +52,6 @@ class Assistant(Viewer):
                 ('Memory', memory)
             )
         )
-        self._invoke_on_init()
 
     def _invoke_on_init(self):
         self.invoke('Initializing chat')
