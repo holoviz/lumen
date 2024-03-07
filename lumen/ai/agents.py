@@ -232,6 +232,10 @@ class LumenBaseAgent(Agent):
             yield pn.indicators.LoadingSpinner(
                 value=True, name="Rendering component...", height=50, width=50
             )
+
+            if active != 1:
+                return
+
             # store the spec in the cache instead of memory to save tokens
             memory["current_spec"] = spec
             try:
@@ -456,7 +460,10 @@ class PipelineAgent(LumenBaseAgent):
     ) -> Type[Transform] | None:
         decision = self.llm.invoke(
             messages,
-            system="Decide whether a transformation is needed; if it's just getting data, return False.",
+            system=(
+                "Decide whether a transformation is needed to compute stats or aggregation; "
+                "if it's just getting data, return False."
+            ),
             response_model=Decision,
             allow_partial=False,
         )
@@ -571,9 +578,7 @@ class hvPlotAgent(LumenBaseAgent):
 
         # Find parameters
         view = hvPlotUIView
-        pipeline.source.load_schema = True
-        schema = pipeline.get_schema()
-        pipeline.source.load_schema = False
+        schema = self._get_schema(pipeline.source, table)
         excluded = view._internal_params + [
             "controls",
             "type",
