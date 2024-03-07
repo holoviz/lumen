@@ -57,8 +57,8 @@ class Assistant(Viewer):
         self.invoke('Initializing chat')
 
     def _generate_picker_prompt(self, agents):
-        prompt = 'Current you have the following items in memory: {list(memory)}'
-        prompt += "\nSelect most relevant agent for the user's query:\n" + "\n".join(
+        # prompt = f'Current you have the following items in memory: {list(memory)}'
+        prompt = "\nSelect most relevant agent for the user's query:\n" + "\n".join(
             f"- {agent.name}: {agent.__doc__.strip()}" for agent in agents
         )
         return prompt
@@ -99,6 +99,8 @@ class Assistant(Viewer):
                 agent for agent in self.agents if any(ur in agent.provides for ur in unmet_dependencies)
             ]
             subagent_name = self._choose_agent(messages, subagents)
+            if subagent_name is None:
+                continue
             subagent = agents[subagent_name]
             agent_chain.append((subagent, unmet_dependencies))
             if not (unmet_dependencies:= tuple(r for r in subagent.requires if r not in memory)):

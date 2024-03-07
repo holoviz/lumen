@@ -30,8 +30,8 @@ class Llm(param.Parameterized):
                 params = dict(self._models[model], **params)
             else:
                 raise ValueError(
-                    "No model named {model!r} available. Known models include "
-                    "{', '.join(LLM_METADATA)}."
+                    f"No model named {model!r} available. Known models include "
+                    f"{', '.join(LLM_METADATA)}."
                 )
         super().__init__(**params)
         self._client = None
@@ -68,20 +68,18 @@ class Llm(param.Parameterized):
                 response_model = Partial[response_model]
             kwargs['response_model'] = response_model
 
-        errored = False
+        print(messages, "\n\n")
+        output = None
         for r in range(self.retry):
             try:
                 output = client(messages=messages, **kwargs)
                 break
             except Exception as e:
+                print(f"Error encountered: {e}")
                 if 'response_model' in kwargs:
-                    errored = True
                     kwargs['response_model'] = Maybe(response_model)
                 messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
-
-        if errored:
-            output = output.result
-
+        print(f"Invoked output: {output!r}")
         return output
 
     def stream(

@@ -47,6 +47,9 @@ class _Memory(Viewer):
     def get(self, key, default=None):
         return self._curcontext.get(key, default)
 
+    def pop(self, key, default=None):
+        return self._curcontext.pop(key, default)
+
     def _render_item(self, key, item):
         if isinstance(item, Component):
             item = item.to_spec()
