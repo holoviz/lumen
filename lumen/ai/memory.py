@@ -52,6 +52,8 @@ class _Memory(Viewer):
 
     def _render_item(self, key, item):
         if isinstance(item, Component):
+            if hasattr(item, "password"):
+                item.password = "$variables.PASSWORD"
             item = item.to_spec()
         if isinstance(item, str):
             item = f'```yaml\n{item}\n```'
