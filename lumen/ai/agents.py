@@ -88,7 +88,7 @@ class Agent(Viewer):
         )
         icons = pn.Row(copy_icon, download_icon)
         code_col = pn.Column(code_editor, icons, sizing_mode="stretch_both")
-        placeholder = pn.Column()
+        placeholder = pn.Column(sizing_mode="stretch_both")
         tabs = pn.Tabs(
             ("Code", code_col),
             ("Output", placeholder),
@@ -104,10 +104,11 @@ class Agent(Viewer):
     def __panel__(self):
         return self.interface
 
-    def _system_prompt_with_context(self, messages: list | str) -> str:
+    def _system_prompt_with_context(self, messages: list | str, context: str = "") -> str:
         system_prompt = self.system_prompt
         if self.embeddings:
             context = self.embeddings.query(messages)
+        if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
 
@@ -242,6 +243,7 @@ class LumenBaseAgent(Agent):
             self.interface.stream(message=message, **message_kwargs)
         else:
             self.interface.send(respond=False, **message_kwargs)
+        tabs.active = 1
 
 
 class TableAgent(LumenBaseAgent):
@@ -269,6 +271,8 @@ class TableAgent(LumenBaseAgent):
             system_prompt = self._system_prompt_with_context(messages)
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
+            # needed or else something with grammar issue
+            tables = tuple(table.replace('"', "") for table in tables)
             table_model = create_model("Table", table=(Literal[tables], ...))
             table = self.llm.invoke(
                 messages,
@@ -288,6 +292,33 @@ class TableAgent(LumenBaseAgent):
         table = self.answer(messages)
         pipeline = Pipeline(source=memory["current_source"], table=table)
         self._render_lumen(pipeline)
+
+
+class TableListAgent(LumenBaseAgent):
+    """
+    The TableListAgent is responsible for listing the available tables in the current source;
+    do not use this if user wants a specific table.
+    """
+
+    system_prompt = param.String(
+        default="You are an agent responsible for listing the available tables in the current source."
+    )
+
+    requires = param.List(default=["current_source"], readonly=True)
+
+    def answer(self, messages: list | str):
+        tables = memory["current_source"].get_tables()
+        if not tables:
+            return
+        tables = tuple(table.replace('"', "") for table in tables)
+        table_bullets = "\n".join(f"- {table}" for table in tables)
+        self.interface.send(
+            f"Available tables:\n{table_bullets}", user=self.name, respond=False
+        )
+        return tables
+
+    def invoke(self, messages: list | str):
+        self.answer(messages)
 
 
 class SQLAgent(LumenBaseAgent):
@@ -313,7 +344,9 @@ class SQLAgent(LumenBaseAgent):
             table = memory["current_table"]
             source.tables[table] = query
             try:
-                memory["current_pipeline"] = pipeline = Pipeline(source=source, table=table)
+                memory["current_pipeline"] = pipeline = Pipeline(
+                    source=source, table=table
+                )
                 yield pipeline
             except Exception as e:
                 yield pn.pane.Alert(
@@ -322,6 +355,7 @@ class SQLAgent(LumenBaseAgent):
 
         tabs = self._link_code_editor(query, _render_sql_result, "sql")
         self.interface.stream(tabs, user="SQL", replace=True)
+        tabs.active = 1
 
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
         prompt = f"The SQL expression for the table {table!r} is {sql!r}."
@@ -363,7 +397,6 @@ class SQLAgent(LumenBaseAgent):
 
     def invoke(self, messages: list | str):
         sql = self.answer(messages)
-        raise ValueError(sql)
         self._render_sql(sql)
 
 
@@ -403,9 +436,7 @@ class PipelineAgent(LumenBaseAgent):
         self, model: BaseModel, transform: Transform, table: str, schema: dict
     ) -> str:
         prompt = f"{transform.__doc__}"
-        prompt += (
-            f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
-        )
+        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -505,9 +536,7 @@ class hvPlotAgent(LumenBaseAgent):
     ) -> str:
         doc = view.__doc__.split("\n\n")[0]
         prompt = f"{doc}"
-        prompt += (
-            f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
-        )
+        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
         if "current_view" in memory:
             prompt += f"The previous view specification was: {memory['current_view']}"
         return prompt
