@@ -242,7 +242,6 @@ class LumenBaseAgent(Agent):
             memory["current_spec"] = spec
             try:
                 yield type(component).from_spec(load_yaml(spec))
-                tabs.active = 1
             except Exception as e:
                 yield pn.pane.Alert(
                     f"Error rendering component: {e}", alert_type="danger"
