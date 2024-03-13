@@ -14,13 +14,15 @@ from pydantic import BaseModel, create_model
 from ..base import Component
 from ..dashboard import load_yaml
 from ..pipeline import Pipeline
-from ..sources import FileSource, InMemorySource
+from ..sources import FileSource, InMemorySource, Source
 from ..transforms.sql import SQLTransform, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import Sql, String, Table
+from .models import (
+    Decision, Sql, String, Table,
+)
 from .translate import param_to_pydantic
 
 
@@ -111,6 +113,13 @@ class Agent(Viewer):
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
+
+    def _get_schema(self, source: Source, table: str):
+        try:
+            source.load_schema = True
+            return source.get_schema(table)
+        finally:
+            source.load_schema = False
 
     def invoke(self, messages: list | str):
         message = None
@@ -222,14 +231,18 @@ class LumenBaseAgent(Agent):
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         async def _render_component(spec, active):
-            if active == 0:
-                yield pn.indicators.LoadingSpinner(
-                    value=True, name="Rendering component...", height=50, width=50
-                )
+            yield pn.indicators.LoadingSpinner(
+                value=True, name="Rendering component...", height=50, width=50
+            )
+
+            if active != 1:
+                return
+
             # store the spec in the cache instead of memory to save tokens
             memory["current_spec"] = spec
             try:
                 yield type(component).from_spec(load_yaml(spec))
+                tabs.active = 1
             except Exception as e:
                 yield pn.pane.Alert(
                     f"Error rendering component: {e}", alert_type="danger"
@@ -243,7 +256,6 @@ class LumenBaseAgent(Agent):
             self.interface.stream(message=message, **message_kwargs)
         else:
             self.interface.send(respond=False, **message_kwargs)
-        tabs.active = 1
 
 
 class TableAgent(LumenBaseAgent):
@@ -323,7 +335,7 @@ class TableListAgent(LumenBaseAgent):
 
 class SQLAgent(LumenBaseAgent):
     """
-    The SQLAgent is responsible for modifying SQL queries based on the user prompt.
+    The SQLAgent is responsible for generating and modifying SQL queries to answer user questions about statistics.
     """
 
     system_prompt = param.String(
@@ -348,6 +360,7 @@ class SQLAgent(LumenBaseAgent):
                     source=source, table=table
                 )
                 yield pipeline
+                tabs.active = 1
             except Exception as e:
                 yield pn.pane.Alert(
                     f"Error executing SQL query: {e}", alert_type="danger"
@@ -355,7 +368,6 @@ class SQLAgent(LumenBaseAgent):
 
         tabs = self._link_code_editor(query, _render_sql_result, "sql")
         self.interface.stream(tabs, user="SQL", replace=True)
-        tabs.active = 1
 
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
         prompt = f"The SQL expression for the table {table!r} is {sql!r}."
@@ -370,7 +382,7 @@ class SQLAgent(LumenBaseAgent):
             return None
         sql_expr = source.get_sql_expr(table)
         system_prompt = self._system_prompt_with_context(messages)
-        schema = source.get_schema(table)
+        schema = self._get_schema(source, table)
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
         for chunk in self.llm.stream(
             messages,
@@ -429,13 +441,17 @@ class PipelineAgent(LumenBaseAgent):
         for name, transform in self._available_transforms.items():
             if doc := (transform.__doc__ or "").strip():
                 doc = doc.split("\n\n")[0].strip().replace("\n", "")
-                prompt += f"- {name}: {doc}\n"
+                prompt += f"- {name!r}: {doc}\n"
         return prompt
 
     def _transform_prompt(
         self, model: BaseModel, transform: Transform, table: str, schema: dict
     ) -> str:
         prompt = f"{transform.__doc__}"
+        if not schema:
+            raise ValueError(f"No schema found for table {table!r}")
+        else:
+            print(f"Used schema: {schema}")
         prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
@@ -444,6 +460,19 @@ class PipelineAgent(LumenBaseAgent):
     def _find_transform(
         self, messages: list | str, system_prompt: str
     ) -> Type[Transform] | None:
+        decision = self.llm.invoke(
+            messages,
+            system=(
+                "Decide whether a transformation is needed to compute stats or aggregation; "
+                "if it's just getting data, return False."
+            ),
+            response_model=Decision,
+            allow_partial=False,
+        )
+        if decision is None or not decision.required:
+            print(f"{self.name} decided that no transformation is needed because {decision}")
+            return
+
         picker_prompt = self._transform_picker_prompt()
         transforms = self._available_transforms
         transform_model = create_model(
@@ -458,14 +487,14 @@ class PipelineAgent(LumenBaseAgent):
             print(
                 f"{self.name} thought {transform_name=!r} would be the right thing to do."
             )
-        return transforms[transform_name] if transform_name else None
+        return transforms[transform_name.strip("'")] if transform_name else None
 
     def _construct_transform(
         self, messages: list | str, transform: Type[Transform], system_prompt: str
     ) -> Transform:
         table = memory["current_table"]
         excluded = transform._internal_params + ["controls", "type"]
-        schema = memory["current_source"].get_schema(table)
+        schema = self._get_schema(memory["current_source"], table)
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[
             transform.__name__
         ]
@@ -505,9 +534,12 @@ class PipelineAgent(LumenBaseAgent):
         except Exception as e:
             self.interface.send(
                 f"Generated invalid transform resulting in following error: {e}",
-                user=self.name,
+                user="Exception",
+                respond=False,
             )
             pipeline.transforms = pipeline.transforms[:-1]
+            memory.pop("current_transform")
+            print(f"{memory=}")
             pipeline._stale = True
         return pipeline
 
@@ -548,7 +580,7 @@ class hvPlotAgent(LumenBaseAgent):
 
         # Find parameters
         view = hvPlotUIView
-        schema = pipeline.get_schema()
+        schema = self._get_schema(pipeline.source, table)
         excluded = view._internal_params + [
             "controls",
             "type",

@@ -47,8 +47,13 @@ class _Memory(Viewer):
     def get(self, key, default=None):
         return self._curcontext.get(key, default)
 
+    def pop(self, key, default=None):
+        return self._curcontext.pop(key, default)
+
     def _render_item(self, key, item):
         if isinstance(item, Component):
+            if hasattr(item, "password"):
+                item.password = "$variables.PASSWORD"
             item = item.to_spec()
         if isinstance(item, str):
             item = f'```yaml\n{item}\n```'
