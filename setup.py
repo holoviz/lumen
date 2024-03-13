@@ -23,7 +23,7 @@ dependencies = [
     "hvplot",
     "holoviews >=1.17.0",
     "packaging",
-    "intake",
+    "intake <2",
     "jinja2 >3.0"
 ]
 
