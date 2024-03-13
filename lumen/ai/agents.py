@@ -14,13 +14,15 @@ from pydantic import BaseModel, create_model
 from ..base import Component
 from ..dashboard import load_yaml
 from ..pipeline import Pipeline
-from ..sources import Source, FileSource, InMemorySource
+from ..sources import FileSource, InMemorySource, Source
 from ..transforms.sql import SQLTransform, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import Sql, String, Table, Decision
+from .models import (
+    Decision, Sql, String, Table,
+)
 from .translate import param_to_pydantic
 
 

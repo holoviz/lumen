@@ -1,7 +1,5 @@
 from functools import partial
 
-from llama_cpp import ChatCompletionChunk
-
 import panel as pn
 import param
 
@@ -31,7 +29,7 @@ class Llm(param.Parameterized):
             else:
                 raise ValueError(
                     f"No model named {model!r} available. Known models include "
-                    f"{', '.join(LLM_METADATA)}."
+                    f"{', '.join(self._models)}."
                 )
         super().__init__(**params)
         self._client = None
