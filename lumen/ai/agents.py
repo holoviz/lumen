@@ -58,7 +58,7 @@ class Agent(Viewer):
 
     requires = param.List(default=[], readonly=True)
 
-    fulfills = param.List(default=[], readonly=True)
+    provides = param.List(default=[], readonly=True)
 
     __abstract = True
 
@@ -154,7 +154,7 @@ class SourceAgent(Agent):
 
     requires = param.List(default=[], readonly=True)
 
-    fulfills = param.List(default=["current_source"], readonly=True)
+    provides = param.List(default=["current_source"], readonly=True)
 
     on_init = param.Boolean(default=True)
 
@@ -281,7 +281,7 @@ class TableAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    fulfills = param.List(default=["current_table", "current_pipeline"], readonly=True)
+    provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
 
     def answer(self, messages: list | str):
         tables = tuple(memory["current_source"].get_tables())
@@ -433,7 +433,7 @@ class PipelineAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_table"], readonly=True)
 
-    fulfills = param.List(default=["current_pipeline"], readonly=True)
+    provides = param.List(default=["current_pipeline"], readonly=True)
 
     @property
     def _available_transforms(self) -> dict[str, Type[Transform]]:
@@ -585,7 +585,7 @@ class hvPlotAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_pipeline"], readonly=True)
 
-    fulfills = param.List(default=["current_plot"], readonly=True)
+    provides = param.List(default=["current_plot"], readonly=True)
 
     def _view_prompt(
         self, model: BaseModel, view: hvPlotUIView, table: str, schema: dict

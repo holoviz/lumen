@@ -104,7 +104,7 @@ class Assistant(Viewer):
             subagents = [
                 agent
                 for agent in self.agents
-                if any(ur in agent.fulfills for ur in unmet_dependencies)
+                if any(ur in agent.provides for ur in unmet_dependencies)
             ]
             subagent_name = self._choose_agent(messages, subagents)
             if subagent_name is None:
