@@ -9,7 +9,6 @@ from panel.layout import Column, Tabs
 from panel.pane import Markdown
 from panel.viewable import Viewer
 from pydantic import create_model
-from instructor import Maybe
 
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm

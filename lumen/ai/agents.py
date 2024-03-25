@@ -1,6 +1,6 @@
 import io
 
-from typing import Literal, Type, Optional
+from typing import Literal, Optional, Type
 
 import pandas as pd
 import panel as pn
@@ -11,7 +11,6 @@ from panel.chat import ChatInterface
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
-from instructor import Maybe
 
 from ..base import Component
 from ..dashboard import load_yaml
@@ -22,15 +21,8 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import (
-    Sql,
-    String,
-    Table,
-)
+from .models import Sql, String, Table
 from .translate import param_to_pydantic
-from pydantic import BaseModel, BeforeValidator
-from typing_extensions import Annotated
-from instructor import llm_validator
 
 
 class Agent(Viewer):
@@ -498,7 +490,11 @@ class PipelineAgent(LumenBaseAgent):
         if transform.transform_required:
             transform = self.llm.invoke(
                 f"is the transform, {transform.transform!r} partially relevant to the query {messages!r}",
-                system=f"You are a world class validation model. Capable to determine if the following value is valid for the statement, if it is not, explain why and suggest a new value from {picker_prompt}",
+                system=(
+                    f"You are a world class validation model. "
+                    f"Capable to determine if the following value is valid for the statement, "
+                    f"if it is not, explain why and suggest a new value from {picker_prompt}"
+                ),
                 response_model=transform_model,
             )
 
