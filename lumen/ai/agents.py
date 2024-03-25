@@ -1,6 +1,6 @@
 import io
 
-from typing import Literal, Type
+from typing import Literal, Optional, Type
 
 import pandas as pd
 import panel as pn
@@ -10,6 +10,7 @@ import yaml
 from panel.chat import ChatInterface
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
+from pydantic.fields import FieldInfo
 
 from ..base import Component
 from ..dashboard import load_yaml
@@ -20,9 +21,7 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import (
-    Decision, Sql, String, Table,
-)
+from .models import Sql, String, Table
 from .translate import param_to_pydantic
 
 
@@ -106,7 +105,9 @@ class Agent(Viewer):
     def __panel__(self):
         return self.interface
 
-    def _system_prompt_with_context(self, messages: list | str, context: str = "") -> str:
+    def _system_prompt_with_context(
+        self, messages: list | str, context: str = ""
+    ) -> str:
         system_prompt = self.system_prompt
         if self.embeddings:
             context = self.embeddings.query(messages)
@@ -259,7 +260,7 @@ class LumenBaseAgent(Agent):
 
 class TableAgent(LumenBaseAgent):
     """
-    The TableAgent is responsible for selecting between a set of tables based on the user prompt.
+    Responsible for selecting between a set of tables / datasets based on the user prompt.
     """
 
     system_prompt = param.String(
@@ -307,8 +308,8 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    The TableListAgent is responsible for listing the available tables in the current source;
-    do not use this if user wants a specific table.
+    Responsible for listing the available tables if the user's request is vague;
+    do not use this if user wants a specific table.s
     """
 
     system_prompt = param.String(
@@ -334,7 +335,7 @@ class TableListAgent(LumenBaseAgent):
 
 class SQLAgent(LumenBaseAgent):
     """
-    The SQLAgent is responsible for generating and modifying SQL queries to answer user questions about statistics.
+    Responsible for generating and modifying SQL queries to answer user questions about statistics.
     """
 
     system_prompt = param.String(
@@ -413,13 +414,13 @@ class SQLAgent(LumenBaseAgent):
 
 class PipelineAgent(LumenBaseAgent):
     """
-    The Pipeline agent generates a data pipeline by applying transformations to the data.
+    Generates a data pipeline by applying transformations to the data.
 
     If the user asks to calculate, aggregate, select or perform some other operation on the data this is your best best.
     """
 
     system_prompt = param.String(
-        default="Generate the appropriate data transformation."
+        default="Choose the appropriate data transformation based on the query."
     )
 
     requires = param.List(default=["current_table"], readonly=True)
@@ -437,10 +438,11 @@ class PipelineAgent(LumenBaseAgent):
 
     def _transform_picker_prompt(self) -> str:
         prompt = "This is a description of all available transforms:\n"
-        for name, transform in self._available_transforms.items():
+        for transform in self._available_transforms.values():
             if doc := (transform.__doc__ or "").strip():
                 doc = doc.split("\n\n")[0].strip().replace("\n", "")
-                prompt += f"- {name!r}: {doc}\n"
+                prompt += f"- {doc}\n"
+        prompt += "- `None` No transform needed\n"
         return prompt
 
     def _transform_prompt(
@@ -459,29 +461,48 @@ class PipelineAgent(LumenBaseAgent):
     def _find_transform(
         self, messages: list | str, system_prompt: str
     ) -> Type[Transform] | None:
-        decision = self.llm.invoke(
-            messages,
-            system=(
-                "Decide whether a transformation is needed to compute stats or aggregation; "
-                "if it's just getting data, return False."
-            ),
-            response_model=Decision,
-            allow_partial=False,
-        )
-        if decision is None or not decision.required:
-            print(f"{self.name} decided that no transformation is needed because {decision}")
-            return
-
         picker_prompt = self._transform_picker_prompt()
         transforms = self._available_transforms
         transform_model = create_model(
-            "Transform", transform=(Literal[tuple(transforms)], ...)
+            "Transform",
+            summary_of_query=(
+                str,
+                FieldInfo(
+                    description="A summary of the query and whether you think a transform is needed."
+                ),
+            ),
+            transform_required=(
+                bool,
+                FieldInfo(
+                    description="Whether a transform is required for the query; sometimes the user may not need a transform.",
+                    default=True,
+                ),
+            ),
+            transform=(Optional[Literal[tuple(transforms)]], None),
         )
-        transform_name = self.llm.invoke(
+
+        transform = self.llm.invoke(
             messages,
-            system=system_prompt + picker_prompt,
+            system=f"{system_prompt}\n{picker_prompt}",
             response_model=transform_model,
-        ).transform
+        )
+
+        if transform.transform_required:
+            transform = self.llm.invoke(
+                f"is the transform, {transform.transform!r} partially relevant to the query {messages!r}",
+                system=(
+                    f"You are a world class validation model. "
+                    f"Capable to determine if the following value is valid for the statement, "
+                    f"if it is not, explain why and suggest a new value from {picker_prompt}"
+                ),
+                response_model=transform_model,
+            )
+
+        if transform is None or not transform.transform_required:
+            print(f"No transform found for {messages}")
+            return None
+
+        transform_name = transform.transform
         if self.debug:
             print(
                 f"{self.name} thought {transform_name=!r} would be the right thing to do."
@@ -549,7 +570,7 @@ class PipelineAgent(LumenBaseAgent):
 
 class hvPlotAgent(LumenBaseAgent):
     """
-    The hvPlot agent generates a plot of the data given a user prompt.
+    Generates a plot of the data given a user prompt.
 
     If the user asks to plot, visualize or render the data this is your best best.
     """

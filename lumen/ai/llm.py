@@ -116,7 +116,7 @@ class Llama(Llm):
 
     model_file = param.String(constant=True)
 
-    temperature = param.Number(default=0.3, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
 
     _models = {
         "default": {
