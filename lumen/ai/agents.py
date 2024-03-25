@@ -10,6 +10,7 @@ import yaml
 from panel.chat import ChatInterface
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
+from pydantic.fields import FieldInfo
 from instructor import Maybe
 
 from ..base import Component
@@ -449,6 +450,7 @@ class PipelineAgent(LumenBaseAgent):
             if doc := (transform.__doc__ or "").strip():
                 doc = doc.split("\n\n")[0].strip().replace("\n", "")
                 prompt += f"- {doc}\n"
+        prompt += "- `None` No transform needed\n"
         return prompt
 
     def _transform_prompt(
@@ -469,32 +471,38 @@ class PipelineAgent(LumenBaseAgent):
     ) -> Type[Transform] | None:
         picker_prompt = self._transform_picker_prompt()
         transforms = self._available_transforms
-        print(
-            "VALIDATOR",
-            f"is the transform applicable to {messages}? if not, choose again: {picker_prompt}",
-        )
         transform_model = create_model(
             "Transform",
-            chain_of_thought_to_select=(str, ...),
-            transform=(
-                Annotated[
-                    Optional[Literal[tuple(transforms)]],
-                    BeforeValidator(
-                        llm_validator(
-                            f"is the transform partially relevant to the query {messages!r} if not, choose again: {picker_prompt}",
-                            allow_override=True,
-                        )
-                    ),
-                ],
-                None,
+            summary_of_query=(
+                str,
+                FieldInfo(
+                    description="A summary of the query and whether you think a transform is needed."
+                ),
             ),
+            transform_required=(
+                bool,
+                FieldInfo(
+                    description="Whether a transform is required for the query; sometimes the user may not need a transform.",
+                    default=True,
+                ),
+            ),
+            transform=(Optional[Literal[tuple(transforms)]], None),
         )
+
         transform = self.llm.invoke(
             messages,
             system=f"{system_prompt}\n{picker_prompt}",
             response_model=transform_model,
         )
-        if transform is None or not hasattr(transform, "transform"):
+
+        if transform.transform_required:
+            transform = self.llm.invoke(
+                f"is the transform, {transform.transform!r} partially relevant to the query {messages!r}",
+                system=f"You are a world class validation model. Capable to determine if the following value is valid for the statement, if it is not, explain why and suggest a new value from {picker_prompt}",
+                response_model=transform_model,
+            )
+
+        if transform is None or not transform.transform_required:
             print(f"No transform found for {messages}")
             return None
 
