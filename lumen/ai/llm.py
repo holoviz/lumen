@@ -1,9 +1,6 @@
-from functools import partial
-
 import panel as pn
 import param
 
-from instructor import Maybe
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
@@ -75,7 +72,7 @@ class Llm(param.Parameterized):
             except Exception as e:
                 print(f"Error encountered: {e}")
                 if 'response_model' in kwargs:
-                    kwargs['response_model'] = Maybe(response_model)
+                    kwargs['response_model'] = response_model
                 messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
         print(f"Invoked output: {output!r}")
         return output
@@ -143,16 +140,16 @@ class Llama(Llm):
     def _init_model(self):
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
-        from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
-        draft_model = LlamaPromptLookupDecoding(num_pred_tokens=10)
         self._model = pn.state.as_cached(
             'Llama',
-            partial(Llama, draft_model=draft_model),
+            Llama,
             model_path=hf_hub_download(self.repo, self.model_file),
             n_gpu_layers=-1,
             n_ctx=8192,
+            seed=128,
             chat_format=self.chat_format,
             logits_all=False,
+            use_mlock=True,
             verbose=False
         )
         self._raw_client = self._model.create_chat_completion_openai_v1
