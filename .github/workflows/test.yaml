@@ -19,7 +19,7 @@ jobs:
     name: Run pre-commit
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: holoviz-dev/holoviz_tasks/pre-commit@v0.1a18
+      - uses: holoviz-dev/holoviz_tasks/pre-commit@v0
   unit_test_suite:
     name: Pytest on ${{ matrix.python-version }}, ${{ matrix.os }}
     needs: [pre_commit]
@@ -36,7 +36,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: holoviz-dev/holoviz_tasks/install@v0.1a18
+      - uses: holoviz-dev/holoviz_tasks/install@v0
         with:
           name: unit_test_suite
           python-version: ${{ matrix.python-version }}
@@ -71,7 +71,7 @@ jobs:
       PYTHON_VERSION: ${{ matrix.python-version }}
     steps:
       # Add back when this works on Python 3.12
-      # - uses: holoviz-dev/holoviz_tasks/install@v0.1a18
+      # - uses: holoviz-dev/holoviz_tasks/install@v0
       #   with:
       #     name: core_test_suite
       #     python-version: ${{ matrix.python-version }}
