@@ -10,7 +10,9 @@ from .models import String
 
 class Llm(param.Parameterized):
 
-    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON])
+    mode = param.Selector(
+        default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON]
+    )
 
     retry = param.Integer(default=2)
 
@@ -44,15 +46,17 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel = String,
         allow_partial: bool = True,
-        **kwargs
+        **kwargs,
     ) -> BaseModel:
         if self._client is None:
             self._init_model()
 
         if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
+            messages = [{"role": "user", "content": messages.replace("  ", " ")}]
         if system:
-            messages = [{"role": "system", "content": system}] + messages
+            messages = [
+                {"role": "system", "content": system.replace("  ", " ")}
+            ] + messages
 
         kwargs = dict(self._client_kwargs, **kwargs)
         if response_model is String:
@@ -61,7 +65,7 @@ class Llm(param.Parameterized):
             client = self._client
             if allow_partial:
                 response_model = Partial[response_model]
-            kwargs['response_model'] = response_model
+            kwargs["response_model"] = response_model
 
         print(messages, "\n\n")
         output = None
@@ -71,9 +75,14 @@ class Llm(param.Parameterized):
                 break
             except Exception as e:
                 print(f"Error encountered: {e}")
-                if 'response_model' in kwargs:
-                    kwargs['response_model'] = response_model
-                messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
+                if "response_model" in kwargs:
+                    kwargs["response_model"] = response_model
+                messages = messages + [
+                    {
+                        "role": "system",
+                        "content": f"You just encountered the following error, make sure you don't repeat it: {e}",
+                    }
+                ]
         print(f"Invoked output: {output!r}")
         return output
 
@@ -83,7 +92,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel = String,
         field: str = "output",
-        **kwargs
+        **kwargs,
     ):
         if self._client is None:
             self._init_model()
@@ -94,7 +103,7 @@ class Llm(param.Parameterized):
             system=system,
             response_model=response_model,
             stream=True,
-            **dict(self._client_kwargs, **kwargs)
+            **dict(self._client_kwargs, **kwargs),
         ):
             if response_model is String:
                 delta = chunk.choices[0].delta.content
@@ -135,13 +144,14 @@ class Llama(Llm):
 
     @property
     def _client_kwargs(self):
-        return {'temperature': self.temperature}
+        return {"temperature": self.temperature}
 
     def _init_model(self):
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
+
         self._model = pn.state.as_cached(
-            'Llama',
+            "Llama",
             Llama,
             model_path=hf_hub_download(self.repo, self.model_file),
             n_gpu_layers=-1,
@@ -150,7 +160,7 @@ class Llama(Llm):
             chat_format=self.chat_format,
             logits_all=False,
             use_mlock=True,
-            verbose=False
+            verbose=False,
         )
         self._raw_client = self._model.create_chat_completion_openai_v1
         self._client = self._create_client(self._raw_client)
@@ -164,32 +174,31 @@ class OpenAI(Llm):
 
     model_name = param.String()
 
-    mode = param.Selector(default=Mode.FUNCTIONS, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS])
+    mode = param.Selector(
+        default=Mode.FUNCTIONS, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS]
+    )
 
     organization = param.String()
 
     _models = {
-        'gpt-4': {
-            'model_name': 'gpt-4'
-        },
-        'gpt-3.5-turbo': {
-            'model_name': 'gpt-3.5-turbo'
-        }
+        "gpt-4": {"model_name": "gpt-4"},
+        "gpt-3.5-turbo": {"model_name": "gpt-3.5-turbo"},
     }
 
     @property
     def _client_kwargs(self):
-        return {'model': self.model_name}
+        return {"model": self.model_name}
 
     def _init_model(self):
         import openai
+
         model_kwargs = {}
         if self.base_url:
-            model_kwargs['base_url'] = self.base_url
+            model_kwargs["base_url"] = self.base_url
         if self.api_key:
-            model_kwargs['api_key'] = self.api_key
+            model_kwargs["api_key"] = self.api_key
         if self.organization:
-            model_kwargs['organization'] = self.organization
+            model_kwargs["organization"] = self.organization
         self._model = openai.OpenAI(**model_kwargs)
         self._raw_client = self._model.chat.completions.create
         self._client = self._create_client(self._raw_client)
@@ -201,8 +210,4 @@ class AILauncher(OpenAI):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
-    _models = {
-        'default': {
-            'model_name': 'gpt-3.5-turbo'
-        }
-    }
+    _models = {"default": {"model_name": "gpt-3.5-turbo"}}

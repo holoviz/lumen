@@ -7,7 +7,7 @@ import panel as pn
 import param
 import yaml
 
-from panel.chat import ChatInterface
+from panel.chat import ChatInterface, ChatStep, ChatSteps
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -38,6 +38,8 @@ class Agent(Viewer):
 
     interface = param.ClassSelector(class_=ChatInterface)
 
+    steps = param.ClassSelector(class_=ChatSteps)
+
     llm = param.ClassSelector(class_=Llm)
 
     system_prompt = param.String()
@@ -57,6 +59,8 @@ class Agent(Viewer):
     def __init__(self, **params):
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
+        if "steps" not in params:
+            params["steps"] = ChatSteps()
         super().__init__(**params)
 
     def _link_code_editor(self, value, callback, language):
@@ -275,7 +279,7 @@ class TableAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
 
-    def answer(self, messages: list | str):
+    def answer(self, messages: list | str, step: ChatStep | None = None):
         tables = tuple(memory["current_source"].get_tables())
         if len(tables) == 1:
             table = tables[0]
@@ -296,12 +300,15 @@ class TableAgent(LumenBaseAgent):
         memory["current_pipeline"] = Pipeline(
             source=memory["current_source"], table=table
         )
+        if step is not None:
+            step.append(f"Selected table: {table}")
+            step.append(f"Current pipeline: {memory['current_pipeline']}")
         if self.debug:
             print(f"{self.name} thinks that the user is talking about {table=!r}.")
         return table
 
-    def invoke(self, messages: list | str):
-        table = self.answer(messages)
+    def invoke(self, messages: list | str, step: ChatStep | None = None):
+        table = self.answer(messages, step=step)
         pipeline = Pipeline(source=memory["current_source"], table=table)
         self._render_lumen(pipeline)
 
@@ -318,7 +325,7 @@ class TableListAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    def answer(self, messages: list | str):
+    def answer(self, messages: list | str, step: ChatStep | None = None):
         tables = memory["current_source"].get_tables()
         if not tables:
             return
@@ -374,7 +381,7 @@ class SQLAgent(LumenBaseAgent):
         prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{str(schema)}```"
         return prompt
 
-    def answer(self, messages: list | str):
+    def answer(self, messages: list | str, step: ChatStep | None = None):
         message = None
         source = memory["current_source"]
         table = memory["current_table"]
@@ -405,10 +412,12 @@ class SQLAgent(LumenBaseAgent):
             sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
             print(table, sql_in, sql_out)
         memory["current_sql"] = sql_out
+        if step is not None:
+            step.append(f"SQL query: {sql_out}")
         return sql_out
 
-    def invoke(self, messages: list | str):
-        sql = self.answer(messages)
+    def invoke(self, messages: list | str, step: ChatStep | None = None):
+        sql = self.answer(messages, step=step)
         self._render_sql(sql)
 
 
@@ -529,7 +538,7 @@ class PipelineAgent(LumenBaseAgent):
         )
         return transform(**dict(kwargs))
 
-    def answer(self, messages: list | str) -> Transform:
+    def answer(self, messages: list | str, step: ChatStep | None = None) -> Transform:
         system_prompt = self._system_prompt_with_context(messages)
         transform_type = self._find_transform(messages, system_prompt)
         if "current_pipeline" in memory:
@@ -539,10 +548,14 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"], table=memory["current_table"]
             )
         memory["current_pipeline"] = pipeline
+        if step is not None:
+            step.append(f"Current pipeline: {pipeline}")
         if not transform_type:
             return pipeline
         transform = self._construct_transform(messages, transform_type, system_prompt)
         memory["current_transform"] = spec = transform.to_spec()
+        if step is not None:
+            step.append(f"Transform specification: {spec}")
         if self.debug:
             print(f"{self.name} settled on {spec=!r}.")
         if pipeline.transforms and type(pipeline.transforms[-1]) is type(transform):
@@ -559,12 +572,14 @@ class PipelineAgent(LumenBaseAgent):
             )
             pipeline.transforms = pipeline.transforms[:-1]
             memory.pop("current_transform")
+            if step is not None:
+                step.append(f"Removed invalid transform: {transform}")
             print(f"{memory=}")
             pipeline._stale = True
         return pipeline
 
-    def invoke(self, messages: list | str):
-        pipeline = self.answer(messages)
+    def invoke(self, messages: list | str, step: ChatStep | None = None):
+        pipeline = self.answer(messages, step=step)
         self._render_lumen(pipeline)
 
 
@@ -593,7 +608,7 @@ class hvPlotAgent(LumenBaseAgent):
             prompt += f"The previous view specification was: {memory['current_view']}"
         return prompt
 
-    def answer(self, messages: list | str) -> Transform:
+    def answer(self, messages: list | str, step: ChatStep | None = None) -> Transform:
         pipeline = memory["current_pipeline"]
         table = memory["current_table"]
         system_prompt = self._system_prompt_with_context(messages)
@@ -630,10 +645,12 @@ class hvPlotAgent(LumenBaseAgent):
         spec = dict(kwargs)
         spec["responsive"] = True
         memory["current_view"] = dict(spec, type=view.view_type)
+        if step is not None:
+            step.append(f"Current view: {memory['current_view']}")
         if self.debug:
             print(f"{self.name} settled on {spec=!r}.")
         return view(pipeline=pipeline, **spec)
 
-    def invoke(self, messages: list | str):
-        view = self.answer(messages)
+    def invoke(self, messages: list | str, step: ChatStep | None = None):
+        view = self.answer(messages, step=step)
         self._render_lumen(view)

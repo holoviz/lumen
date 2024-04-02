@@ -4,7 +4,7 @@ from typing import Literal, Type
 
 import param
 
-from panel.chat import ChatInterface
+from panel.chat import ChatInterface, ChatSteps
 from panel.layout import Column, Tabs
 from panel.pane import Markdown
 from panel.viewable import Viewer
@@ -26,10 +26,13 @@ class Assistant(Viewer):
 
     interface = param.ClassSelector(class_=ChatInterface)
 
+    steps = param.ClassSelector(class_=ChatSteps)
+
     def __init__(
         self,
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
+        steps: ChatSteps | None = None,
         agents: list[Agent | Type[Agent]] | None = None,
         **params,
     ):
@@ -39,14 +42,16 @@ class Assistant(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
+        if steps is None:
+            steps = ChatSteps()
         llm = llm or self.llm
         instantiated = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
-                agent = agent(interface=interface, **kwargs)
+                agent = agent(interface=interface, steps=steps, **kwargs)
             instantiated.append(agent)
-        super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, steps=steps, **params)
         self._current_agent = Markdown("## No agent active", margin=0)
         self._controls = Column(self._current_agent, Tabs(("Memory", memory)))
 
@@ -83,7 +88,7 @@ class Assistant(Viewer):
             if out:
                 return out.agent
 
-    def _get_agent(self, messages: list | str):
+    def invoke(self, messages: list | str) -> str:
         if len(self.agents) == 1:
             return self.agents[0]
         agent_types = tuple(agent.name[:-5] for agent in self.agents)
@@ -92,14 +97,21 @@ class Assistant(Viewer):
             agent = agent_types[0]
         else:
             agent = self._choose_agent(messages, self.agents)
-        print(
-            f"Assistant decided on {agent} between the available options: {agent_types}"
+
+        steps = self.interface.steps(
+            chat_steps=self.steps,
+            title="Solving dependencies...",
+            status="running",
         )
+
         selected = subagent = agents[agent]
+        steps.step(title="Selected {subagent.name[:-5]}...")
+
         agent_chain = []
         while unmet_dependencies := tuple(
             r for r in subagent.requires if r not in memory
         ):
+            steps.title = f"Solving {len(unmet_dependencies)} dependencies..."
             subagents = [
                 agent
                 for agent in self.agents
@@ -109,6 +121,7 @@ class Assistant(Viewer):
             if subagent_name is None:
                 continue
             subagent = agents[subagent_name]
+            steps.step(title=f"Preparing to use {subagent_name}...")
             agent_chain.append((subagent, unmet_dependencies))
             if not (
                 unmet_dependencies := tuple(
@@ -116,17 +129,19 @@ class Assistant(Viewer):
                 )
             ):
                 break
-        for subagent, deps in agent_chain[::-1]:
-            print(f"Assistant decided the {subagent} will provide {deps}.")
-            self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
-            subagent.answer(messages)
-        return selected
 
-    def invoke(self, messages: list | str) -> str:
-        agent = self._get_agent(messages)
-        self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        result = agent.invoke(messages)
+        for i, (subagent, deps) in enumerate(agent_chain[::-1]):
+            self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
+            steps.title = f"Using {subagent.name[:-5]} to solve {deps}..."
+            with steps[-i - 1] as step:
+                subagent.answer(messages, step=step)
+
+        self._current_agent.object = f"## **Current Agent**: {selected.name[:-5]}"
+        with steps[0] as step:
+            result = selected.invoke(messages, step=step)
         self._current_agent.object = "## No agent active"
+        steps.status = "completed"
+        steps.title = "Completed!"
         return result
 
     def controls(self):
