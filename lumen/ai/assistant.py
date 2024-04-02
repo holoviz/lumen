@@ -56,7 +56,7 @@ class Assistant(Viewer):
     def _generate_picker_prompt(self, agents):
         # prompt = f'Current you have the following items in memory: {list(memory)}'
         prompt = "\nSelect most relevant agent for the user's query:\n" + "\n".join(
-            f"- {agent.name}: {agent.__doc__.strip()}" for agent in agents
+            f"- {agent.name[:-5]}: {agent.__doc__.strip()}" for agent in agents
         )
         return prompt
 
@@ -64,7 +64,7 @@ class Assistant(Viewer):
         return self.invoke(contents)
 
     def _choose_agent(self, messages: list | str, agents: list[Agent]):
-        agent_names = tuple(sagent.name for sagent in agents)
+        agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
@@ -86,8 +86,8 @@ class Assistant(Viewer):
     def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
             return self.agents[0]
-        agent_types = tuple(agent.name for agent in self.agents)
-        agents = {agent.name: agent for agent in self.agents}
+        agent_types = tuple(agent.name[:-5] for agent in self.agents)
+        agents = {agent.name[:-5]: agent for agent in self.agents}
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
@@ -118,13 +118,13 @@ class Assistant(Viewer):
                 break
         for subagent, deps in agent_chain[::-1]:
             print(f"Assistant decided the {subagent} will provide {deps}.")
-            self._current_agent.object = f"## **Current Agent**: {subagent.name}"
+            self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
             subagent.answer(messages)
         return selected
 
     def invoke(self, messages: list | str) -> str:
         agent = self._get_agent(messages)
-        self._current_agent.object = f"## **Current Agent**: {agent.name}"
+        self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
         result = agent.invoke(messages)
         self._current_agent.object = "## No agent active"
         return result
