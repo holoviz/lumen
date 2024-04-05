@@ -107,6 +107,7 @@ class DuckDBSource(Source):
                     min_maxes.append(name)
             for col in enums:
                 distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
+                distinct_expr = SQLLimit(limit=5).apply(distinct_expr)  # TODO REMOVE THIS
                 distinct_expr = ' '.join(distinct_expr.splitlines())
                 distinct = self._connection.execute(distinct_expr).fetch_df()
                 schema[col]['enum'] = distinct[col].tolist()
