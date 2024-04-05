@@ -227,4 +227,12 @@ class SQLFilter(SQLTransform):
         return self._render_template(template, sql_in=sql_in, conditions=' AND '.join(conditions))
 
 
+class SQLOverride(SQLTransform):
+
+    override = param.String()
+
+    def apply(self, sql_expr):
+        return self.override
+
+
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]

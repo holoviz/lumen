@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import param  # type: ignore
 
 from .intake_sql import IntakeBaseSQLSource
