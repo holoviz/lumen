@@ -31,7 +31,7 @@ extras_require = {
     'sql': [
         'duckdb',
         'intake-sql',
-        'sqlalchemy <2',  # Don't work with pandas yet
+        'sqlalchemy',
     ],
     'tests': [
         'pytest',
