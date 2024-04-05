@@ -6,6 +6,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from hvplot.tests.util import makeMixedDataFrame
+
 from lumen.sources.base import Source
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
@@ -155,7 +157,7 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     df.index.names = [None]
     pd.testing.assert_frame_equal(
         df,
-        pd._testing.makeMixedDataFrame().iloc[1:3]
+        makeMixedDataFrame().iloc[1:3]
     )
 
 
