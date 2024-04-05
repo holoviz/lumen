@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+
 from hvplot.tests.util import makeMixedDataFrame
 
 

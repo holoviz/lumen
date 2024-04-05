@@ -1,6 +1,6 @@
+import contextlib
 import os
 import tempfile
-import contextlib
 
 from unittest.mock import Mock
 
@@ -15,7 +15,6 @@ from lumen.config import config
 from lumen.sources.base import FileSource, Source
 from lumen.state import state
 from lumen.variables.base import Variables
-
 
 with contextlib.suppress(Exception):
     # From Dask 2024.3.0 they now use `dask_expr` by default
