@@ -417,16 +417,20 @@ class Source(MultiTypeComponent):
         """
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         """
         Returns JSON schema describing the tables returned by the
         Source.
 
         Parameters
         ----------
-        table : str or None
+        table : str | None
             The name of the table to return the schema for. If None
             returns schema for all available tables.
+        limit : int | None
+            Limits the number of rows considered for the schema calculation
 
         Returns
         -------
@@ -479,7 +483,9 @@ class RESTSource(Source):
     source_type: ClassVar[str] = 'rest'
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
         return {table: schema['items']['properties'] for table, schema in
@@ -503,7 +509,9 @@ class InMemorySource(Source):
     def get_tables(self) -> list[str]:
         return list(self.tables)
 
-    def get_schema(self, table: str | None = None) -> Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         if table:
             df = self.get(table)
             return get_dataframe_schema(df)['items']['properties']
@@ -765,7 +773,9 @@ class WebsiteSource(Source):
     source_type: ClassVar[str] = 'live'
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schema = {
             "status": {
                 "url": {"type": "string", 'enum': self.urls},
@@ -812,7 +822,9 @@ class PanelSessionSource(Source):
     source_type: ClassVar[str] = 'session_info'
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schema = {
             "summary": {
                 "url": {"type": "string", "enum": self.urls},
@@ -952,7 +964,9 @@ class JoinedSource(Source):
         return list(self.tables)
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schemas: Dict[str, Dict[str, Any]] = {}
         for name, specs in self.tables.items():
             if table is not None and name != table:
