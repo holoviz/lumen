@@ -35,6 +35,7 @@ extras_require = {
     ],
     'tests': [
         'pytest',
+        'pytest-rerunfailures',
         'flake8',
         'intake',
         'fastparquet',

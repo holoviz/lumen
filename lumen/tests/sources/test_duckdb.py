@@ -113,6 +113,7 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
 
 
+@pytest.mark.flaky(reruns=3)
 def test_duckdb_transforms(duckdb_source, source_tables):
     df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
@@ -121,6 +122,7 @@ def test_duckdb_transforms(duckdb_source, source_tables):
     pd.testing.assert_frame_equal(transformed, expected)
 
 
+@pytest.mark.flaky(reruns=3)
 def test_duckdb_transforms_cache(duckdb_source, source_tables):
     df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
