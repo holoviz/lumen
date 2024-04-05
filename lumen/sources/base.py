@@ -97,7 +97,7 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table=None):
+    def wrapped(self, table=None, limit=None):
         if self in locks:
             main_lock = locks[self]['main']
         else:
@@ -106,7 +106,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
         with main_lock:
             schema = self._get_schema_cache() or {}
         tables = self.get_tables() if table is None else [table]
-        if all(table in schema for table in tables):
+        if all(table in schema for table in tables) and limit is None:
             return schema if table is None else schema[table]
         for missing in tables:
             if missing in schema:
@@ -119,10 +119,10 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
             with lock:
                 with main_lock:
                     new_schema = self._get_schema_cache() or {}
-                if missing in new_schema:
+                if missing in new_schema and limit is None:
                     schema[missing] = new_schema[missing]
                 else:
-                    schema[missing] = method(self, missing)
+                    schema[missing] = method(self, missing, limit)
             with main_lock:
                 self._set_schema_cache(schema)
         return schema if table is None else schema[table]
