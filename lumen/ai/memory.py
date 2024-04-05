@@ -45,7 +45,10 @@ class _Memory(Viewer):
             self._update_view(key, value)
 
     def get(self, key, default=None):
-        return self._curcontext.get(key, default)
+        obj = self._curcontext.get(key, default)
+        if hasattr(obj, "copy"):
+            obj = obj.copy()
+        return obj
 
     def pop(self, key, default=None):
         return self._curcontext.pop(key, default)
