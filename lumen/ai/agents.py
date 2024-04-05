@@ -129,7 +129,7 @@ class Agent(Viewer):
     def _get_schema(self, source: Source, table: str):
         try:
             source.load_schema = True
-            return source.get_schema(table)
+            return source.get_schema(table, limit=100)
         finally:
             source.load_schema = False
 

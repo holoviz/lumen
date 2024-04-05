@@ -1,3 +1,5 @@
+from typing import Any, Dict
+
 import duckdb
 import param
 
@@ -84,21 +86,26 @@ class DuckDBSource(Source):
         return df
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         if table is None:
             tables = self.get_tables()
         else:
             tables = [table]
 
         schemas = {}
-        limit = SQLLimit(limit=1)
+        sql_limit = SQLLimit(limit=limit or 1)
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
-            data = self._connection.execute(limit.apply(sql_expr)).fetch_df()
+            data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
             schema = get_dataframe_schema(data)['items']['properties']
+            if limit:
+                schemas[entry] = schema
+                continue
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
                 if 'enum' in col_schema:
@@ -107,7 +114,6 @@ class DuckDBSource(Source):
                     min_maxes.append(name)
             for col in enums:
                 distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
-                distinct_expr = SQLLimit(limit=5).apply(distinct_expr)  # TODO REMOVE THIS
                 distinct_expr = ' '.join(distinct_expr.splitlines())
                 distinct = self._connection.execute(distinct_expr).fetch_df()
                 schema[col]['enum'] = distinct[col].tolist()

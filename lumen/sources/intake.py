@@ -1,3 +1,5 @@
+from typing import Any, Dict
+
 import intake  # type: ignore
 import param  # type: ignore
 
@@ -30,7 +32,9 @@ class IntakeBaseSource(Source):
         return list(self.cat)
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schemas = {}
         for entry in list(self.cat):
             if table is not None and entry != table:
