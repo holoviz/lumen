@@ -145,7 +145,6 @@ def test_file_source_clear_cache(source, column_value_type, dask):
 
 
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
-    pytest.importorskip('fastparquet')
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
     source.get('test', A=(1, 2))

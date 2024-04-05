@@ -132,7 +132,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           # channel-priority: strict
           channels: pyviz/label/dev,conda-forge,nodefaults
-          envs: "-o tests_core -o tests_ci"
+          envs: "-o tests -o tests_ci"
           cache: ${{ github.event.inputs.cache || github.event.inputs.cache == '' }}
           conda-update: true
         id: install
