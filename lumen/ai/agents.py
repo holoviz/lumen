@@ -1,4 +1,5 @@
 import io
+import textwrap
 
 from typing import Literal, Optional, Type
 
@@ -8,6 +9,7 @@ import param
 import yaml
 
 from panel.chat import ChatInterface
+from panel.pane import HTML
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -16,7 +18,8 @@ from ..base import Component
 from ..dashboard import load_yaml
 from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
-from ..transforms.sql import SQLTransform, Transform
+from ..sources.intake_sql import IntakeBaseSQLSource
+from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..validation import ValidationError
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
@@ -25,6 +28,14 @@ from .memory import memory
 from .models import Sql, String, Table
 from .translate import param_to_pydantic
 
+
+def format_schema(schema):
+    formatted = {}
+    for field, spec in schema.items():
+        if 'enum' in spec:
+            spec['enum'] = spec['enum'][:20] + ['...']
+        formatted[field] = spec
+    return formatted
 
 class Agent(Viewer):
     """
@@ -126,12 +137,16 @@ class Agent(Viewer):
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    def _get_schema(self, source: Source, table: str):
-        try:
-            source.load_schema = True
-            return source.get_schema(table, limit=100)
-        finally:
-            source.load_schema = False
+    def _get_schema(self, source: Source | Pipeline, table: str = None):
+        if isinstance(source, Pipeline):
+            schema = source.get_schema()
+        else:
+            schema = source.get_schema(table, limit=100)
+        schema = dict(schema)
+        for field, spec in schema.items():
+            if 'enum' in spec:
+                schema[field] = dict(spec, enum=spec['enum'][:5])
+        return schema
 
     def invoke(self, messages: list | str):
         message = None
@@ -348,6 +363,38 @@ class TableAgent(LumenBaseAgent):
         self._render_lumen(pipeline)
 
 
+class TableListAgent(LumenBaseAgent):
+    """
+    Responsible for listing the available tables if the user's request is vague;
+    do not use this if user wants a specific table.s
+    """
+
+    system_prompt = param.String(
+        default="You are an agent responsible for listing the available tables in the current source."
+    )
+
+    requires = param.List(default=["current_source"], readonly=True)
+
+    def answer(self, messages: list | str):
+        source = memory["current_source"]
+        tables = memory["current_source"].get_tables()
+        if not tables:
+            return
+        if isinstance(source, IntakeBaseSQLSource) and hasattr(source.cat, '_repr_html_'):
+            table_listing = HTML(textwrap.dedent(source.cat._repr_html_()), margin=10, styles={
+                'overflow': 'auto', 'background-color': 'white', 'padding': '10px'
+            })
+        else:
+            tables = tuple(table.replace('"', "") for table in tables)
+            table_bullets = "\n".join(f"- {table}" for table in tables)
+            table_listing = f"Available tables:\n{table_bullets}"
+        self.interface.send(table_listing, user=self.name, respond=False)
+        return tables
+
+    def invoke(self, messages: list | str):
+        self.answer(messages)
+
+
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user questions about statistics like min/max/average.
@@ -369,9 +416,10 @@ class SQLAgent(LumenBaseAgent):
                 )
 
             table = memory["current_table"]
-            source.tables[table] = query
+
+            transforms = [SQLOverride(override=query)]
             try:
-                memory["current_pipeline"] = Pipeline(source=source, table=table)
+                memory["current_pipeline"] = Pipeline(source=source, table=table, sql_transforms=transforms)
                 # Need this separate or else create random memory entry
                 pipeline = memory["current_pipeline"].__panel__()
                 yield pipeline
@@ -388,7 +436,9 @@ class SQLAgent(LumenBaseAgent):
 
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
         prompt = f"The SQL expression for the table {table!r} is {sql!r}."
-        prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{str(schema)}```"
+        if "current_sql" in memory:
+            prompt += f"In case the user is following up on a previous request here is the SQL you just generated: `{memory['current_sql']}`"
+        prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
         return prompt
 
     def answer(self, messages: list | str):
@@ -418,9 +468,8 @@ class SQLAgent(LumenBaseAgent):
             return
         sql_out = message.object.replace("```sql", "").replace("```", "").strip()
         if f"FROM {table}" in sql_out:
-            sql_in = sql_expr.replace("SELECT * from ", "")
+            sql_in = sql_expr.replace("SELECT * FROM ", "").replace("SELECT * from ", "")
             sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
-            print(table, sql_in, sql_out)
         memory["current_sql"] = sql_out
         return sql_out
 
@@ -470,7 +519,7 @@ class PipelineAgent(LumenBaseAgent):
             raise ValueError(f"No schema found for table {table!r}")
         else:
             print(f"Used schema: {schema}")
-        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
+        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -530,9 +579,9 @@ class PipelineAgent(LumenBaseAgent):
     def _construct_transform(
         self, messages: list | str, transform: Type[Transform], system_prompt: str
     ) -> Transform:
-        table = memory["current_table"]
         excluded = transform._internal_params + ["controls", "type"]
-        schema = self._get_schema(memory["current_source"], table)
+        schema = self._get_schema(memory["current_pipeline"])
+        table = memory["current_table"]
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[
             transform.__name__
         ]
@@ -601,7 +650,7 @@ class hvPlotAgent(LumenBaseAgent):
     ) -> str:
         doc = view.__doc__.split("\n\n")[0]
         prompt = f"{doc}"
-        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{str(schema)}\n```"
+        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
         if "current_view" in memory:
             prompt += f"The previous view specification was: {memory['current_view']}"
         return prompt
@@ -613,7 +662,7 @@ class hvPlotAgent(LumenBaseAgent):
 
         # Find parameters
         view = hvPlotUIView
-        schema = self._get_schema(pipeline.source, table)
+        schema = self._get_schema(pipeline)
         excluded = view._internal_params + [
             "controls",
             "type",
@@ -657,6 +706,9 @@ class hvPlotAgent(LumenBaseAgent):
                 return self.answer(messages, retry=False)
 
         spec.pop("type", None)
+        if len(pipeline.data) > 20000 and spec['kind'] in ('line', 'scatter', 'points'):
+            spec["rasterize"] = True
+            spec["cnorm"] = 'log'
         memory["current_view"] = dict(spec, type=view.view_type)
         if self.debug:
             print(f"{self.name} settled on {spec=!r}.")
