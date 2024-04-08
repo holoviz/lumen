@@ -7,11 +7,12 @@ from typing import Literal, Type
 
 import param
 
+from panel import bind
 from panel.chat import ChatInterface
 from panel.layout import Column, Tabs
 from panel.pane import Markdown
 from panel.viewable import Viewer
-from panel.widgets import FileDownload
+from panel.widgets import FileDownload, PasswordInput, TextInput
 from pydantic import create_model
 from pydantic.fields import FieldInfo
 
@@ -65,16 +66,32 @@ class Assistant(Viewer):
             instantiated.append(agent)
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
         self._current_agent = Markdown("## No agent active", margin=0)
-        self._controls = Column(
-            FileDownload(
-                icon="download",
-                button_type="success",
-                callback=download_messages,
-                filename="favorited_messages.json",
-                sizing_mode="stretch_width",
-            )
+
+        file_download = FileDownload(
+            icon="download",
+            button_type="success",
+            callback=download_messages,
+            filename="favorited_messages.json",
+            sizing_mode="stretch_width",
         )
+        base_url_input = TextInput(
+            placeholder="https://localhost:8000/v1/"
+        )
+        api_key_input = PasswordInput(
+            placeholder="sk-"
+        )
+        self._controls = Column(
+            file_download,
+            base_url_input,
+            api_key_input,
+        )
+        bind(self._update_llm_key_url, base_url_input, api_key_input, watch=True)
         # self._controls = Column(self._current_agent, Tabs(("Memory", memory)))
+
+    def _update_llm_key_url(self, base_url: str, api_key: str):
+        self.llm.base_url = base_url
+        self.llm.api_key = api_key
+        self.llm._init_model()
 
     def _generate_picker_prompt(self, agents):
         # prompt = f'Current you have the following items in memory: {list(memory)}'
