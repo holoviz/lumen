@@ -7,7 +7,6 @@ from typing import Literal, Type
 
 import param
 
-from instructor import Partial
 from panel.chat import ChatInterface, ChatMessage
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import Markdown
@@ -19,7 +18,7 @@ from pydantic.fields import FieldInfo
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm
 from .memory import memory
-from .models import FollowUp
+from .models import String
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -77,6 +76,9 @@ class Assistant(Viewer):
         interface.send(
             "Welcome to LumenAI; how can I help you today?", user="Help", respond=False
         )
+        interface.button_properties={
+            "suggest": {"callback": self._create_suggestion, "icon": "wand"}
+        }
         self._add_suggestions_to_footer(GETTING_STARTED_SUGGESTIONS)
 
         self._current_agent = Markdown("## No agent active", margin=0)
@@ -120,17 +122,21 @@ class Assistant(Viewer):
             self.interface.objects[-1] = message
         return message
 
-    def _generate_suggestions(self, messages: list, n: int = 2):
-        # need to do a panel fix for this
-        follow_up = self.llm.invoke(
+    def _create_suggestion(self, instance, event):
+        messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
+        string = self.llm.stream(
             messages,
-            system=f"Generate up to {n} follow-up questions that a user might ask.",
-            response_model=Partial[FollowUp],
+            system="Generate a follow-up question that a user might ask; ask from the user POV",
+            response_model=String,
             model="gpt-3.5-turbo",
             allow_partial=True,
         )
-        message = self._add_suggestions_to_footer(follow_up.suggestions, inplace=False)
-        return message
+        try:
+            self.interface.disabled = True
+            for chunk in string:
+                self.interface.active_widget.value_input = chunk
+        finally:
+            self.interface.disabled = False
 
     def _generate_picker_prompt(self, agents):
         # prompt = f'Current you have the following items in memory: {list(memory)}'
@@ -214,19 +220,19 @@ class Assistant(Viewer):
             subagent.answer(messages)
         return selected
 
-    def invoke(self, messages: list | str) -> str:
-        def _custom_serializer(obj):
-            if isinstance(obj, (Tabs, Column)):
-                return _custom_serializer(obj[0])
-            if hasattr(obj, "object"):
-                return obj.object
-            elif hasattr(obj, "value"):
-                return obj.value
-            return str(obj)
+    def _serialize(self, obj):
+        if isinstance(obj, (Tabs, Column)):
+            return self._serialize(obj[0])
+        if hasattr(obj, "object"):
+            return obj.object
+        elif hasattr(obj, "value"):
+            return obj.value
+        return str(obj)
 
+    def invoke(self, messages: list | str) -> str:
         agent = self._get_agent(messages)
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        messages = self.interface.serialize(custom_serializer=_custom_serializer)[-5:-1]
+        messages = self.interface.serialize(custom_serializer=self._serialize)[-5:-1]
 
         # something weird with duplicate assistant messages;
         # TODO: remove later
