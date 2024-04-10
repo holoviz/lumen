@@ -7,17 +7,26 @@ from typing import Literal, Type
 
 import param
 
-from panel.chat import ChatInterface
-from panel.layout import Column, Tabs
+from instructor import Partial
+from panel.chat import ChatInterface, ChatMessage
+from panel.layout import Column, FlexBox, Tabs
 from panel.pane import Markdown
 from panel.viewable import Viewer
-from panel.widgets import FileDownload
+from panel.widgets import Button, FileDownload
 from pydantic import create_model
 from pydantic.fields import FieldInfo
 
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm
 from .memory import memory
+from .models import FollowUp
+
+GETTING_STARTED_SUGGESTIONS = [
+    "What datasets do you have?",
+    "Tell me about the dataset.",
+    "Create a plot of the dataset.",
+    "Find the min and max of the values.",
+]
 
 
 class Assistant(Viewer):
@@ -56,6 +65,7 @@ class Assistant(Viewer):
         else:
             interface.callback = self._chat_invoke
         interface.callback_exception = "raise"
+
         llm = llm or self.llm
         instantiated = []
         for agent in agents or self.agents:
@@ -64,6 +74,11 @@ class Assistant(Viewer):
                 agent = agent(interface=interface, **kwargs)
             instantiated.append(agent)
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
+        interface.send(
+            "Welcome to LumenAI; how can I help you today?", user="Help", respond=False
+        )
+        self._add_suggestions_to_footer(GETTING_STARTED_SUGGESTIONS)
+
         self._current_agent = Markdown("## No agent active", margin=0)
         self._controls = Column(
             FileDownload(
@@ -75,6 +90,47 @@ class Assistant(Viewer):
             )
         )
         # self._controls = Column(self._current_agent, Tabs(("Memory", memory)))
+
+    def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
+        def use_suggestion(event):
+            contents = event.obj.name
+            suggestion_buttons.visible = False
+            self.interface.send(contents)
+
+        suggestion_buttons = FlexBox(
+            *[
+                Button(
+                    name=suggestion,
+                    button_style="outline",
+                    on_click=use_suggestion,
+                    margin=5,
+                )
+                for suggestion in suggestions
+            ],
+            margin=(5, 5),
+        )
+
+        message = self.interface.objects[-1]
+        message = ChatMessage(
+            footer_objects=[suggestion_buttons],
+            user=message.user,
+            object=message.object,
+        )
+        if inplace:
+            self.interface.objects[-1] = message
+        return message
+
+    def _generate_suggestions(self, messages: list, n: int = 2):
+        # need to do a panel fix for this
+        follow_up = self.llm.invoke(
+            messages,
+            system=f"Generate up to {n} follow-up questions that a user might ask.",
+            response_model=Partial[FollowUp],
+            model="gpt-3.5-turbo",
+            allow_partial=True,
+        )
+        message = self._add_suggestions_to_footer(follow_up.suggestions, inplace=False)
+        return message
 
     def _generate_picker_prompt(self, agents):
         # prompt = f'Current you have the following items in memory: {list(memory)}'

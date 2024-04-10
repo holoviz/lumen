@@ -68,6 +68,8 @@ class Agent(Viewer):
 
     def __init__(self, **params):
         def _exception_handler(exception):
+            import traceback
+            traceback.print_exc()
             self.interface.send(
                 f"Sorry I'm unable to handle this: {exception!r}",
                 user="System",
