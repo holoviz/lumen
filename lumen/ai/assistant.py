@@ -74,7 +74,7 @@ class Assistant(Viewer):
             instantiated.append(agent)
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
         interface.send(
-            "Welcome to LumenAI; how can I help you today?", user="Help", respond=False
+            "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!", user="Help", respond=False
         )
         interface.button_properties={
             "suggest": {"callback": self._create_suggestion, "icon": "wand"}
