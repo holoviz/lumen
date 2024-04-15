@@ -3,8 +3,8 @@ from __future__ import annotations
 import panel as pn
 import param
 
+from instructor import Mode, from_openai
 from instructor.dsl.partial import Partial
-from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
 from .models import String
@@ -36,7 +36,7 @@ class Llm(param.Parameterized):
         self._client = None
 
     def _create_client(self, create):
-        return patch(create=create, mode=self.mode)
+        return from_openai(create, mode=self.mode)
 
     @property
     def _client_kwargs(self):
@@ -157,7 +157,7 @@ class Llama(Llm):
             verbose=False
         )
         self._raw_client = self._model.create_chat_completion_openai_v1
-        self._client = self._create_client(self._raw_client)
+        self._client = self._create_client(self._model).create_chat_completion_openai_v1
 
 
 class OpenAI(Llm):
@@ -198,7 +198,7 @@ class OpenAI(Llm):
             model_kwargs["organization"] = self.organization
         self._model = openai.OpenAI(**model_kwargs)
         self._raw_client = self._model.chat.completions.create
-        self._client = self._create_client(self._raw_client)
+        self._client = self._create_client(self._model).chat.completions.create
 
 
 class AILauncher(OpenAI):
