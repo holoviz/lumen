@@ -18,7 +18,6 @@ from pydantic.fields import FieldInfo
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm
 from .memory import memory
-from .models import String
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -127,7 +126,6 @@ class Assistant(Viewer):
         string = self.llm.stream(
             messages,
             system="Generate a follow-up question that a user might ask; ask from the user POV",
-            response_model=String,
             model="gpt-3.5-turbo",
             allow_partial=True,
         )
@@ -149,11 +147,11 @@ class Assistant(Viewer):
         )
         return prompt
 
-    def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
+    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         print("-" * 50)
-        return self.invoke(contents)
+        await self.invoke(contents)
 
-    def _choose_agent(self, messages: list | str, agents: list[Agent]):
+    async def _choose_agent(self, messages: list | str, agents: list[Agent]):
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -171,7 +169,7 @@ class Assistant(Viewer):
         )
         self._current_agent.object = "## **Current Agent**: Lumen.ai"
         for _ in range(3):
-            out = self.llm.invoke(
+            out = await self.llm.invoke(
                 messages=messages,
                 system=self._generate_picker_prompt(agents),
                 response_model=agent_model,
@@ -181,7 +179,7 @@ class Assistant(Viewer):
             if out:
                 return out.agent
 
-    def _get_agent(self, messages: list | str):
+    async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
             return self.agents[0]
         agent_types = tuple(agent.name[:-5] for agent in self.agents)
@@ -189,7 +187,7 @@ class Assistant(Viewer):
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            agent = self._choose_agent(messages, self.agents)
+            agent = await self._choose_agent(messages, self.agents)
         print(
             f"Assistant decided on {agent} between the available options: {agent_types}"
         )
@@ -229,26 +227,27 @@ class Assistant(Viewer):
             return obj.value
         return str(obj)
 
-    def invoke(self, messages: list | str) -> str:
-        agent = self._get_agent(messages)
+    async def invoke(self, messages: list | str) -> str:
+        agent = await self._get_agent(messages)
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        messages = self.interface.serialize(custom_serializer=self._serialize)[-5:-1]
+        messages = self.interface.serialize(custom_serializer=self._serialize)
 
         # something weird with duplicate assistant messages;
         # TODO: remove later
         if len(messages) > 1:
-            messages = [
-                message
-                for message, next_message in zip(messages, messages[1:])
-                if message != next_message
-            ][-3:] + [messages[-1]]
+            print(len(messages))
+            # messages = [
+            #     message
+            #     for message, next_message in zip(messages, messages[1:])
+            #     if message != next_message
+            # ][-3:] + [messages[-1]]
             for message in messages:
                 print(f"{message['role']!r}: {message['content']}")
                 print("---")
 
-        result = agent.invoke(messages)
+        print(messages, "MESSAGES")
+        await agent.invoke(messages)
         self._current_agent.object = "## No agent active"
-        return result
 
     def controls(self):
         return self._controls
