@@ -232,18 +232,9 @@ class Assistant(Viewer):
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
         messages = self.interface.serialize(custom_serializer=self._serialize)
 
-        # something weird with duplicate assistant messages;
-        # TODO: remove later
-        if len(messages) > 1:
-            print(len(messages))
-            # messages = [
-            #     message
-            #     for message, next_message in zip(messages, messages[1:])
-            #     if message != next_message
-            # ][-3:] + [messages[-1]]
-            for message in messages:
-                print(f"{message['role']!r}: {message['content']}")
-                print("---")
+        for message in messages:
+            print(f"{message['role']!r}: {message['content']}")
+            print("---")
 
         print(messages, "MESSAGES")
         await agent.invoke(messages)
