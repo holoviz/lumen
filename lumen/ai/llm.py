@@ -7,8 +7,6 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from .models import String
-
 
 class Llm(param.Parameterized):
 
@@ -42,11 +40,11 @@ class Llm(param.Parameterized):
     def _client_kwargs(self):
         return {}
 
-    def invoke(
+    async def invoke(
         self,
         messages: list | str,
         system: str = "",
-        response_model: BaseModel = String,
+        response_model: BaseModel | None = None,
         allow_partial: bool = True,
         **input_kwargs,
     ) -> BaseModel:
@@ -60,10 +58,9 @@ class Llm(param.Parameterized):
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
-        if response_model is String:
-            client = self._raw_client
-        else:
-            client = self._client
+        client = self._client
+
+        if response_model is not None:
             if allow_partial:
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
@@ -71,21 +68,21 @@ class Llm(param.Parameterized):
         output = None
         for r in range(self.retry):
             try:
-                output = client(messages=messages, **kwargs)
+                output = await client(messages=messages, **kwargs)
                 break
             except Exception as e:
                 print(f"Error encountered: {e}")
                 if 'response_model' in kwargs:
                     kwargs['response_model'] = response_model
                 messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
-        print(f"Invoked output: {output!r}")
+        print(f"Invoked LLM output: {output!r}")
         return output
 
-    def stream(
+    async def stream(
         self,
         messages: list | str,
         system: str = "",
-        response_model: BaseModel = String,
+        response_model: BaseModel | None = None,
         field: str = "output",
         **kwargs,
     ):
@@ -93,17 +90,16 @@ class Llm(param.Parameterized):
             self._init_model()
 
         string = ""
-        for chunk in self.invoke(
+        async for chunk in await self.invoke(
             messages,
             system=system,
             response_model=response_model,
             stream=True,
             **dict(self._client_kwargs, **kwargs),
         ):
-            if response_model is String:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    string += delta
+            if response_model is None:
+                delta = chunk.choices[0].delta.content or ""
+                string += delta
                 yield string
             else:
                 yield getattr(chunk, field)
@@ -196,7 +192,7 @@ class OpenAI(Llm):
             model_kwargs["api_key"] = self.api_key
         if self.organization:
             model_kwargs["organization"] = self.organization
-        self._model = openai.OpenAI(**model_kwargs)
+        self._model = openai.AsyncOpenAI(**model_kwargs)
         self._raw_client = self._model.chat.completions.create
         self._client = self._create_client(self._raw_client)
 
