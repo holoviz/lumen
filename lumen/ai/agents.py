@@ -25,17 +25,18 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import Sql, String, Table
+from .models import Sql, Table
 from .translate import param_to_pydantic
 
 
 def format_schema(schema):
     formatted = {}
     for field, spec in schema.items():
-        if 'enum' in spec:
-            spec['enum'] = spec['enum'][:20] + ['...']
+        if "enum" in spec:
+            spec["enum"] = spec["enum"][:20] + ["..."]
         formatted[field] = spec
     return formatted
+
 
 class Agent(Viewer):
     """
@@ -54,9 +55,7 @@ class Agent(Viewer):
 
     system_prompt = param.String()
 
-    response_model = param.ClassSelector(
-        class_=BaseModel, is_instance=False, default=String
-    )
+    response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     user = param.String(default="Assistant")
 
@@ -69,10 +68,12 @@ class Agent(Viewer):
     def __init__(self, **params):
         def _exception_handler(exception):
             import traceback
+
             traceback.print_exc()
+            last_message = self.interface.objects[-1]
             self.interface.send(
-                f"Sorry I'm unable to handle this: {exception!r}",
-                user="System",
+                f"Sorry I'm unable to {last_message.object!r}: {exception!r}",
+                user="Exception",
                 respond=False,
             )
 
@@ -123,8 +124,8 @@ class Agent(Viewer):
         return tabs
 
     def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        print("-" * 50)
-        return self.invoke(contents)
+        print("-" * 25)
+        self.invoke(contents)
 
     def __panel__(self):
         return self.interface
@@ -146,22 +147,20 @@ class Agent(Viewer):
             schema = source.get_schema(table, limit=100)
         schema = dict(schema)
         for field, spec in schema.items():
-            if 'enum' in spec:
-                schema[field] = dict(spec, enum=spec['enum'][:5])
+            if "enum" in spec:
+                schema[field] = dict(spec, enum=spec["enum"][:5])
         return schema
 
-    def invoke(self, messages: list | str):
-        message = None
+    async def invoke(self, messages: list | str):
         system_prompt = self._system_prompt_with_context(messages)
-        for chunk in self.llm.stream(
+
+        message = None
+        async for chunk in self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model
         ):
-            if not chunk:
-                continue
             message = self.interface.stream(
-                chunk, user=self.user, message=message, replace=True
+                chunk, replace=True, message=message, user=self.user
             )
-        return message
 
 
 class SourceAgent(Agent):
@@ -178,7 +177,7 @@ class SourceAgent(Agent):
 
     on_init = param.Boolean(default=True)
 
-    def invoke(self, messages: list[str] | str):
+    async def invoke(self, messages: list[str] | str):
         name = pn.widgets.TextInput(name="Name your table", align="center")
         upload = pn.widgets.FileInput(align="end")
         url = pn.widgets.TextInput(name="Add a file from a URL")
@@ -255,9 +254,7 @@ class ChatAgent(Agent):
         )
     )
 
-    response_model = param.ClassSelector(
-        default=String, class_=BaseModel, is_instance=False
-    )
+    response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     requires = param.List(default=["current_source"], readonly=True)
 
@@ -308,12 +305,10 @@ class LumenBaseAgent(Agent):
 
         component_spec = component.to_spec()
         spec = yaml.safe_dump(component_spec)
+        spec = f"# Here's the generated Lumen spec; modify if needed\n{spec}"
         tabs = self._link_code_editor(spec, _render_component, "yaml")
         message_kwargs = dict(value=tabs, user=self.user)
-        if message:
-            self.interface.stream(message=message, **message_kwargs)
-        else:
-            self.interface.send(respond=False, **message_kwargs)
+        self.interface.stream(message=message, **message_kwargs, replace=True)
         tabs.active = 1
 
 
@@ -334,7 +329,7 @@ class TableAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
 
-    def answer(self, messages: list | str):
+    async def answer(self, messages: list | str):
         tables = tuple(memory["current_source"].get_tables())
         if len(tables) == 1:
             table = tables[0]
@@ -344,13 +339,16 @@ class TableAgent(LumenBaseAgent):
                 print(f"{self.name} is being instructed that it should {system_prompt}")
             # needed or else something with grammar issue
             tables = tuple(table.replace('"', "") for table in tables)
-            table_model = create_model("Table", table=(Literal[tables], ...))
-            table = self.llm.invoke(
+            table_model = create_model("Table", table=(Literal[tables], FieldInfo(
+                description="The most relevant table based on the user query; if none are relevant, select the first."
+            )))
+            result = await self.llm.invoke(
                 messages,
                 system=system_prompt,
                 response_model=table_model,
                 allow_partial=False,
-            ).table
+            )
+            table = result.table
         memory["current_table"] = table
         memory["current_pipeline"] = Pipeline(
             source=memory["current_source"], table=table
@@ -359,8 +357,8 @@ class TableAgent(LumenBaseAgent):
             print(f"{self.name} thinks that the user is talking about {table=!r}.")
         return table
 
-    def invoke(self, messages: list | str):
-        table = self.answer(messages)
+    async def invoke(self, messages: list | str):
+        table = await self.answer(messages)
         pipeline = Pipeline(source=memory["current_source"], table=table)
         self._render_lumen(pipeline)
 
@@ -377,15 +375,23 @@ class TableListAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    def answer(self, messages: list | str):
+    async def answer(self, messages: list | str):
         source = memory["current_source"]
         tables = memory["current_source"].get_tables()
         if not tables:
             return
-        if isinstance(source, IntakeBaseSQLSource) and hasattr(source.cat, '_repr_html_'):
-            table_listing = HTML(textwrap.dedent(source.cat._repr_html_()), margin=10, styles={
-                'overflow': 'auto', 'background-color': 'white', 'padding': '10px'
-            })
+        if isinstance(source, IntakeBaseSQLSource) and hasattr(
+            source.cat, "_repr_html_"
+        ):
+            table_listing = HTML(
+                textwrap.dedent(source.cat._repr_html_()),
+                margin=10,
+                styles={
+                    "overflow": "auto",
+                    "background-color": "white",
+                    "padding": "10px",
+                },
+            )
         else:
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
@@ -393,13 +399,14 @@ class TableListAgent(LumenBaseAgent):
         self.interface.send(table_listing, user=self.name, respond=False)
         return tables
 
-    def invoke(self, messages: list | str):
-        self.answer(messages)
+    async def invoke(self, messages: list | str):
+        await self.answer(messages)
 
 
 class SQLAgent(LumenBaseAgent):
     """
-    Responsible for generating and modifying SQL queries to answer user questions about statistics like min/max/average.
+    Responsible for generating and modifying SQL queries to answer user queries about the data,
+    like stats or insights about the dataset.
     """
 
     system_prompt = param.String(
@@ -421,7 +428,9 @@ class SQLAgent(LumenBaseAgent):
 
             transforms = [SQLOverride(override=query)]
             try:
-                memory["current_pipeline"] = Pipeline(source=source, table=table, sql_transforms=transforms)
+                memory["current_pipeline"] = Pipeline(
+                    source=source, table=table, sql_transforms=transforms
+                )
                 # Need this separate or else create random memory entry
                 pipeline = memory["current_pipeline"].__panel__()
                 yield pipeline
@@ -443,7 +452,7 @@ class SQLAgent(LumenBaseAgent):
         prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
         return prompt
 
-    def answer(self, messages: list | str):
+    async def answer(self, messages: list | str):
         message = None
         source = memory["current_source"]
         table = memory["current_table"]
@@ -453,30 +462,31 @@ class SQLAgent(LumenBaseAgent):
         system_prompt = self._system_prompt_with_context(messages)
         schema = self._get_schema(source, table)
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
-        for chunk in self.llm.stream(
+        async for chunk in self.llm.stream(
             messages,
             system=system_prompt + sql_prompt,
             response_model=Sql,
             field="query",
         ):
-            if chunk:
-                message = self.interface.stream(
-                    f"```sql\n{chunk}\n```",
-                    user="SQL",
-                    message=message,
-                    replace=True,
-                )
+            message = self.interface.stream(
+                f"```sql\n{chunk}\n```",
+                user="SQL",
+                message=message,
+                replace=True,
+            )
         if message.object is None:
             return
         sql_out = message.object.replace("```sql", "").replace("```", "").strip()
         if f"FROM {table}" in sql_out:
-            sql_in = sql_expr.replace("SELECT * FROM ", "").replace("SELECT * from ", "")
+            sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
+                "SELECT * from ", ""
+            )
             sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
         memory["current_sql"] = sql_out
         return sql_out
 
-    def invoke(self, messages: list | str):
-        sql = self.answer(messages)
+    async def invoke(self, messages: list | str):
+        sql = await self.answer(messages)
         self._render_sql(sql)
 
 
@@ -526,7 +536,7 @@ class PipelineAgent(LumenBaseAgent):
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
 
-    def _find_transform(
+    async def _find_transform(
         self, messages: list | str, system_prompt: str
     ) -> Type[Transform] | None:
         picker_prompt = self._transform_picker_prompt()
@@ -549,7 +559,7 @@ class PipelineAgent(LumenBaseAgent):
             transform=(Optional[Literal[tuple(transforms)]], None),
         )
 
-        transform = self.llm.invoke(
+        transform = await self.llm.invoke(
             messages,
             system=f"{system_prompt}\n{picker_prompt}",
             response_model=transform_model,
@@ -557,7 +567,7 @@ class PipelineAgent(LumenBaseAgent):
         )
 
         if transform.transform_required:
-            transform = self.llm.invoke(
+            transform = await self.llm.invoke(
                 f"is the transform, {transform.transform!r} partially relevant to the query {messages!r}",
                 system=(
                     f"You are a world class validation model. "
@@ -578,7 +588,7 @@ class PipelineAgent(LumenBaseAgent):
             )
         return transforms[transform_name.strip("'")] if transform_name else None
 
-    def _construct_transform(
+    async def _construct_transform(
         self, messages: list | str, transform: Type[Transform], system_prompt: str
     ) -> Transform:
         excluded = transform._internal_params + ["controls", "type"]
@@ -590,7 +600,7 @@ class PipelineAgent(LumenBaseAgent):
         transform_prompt = self._transform_prompt(model, transform, table, schema)
         if self.debug:
             print(f"{self.name} recalls that {transform_prompt}.")
-        kwargs = self.llm.invoke(
+        kwargs = await self.llm.invoke(
             messages,
             system=system_prompt + transform_prompt,
             response_model=model,
@@ -598,9 +608,9 @@ class PipelineAgent(LumenBaseAgent):
         )
         return transform(**dict(kwargs))
 
-    def answer(self, messages: list | str) -> Transform:
+    async def answer(self, messages: list | str) -> Transform:
         system_prompt = self._system_prompt_with_context(messages)
-        transform_type = self._find_transform(messages, system_prompt)
+        transform_type = await self._find_transform(messages, system_prompt)
         if "current_pipeline" in memory:
             pipeline = memory["current_pipeline"]
         else:
@@ -610,7 +620,9 @@ class PipelineAgent(LumenBaseAgent):
         memory["current_pipeline"] = pipeline
         if not transform_type:
             return pipeline
-        transform = self._construct_transform(messages, transform_type, system_prompt)
+        transform = await self._construct_transform(
+            messages, transform_type, system_prompt
+        )
         memory["current_transform"] = spec = transform.to_spec()
         if self.debug:
             print(f"{self.name} settled on {spec=!r}.")
@@ -627,8 +639,8 @@ class PipelineAgent(LumenBaseAgent):
             pipeline._stale = True
         return pipeline
 
-    def invoke(self, messages: list | str):
-        pipeline = self.answer(messages)
+    async def invoke(self, messages: list | str):
+        pipeline = await self.answer(messages)
         self._render_lumen(pipeline)
 
 
@@ -657,7 +669,7 @@ class hvPlotAgent(LumenBaseAgent):
             prompt += f"The previous view specification was: {memory['current_view']}"
         return prompt
 
-    def answer(self, messages: list | str, retry: bool = True) -> Transform:
+    async def answer(self, messages: list | str, retry: bool = True) -> Transform:
         pipeline = memory["current_pipeline"]
         table = memory["current_table"]
         system_prompt = self._system_prompt_with_context(messages)
@@ -683,7 +695,7 @@ class hvPlotAgent(LumenBaseAgent):
         view_prompt = self._view_prompt(model, view, table, schema)
         if self.debug:
             print(f"{self.name} is being instructed that {view_prompt}.")
-        kwargs = self.llm.invoke(
+        kwargs = await self.llm.invoke(
             messages,
             system=system_prompt + view_prompt,
             response_model=model,
@@ -701,21 +713,24 @@ class hvPlotAgent(LumenBaseAgent):
             if retry:
                 new_messages = [
                     {"role": "assistant", "content": f"{spec=}"},
-                    {"role": "user", "content": f"\nThat didn't work; please note: {e}"}
+                    {
+                        "role": "user",
+                        "content": f"\nThat didn't work; please note: {e}",
+                    },
                 ]
                 messages.extend(new_messages)
                 print(f"RETRYING...\n\n\n{messages}")
-                return self.answer(messages, retry=False)
+                return await self.answer(messages, retry=False)
 
         spec.pop("type", None)
-        if len(pipeline.data) > 20000 and spec['kind'] in ('line', 'scatter', 'points'):
+        if len(pipeline.data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             spec["rasterize"] = True
-            spec["cnorm"] = 'log'
+            spec["cnorm"] = "log"
         memory["current_view"] = dict(spec, type=view.view_type)
         if self.debug:
             print(f"{self.name} settled on {spec=!r}.")
         return view(pipeline=pipeline, **spec)
 
-    def invoke(self, messages: list | str):
-        view = self.answer(messages)
+    async def invoke(self, messages: list | str):
+        view = await self.answer(messages)
         self._render_lumen(view)
