@@ -110,6 +110,8 @@ def parameter_to_field(
     elif param_type in [param.Selector, param.ObjectSelector]:
         if literals:
             type_ = _create_literal(literals)
+        elif parameter.objects:
+            type_ = _create_literal(parameter.objects)
         else:
             type_ = str
     elif issubclass(param_type, param.DataFrame):
