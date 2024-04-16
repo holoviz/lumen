@@ -70,9 +70,10 @@ class Agent(Viewer):
             import traceback
 
             traceback.print_exc()
+            last_message = self.interface.objects[-1]
             self.interface.send(
-                f"Sorry I'm unable to handle this: {exception!r}",
-                user="System",
+                f"Sorry I'm unable to {last_message.object!r}: {exception!r}",
+                user="Exception",
                 respond=False,
             )
 
@@ -304,6 +305,7 @@ class LumenBaseAgent(Agent):
 
         component_spec = component.to_spec()
         spec = yaml.safe_dump(component_spec)
+        spec = f"# Here's the generated Lumen spec; modify if needed\n{spec}"
         tabs = self._link_code_editor(spec, _render_component, "yaml")
         message_kwargs = dict(value=tabs, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True)
@@ -337,7 +339,9 @@ class TableAgent(LumenBaseAgent):
                 print(f"{self.name} is being instructed that it should {system_prompt}")
             # needed or else something with grammar issue
             tables = tuple(table.replace('"', "") for table in tables)
-            table_model = create_model("Table", table=(Literal[tables], ...))
+            table_model = create_model("Table", table=(Literal[tables], FieldInfo(
+                description="The most relevant table based on the user query; if none are relevant, select the first."
+            )))
             result = await self.llm.invoke(
                 messages,
                 system=system_prompt,
@@ -458,7 +462,7 @@ class SQLAgent(LumenBaseAgent):
         system_prompt = self._system_prompt_with_context(messages)
         schema = self._get_schema(source, table)
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
-        for chunk in self.llm.stream(
+        async for chunk in self.llm.stream(
             messages,
             system=system_prompt + sql_prompt,
             response_model=Sql,

@@ -139,11 +139,12 @@ class Assistant(Viewer):
     def _generate_picker_prompt(self, agents):
         # prompt = f'Current you have the following items in memory: {list(memory)}'
         prompt = (
-            "\nSelect most relevant agent for the user's query:\n'''"
+            "\nYou are a world-class leader who has a lot of agents at your disposal. "
+            "Select most relevant agent for the user's query:\n'''"
             + "\n".join(
                 f"- '{agent.name[:-5]}': {agent.__doc__.strip()}" for agent in agents
             )
-            + "\n'''"
+            + f"\n'''\nIf possible, build off the prior agent: {memory.get('current_agent')!r}"
         )
         return prompt
 
@@ -162,7 +163,10 @@ class Assistant(Viewer):
             chain_of_thought=(
                 str,
                 FieldInfo(
-                    description="Thoughts focused on application and how it could be useful to the user."
+                    description=(
+                        "Thoughts focused on application and how it could be useful to the user, "
+                        "specifically focusing on the prior messages and the user's query."
+                    )
                 ),
             ),
             agent=(Literal[agent_names], ...),
@@ -201,7 +205,7 @@ class Assistant(Viewer):
                 for agent in self.agents
                 if any(ur in agent.provides for ur in unmet_dependencies)
             ]
-            subagent_name = self._choose_agent(messages, subagents)
+            subagent_name = await self._choose_agent(messages, subagents)
             if subagent_name is None:
                 continue
             subagent = agents[subagent_name]
@@ -215,7 +219,7 @@ class Assistant(Viewer):
         for subagent, deps in agent_chain[::-1]:
             print(f"Assistant decided the {subagent} will provide {deps}.")
             self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
-            subagent.answer(messages)
+            await subagent.answer(messages)
         return selected
 
     def _serialize(self, obj):
@@ -230,15 +234,16 @@ class Assistant(Viewer):
     async def invoke(self, messages: list | str) -> str:
         agent = await self._get_agent(messages)
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        messages = self.interface.serialize(custom_serializer=self._serialize)
+        memory["current_agent"] = agent
+        messages = self.interface.serialize(custom_serializer=self._serialize)[-5:]
 
         for message in messages:
             print(f"{message['role']!r}: {message['content']}")
             print("---")
 
-        print(messages, "MESSAGES")
-        await agent.invoke(messages)
+        result = await agent.invoke(messages)
         self._current_agent.object = "## No agent active"
+        return result
 
     def controls(self):
         return self._controls
