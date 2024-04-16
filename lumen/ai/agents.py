@@ -683,14 +683,11 @@ class hvPlotAgent(LumenBaseAgent):
             "source",
             "pipeline",
             "transforms",
-            "sql_transforms",
             "download",
             "field",
-            "groupby",
-            "by",
             "selection_group",
-            "limit",
         ]
+        print(f"EXCLUDING: ... {excluded}")
         model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
         view_prompt = self._view_prompt(model, view, table, schema)
         if self.debug:

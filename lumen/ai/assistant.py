@@ -173,6 +173,7 @@ class Assistant(Viewer):
         )
         self._current_agent.object = "## **Current Agent**: Lumen.ai"
         for _ in range(3):
+            print(messages, "MESSAGES AGENT")
             out = await self.llm.invoke(
                 messages=messages,
                 system=self._generate_picker_prompt(agents),
@@ -232,10 +233,10 @@ class Assistant(Viewer):
         return str(obj)
 
     async def invoke(self, messages: list | str) -> str:
-        agent = await self._get_agent(messages)
+        messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
+        agent = await self._get_agent(messages[-2:])
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
         memory["current_agent"] = agent
-        messages = self.interface.serialize(custom_serializer=self._serialize)[-5:]
 
         for message in messages:
             print(f"{message['role']!r}: {message['content']}")
