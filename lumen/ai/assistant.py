@@ -18,6 +18,7 @@ from pydantic.fields import FieldInfo
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm
 from .memory import memory
+from .models import PipelineValidity
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -81,16 +82,14 @@ class Assistant(Viewer):
         self._add_suggestions_to_footer(GETTING_STARTED_SUGGESTIONS)
 
         self._current_agent = Markdown("## No agent active", margin=0)
-        self._controls = Column(
-            FileDownload(
-                icon="download",
-                button_type="success",
-                callback=download_messages,
-                filename="favorited_messages.json",
-                sizing_mode="stretch_width",
-            )
+        download_button = FileDownload(
+            icon="download",
+            button_type="success",
+            callback=download_messages,
+            filename="favorited_messages.json",
+            sizing_mode="stretch_width",
         )
-        # self._controls = Column(self._current_agent, Tabs(("Memory", memory)))
+        self._controls = Column(download_button, self._current_agent, Tabs(("Memory", memory)))
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
         def use_suggestion(event):
@@ -136,20 +135,52 @@ class Assistant(Viewer):
         finally:
             self.interface.disabled = False
 
+    async def _invalidate_pipeline(self, messages):
+        pipeline = memory.get("current_pipeline")
+        if not pipeline:
+            return
+        system = f"""
+        Based on the latest user's query, does the pipeline include all the necessary datasets or columns
+        to answer the user's query? If an does the SQL transform is included, do those
+        transformations contain all the necessary columns to answer the user's query?
+        FOCUS only on the columns, and **disregard** everything else,
+        like whether the pipeline contains visualization or not.
+
+        ### Current Pipeline:
+        ```
+        {pipeline.to_spec()}
+        ```
+        """
+        validity = await self.llm.invoke(
+            messages=messages,
+            system=system,
+            response_model=PipelineValidity,
+            allow_partial=False,
+            model="gpt-4-turbo-preview",
+        )
+        if not validity.valid:
+            memory.pop("current_pipeline", None)
+            memory.pop("current_sql", None)
+            memory.pop("current_transform", None)
+        print(f"Current memory: {memory.keys()}")
+
     def _generate_picker_prompt(self, agents):
         # prompt = f'Current you have the following items in memory: {list(memory)}'
         prompt = (
-            "\nYou are a world-class leader who has a lot of agents at your disposal. "
-            "Select most relevant agent for the user's query:\n'''"
+            "\nYou are a world-class contracting agency who has a lot of agents at your disposal. "
+            "Select most relevant agent for the user's query:\n'''\n"
             + "\n".join(
-                f"- '{agent.name[:-5]}': {agent.__doc__.strip()}" for agent in agents
+                f"- `{agent.name[:-5]}`: {' '.join(agent.__doc__.strip().split())}"
+                for agent in agents
             )
-            + f"\n'''\nIf possible, build off the prior agent: {memory.get('current_agent')!r}"
+            + "\n'''"
         )
+        if "current_agent" in memory:
+            prompt += f"If possible, continue using the existing agent to perform the query: {self._current_agent.object}"
         return prompt
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        print("-" * 50)
+        print("NEW" + "-" * 100)
         await self.invoke(contents)
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent]):
@@ -173,7 +204,6 @@ class Assistant(Viewer):
         )
         self._current_agent.object = "## **Current Agent**: Lumen.ai"
         for _ in range(3):
-            print(messages, "MESSAGES AGENT")
             out = await self.llm.invoke(
                 messages=messages,
                 system=self._generate_picker_prompt(agents),
@@ -201,6 +231,7 @@ class Assistant(Viewer):
         while unmet_dependencies := tuple(
             r for r in subagent.requires if r not in memory
         ):
+            print(f"Unmet dependencies: {unmet_dependencies}")
             subagents = [
                 agent
                 for agent in self.agents
@@ -234,16 +265,17 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
+        await self._invalidate_pipeline(messages[-2:])
         agent = await self._get_agent(messages[-2:])
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        memory["current_agent"] = agent
 
         for message in messages:
             print(f"{message['role']!r}: {message['content']}")
-            print("---")
+            print("ENTRY" + "-" * 10)
 
-        result = await agent.invoke(messages)
+        result = await agent.invoke(messages[-2:])
         self._current_agent.object = "## No agent active"
+        print("DONE", "\n\n")
         return result
 
     def controls(self):

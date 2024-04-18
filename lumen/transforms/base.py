@@ -303,6 +303,8 @@ class Aggregate(Transform):
     """
     `Aggregate` one or more columns or indexes, see `pandas.DataFrame.groupby`.
 
+    `by` must be provided.
+
     `df.groupby(<by>)[<columns>].<method>()[.reset_index()]`
     """
 
@@ -315,8 +317,8 @@ class Aggregate(Transform):
     with_index = param.Boolean(default=True, doc="""
         Whether to make the groupby columns indexes.""")
 
-    method = param.String(default=None, doc="""
-        Name of aggregation method.""")
+    method = param.String(default="mean", doc="""
+        Name of the pandas aggregation method, e.g. max, min, count.""")
 
     kwargs = param.Dict(default={}, doc="""
         Keyword arguments to the aggregation method.""")
