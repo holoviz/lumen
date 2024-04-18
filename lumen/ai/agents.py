@@ -500,7 +500,7 @@ class TableListAgent(LumenBaseAgent):
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user queries about the data,
-    like disucssing stats, such as min & max, or other insights about the dataset.
+    like discussing stats, such as min & max, or other insights about the dataset.
     """
 
     system_prompt = param.String(
