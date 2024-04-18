@@ -252,6 +252,7 @@ class ChatAgent(Agent):
     Responsible for chatting about high level data stuff, like
     what datasets are available and what each column represents.
     Is capable of providing suggestions to get started.
+    If data is available, it can also talk about the data itself.
     """
 
     system_prompt = param.String(
@@ -278,6 +279,12 @@ class ChatAgent(Agent):
             if schema:
                 context = f"{table} with schema: {schema}"
 
+        if "current_data" in memory:
+            context += (
+                f"\nHere's an overview of a *RANDOM* SAMPLE of "
+                f"the last available dataset, up to 5000 rows:\n```\n{memory['current_data']}\n```"
+            )
+
         system_prompt = self.system_prompt
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
@@ -287,6 +294,85 @@ class ChatAgent(Agent):
 class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
+
+    def _describe_data(self, df: pd.DataFrame) -> str:
+        def format_float(num):
+            if pd.isna(num):
+                return num
+            # if is integer, round to 0 decimals
+            if num == int(num):
+                return f"{int(num)}"
+            elif 0.01 <= abs(num) < 100:
+                return f"{num:.1f}"  # Regular floating-point notation with two decimals
+            else:
+                return f"{num:.1e}"  # Exponential notation with two decimals
+
+        df = pd.read_parquet("windturbines.parq")
+        df = df.sample(len(df) if len(df) < 5000 else 5000).sort_index()
+
+        for col in df.columns:
+            if isinstance(df[col].iloc[0], pd.Timestamp):
+                df[col] = pd.to_datetime(df[col])
+
+        # df_dtypes_dict = {
+        #     col: str(type(df[col].iloc[:1].astype("object").iloc[0])).split("'")[1]
+        #     for col in df.columns
+        # }
+        df_describe_dict = df.describe(percentiles=[]).to_dict()
+
+        for col in df.select_dtypes(include=["object"]).columns:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            df_describe_dict[col]["nunique"] = df[col].nunique()
+            # df_describe_dict[col]["top_5_counts"] = df[col].value_counts().head().to_dict()
+            # length stats
+            df_describe_dict[col]["lengths"] = {
+                "max": df[col].str.len().max(),
+                "min": df[col].str.len().min(),
+                "mean": float(df[col].str.len().mean()),
+                # "std": df[col].str.len().std(),
+            }
+
+        for col in df.columns:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
+
+        # select datetime64 columns
+        for col in df.select_dtypes(include=["datetime64"]).columns:
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
+
+        # select all numeric columns and round
+        for col in df.select_dtypes(include=["int64", "float64"]).columns:
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+
+        for col in df.select_dtypes(include=["float64"]).columns:
+            df[col] = df[col].apply(format_float)
+
+        df_head_dict = {}
+        for col in df.columns:
+            df_head_dict[col] = df[col].head(5)
+            # if all nan or none, replace with None
+            if df_head_dict[col].isnull().all():
+                df_head_dict[col] = ["all null"]
+            else:
+                df_head_dict[col] = df_head_dict[col].tolist()
+
+        data = {"stats": df_describe_dict, "head": df_head_dict}
+        # if len(df) > 5:
+        #     df_tail_dict = {}
+        #     for col in df.columns:
+        #         df_tail_dict[col] = df[col].tail(5)
+        #         # if all nan or none, replace with None
+        #         if df_tail_dict[col].isnull().all():
+        #             df_tail_dict[col] = ["all null"]
+        #         else:
+        #             df_tail_dict[col] = df_tail_dict[col].tolist()
+        data_string = str(data)
+        return data_string
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         async def _render_component(spec, active):
@@ -356,16 +442,18 @@ class TableAgent(LumenBaseAgent):
             )
             table = result.table
         memory["current_table"] = table
-        memory["current_pipeline"] = Pipeline(
+        memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
         )
+        df = pipeline.__panel__()[-1].value
+        if len(df) > 0:
+            memory["current_data"] = self._describe_data(df)
         if self.debug:
             print(f"{self.name} thinks that the user is talking about {table=!r}.")
-        return table
+        return pipeline
 
     async def invoke(self, messages: list | str):
-        table = await self.answer(messages)
-        pipeline = Pipeline(source=memory["current_source"], table=table)
+        pipeline = await self.answer(messages)
         self._render_lumen(pipeline)
 
 
@@ -412,7 +500,7 @@ class TableListAgent(LumenBaseAgent):
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user queries about the data,
-    like stats, such as min & max, or other insights about the dataset.
+    like disucssing stats, such as min & max, or other insights about the dataset.
     """
 
     system_prompt = param.String(
@@ -439,6 +527,9 @@ class SQLAgent(LumenBaseAgent):
                 )
                 # Need this separate or else create random memory entry
                 pipeline = memory["current_pipeline"].__panel__()
+                df = pipeline.objects[-1].value
+                if len(df) > 0:
+                    memory["current_data"] = self._describe_data(df)
                 yield pipeline
             except Exception as e:
                 memory.pop("current_pipeline")
