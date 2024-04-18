@@ -53,6 +53,9 @@ class _Memory(Viewer):
     def pop(self, key, default=None):
         return self._curcontext.pop(key, default)
 
+    def keys(self):
+        return self._curcontext.keys()
+
     def _render_item(self, key, item):
         if isinstance(item, Component):
             if hasattr(item, "password"):
