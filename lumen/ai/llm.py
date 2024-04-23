@@ -197,6 +197,38 @@ class OpenAI(Llm):
         self._client = self._create_client(self._raw_client)
 
 
+class AzureOpenAI(Llm):
+
+    api_key = param.String()
+
+    api_version = param.String()
+
+    azure_endpoint = param.String()
+
+    model_name = param.String()
+
+    temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
+
+    @property
+    def _client_kwargs(self):
+        return {"model": self.model_name, "temperature": self.temperature}
+
+    def _init_model(self):
+        import openai
+
+        model_kwargs = {}
+        if self.api_version:
+            model_kwargs["api_version"] = self.api_version
+        if self.api_key:
+            model_kwargs["api_key"] = self.api_key
+        if self.azure_endpoint:
+            model_kwargs["azure_endpoint"] = self.azure_endpoint
+        self._model = openai.AsyncAzureOpenAI(**model_kwargs)
+        self._raw_client = self._model.chat.completions.create
+        self._client = self._create_client(self._raw_client)
+
+
+
 class AILauncher(OpenAI):
 
     base_url = param.String(default="http://localhost:8080/v1")
