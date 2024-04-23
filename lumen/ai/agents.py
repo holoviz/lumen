@@ -308,17 +308,20 @@ class LumenBaseAgent(Agent):
             else:
                 return f"{num:.1e}"  # Exponential notation with two decimals
 
-        df = pd.read_parquet("windturbines.parq")
-        df = df.sample(len(df) if len(df) < 5000 else 5000).sort_index()
+        if len(df) < 100:
+            out = io.StringIO()
+            df.to_csv(out)
+            out.seek(0)
+            return out.read()
+        elif len(df) > 5000:
+            df = df.sample(5000)
+
+        df = df.sort_index()
 
         for col in df.columns:
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
-        # df_dtypes_dict = {
-        #     col: str(type(df[col].iloc[:1].astype("object").iloc[0])).split("'")[1]
-        #     for col in df.columns
-        # }
         df_describe_dict = df.describe(percentiles=[]).to_dict()
 
         for col in df.select_dtypes(include=["object"]).columns:
@@ -355,7 +358,7 @@ class LumenBaseAgent(Agent):
 
         df_head_dict = {}
         for col in df.columns:
-            df_head_dict[col] = df[col].head(5)
+            df_head_dict[col] = df[col].head(10)
             # if all nan or none, replace with None
             if df_head_dict[col].isnull().all():
                 df_head_dict[col] = ["all null"]
@@ -363,15 +366,6 @@ class LumenBaseAgent(Agent):
                 df_head_dict[col] = df_head_dict[col].tolist()
 
         data = {"stats": df_describe_dict, "head": df_head_dict}
-        # if len(df) > 5:
-        #     df_tail_dict = {}
-        #     for col in df.columns:
-        #         df_tail_dict[col] = df[col].tail(5)
-        #         # if all nan or none, replace with None
-        #         if df_tail_dict[col].isnull().all():
-        #             df_tail_dict[col] = ["all null"]
-        #         else:
-        #             df_tail_dict[col] = df_tail_dict[col].tolist()
         data_string = str(data)
         return data_string
 
@@ -501,7 +495,7 @@ class TableListAgent(LumenBaseAgent):
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user queries about the data,
-    like disucssing stats, such as min & max, or other insights about the dataset.
+    such querying subsets of the data, aggregating the data and calculating results.
     """
 
     system_prompt = param.String(
@@ -523,15 +517,13 @@ class SQLAgent(LumenBaseAgent):
 
             transforms = [SQLOverride(override=query)]
             try:
-                memory["current_pipeline"] = Pipeline(
+                memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
                 )
-                # Need this separate or else create random memory entry
-                pipeline = memory["current_pipeline"].__panel__()
-                df = pipeline.objects[-1].value
+                df = pipeline.data
                 if len(df) > 0:
                     memory["current_data"] = self._describe_data(df)
-                yield pipeline
+                yield memory["current_pipeline"].__panel__()
             except Exception as e:
                 memory.pop("current_pipeline")
                 yield pn.pane.Alert(
