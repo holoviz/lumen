@@ -195,8 +195,8 @@ class Assistant(Viewer):
                 str,
                 FieldInfo(
                     description=(
-                        "Thoughts focused on application and how it could be useful to the user, "
-                        "specifically focusing on the prior messages and the user's query."
+                        "Concise thoughts focused on application and how it could be useful to the user, "
+                        "specifically focusing on the prior messages and the user's query. Brevity is key."
                     )
                 ),
             ),
