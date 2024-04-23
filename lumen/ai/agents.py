@@ -20,7 +20,6 @@ from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
-from ..validation import ValidationError
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
@@ -66,16 +65,24 @@ class Agent(Viewer):
     __abstract = True
 
     def __init__(self, **params):
+        self._retries_left = 1
         def _exception_handler(exception):
             import traceback
+            tb = traceback.format_exc()
+            print(tb)
+            if self._retries_left > 0:
+                self._retries_left -= 1
+                self.interface.send(
+                    f"Attempting to fix: {exception}.",
+                    user="Exception",
+                )
+            else:
+                self.interface.send(
+                    f"Error cannot be resolved: {exception}.",
+                    user="System",
+                    respond=False
+                )
 
-            traceback.print_exc()
-            last_message = self.interface.objects[-1]
-            self.interface.send(
-                f"Sorry I'm unable to {last_message.object!r}: {exception!r}",
-                user="Exception",
-                respond=False,
-            )
 
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
@@ -123,9 +130,9 @@ class Agent(Viewer):
         ]
         return tabs
 
-    def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        print("-" * 25)
-        self.invoke(contents)
+    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
+        await self.invoke(contents)
+        self._retries_left = 1
 
     def __panel__(self):
         return self.interface
@@ -243,14 +250,16 @@ class SourceAgent(Agent):
 
 class ChatAgent(Agent):
     """
-    Responsible for chatting about high level or simple data exploration and suggesting
-    ways to get started with data exploration.
+    Responsible for chatting about high level data stuff, like
+    what datasets are available and what each column represents.
+    Is capable of providing suggestions to get started.
+    If data is available, it can also talk about the data itself.
     """
 
     system_prompt = param.String(
         default=(
             "Be a helpful chatbot to talk about high-level data exploration "
-            "like their types or suggestions to get started."
+            "like what datasets are available and what each column represents."
         )
     )
 
@@ -271,6 +280,12 @@ class ChatAgent(Agent):
             if schema:
                 context = f"{table} with schema: {schema}"
 
+        if "current_data" in memory:
+            context += (
+                f"\nHere's an overview of a *RANDOM* SAMPLE of "
+                f"the last available dataset, up to 5000 rows:\n```\n{memory['current_data']}\n```"
+            )
+
         system_prompt = self.system_prompt
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
@@ -280,6 +295,85 @@ class ChatAgent(Agent):
 class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
+
+    def _describe_data(self, df: pd.DataFrame) -> str:
+        def format_float(num):
+            if pd.isna(num):
+                return num
+            # if is integer, round to 0 decimals
+            if num == int(num):
+                return f"{int(num)}"
+            elif 0.01 <= abs(num) < 100:
+                return f"{num:.1f}"  # Regular floating-point notation with two decimals
+            else:
+                return f"{num:.1e}"  # Exponential notation with two decimals
+
+        df = pd.read_parquet("windturbines.parq")
+        df = df.sample(len(df) if len(df) < 5000 else 5000).sort_index()
+
+        for col in df.columns:
+            if isinstance(df[col].iloc[0], pd.Timestamp):
+                df[col] = pd.to_datetime(df[col])
+
+        # df_dtypes_dict = {
+        #     col: str(type(df[col].iloc[:1].astype("object").iloc[0])).split("'")[1]
+        #     for col in df.columns
+        # }
+        df_describe_dict = df.describe(percentiles=[]).to_dict()
+
+        for col in df.select_dtypes(include=["object"]).columns:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            df_describe_dict[col]["nunique"] = df[col].nunique()
+            # df_describe_dict[col]["top_5_counts"] = df[col].value_counts().head().to_dict()
+            # length stats
+            df_describe_dict[col]["lengths"] = {
+                "max": df[col].str.len().max(),
+                "min": df[col].str.len().min(),
+                "mean": float(df[col].str.len().mean()),
+                # "std": df[col].str.len().std(),
+            }
+
+        for col in df.columns:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
+
+        # select datetime64 columns
+        for col in df.select_dtypes(include=["datetime64"]).columns:
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
+
+        # select all numeric columns and round
+        for col in df.select_dtypes(include=["int64", "float64"]).columns:
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+
+        for col in df.select_dtypes(include=["float64"]).columns:
+            df[col] = df[col].apply(format_float)
+
+        df_head_dict = {}
+        for col in df.columns:
+            df_head_dict[col] = df[col].head(5)
+            # if all nan or none, replace with None
+            if df_head_dict[col].isnull().all():
+                df_head_dict[col] = ["all null"]
+            else:
+                df_head_dict[col] = df_head_dict[col].tolist()
+
+        data = {"stats": df_describe_dict, "head": df_head_dict}
+        # if len(df) > 5:
+        #     df_tail_dict = {}
+        #     for col in df.columns:
+        #         df_tail_dict[col] = df[col].tail(5)
+        #         # if all nan or none, replace with None
+        #         if df_tail_dict[col].isnull().all():
+        #             df_tail_dict[col] = ["all null"]
+        #         else:
+        #             df_tail_dict[col] = df_tail_dict[col].tolist()
+        data_string = str(data)
+        return data_string
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         async def _render_component(spec, active):
@@ -302,7 +396,6 @@ class LumenBaseAgent(Agent):
                 # maybe offer undo
 
         # layout widgets
-
         component_spec = component.to_spec()
         spec = yaml.safe_dump(component_spec)
         spec = f"# Here's the generated Lumen spec; modify if needed\n{spec}"
@@ -350,16 +443,18 @@ class TableAgent(LumenBaseAgent):
             )
             table = result.table
         memory["current_table"] = table
-        memory["current_pipeline"] = Pipeline(
+        memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
         )
+        df = pipeline.__panel__()[-1].value
+        if len(df) > 0:
+            memory["current_data"] = self._describe_data(df)
         if self.debug:
             print(f"{self.name} thinks that the user is talking about {table=!r}.")
-        return table
+        return pipeline
 
     async def invoke(self, messages: list | str):
-        table = await self.answer(messages)
-        pipeline = Pipeline(source=memory["current_source"], table=table)
+        pipeline = await self.answer(messages)
         self._render_lumen(pipeline)
 
 
@@ -406,7 +501,7 @@ class TableListAgent(LumenBaseAgent):
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user queries about the data,
-    like stats or insights about the dataset.
+    like disucssing stats, such as min & max, or other insights about the dataset.
     """
 
     system_prompt = param.String(
@@ -433,6 +528,9 @@ class SQLAgent(LumenBaseAgent):
                 )
                 # Need this separate or else create random memory entry
                 pipeline = memory["current_pipeline"].__panel__()
+                df = pipeline.objects[-1].value
+                if len(df) > 0:
+                    memory["current_data"] = self._describe_data(df)
                 yield pipeline
             except Exception as e:
                 memory.pop("current_pipeline")
@@ -529,9 +627,7 @@ class PipelineAgent(LumenBaseAgent):
         prompt = f"{transform.__doc__}"
         if not schema:
             raise ValueError(f"No schema found for table {table!r}")
-        else:
-            print(f"Used schema: {schema}")
-        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
+        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -618,7 +714,7 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"], table=memory["current_table"]
             )
         memory["current_pipeline"] = pipeline
-        if not transform_type:
+        if not transform_type and pipeline:
             return pipeline
         transform = await self._construct_transform(
             messages, transform_type, system_prompt
@@ -630,13 +726,7 @@ class PipelineAgent(LumenBaseAgent):
             pipeline.transforms[-1] = transform
         else:
             pipeline.add_transform(transform)
-        try:
-            pipeline._update_data(force=True)
-        except Exception:
-            pipeline.transforms = pipeline.transforms[:-1]
-            memory.pop("current_transform")
-            print(f"{memory=}")
-            pipeline._stale = True
+        pipeline._update_data(force=True)
         return pipeline
 
     async def invoke(self, messages: list | str):
@@ -652,7 +742,12 @@ class hvPlotAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="Generate the plot the user requested. Note that x, y, by and groupby arguments may not reference the same columns. Be sure to add `download: csv`"
+        default="""
+        Generate the plot the user requested.
+        Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns.
+        Do not arbitrarily set `groupby` and `by` fields unless explicitly requested.
+        If a histogram is requested, use `y` instead of `x`.
+        """
     )
 
     requires = param.List(default=["current_pipeline"], readonly=True)
@@ -664,12 +759,12 @@ class hvPlotAgent(LumenBaseAgent):
     ) -> str:
         doc = view.__doc__.split("\n\n")[0]
         prompt = f"{doc}"
-        prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
+        # prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
         if "current_view" in memory:
             prompt += f"The previous view specification was: {memory['current_view']}"
         return prompt
 
-    async def answer(self, messages: list | str, retry: bool = True) -> Transform:
+    async def answer(self, messages: list | str) -> Transform:
         pipeline = memory["current_pipeline"]
         table = memory["current_table"]
         system_prompt = self._system_prompt_with_context(messages)
@@ -683,13 +778,9 @@ class hvPlotAgent(LumenBaseAgent):
             "source",
             "pipeline",
             "transforms",
-            "sql_transforms",
             "download",
             "field",
-            "groupby",
-            "by",
             "selection_group",
-            "limit",
         ]
         model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
         view_prompt = self._view_prompt(model, view, table, schema)
@@ -706,21 +797,8 @@ class hvPlotAgent(LumenBaseAgent):
         spec = dict(kwargs)
         spec["responsive"] = True
 
-        try:
-            spec["type"] = "hvplot_ui"
-            view.validate(spec)
-        except ValidationError as e:
-            if retry:
-                new_messages = [
-                    {"role": "assistant", "content": f"{spec=}"},
-                    {
-                        "role": "user",
-                        "content": f"\nThat didn't work; please note: {e}",
-                    },
-                ]
-                messages.extend(new_messages)
-                print(f"RETRYING...\n\n\n{messages}")
-                return await self.answer(messages, retry=False)
+        spec["type"] = "hvplot_ui"
+        view.validate(spec)
 
         spec.pop("type", None)
         if len(pipeline.data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
