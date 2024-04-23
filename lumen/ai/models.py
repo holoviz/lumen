@@ -1,11 +1,6 @@
 from pydantic import BaseModel, Field
 
 
-class String(BaseModel):
-
-    output: str
-
-
 class Table(BaseModel):
 
     table: str = Field(
