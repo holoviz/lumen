@@ -83,6 +83,7 @@ class Agent(Viewer):
                     respond=False
                 )
 
+
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
         super().__init__(**params)
@@ -695,7 +696,6 @@ class PipelineAgent(LumenBaseAgent):
         transform_prompt = self._transform_prompt(model, transform, table, schema)
         if self.debug:
             print(f"{self.name} recalls that {transform_prompt}.")
-
         kwargs = await self.llm.invoke(
             messages,
             system=system_prompt + transform_prompt,
@@ -786,19 +786,12 @@ class hvPlotAgent(LumenBaseAgent):
         view_prompt = self._view_prompt(model, view, table, schema)
         if self.debug:
             print(f"{self.name} is being instructed that {view_prompt}.")
-
-        kwargs = None
-        for _ in range(0, 3):
-            kwargs = await self.llm.invoke(
-                messages,
-                system=system_prompt + view_prompt,
-                response_model=model,
-                allow_partial=False,
-            )
-            if kwargs is not None:
-                break
-        else:
-            raise RuntimeError("Failed to find a valid view.")
+        kwargs = await self.llm.invoke(
+            messages,
+            system=system_prompt + view_prompt,
+            response_model=model,
+            allow_partial=False,
+        )
 
         # Instantiate
         spec = dict(kwargs)
