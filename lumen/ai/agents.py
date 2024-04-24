@@ -332,19 +332,24 @@ class LumenBaseAgent(Agent):
             else:
                 return f"{num:.1e}"  # Exponential notation with two decimals
 
-        length = len(df)
-        if length < 100:
+        size = df.size
+        shape = df.shape
+        if size < 250:
             out = io.StringIO()
             df.to_csv(out)
             out.seek(0)
             return out.read()
 
         is_summarized = False
-        if length > 5000:
+        if size > 5000:
             is_summarized = True
             df = df.sample(5000)
 
         df = df.sort_index()
+        df_dtypes_dict = {
+            col: str(type(df[col].iloc[:1].astype("object").iloc[0])).split("'")[1]
+            for col in df.columns
+        }
 
         for col in df.columns:
             if isinstance(df[col].iloc[0], pd.Timestamp):
@@ -395,9 +400,10 @@ class LumenBaseAgent(Agent):
 
         data = {
             "summary": {
-                "total_length": length,
+                "total_size": size,
+                "total_shape": shape,
                 "is_summarized": is_summarized,
-                "dtypes": {col: str(dtype) for col, dtype in df.dtypes.to_dict().items()}
+                "dtypes": df_dtypes_dict,
             },
             "stats": df_describe_dict,
             "head": df_head_dict
