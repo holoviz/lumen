@@ -341,7 +341,7 @@ class LumenBaseAgent(Agent):
             return out.read()
 
         is_summarized = False
-        if size > 5000:
+        if shape[0] > 5000:
             is_summarized = True
             df = df.sample(5000)
 
