@@ -11,7 +11,7 @@ from pydantic import BaseModel
 class Llm(param.Parameterized):
 
     mode = param.Selector(
-        default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON]
+        default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS]
     )
 
     retry = param.Integer(default=2)
@@ -164,9 +164,7 @@ class OpenAI(Llm):
 
     model_name = param.String()
 
-    mode = param.Selector(
-        default=Mode.FUNCTIONS, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS]
-    )
+    mode = param.Selector(default=Mode.FUNCTIONS)
 
     temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
 
@@ -205,6 +203,8 @@ class AzureOpenAI(Llm):
 
     azure_endpoint = param.String()
 
+    mode = param.Selector(default=Mode.FUNCTIONS)
+
     model_name = param.String()
 
     temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
@@ -226,7 +226,6 @@ class AzureOpenAI(Llm):
         self._model = openai.AsyncAzureOpenAI(**model_kwargs)
         self._raw_client = self._model.chat.completions.create
         self._client = self._create_client(self._raw_client)
-
 
 
 class AILauncher(OpenAI):
