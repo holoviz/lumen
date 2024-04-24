@@ -206,7 +206,7 @@ class Assistant(Viewer):
                     )
                 ),
             ),
-            agents=(Literal[agent_names], ...),
+            agent=(Literal[agent_names], ...),
         )
         self._current_agent.object = "## **Current Agent**: Lumen.ai"
         for _ in range(3):
