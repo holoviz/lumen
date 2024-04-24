@@ -18,7 +18,7 @@ from pydantic.fields import FieldInfo
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm
 from .memory import memory
-from .models import PipelineValidity
+from .models import Validity
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -127,16 +127,25 @@ class Assistant(Viewer):
             self.interface.objects[-1] = message
         return message
 
-    async def _invalidate_pipeline(self, messages):
+    async def _invalidate_memory(self, messages):
+        table = memory.get("current_table")
         pipeline = memory.get("current_pipeline")
         if not pipeline:
             return
         system = f"""
-        Based on the latest user's query, does the pipeline include all the necessary datasets or columns
+        Based on the latest user's query, is the table relevant?
+        If not, return invalid_key='table'.
+
+        Then, does the pipeline include all the necessary datasets or columns
         to answer the user's query? If an does the SQL transform is included, do those
         transformations contain all the necessary columns to answer the user's query?
         FOCUS only on the columns, and **disregard** everything else,
         like whether the pipeline contains visualization or not.
+
+        ### Current Table:
+        ```
+        {table}
+        ```
 
         ### Current Pipeline:
         ```
@@ -146,14 +155,18 @@ class Assistant(Viewer):
         validity = await self.llm.invoke(
             messages=messages,
             system=system,
-            response_model=PipelineValidity,
+            response_model=Validity,
             allow_partial=False,
         )
-        if validity and not validity.valid:
+        if validity and validity.is_invalid:
+            invalid_key = validity.invalid_key
+            if invalid_key == "table":
+                memory.pop("current_table", None)
+                memory.pop("current_data", None)
             memory.pop("current_pipeline", None)
             memory.pop("current_sql", None)
             memory.pop("current_transform", None)
-        print(f"Current memory: {memory.keys()}")
+            print(f"\033[91mInvalidated {invalid_key!r} from memory.\033[0m")
 
     def _create_suggestion(self, instance, event):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
@@ -200,8 +213,8 @@ class Assistant(Viewer):
                 str,
                 FieldInfo(
                     description=(
-                        "Concise thoughts focused on application and how it could be useful to the user, "
-                        "specifically focusing on the prior messages and the user's query. Brevity is key."
+                        "Think step by step out loud, focused on application and how it could be useful to the "
+                        "tying into the available agents. Provide up to two sentence description."
                     )
                 ),
             ),
@@ -228,14 +241,14 @@ class Assistant(Viewer):
         else:
             agent = await self._choose_agent(messages, self.agents)
         print(
-            f"Assistant decided on {agent} between the available options: {agent_types}"
+            f"Assistant decided on \033[95m{agent!r}\033[0m"
         )
         selected = subagent = agents[agent]
         agent_chain = []
         while unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in memory
         ):
-            print(f"Unmet dependencies: {unmet_dependencies}")
+            print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
             subagents = [
                 agent
                 for agent in self.agents
@@ -247,7 +260,7 @@ class Assistant(Viewer):
             subagent = agents[subagent_name]
             agent_chain.append((subagent, unmet_dependencies))
         for subagent, deps in agent_chain[::-1]:
-            print(f"Assistant decided the {subagent} will provide {deps}.")
+            print(f"Assistant decided the {subagent.name[:-5]!r} will provide {deps}.")
             self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
             await subagent.answer(messages)
         return selected
@@ -263,8 +276,8 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        await self._invalidate_pipeline(messages[-2:])
-        agent = await self._get_agent(messages[-2:])
+        await self._invalidate_memory(messages[-2:])
+        agent = await self._get_agent(messages[-3:])
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
 
         for message in messages:
@@ -273,7 +286,7 @@ class Assistant(Viewer):
 
         result = await agent.invoke(messages[-2:])
         self._current_agent.object = "## No agent active"
-        print("DONE", "\n\n")
+        print("\033[92mDONE\033[0m", "\n\n")
         return result
 
     def controls(self):

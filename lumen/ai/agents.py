@@ -253,9 +253,9 @@ class SourceAgent(Agent):
 
 class ChatAgent(Agent):
     """
-    Responsible for chatting about high level data related topics,
+    Responsible for chatting and providing info about high level data related topics,
     e.g. what datasets are available, the columns of the data or
-    statistics about the data.
+    statistics about the data, and continuing the conversation.
 
     Is capable of providing suggestions to get started.
     If data is available, it can also talk about the data itself.
@@ -264,7 +264,8 @@ class ChatAgent(Agent):
     system_prompt = param.String(
         default=(
             "Be a helpful chatbot to talk about high-level data exploration "
-            "like what datasets are available and what each column represents."
+            "like what datasets are available and what each column represents. "
+            "Provide suggestions to get started if necessary."
         )
     )
 
@@ -314,6 +315,27 @@ class ChatAgent(Agent):
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
+
+
+class ChatDetailsAgent(ChatAgent):
+    """
+    Responsible for chatting and providing info about details about the table values,
+    e.g. what should be noted about the data values, valuable, applicable insights about the data,
+    and continuing the conversation. Does not provide overviews; only details and meaning of the data.
+    """
+
+    requires = param.List(default=["current_source", "current_table"], readonly=True)
+
+    system_prompt = param.String(
+        default=(
+            "You are a world-class, subject expert on the topic. Help provide guidance and meaning "
+            "about the data values, highlight valuable and applicable insights. Be very precise "
+            "on your subject matter expertise and do not be afraid to use specialized terminology or "
+            "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
+            "instead, focus on the details and meaning of the data. If it's unclear what the user is asking, "
+            "ask clarifying questions to get more information."
+        )
+    )
 
 
 class LumenBaseAgent(Agent):
@@ -400,7 +422,7 @@ class LumenBaseAgent(Agent):
 
         data = {
             "summary": {
-                "total_size": size,
+                "total_table_cells": size,
                 "total_shape": shape,
                 "is_summarized": is_summarized,
                 "dtypes": df_dtypes_dict,
@@ -442,7 +464,7 @@ class LumenBaseAgent(Agent):
 
 class TableAgent(LumenBaseAgent):
     """
-    Responsible for selecting between a set of tables / datasets based on the user prompt.
+    Responsible for only displaying or choosing between a set of tables / datasets, no discussion.
     """
 
     system_prompt = param.String(
