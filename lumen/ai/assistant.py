@@ -233,7 +233,7 @@ class Assistant(Viewer):
         selected = subagent = agents[agent]
         agent_chain = []
         while unmet_dependencies := tuple(
-            r for r in subagent.requires if r not in memory
+            r for r in await subagent.requirements(messages) if r not in memory
         ):
             print(f"Unmet dependencies: {unmet_dependencies}")
             subagents = [
@@ -246,12 +246,6 @@ class Assistant(Viewer):
                 continue
             subagent = agents[subagent_name]
             agent_chain.append((subagent, unmet_dependencies))
-            if not (
-                unmet_dependencies := tuple(
-                    r for r in subagent.requires if r not in memory
-                )
-            ):
-                break
         for subagent, deps in agent_chain[::-1]:
             print(f"Assistant decided the {subagent} will provide {deps}.")
             self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"

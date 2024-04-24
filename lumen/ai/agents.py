@@ -158,6 +158,9 @@ class Agent(Viewer):
                 schema[field] = dict(spec, enum=spec["enum"][:5])
         return schema
 
+    async def requirements(self, messages: list | str):
+        return self.requires
+
     async def invoke(self, messages: list | str):
         system_prompt = self._system_prompt_with_context(messages)
 
@@ -250,8 +253,10 @@ class SourceAgent(Agent):
 
 class ChatAgent(Agent):
     """
-    Responsible for chatting about high level data stuff, like
-    what datasets are available and what each column represents.
+    Responsible for chatting about high level data related topics,
+    e.g. what datasets are available, the columns of the data or
+    statistics about the data.
+
     Is capable of providing suggestions to get started.
     If data is available, it can also talk about the data itself.
     """
@@ -266,6 +271,26 @@ class ChatAgent(Agent):
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     requires = param.List(default=["current_source"], readonly=True)
+
+    async def requirements(self, messages: list | str):
+        if 'current_data' in memory:
+            return self.requires
+        required_model = create_model("DataRequired", data_required=(bool, FieldInfo(
+            description="Whether the provided user query requires access to data."
+        )))
+        result = await self.llm.invoke(
+            messages,
+            system=(
+                "The user may or may not want to chat about a particular dataset. "
+                "Determine whether the provided user prompt requires access to "
+                "actual data."
+            ),
+            response_model=required_model,
+            allow_partial=False,
+        )
+        if result.data_required:
+            return self.requires + ['current_table']
+        return self.requires
 
     def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
@@ -282,8 +307,7 @@ class ChatAgent(Agent):
 
         if "current_data" in memory:
             context += (
-                f"\nHere's an overview of a *RANDOM* SAMPLE of "
-                f"the last available dataset, up to 5000 rows:\n```\n{memory['current_data']}\n```"
+                f"\nHere's a summary of the dataset the user just asked about:\n```\n{memory['current_data']}\n```"
             )
 
         system_prompt = self.system_prompt
