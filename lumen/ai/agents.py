@@ -656,7 +656,7 @@ class PipelineAgent(LumenBaseAgent):
             model="gpt-4",
         )
 
-        if transform.transform_required:
+        if transform and transform.transform_required:
             transform = await self.llm.invoke(
                 f"is the transform, {transform.transform!r} partially relevant to the query {messages!r}",
                 system=(
