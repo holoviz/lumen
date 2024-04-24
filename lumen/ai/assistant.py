@@ -148,9 +148,8 @@ class Assistant(Viewer):
             system=system,
             response_model=PipelineValidity,
             allow_partial=False,
-            model="gpt-4-turbo-preview",
         )
-        if not validity.valid:
+        if validity and not validity.valid:
             memory.pop("current_pipeline", None)
             memory.pop("current_sql", None)
             memory.pop("current_transform", None)
