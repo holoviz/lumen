@@ -332,12 +332,16 @@ class LumenBaseAgent(Agent):
             else:
                 return f"{num:.1e}"  # Exponential notation with two decimals
 
-        if len(df) < 100:
+        length = len(df)
+        if length < 100:
             out = io.StringIO()
             df.to_csv(out)
             out.seek(0)
             return out.read()
-        elif len(df) > 5000:
+
+        is_summarized = False
+        if length > 5000:
+            is_summarized = True
             df = df.sample(5000)
 
         df = df.sort_index()
@@ -352,8 +356,6 @@ class LumenBaseAgent(Agent):
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
             df_describe_dict[col]["nunique"] = df[col].nunique()
-            # df_describe_dict[col]["top_5_counts"] = df[col].value_counts().head().to_dict()
-            # length stats
             try:
                 df_describe_dict[col]["lengths"] = {
                     "max": df[col].str.len().max(),
@@ -391,9 +393,16 @@ class LumenBaseAgent(Agent):
             else:
                 df_head_dict[col] = df_head_dict[col].tolist()
 
-        data = {"stats": df_describe_dict, "head": df_head_dict}
-        data_string = str(data)
-        return data_string
+        data = {
+            "summary": {
+                "total_length": length,
+                "is_summarized": is_summarized,
+                "dtypes": {col: str(dtype) for col, dtype in df.dtypes.to_dict().items()}
+            },
+            "stats": df_describe_dict,
+            "head": df_head_dict
+        }
+        return str(data)
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         async def _render_component(spec, active):
@@ -677,7 +686,6 @@ class PipelineAgent(LumenBaseAgent):
             messages,
             system=f"{system_prompt}\n{picker_prompt}",
             response_model=transform_model,
-            model="gpt-4",
         )
 
         if transform and transform.transform_required:
@@ -745,6 +753,7 @@ class PipelineAgent(LumenBaseAgent):
         else:
             pipeline.add_transform(transform)
         pipeline._update_data(force=True)
+        memory["current_data"] = self._describe_data(pipeline.data)
         return pipeline
 
     async def invoke(self, messages: list | str):
