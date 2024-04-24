@@ -120,9 +120,12 @@ class DuckDBSource(Source):
                 distinct = self._connection.execute(distinct_expr).fetch_df()
                 schema[col]['enum'] = distinct[col].tolist()
 
-            minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
-            minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self._connection.execute(minmax_expr).fetch_df()
+            if min_maxes:
+                minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
+                minmax_expr = ' '.join(minmax_expr.splitlines())
+                minmax_data = self._connection.execute(minmax_expr).fetch_df()
+            else:
+                minmax_data = None
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':

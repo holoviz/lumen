@@ -107,9 +107,12 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                     self._apply_transforms(source, distinct_transforms)
                 )
                 schema[col]['enum'] = distinct[col].to_list()
-            minmax_data = self._read(
-                self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
-            )
+            if min_maxes:
+                minmax_data = self._read(
+                    self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
+                )
+            else:
+                minmax_data = None
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':
