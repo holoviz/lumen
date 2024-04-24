@@ -330,12 +330,14 @@ class LumenBaseAgent(Agent):
             df_describe_dict[col]["nunique"] = df[col].nunique()
             # df_describe_dict[col]["top_5_counts"] = df[col].value_counts().head().to_dict()
             # length stats
-            df_describe_dict[col]["lengths"] = {
-                "max": df[col].str.len().max(),
-                "min": df[col].str.len().min(),
-                "mean": float(df[col].str.len().mean()),
-                # "std": df[col].str.len().std(),
-            }
+            try:
+                df_describe_dict[col]["lengths"] = {
+                    "max": df[col].str.len().max(),
+                    "min": df[col].str.len().min(),
+                    "mean": float(df[col].str.len().mean()),
+                }
+            except AttributeError:
+                pass
 
         for col in df.columns:
             if col not in df_describe_dict:
