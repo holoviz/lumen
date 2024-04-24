@@ -78,6 +78,12 @@ class Llm(param.Parameterized):
         print(f"Invoked LLM output: {output!r}")
         return output
 
+    @classmethod
+    def _get_delta(cls, chunk):
+        if chunk.choices:
+            return chunk.choices[0].delta.content or ""
+        return ""
+
     async def stream(
         self,
         messages: list | str,
@@ -98,7 +104,7 @@ class Llm(param.Parameterized):
             **dict(self._client_kwargs, **kwargs),
         ):
             if response_model is None:
-                delta = chunk.choices[0].delta.content or ""
+                delta = self._get_delta(chunk)
                 string += delta
                 yield string
             else:
