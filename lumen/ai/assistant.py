@@ -42,7 +42,7 @@ class Assistant(Viewer):
 
     agents = param.List(default=[ChatAgent])
 
-    llm = param.ClassSelector(class_=Llm, default=Llama(model="default"))
+    llm = param.ClassSelector(class_=Llm, default=Llama())
 
     interface = param.ClassSelector(class_=ChatInterface)
 
@@ -226,6 +226,7 @@ class Assistant(Viewer):
                 messages=messages,
                 system=self._generate_picker_prompt(agents),
                 response_model=agent_model,
+                model_key="reasoning",
                 allow_partial=False
             )
             if out:
