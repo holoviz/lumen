@@ -28,6 +28,10 @@ dependencies = [
 ]
 
 extras_require = {
+    'ai': [
+        'instructor>=1.2.3',
+        'pydantic',
+    ],
     'sql': [
         'duckdb',
         'intake-sql',
