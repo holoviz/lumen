@@ -90,7 +90,7 @@ class Llm(param.Parameterized):
             model_key=model_key,
             **kwargs,
         )
-        if isasyncgen(chunks):
+        try:
             async for chunk in chunks:
                 if response_model is None:
                     delta = self._get_delta(chunk)
@@ -98,7 +98,7 @@ class Llm(param.Parameterized):
                     yield string
                 else:
                     yield getattr(chunk, field)
-        else:
+        except AttributeError:
             for chunk in chunks:
                 if response_model is None:
                     delta = self._get_delta(chunk)

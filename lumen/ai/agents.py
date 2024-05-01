@@ -17,7 +17,9 @@ from pydantic.fields import FieldInfo
 from ..base import Component
 from ..dashboard import load_yaml
 from ..pipeline import Pipeline
-from ..sources import FileSource, InMemorySource, Source
+from ..sources import (
+    FileSource, InMemorySource, JoinedSource, Source,
+)
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import hvPlotUIView
@@ -252,6 +254,28 @@ class SourceAgent(Agent):
         self.interface.send(menu, respond=False, user="SourceAgent")
 
 
+class TableJoinAgent(Agent):
+
+    requires = param.List(default=["current_source"], readonly=True)
+
+    provides = param.List(default=["current_source"], readonly=True)
+
+    on_init = param.Boolean(default=True)
+
+    async def invoke(self, messages: list[str] | str):
+        tables = tuple(memory["current_source"].get_tables())
+        # ??
+        # context = f"Here are all the tables available: {', '.join(tables)} in {memory['current_source']}"
+        system_prompt = self._system_prompt_with_context(messages, context=context)
+        result = await self.llm.invoke(
+            messages,
+            system=system_prompt,
+            response_model=JoinedSource,
+            allow_partial=False,
+        )
+        table = result.table
+
+
 class ChatAgent(Agent):
     """
     Responsible for chatting and providing info about high level data related topics,
@@ -329,12 +353,14 @@ class ChatDetailsAgent(ChatAgent):
 
     system_prompt = param.String(
         default=(
-            "You are a world-class, subject expert on the topic. Help provide guidance and meaning "
+            "You are a world-class, subject expert on the topic, with profound intellect. "
+            "Help provide guidance and meaning "
             "about the data values, highlight valuable and applicable insights. Be very precise "
             "on your subject matter expertise and do not be afraid to use specialized terminology or "
             "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
             "instead, focus on the details and meaning of the data. If it's unclear what the user is asking, "
-            "ask clarifying questions to get more information."
+            "ask clarifying questions to get more information. Your responses should reflect deep analytics "
+            "and passion for the subject matter at hand. Do not just repeat stats."
         )
     )
 
