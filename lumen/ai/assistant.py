@@ -17,6 +17,7 @@ from pydantic.fields import FieldInfo
 
 from .agents import Agent, ChatAgent
 from .llm import Llama, Llm
+from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
 
@@ -46,13 +47,29 @@ class Assistant(Viewer):
 
     interface = param.ClassSelector(class_=ChatInterface)
 
+    logs_filename = param.String(default="chat_logs.db")
+
     def __init__(
         self,
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | Type[Agent]] | None = None,
+        logs_filename: str = "chat_logs.db",
         **params,
     ):
+        self._logs = ChatLogs(filename=logs_filename)
+
+        def log_message(instance, message):
+            print(message)
+            index = len(instance)
+            self._logs.append(
+                session_id=self._session_id,
+                message_id=id(message),
+                index=index,
+                user=message.user,
+                content=message.object,
+            )
+
         def download_messages():
             def filter_by_reactions(messages):
                 return [
@@ -72,6 +89,9 @@ class Assistant(Viewer):
             interface.callback = self._chat_invoke
         interface.callback_exception = "raise"
 
+        self._session_id = id(self)
+        interface.append_callback = log_message
+
         llm = llm or self.llm
         instantiated = []
         for agent in agents or self.agents:
@@ -79,6 +99,7 @@ class Assistant(Viewer):
                 kwargs = {"llm": llm} if agent.llm is None else {}
                 agent = agent(interface=interface, **kwargs)
             instantiated.append(agent)
+
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!", user="Help", respond=False
