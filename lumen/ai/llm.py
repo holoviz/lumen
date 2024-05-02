@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import partial
-from inspect import isasyncgen
 
 import panel as pn
 import param

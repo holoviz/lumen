@@ -47,27 +47,25 @@ class Assistant(Viewer):
 
     interface = param.ClassSelector(class_=ChatInterface)
 
-    logs_filename = param.String(default="chat_logs.db")
+    logs_filename = param.String()
 
     def __init__(
         self,
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | Type[Agent]] | None = None,
-        logs_filename: str = "chat_logs.db",
+        logs_filename: str | None = None,
         **params,
     ):
-        self._logs = ChatLogs(filename=logs_filename)
-
-        def log_message(instance, message):
-            print(message)
-            index = len(instance)
-            self._logs.append(
+        def log_message(message, instance):
+            message_id = id(message)
+            message_index = len(instance)
+            self._logs.upsert(
                 session_id=self._session_id,
-                message_id=id(message),
-                index=index,
-                user=message.user,
-                content=message.object,
+                message_id=message_id,
+                message_index=message_index,
+                message_user=message.user,
+                message_content=message.object,
             )
 
         def download_messages():
@@ -90,7 +88,10 @@ class Assistant(Viewer):
         interface.callback_exception = "raise"
 
         self._session_id = id(self)
-        interface.append_callback = log_message
+
+        if logs_filename is not None:
+            self._logs = ChatLogs(filename=logs_filename)
+            interface.append_callback = log_message
 
         llm = llm or self.llm
         instantiated = []
