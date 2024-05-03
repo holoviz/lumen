@@ -24,12 +24,12 @@ class ChatLogs(param.Parameterized):
                 liked BOOLEAN DEFAULT FALSE,
                 disliked BOOLEAN DEFAULT FALSE,
                 removed BOOLEAN DEFAULT FALSE,
-                version INTEGER DEFAULT 1,
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         self.conn.commit()
+
     def upsert(
         self,
         session_id,
@@ -37,20 +37,18 @@ class ChatLogs(param.Parameterized):
         message_index,
         message_user,
         message_content,
-        version=1,
     ):
         self.cursor.execute(
             """
-            INSERT INTO logs (session_id, message_id, message_index, message_user, message_content, version)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO logs (session_id, message_id, message_index, message_user, message_content)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (message_id)
             DO UPDATE SET
             session_id = excluded.session_id,
             message_id = excluded.message_id,
             message_index = excluded.message_index,
             message_user = excluded.message_user,
-            message_content = excluded.message_content,
-            version = excluded.version
+            message_content = excluded.message_content
             """,
             (
                 session_id,
@@ -58,17 +56,17 @@ class ChatLogs(param.Parameterized):
                 message_index,
                 message_user,
                 message_content,
-                version,
             ),
         )
         self.conn.commit()
-    def update_status(self, id, liked=None, disliked=None, removed=None):
+
+    def update_status(self, message_id, liked=None, disliked=None, removed=None):
         self.cursor.execute(
             """
             UPDATE logs
             SET liked = COALESCE(?, liked), disliked = COALESCE(?, disliked), removed = COALESCE(?, removed)
-            WHERE id = ?
+            WHERE message_id = ?
             """,
-            (liked, disliked, removed, id),
+            (liked, disliked, removed, message_id),
         )
         self.conn.commit()

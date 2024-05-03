@@ -7,7 +7,8 @@ from typing import Literal, Type
 
 import param
 
-from panel.chat import ChatInterface, ChatMessage
+from panel import bind
+from panel.chat import ChatInterface, ChatMessage, ChatReactionIcons
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import Markdown
 from panel.viewable import Viewer
@@ -57,9 +58,18 @@ class Assistant(Viewer):
         logs_filename: str | None = None,
         **params,
     ):
-        def log_message(message, instance):
+
+        def on_message(message, instance):
+            def update_on_reaction(reactions):
+                self._logs.update_status(
+                    message_id=message_id,
+                    liked="like" in reactions,
+                    disliked="dislike" in reactions,
+                )
+
+            bind(update_on_reaction, message.param.reactions, watch=True)
             message_id = id(message)
-            message_index = len(instance)
+            message_index = len(instance) - 1
             self._logs.upsert(
                 session_id=self._session_id,
                 message_id=message_id,
@@ -67,6 +77,18 @@ class Assistant(Viewer):
                 message_user=message.user,
                 message_content=message.object,
             )
+
+        def on_undo(instance, _):
+            count = instance._get_last_user_entry_index()
+            messages = instance[-count:]
+            for message in messages:
+                self._logs.update_status(message_id=id(message), removed=True)
+
+        def on_rerun(instance, _):
+            count = instance._get_last_user_entry_index() - 1
+            messages = instance[-count:]
+            for message in messages:
+                self._logs.update_status(message_id=id(message), removed=True)
 
         def download_messages():
             def filter_by_reactions(messages):
@@ -82,16 +104,21 @@ class Assistant(Viewer):
             return StringIO(json.dumps(messages))
 
         if interface is None:
-            interface = ChatInterface(callback=self._chat_invoke)
+            interface = ChatInterface(
+                callback=self._chat_invoke,
+                # remove this once dynamic reaction icons is merged
+                reaction_icons=ChatReactionIcons(options={"like": "thumb-up", "dislike": "thumb-down"}).clone()
+            )
         else:
             interface.callback = self._chat_invoke
         interface.callback_exception = "raise"
+        interface.reaction_icons = ChatReactionIcons(options={"like": "thumb-up", "dislike": "thumb-down"}).clone()
 
         self._session_id = id(self)
 
         if logs_filename is not None:
             self._logs = ChatLogs(filename=logs_filename)
-            interface.append_callback = log_message
+            interface.append_callback = on_message
 
         llm = llm or self.llm
         instantiated = []
@@ -103,10 +130,13 @@ class Assistant(Viewer):
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
         interface.send(
-            "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!", user="Help", respond=False
+            "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
+            user="Help", respond=False,
         )
         interface.button_properties={
-            "suggest": {"callback": self._create_suggestion, "icon": "wand"}
+            "suggest": {"callback": self._create_suggestion, "icon": "wand"},
+            "undo": {"callback": on_undo},
+            "rerun": {"callback": on_rerun},
         }
         self._add_suggestions_to_footer(GETTING_STARTED_SUGGESTIONS)
 
