@@ -187,9 +187,6 @@ class OpenAI(Llm):
         return {"temperature": self.temperature}
 
     def get_client(self, model_key: str):
-        if client := pn.state.cache.get(model_key):
-            return client
-
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -203,7 +200,6 @@ class OpenAI(Llm):
         llm = openai.AsyncOpenAI(**model_kwargs)
         raw_client = llm.chat.completions.create
         client = self._create_client(raw_client, model)
-        pn.state.cache[model_key] = client
         return client
 
 class AzureOpenAI(Llm):
@@ -223,9 +219,6 @@ class AzureOpenAI(Llm):
         return {"temperature": self.temperature}
 
     def get_client(self, model_key: str):
-        if client := pn.state.cache.get(model_key):
-            return client
-
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -239,7 +232,6 @@ class AzureOpenAI(Llm):
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
         raw_client = llm.chat.completions.create
         client = self._create_client(raw_client, model)
-        pn.state.cache[model_key] = client
         return client
 
 
