@@ -75,7 +75,7 @@ class Llm(param.Parameterized):
                 if 'response_model' in kwargs:
                     kwargs['response_model'] = response_model
                 messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
-        print(f"Invoked LLM output: {output!r}")
+        print(f"\033[33mInvoked LLM output: {output!r}\033[0m")
         return output
 
     @classmethod

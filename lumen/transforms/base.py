@@ -175,6 +175,9 @@ class Transform(MultiTypeComponent):
             margin=(-10, 0, 5, 0)
         )
 
+    def _drop_none_values(self, **kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        return {k: v for k, v in kwargs.items() if v is not None}
+
 
 class Filter(Transform):
     """
@@ -492,7 +495,9 @@ class Sample(Transform):
     transform_type: ClassVar[str] = 'sample'
 
     def apply(self, table: DataFrame) -> DataFrame:
-        return table.sample(n=self.n, frac=self.frac, replace=self.replace)
+        return table.sample(
+            **self._drop_none_values(n=self.n, frac=self.frac, replace=self.replace)
+        )
 
 
 class Compute(Transform):
@@ -528,7 +533,15 @@ class Pivot(Transform):
     transform_type: ClassVar[str] = 'pivot'
 
     def apply(self, table: DataFrame) -> DataFrame:
-        return table.pivot(index=self.index, columns=self.columns, values=self.values)
+        pivot_table = table.pivot(
+            **self._drop_none_values(
+                index=self.index,
+                columns=self.columns,
+                values=self.values
+            )
+        )
+        pivot_table.columns = pivot_table.columns.to_flat_index()
+        return pivot_table
 
 
 class Melt(Transform):
@@ -795,6 +808,34 @@ class Eval(Transform):
     def apply(self, table: DataFrame) -> DataFrame:
         return pd.eval(self.expr, target=table)
 
+
+class DropNA(Transform):
+    """
+    `DropNA` drops rows with any missing values.
+
+    `df.dropna(axis=<axis>, how=<how>, thresh=<thresh>, subset=<subset>)`
+    """
+
+    axis = param.ClassSelector(default=0, class_=(int, str), doc="""
+        The axis to rename. 0 or 'index', 1 or 'columns'""")
+
+    how = param.ObjectSelector(default='any', objects=['any', 'all'], doc="""
+        Determine if row or column is removed from DataFrame, when we have
+        at least one NA or all NA.""")
+
+    thresh = param.Integer(default=None, doc="""
+        Require that many non-NA values.""")
+
+    subset = param.ListSelector(default=None, doc="""
+        Labels along other axis to consider, e.g. if you are dropping rows
+        these would be a list of columns to include.""")
+
+    transform_type: ClassVar[str] = 'dropna'
+
+    def apply(self, table: DataFrame) -> DataFrame:
+        return table.dropna(
+            axis=self.axis, how=self.how, thresh=self.thresh, subset=self.subset
+        )
 
 class project_lnglat(Transform):
     """

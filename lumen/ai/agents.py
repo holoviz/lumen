@@ -76,6 +76,7 @@ class Agent(Viewer):
                     f"Attempting to fix: {exception}.",
                     user="Exception",
                 )
+                memory.pop("current_pipeline")
             else:
                 self.interface.send(
                     f"Error cannot be resolved: {exception}.",
@@ -253,9 +254,9 @@ class SourceAgent(Agent):
 
 class ChatAgent(Agent):
     """
-    Responsible for chatting about high level data related topics,
+    Responsible for chatting and providing info about high level data related topics,
     e.g. what datasets are available, the columns of the data or
-    statistics about the data.
+    statistics about the data, and continuing the conversation.
 
     Is capable of providing suggestions to get started.
     If data is available, it can also talk about the data itself.
@@ -264,7 +265,8 @@ class ChatAgent(Agent):
     system_prompt = param.String(
         default=(
             "Be a helpful chatbot to talk about high-level data exploration "
-            "like what datasets are available and what each column represents."
+            "like what datasets are available and what each column represents. "
+            "Provide suggestions to get started if necessary."
         )
     )
 
@@ -316,6 +318,27 @@ class ChatAgent(Agent):
         return system_prompt
 
 
+class ChatDetailsAgent(ChatAgent):
+    """
+    Responsible for chatting and providing info about details about the table values,
+    e.g. what should be noted about the data values, valuable, applicable insights about the data,
+    and continuing the conversation. Does not provide overviews; only details and meaning of the data.
+    """
+
+    requires = param.List(default=["current_source", "current_table"], readonly=True)
+
+    system_prompt = param.String(
+        default=(
+            "You are a world-class, subject expert on the topic. Help provide guidance and meaning "
+            "about the data values, highlight valuable and applicable insights. Be very precise "
+            "on your subject matter expertise and do not be afraid to use specialized terminology or "
+            "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
+            "instead, focus on the details and meaning of the data. If it's unclear what the user is asking, "
+            "ask clarifying questions to get more information."
+        )
+    )
+
+
 class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
@@ -341,7 +364,7 @@ class LumenBaseAgent(Agent):
             return out.read()
 
         is_summarized = False
-        if size > 5000:
+        if shape[0] > 5000:
             is_summarized = True
             df = df.sample(5000)
 
@@ -400,7 +423,7 @@ class LumenBaseAgent(Agent):
 
         data = {
             "summary": {
-                "total_size": size,
+                "total_table_cells": size,
                 "total_shape": shape,
                 "is_summarized": is_summarized,
                 "dtypes": df_dtypes_dict,
@@ -424,8 +447,10 @@ class LumenBaseAgent(Agent):
             try:
                 yield type(component).from_spec(load_yaml(spec)).__panel__()
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 yield pn.pane.Alert(
-                    f"Error rendering component: {e}. Please undo or continue the conversation.",
+                    f"Error rendering component: {e}. Please press undo, edit the YAML, or continue the conversation.",
                     alert_type="danger",
                 )
                 # maybe offer undo
@@ -442,7 +467,7 @@ class LumenBaseAgent(Agent):
 
 class TableAgent(LumenBaseAgent):
     """
-    Responsible for selecting between a set of tables / datasets based on the user prompt.
+    Responsible for only displaying or choosing between a set of tables / datasets, no discussion.
     """
 
     system_prompt = param.String(
@@ -568,7 +593,7 @@ class SQLAgent(LumenBaseAgent):
             except Exception as e:
                 memory.pop("current_pipeline")
                 yield pn.pane.Alert(
-                    f"Error executing SQL query: {e}; please undo or continue the conversation",
+                    f"Error executing SQL query: {e}; please press undo, edit the YAML, or continue the conversation",
                     alert_type="danger",
                 )
 
@@ -629,7 +654,11 @@ class PipelineAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="Choose the appropriate data transformation based on the query."
+        default=(
+            "Choose the appropriate data transformation based on the query. "
+            "For `contains duplicate entries, cannot reshape`, "
+            "be sure to perform an `aggregate` transform first, ensuring `with_index=False` is set."
+        )
     )
 
     requires = param.List(default=["current_table"], readonly=True)
@@ -681,40 +710,39 @@ class PipelineAgent(LumenBaseAgent):
             transform_required=(
                 bool,
                 FieldInfo(
-                    description="Whether a transform is required for the query; sometimes the user may not need a transform.",
+                    description="Whether transforms are required for the query; sometimes the user may not need a transform.",
                     default=True,
                 ),
             ),
-            transform=(Optional[Literal[tuple(transforms)]], None),
+            transforms=(Optional[list[Literal[tuple(transforms)]]], None),
         )
 
         transform = await self.llm.invoke(
             messages,
             system=f"{system_prompt}\n{picker_prompt}",
             response_model=transform_model,
+            allow_partial=False
         )
 
         if transform and transform.transform_required:
             transform = await self.llm.invoke(
-                f"is the transform, {transform.transform!r} partially relevant to the query {messages!r}",
+                f"are the transforms, {transform.transforms!r} partially relevant to the query {messages!r}",
                 system=(
                     f"You are a world class validation model. "
                     f"Capable to determine if the following value is valid for the statement, "
                     f"if it is not, explain why and suggest a new value from {picker_prompt}"
                 ),
                 response_model=transform_model,
+                allow_partial=False
             )
 
         if transform is None or not transform.transform_required:
             print(f"No transform found for {messages}")
             return None
 
-        transform_name = transform.transform
-        if self.debug:
-            print(
-                f"{self.name} thought {transform_name=!r} would be the right thing to do."
-            )
-        return transforms[transform_name.strip("'")] if transform_name else None
+        transform_names = transform.transforms
+        if transform_names:
+            return [transforms[transform_name.strip("'")] for transform_name in transform_names]
 
     async def _construct_transform(
         self, messages: list | str, transform: Type[Transform], system_prompt: str
@@ -738,7 +766,7 @@ class PipelineAgent(LumenBaseAgent):
 
     async def answer(self, messages: list | str) -> Transform:
         system_prompt = self._system_prompt_with_context(messages)
-        transform_type = await self._find_transform(messages, system_prompt)
+        transform_types = await self._find_transform(messages, system_prompt)
         if "current_pipeline" in memory:
             pipeline = memory["current_pipeline"]
         else:
@@ -746,18 +774,20 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"], table=memory["current_table"]
             )
         memory["current_pipeline"] = pipeline
-        if not transform_type and pipeline:
+        if not transform_types and pipeline:
             return pipeline
-        transform = await self._construct_transform(
-            messages, transform_type, system_prompt
-        )
-        memory["current_transform"] = spec = transform.to_spec()
-        if self.debug:
-            print(f"{self.name} settled on {spec=!r}.")
-        if pipeline.transforms and type(pipeline.transforms[-1]) is type(transform):
-            pipeline.transforms[-1] = transform
-        else:
-            pipeline.add_transform(transform)
+
+        for transform_type in transform_types:
+            transform = await self._construct_transform(
+                messages, transform_type, system_prompt
+            )
+            memory["current_transform"] = spec = transform.to_spec()
+            if self.debug:
+                print(f"{self.name} settled on {spec=!r}.")
+            if pipeline.transforms and type(pipeline.transforms[-1]) is type(transform):
+                pipeline.transforms[-1] = transform
+            else:
+                pipeline.add_transform(transform)
         pipeline._update_data(force=True)
         memory["current_data"] = self._describe_data(pipeline.data)
         return pipeline
