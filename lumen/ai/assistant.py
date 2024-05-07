@@ -118,7 +118,7 @@ class Assistant(Viewer):
 
         if logs_filename is not None:
             self._logs = ChatLogs(filename=logs_filename)
-            interface.append_callback = on_message
+            interface.post_hook = on_message
 
         llm = llm or self.llm
         instantiated = []
