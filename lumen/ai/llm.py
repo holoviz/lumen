@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import partial
-from inspect import isasyncgen
 
 import panel as pn
 import param
@@ -30,8 +29,12 @@ class Llm(param.Parameterized):
         else:
             return patch(create=create, mode=self.mode)
 
-    def _get_model_kwargs(self, model):
-        return self._models_kwargs.get(model) or self._models_kwargs["default"]
+    def _get_model_kwargs(self, model_key):
+        if model_key in self._models_kwargs:
+            model_kwargs = self._models_kwargs.get(model_key)
+        else:
+            model_kwargs = self._models_kwargs["default"]
+        return dict(model_kwargs)
 
     @property
     def _client_kwargs(self):
@@ -96,7 +99,7 @@ class Llm(param.Parameterized):
             model_key=model_key,
             **kwargs,
         )
-        if isasyncgen(chunks):
+        try:
             async for chunk in chunks:
                 if response_model is None:
                     delta = self._get_delta(chunk)
@@ -104,7 +107,7 @@ class Llm(param.Parameterized):
                     yield string
                 else:
                     yield getattr(chunk, field)
-        else:
+        except TypeError:
             for chunk in chunks:
                 if response_model is None:
                     delta = self._get_delta(chunk)
@@ -196,7 +199,7 @@ class OpenAI(Llm):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
-        model = model_kwargs.pop("model", "default")
+        model = model_kwargs.pop("model")
         if self.base_url:
             model_kwargs["base_url"] = self.base_url
         if self.api_key:
@@ -228,7 +231,7 @@ class AzureOpenAI(Llm):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
-        model = model_kwargs.pop("model", "default")
+        model = model_kwargs.pop("model")
         if self.api_version:
             model_kwargs["api_version"] = self.api_version
         if self.api_key:
