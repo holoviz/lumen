@@ -61,8 +61,14 @@ class Llm(param.Parameterized):
 
         output = None
         for r in range(self.retry):
-            output = await self.run_client(model_key, messages, **kwargs)
-            break
+            try:
+                output = await self.run_client(model_key, messages, **kwargs)
+                break
+            except Exception as e:
+                print(f"Error encountered: {e}")
+                if 'response_model' in kwargs:
+                    kwargs['response_model'] = response_model
+                messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
         print(f"\033[33mInvoked LLM output: {output!r}\033[0m")
         return output
 
