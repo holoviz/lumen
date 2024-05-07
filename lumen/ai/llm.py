@@ -18,6 +18,8 @@ class Llm(param.Parameterized):
 
     retry = param.Integer(default=2)
 
+    use_logfire = param.Boolean(default=False)
+
     # Allows defining a dictionary of default models.
     _models_kwargs = {}
 
@@ -209,6 +211,11 @@ class OpenAI(Llm):
         llm = openai.AsyncOpenAI(**model_kwargs)
         raw_client = llm.chat.completions.create
         client = self._create_client(raw_client, model)
+
+        if self.use_logfire:
+            import logfire
+            logfire.instrument_openai(llm)
+
         return client
 
 class AzureOpenAI(Llm):
