@@ -38,27 +38,44 @@ class ChatLogs(param.Parameterized):
         message_user,
         message_content,
     ):
-        self.cursor.execute(
-            """
-            INSERT INTO logs (session_id, message_id, message_index, message_user, message_content)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (message_id)
-            DO UPDATE SET
-            session_id = excluded.session_id,
-            message_id = excluded.message_id,
-            message_index = excluded.message_index,
-            message_user = excluded.message_user,
-            message_content = excluded.message_content
-            """,
-            (
-                session_id,
-                message_id,
-                message_index,
-                message_user,
-                message_content,
-            ),
-        )
-        self.conn.commit()
+        UPSERT_SCHEMA = """
+        INSERT INTO logs (session_id, message_id, message_index, message_user, message_content)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (message_id)
+        DO UPDATE SET
+        session_id = excluded.session_id,
+        message_id = excluded.message_id,
+        message_index = excluded.message_index,
+        message_user = excluded.message_user,
+        message_content = excluded.message_content
+        """
+        try:
+            self.cursor.execute(
+                UPSERT_SCHEMA,
+                (
+                    session_id,
+                    message_id,
+                    message_index,
+                    message_user,
+                    message_content,
+                ),
+            )
+        except Exception:
+            try:
+                self.cursor.execute(
+                    UPSERT_SCHEMA,
+                    (
+                        session_id,
+                        message_id,
+                        message_index,
+                        message_user,
+                        str(message_content),
+                    ),
+                )
+            except Exception:
+                print("Failed to insert message")
+                return
+            self.conn.commit()
 
     def update_status(self, message_id, liked=None, disliked=None, removed=None):
         self.cursor.execute(
