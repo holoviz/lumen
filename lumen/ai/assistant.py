@@ -128,7 +128,7 @@ class Assistant(Viewer):
                 agent = agent(interface=interface, **kwargs)
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False,
