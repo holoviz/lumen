@@ -450,7 +450,7 @@ class LumenBaseAgent(Agent):
             memory["current_spec"] = spec
             try:
                 output = type(component).from_spec(load_yaml(spec)).__panel__()
-                output.sizing_mode = "stretch_both"
+                output.sizing_mode = "stretch_width"
                 yield output
             except Exception as e:
                 import traceback
