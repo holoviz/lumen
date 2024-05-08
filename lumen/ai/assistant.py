@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatMessage, ChatReactionIcons
+from panel.chat import ChatInterface, ChatMessage
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import Markdown
 from panel.viewable import Viewer
@@ -55,7 +55,7 @@ class Assistant(Viewer):
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | Type[Agent]] | None = None,
-        logs_filename: str | None = None,
+        logs_filename: str = "",
         **params,
     ):
 
@@ -107,12 +107,12 @@ class Assistant(Viewer):
             interface = ChatInterface(
                 callback=self._chat_invoke,
                 # remove this once dynamic reaction icons is merged
-                reaction_icons=ChatReactionIcons(options={"like": "thumb-up", "dislike": "thumb-down"}).clone()
+                reaction_icons={"like": "thumb-up", "dislike": "thumb-down"}
             )
         else:
             interface.callback = self._chat_invoke
         interface.callback_exception = "raise"
-        interface.reaction_icons = ChatReactionIcons(options={"like": "thumb-up", "dislike": "thumb-down"}).clone()
+        interface.reaction_icons = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
 
