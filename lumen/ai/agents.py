@@ -278,20 +278,23 @@ class ChatAgent(Agent):
         if 'current_data' in memory:
             return self.requires
         required_model = create_model("DataRequired", data_required=(bool, FieldInfo(
-            description="Whether the provided user query requires access to data."
+            description="Whether the user is asking about a specific dataset."
         )))
-        result = await self.llm.invoke(
-            messages,
-            system=(
-                "The user may or may not want to chat about a particular dataset. "
-                "Determine whether the provided user prompt requires access to "
-                "actual data."
-            ),
-            response_model=required_model,
-            allow_partial=False,
-        )
-        if result.data_required:
-            return self.requires + ['current_table']
+        for _ in range(3):
+            result = await self.llm.invoke(
+                messages,
+                system=(
+                    "The user may or may not want to chat about a particular dataset. "
+                    "Determine whether the provided user prompt requires access to "
+                    "actual data."
+                ),
+                response_model=required_model,
+                allow_partial=False,
+            )
+            if result is None:
+                continue
+            elif result.data_required:
+                return self.requires + ['current_table']
         return self.requires
 
     def _system_prompt_with_context(
