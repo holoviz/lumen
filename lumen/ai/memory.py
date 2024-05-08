@@ -59,6 +59,8 @@ class _Memory(Viewer):
     def _render_item(self, key, item):
         if isinstance(item, Component):
             item = item.to_spec()
+            if 'password' in item:
+                item['password'] = '•'*len(item['password'])
         if isinstance(item, str):
             item = f'```yaml\n{item}\n```'
         return pn.panel(item, name=key, sizing_mode='stretch_width', styles={'overflow': 'scroll'})
