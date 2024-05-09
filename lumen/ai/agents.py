@@ -125,6 +125,7 @@ class Agent(Viewer):
         tabs = pn.Tabs(
             ("Code", code_col),
             ("Output", placeholder),
+            styles={'min-width': "100%"}
         )
         placeholder.objects = [
             pn.bind(callback, code_editor.param.value, tabs.param.active)
@@ -448,7 +449,8 @@ class LumenBaseAgent(Agent):
             # store the spec in the cache instead of memory to save tokens
             memory["current_spec"] = spec
             try:
-                yield type(component).from_spec(load_yaml(spec)).__panel__()
+                output = type(component).from_spec(load_yaml(spec)).__panel__()
+                yield output
             except Exception as e:
                 import traceback
                 traceback.print_exc()
