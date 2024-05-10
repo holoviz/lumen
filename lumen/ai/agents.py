@@ -281,7 +281,7 @@ class ChatAgent(Agent):
         required_model = create_model("DataRequired", data_required=(bool, FieldInfo(
             description="Whether the user is asking about a specific dataset."
         )))
-        for _ in range(3):
+        for i in range(3):
             result = await self.llm.invoke(
                 messages,
                 system=(
@@ -296,6 +296,8 @@ class ChatAgent(Agent):
                 continue
             elif result.data_required:
                 return self.requires + ['current_table']
+            else:
+                break
         return self.requires
 
     def _system_prompt_with_context(
