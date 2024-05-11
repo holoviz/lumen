@@ -575,16 +575,6 @@ class SQLAgent(LumenBaseAgent):
         default="""
         You are an agent responsible for writing a SQL query that will
         perform the data transformations the user requested.
-
-        If asked to pivot a table:
-        SELECT
-            t_county,
-            MAX(CASE WHEN t_state = 'CA' THEN p_name ELSE NULL END) AS CA,
-            -- Add more states here
-        FROM
-            your_table
-        GROUP BY
-            t_county;
         """
     )
 
