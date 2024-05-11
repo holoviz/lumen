@@ -864,7 +864,7 @@ class hvPlotAgent(LumenBaseAgent):
         )
 
         # Instantiate
-        spec = dict(kwargs)
+        spec = {key: val for key, val in dict(kwargs).items() if val is not None}
         spec["responsive"] = True
 
         spec["type"] = "hvplot_ui"

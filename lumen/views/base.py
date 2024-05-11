@@ -672,9 +672,9 @@ class hvPlotBaseView(View):
 
     y = param.Selector(doc="The column to render on the y-axis.")
 
-    by = param.ListSelector(doc="The column(s) to facet the plot by.", allow_None=True)
+    by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
-    groupby = param.ListSelector(doc="The column(s) to group by.", allow_None=True)
+    groupby = param.ListSelector(doc="The column(s) to group by.")
 
     _field_params = ['x', 'y', 'by', 'groupby']
 
