@@ -1,7 +1,7 @@
 import io
 import textwrap
 
-from typing import Literal, Optional, Type
+from typing import Literal
 
 import pandas as pd
 import panel as pn
@@ -19,7 +19,7 @@ from ..dashboard import load_yaml
 from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import SQLOverride, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
@@ -577,6 +577,8 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
 
+    provides = param.List(default=["current_sql", "current_pipeline"], readonly=True)
+
     def _render_sql(self, query):
         source = memory["current_source"]
 
@@ -660,120 +662,11 @@ class PipelineAgent(LumenBaseAgent):
     If the user asks to calculate, aggregate, select or perform some other operation on the data this is your best best.
     """
 
-    system_prompt = param.String(
-        default=(
-            "Choose the appropriate data transformation based on the query. "
-            "For `contains duplicate entries, cannot reshape`, "
-            "be sure to perform an `aggregate` transform first, ensuring `with_index=False` is set."
-        )
-    )
-
-    requires = param.List(default=["current_table"], readonly=True)
+    requires = param.List(default=["current_table", "current_sql"], readonly=True)
 
     provides = param.List(default=["current_pipeline"], readonly=True)
 
-    @property
-    def _available_transforms(self) -> dict[str, Type[Transform]]:
-        transforms = param.concrete_descendents(Transform)
-        return {
-            name: transform
-            for name, transform in transforms.items()
-            if not issubclass(transform, SQLTransform)
-        }
-
-    def _transform_picker_prompt(self) -> str:
-        prompt = "This is a description of all available transforms:\n"
-        for transform in self._available_transforms.values():
-            if doc := (transform.__doc__ or "").strip():
-                doc = doc.split("\n\n")[0].strip().replace("\n", "")
-                prompt += f"- {doc}\n"
-        prompt += "- `None` No transform needed\n"
-        return prompt
-
-    def _transform_prompt(
-        self, model: BaseModel, transform: Transform, table: str, schema: dict
-    ) -> str:
-        prompt = f"{transform.__doc__}"
-        if not schema:
-            raise ValueError(f"No schema found for table {table!r}")
-        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
-        if "current_transform" in memory:
-            prompt += f"The previous transform specification was: {memory['current_transform']}"
-        return prompt
-
-    async def _find_transform(
-        self, messages: list | str, system_prompt: str
-    ) -> Type[Transform] | None:
-        picker_prompt = self._transform_picker_prompt()
-        transforms = self._available_transforms
-        transform_model = create_model(
-            "Transform",
-            summary_of_query=(
-                str,
-                FieldInfo(
-                    description="A summary of the query and whether you think a transform is needed."
-                ),
-            ),
-            transform_required=(
-                bool,
-                FieldInfo(
-                    description="Whether transforms are required for the query; sometimes the user may not need a transform.",
-                    default=True,
-                ),
-            ),
-            transforms=(Optional[list[Literal[tuple(transforms)]]], None),
-        )
-
-        transform = await self.llm.invoke(
-            messages,
-            system=f"{system_prompt}\n{picker_prompt}",
-            response_model=transform_model,
-            allow_partial=False
-        )
-
-        if transform and transform.transform_required:
-            transform = await self.llm.invoke(
-                f"are the transforms, {transform.transforms!r} partially relevant to the query {messages!r}",
-                system=(
-                    f"You are a world class validation model. "
-                    f"Capable to determine if the following value is valid for the statement, "
-                    f"if it is not, explain why and suggest a new value from {picker_prompt}"
-                ),
-                response_model=transform_model,
-                allow_partial=False
-            )
-
-        if transform is None or not transform.transform_required:
-            print(f"No transform found for {messages}")
-            return None
-
-        transform_names = transform.transforms
-        if transform_names:
-            return [transforms[transform_name.strip("'")] for transform_name in transform_names]
-
-    async def _construct_transform(
-        self, messages: list | str, transform: Type[Transform], system_prompt: str
-    ) -> Transform:
-        excluded = transform._internal_params + ["controls", "type"]
-        schema = self._get_schema(memory["current_pipeline"])
-        table = memory["current_table"]
-        model = param_to_pydantic(transform, excluded=excluded, schema=schema)[
-            transform.__name__
-        ]
-        transform_prompt = self._transform_prompt(model, transform, table, schema)
-        if self.debug:
-            print(f"{self.name} recalls that {transform_prompt}.")
-        kwargs = await self.llm.invoke(
-            messages,
-            system=system_prompt + transform_prompt,
-            response_model=model,
-            allow_partial=False,
-        )
-        return transform(**dict(kwargs))
-
     async def answer(self, messages: list | str) -> Transform:
-        system_prompt = self._system_prompt_with_context(messages)
-        transform_types = await self._find_transform(messages, system_prompt)
         if "current_pipeline" in memory:
             pipeline = memory["current_pipeline"]
         else:
@@ -781,20 +674,6 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"], table=memory["current_table"]
             )
         memory["current_pipeline"] = pipeline
-        if not transform_types and pipeline:
-            return pipeline
-
-        for transform_type in transform_types:
-            transform = await self._construct_transform(
-                messages, transform_type, system_prompt
-            )
-            memory["current_transform"] = spec = transform.to_spec()
-            if self.debug:
-                print(f"{self.name} settled on {spec=!r}.")
-            if pipeline.transforms and type(pipeline.transforms[-1]) is type(transform):
-                pipeline.transforms[-1] = transform
-            else:
-                pipeline.add_transform(transform)
         pipeline._update_data(force=True)
         memory["current_data"] = self._describe_data(pipeline.data)
         return pipeline

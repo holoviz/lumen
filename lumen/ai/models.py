@@ -24,7 +24,7 @@ class Validity(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Focus only on whether the table and/or pipeline contain all the necessary columns
+        Focus only on whether the table and/or pipeline / SQL contain all the necessary columns
         to answer the user's query.
 
         Based on the latest user's query, is the table relevant?
@@ -34,16 +34,16 @@ class Validity(BaseModel):
         like whether the pipeline contains visualization or not.
         For example, if it's "visualize this", then it's still valid.
         However, if the pipeline contains `MAX(t_cap) as turbine_capacity`, and the user
-        asks to plot a map of `lat and lon`, then it's invalid!
+        asks to plot a map of `lat and lon`, then it's invalid and needs a refresh!
         Please only provide up to two sentences at most; be concise and to the point.
         """
     )
 
     is_invalid: bool = Field(
-        description="Whether one of the table and/or pipeline is invalid."
+        description="Whether one of the table and/or pipeline is invalid or needs a refresh."
     )
 
-    invalid_key: Literal["pipeline", "table"] | None = Field(
+    invalid_key: Literal["pipeline", "table", "sql"] | None = Field(
         default=None,
-        description="Whether a pipeline or table is invalid. None if valid."
+        description="Whether a pipeline, table, or sql is invalid. None if valid."
     )
