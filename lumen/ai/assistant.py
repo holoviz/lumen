@@ -181,27 +181,25 @@ class Assistant(Viewer):
 
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
-        pipeline = memory.get("current_pipeline")
-        if not pipeline:
+        sql = memory.get("current_sql")
+        if not sql:
             return
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
 
-        Then, does the pipeline include all the necessary datasets or columns
+        Then, does the SQL include all the necessary datasets or columns
         to answer the user's query? If an does the SQL transform is included, do those
         transformations contain all the necessary columns to answer the user's query?
-        FOCUS only on the columns, and **disregard** everything else,
-        like whether the pipeline contains visualization or not.
 
         ### Current Table:
         ```
         {table}
         ```
 
-        ### Current Pipeline:
+        ### Current SQL:
         ```
-        {pipeline.to_spec()}
+        {sql}
         ```
         """
         validity = await self.llm.invoke(
@@ -215,10 +213,8 @@ class Assistant(Viewer):
             invalid_key = validity.invalid_key
             if invalid_key == "table":
                 memory.pop("current_table", None)
-                memory.pop("current_data", None)
             elif invalid_key == "sql":
                 memory.pop("current_sql", None)
-            memory.pop("current_pipeline", None)
             print(f"\033[91mInvalidated {invalid_key!r} from memory.\033[0m")
 
     def _create_suggestion(self, instance, event):
@@ -267,7 +263,7 @@ class Assistant(Viewer):
                 FieldInfo(
                     description=(
                         "Think step by step out loud, focused on application and how it could be useful to the "
-                        "tying into the available agents. Provide up to two sentence description."
+                        "tying into the available agents. Provide up to two sentence description. "
                     )
                 ),
             ),
@@ -292,11 +288,12 @@ class Assistant(Viewer):
         agent_types = tuple(agent.name[:-5] for agent in self.agents)
         agents = {agent.name[:-5]: agent for agent in self.agents}
 
-        reasoning = ""
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
             agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
+            messages.append({"role": "assistant", "content": reasoning})
+
         print(
             f"Assistant decided on \033[95m{agent!r}\033[0m"
         )
@@ -320,7 +317,7 @@ class Assistant(Viewer):
             print(f"Assistant decided the {subagent.name[:-5]!r} will provide {deps}.")
             self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
             await subagent.answer(messages)
-        return selected, reasoning
+        return selected
 
     def _serialize(self, obj):
         if isinstance(obj, (Tabs, Column)):
@@ -334,10 +331,9 @@ class Assistant(Viewer):
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         await self._invalidate_memory(messages[-2:])
-        agent, reasoning = await self._get_agent(messages[-3:])
+        agent = await self._get_agent(messages[-3:])
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        messages.append({"role": "assistant", "content": reasoning})
-        print("\n\n\033[95mMESSAGES:\033[0m")
+        print("\n\033[95mMESSAGES:\033[0m")
         for message in messages:
             print(f"{message['role']!r}: {message['content']}")
             print("ENTRY" + "-" * 10)

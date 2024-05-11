@@ -572,7 +572,20 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="You are an agent responsible for writing a SQL query that will perform the data transformations the user requested."
+        default="""
+        You are an agent responsible for writing a SQL query that will
+        perform the data transformations the user requested.
+
+        If asked to pivot a table:
+        SELECT
+            t_county,
+            MAX(CASE WHEN t_state = 'CA' THEN p_name ELSE NULL END) AS CA,
+            -- Add more states here
+        FROM
+            your_table
+        GROUP BY
+            t_county;
+        """
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
@@ -591,6 +604,7 @@ class SQLAgent(LumenBaseAgent):
             table = memory["current_table"]
 
             transforms = [SQLOverride(override=query)]
+            print(memory["current_pipeline"])
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -633,6 +647,8 @@ class SQLAgent(LumenBaseAgent):
             response_model=Sql,
             field="query",
         ):
+            if chunk is None:
+                continue
             message = self.interface.stream(
                 f"```sql\n{chunk}\n```",
                 user="SQL",
@@ -671,8 +687,10 @@ class PipelineAgent(LumenBaseAgent):
             pipeline = memory["current_pipeline"]
         else:
             pipeline = Pipeline(
-                source=memory["current_source"], table=memory["current_table"]
+                source=memory["current_source"],
+                table=memory["current_table"],
             )
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
         memory["current_pipeline"] = pipeline
         pipeline._update_data(force=True)
         memory["current_data"] = self._describe_data(pipeline.data)
