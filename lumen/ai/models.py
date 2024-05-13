@@ -5,9 +5,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class Table(BaseModel):
+class FuzzyTable(BaseModel):
 
-    table: str = Field(description="The full path name")
+    keywords: list[str] = Field(description="The table keywords from the user query.")
 
 
 class Sql(BaseModel):

@@ -1,3 +1,4 @@
+import difflib
 import io
 import textwrap
 
@@ -24,7 +25,7 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import Sql, Table
+from .models import FuzzyTable, Sql
 from .translate import param_to_pydantic
 
 
@@ -76,7 +77,6 @@ class Agent(Viewer):
                     f"Attempting to fix: {exception}.",
                     user="Exception",
                 )
-                memory.pop("current_pipeline")
             else:
                 self.interface.send(
                     f"Error cannot be resolved: {exception}.",
@@ -139,7 +139,7 @@ class Agent(Viewer):
     def __panel__(self):
         return self.interface
 
-    def _system_prompt_with_context(
+    async def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
@@ -157,14 +157,31 @@ class Agent(Viewer):
         schema = dict(schema)
         for field, spec in schema.items():
             if "enum" in spec:
-                schema[field] = dict(spec, enum=spec["enum"][:5])
+                spec.pop("enum")
+            if "inclusiveMinimum" in spec:
+                spec["min"] = spec.pop("inclusiveMinimum")
+            if "inclusiveMaximum" in spec:
+                spec["max"] = spec.pop("inclusiveMaximum")
         return schema
+
+
+    async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
+        table_keywords = (await self.llm.invoke(
+            messages,
+            system=self.system_prompt,
+            response_model=FuzzyTable,
+            allow_partial=False
+        )).keywords
+        print(table_keywords, "KEYWORDS")
+        tables = tuple(table.replace('"', "") for table in tables)
+        closest_tables = difflib.get_close_matches(table_keywords, tables, n=n)
+        return tuple(closest_tables)
 
     async def requirements(self, messages: list | str):
         return self.requires
 
     async def invoke(self, messages: list | str):
-        system_prompt = self._system_prompt_with_context(messages)
+        system_prompt = await self._system_prompt_with_context(messages)
 
         message = None
         async for chunk in self.llm.stream(
@@ -300,13 +317,17 @@ class ChatAgent(Agent):
                 break
         return self.requires
 
-    def _system_prompt_with_context(
+    async def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
     ) -> str:
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
         if len(tables) > 1:
-            context = f"Available tables: {', '.join(tables)}"
+            if len(tables) < 10:
+                context = f"Available tables: {', '.join(tables)}"
+            else:
+                tables = await self._get_closest_tables(messages, tables, n=5)
+                context = f"Top 5 closest tables: {', '.join(tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
             schema = self._get_schema(memory["current_source"], table)
@@ -375,10 +396,6 @@ class LumenBaseAgent(Agent):
             df = df.sample(5000)
 
         df = df.sort_index()
-        df_dtypes_dict = {
-            col: str(type(df[col].iloc[:1].astype("object").iloc[0])).split("'")[1]
-            for col in df.columns
-        }
 
         for col in df.columns:
             if isinstance(df[col].iloc[0], pd.Timestamp):
@@ -432,7 +449,6 @@ class LumenBaseAgent(Agent):
                 "total_table_cells": size,
                 "total_shape": shape,
                 "is_summarized": is_summarized,
-                "dtypes": df_dtypes_dict,
             },
             "stats": df_describe_dict,
             "head": df_head_dict
@@ -481,10 +497,6 @@ class TableAgent(LumenBaseAgent):
         default="You are an agent responsible for finding the correct table based on the user prompt."
     )
 
-    response_model = param.ClassSelector(
-        default=Table, class_=BaseModel, is_instance=False
-    )
-
     requires = param.List(default=["current_source"], readonly=True)
 
     provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
@@ -494,11 +506,13 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            system_prompt = self._system_prompt_with_context(messages)
+            if len(tables) > 10:
+                tables = await self._get_closest_tables(messages, tables)
+
+            system_prompt = await self._system_prompt_with_context(messages)
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
             # needed or else something with grammar issue
-            tables = tuple(table.replace('"', "") for table in tables)
             table_model = create_model("Table", table=(Literal[tables], FieldInfo(
                 description="The most relevant table based on the user query; if none are relevant, select the first."
             )))
@@ -528,7 +542,7 @@ class TableAgent(LumenBaseAgent):
 class TableListAgent(LumenBaseAgent):
     """
     Responsible for listing the available tables if the user's request is vague;
-    do not use this if user wants a specific table.s
+    do not use this if user wants a specific table.
     """
 
     system_prompt = param.String(
@@ -594,7 +608,6 @@ class SQLAgent(LumenBaseAgent):
             table = memory["current_table"]
 
             transforms = [SQLOverride(override=query)]
-            print(memory["current_pipeline"])
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -604,7 +617,6 @@ class SQLAgent(LumenBaseAgent):
                     memory["current_data"] = self._describe_data(df)
                 yield memory["current_pipeline"].__panel__()
             except Exception as e:
-                memory.pop("current_pipeline")
                 yield pn.pane.Alert(
                     f"Error executing SQL query: {e}; please press undo, edit the YAML, or continue the conversation",
                     alert_type="danger",
@@ -628,8 +640,9 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
         sql_expr = source.get_sql_expr(table)
-        system_prompt = self._system_prompt_with_context(messages)
+        system_prompt = await self._system_prompt_with_context(messages)
         schema = self._get_schema(source, table)
+        print(schema, "SCHEMA...")
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
         async for chunk in self.llm.stream(
             messages,
@@ -812,7 +825,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         return transform(**dict(kwargs))
 
     async def answer(self, messages: list | str) -> Transform:
-        system_prompt = self._system_prompt_with_context(messages)
+        system_prompt = await self._system_prompt_with_context(messages)
         transform_types = await self._find_transform(messages, system_prompt)
 
         if "current_pipeline" in memory:
@@ -882,7 +895,7 @@ class hvPlotAgent(LumenBaseAgent):
     async def answer(self, messages: list | str) -> Transform:
         pipeline = memory["current_pipeline"]
         table = memory["current_table"]
-        system_prompt = self._system_prompt_with_context(messages)
+        system_prompt = await self._system_prompt_with_context(messages)
 
         # Find parameters
         view = hvPlotUIView
