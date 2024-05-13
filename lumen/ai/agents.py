@@ -29,7 +29,7 @@ from .memory import memory
 from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
 
-FUZZY_TABLE_LENGTH = 10
+FUZZY_TABLE_LENGTH = 1
 
 
 def format_schema(schema):
@@ -186,7 +186,7 @@ class Agent(Viewer):
 
         # make case insensitive, but keep original case to transform back
         if not fuzzy_table.keywords:
-            return []
+            return tables[:n]
 
         table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
         tables_lower = {table.lower(): table for table in tables}
@@ -196,17 +196,28 @@ class Agent(Viewer):
         for keyword in table_keywords:
             closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
         closest_tables = [tables_lower[table] for table in closest_tables]
-        return tuple(closest_tables)
+        if len(closest_tables) == 0:
+            # if no tables are found, ask the user to select ones and load it
+            tables = await self._select_table(tables)
+        memory["closest_tables"] = tables
+        return tuple(tables)
 
     async def _select_table(self, tables):
         input_widget = pn.widgets.AutocompleteInput(
-            placeholder="Start typing the table name you are looking for",
+            placeholder="Start typing parts of the table name",
             case_sensitive=False,
             options=list(tables),
             search_strategy="includes",
             min_characters=1,
         )
-        self.interface.send(input_widget, user="Assistant", respond=False)
+        self.interface.send(
+            pn.chat.ChatMessage(
+                "No tables were found based on the user query. Please select the table you are looking for.",
+                footer_objects=[input_widget],
+                user="Assistant",
+            ),
+            respond=False
+        )
         while not input_widget.value:
             await asyncio.sleep(0.05)
         tables = [input_widget.value]
@@ -332,17 +343,6 @@ class ChatAgent(Agent):
         if 'current_data' in memory:
             return self.requires
 
-        source = memory.get("current_source")
-        tables = source.get_tables() if source else []
-        if len(tables) > FUZZY_TABLE_LENGTH:
-            closest_tables = await self._get_closest_tables(messages, tables, n=5)
-            if len(closest_tables) == 0:
-                # if no tables are found, ask the user to select ones and load it
-                tables = await self._select_table(tables)
-                return self.requires + ['current_table']
-            elif len(closest_tables) == 1:
-                return self.requires + ['current_table']
-
         for i in range(3):
             result = await self.llm.invoke(
                 messages,
@@ -368,9 +368,11 @@ class ChatAgent(Agent):
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
         if len(tables) > 1:
-            if len(tables) > FUZZY_TABLE_LENGTH:
-                tables = await self._get_closest_tables(messages, tables, n=5)
-            context = f"Available tables: {', '.join(tables)}"
+            if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
+                closest_tables = await self._get_closest_tables(messages, tables, n=5)
+            else:
+                closest_tables = memory.get("closest_tables", None)
+            context = f"Available tables: {', '.join(closest_tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
             schema = self._get_schema(memory["current_source"], table)
@@ -533,11 +535,11 @@ class LumenBaseAgent(Agent):
 
 class TableAgent(LumenBaseAgent):
     """
-    Responsible for only displaying or choosing between a set of tables / datasets, no discussion.
+    Responsible for only displaying a set of tables / datasets, no discussion.
     """
 
     system_prompt = param.String(
-        default="You are an agent responsible for finding the correct table based on the user prompt."
+        default="You are an agent responsible for displaying correct table based on the user prompt."
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -549,22 +551,27 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            if len(tables) > FUZZY_TABLE_LENGTH:
+            closest_tables = memory.pop("closest_tables", None)
+            if closest_tables:
+                tables = closest_tables
+            elif len(tables) > FUZZY_TABLE_LENGTH:
                 tables = await self._get_closest_tables(messages, tables)
             system_prompt = await self._system_prompt_with_context(messages)
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
-            # needed or else something with grammar issue
-            table_model = create_model("Table", table=(Literal[tables], FieldInfo(
-                description="The most relevant table based on the user query; if none are relevant, select the first."
-            )))
-            result = await self.llm.invoke(
-                messages,
-                system=system_prompt,
-                response_model=table_model,
-                allow_partial=False,
-            )
-            table = result.table
+            if len(tables) > 1:
+                table_model = create_model("Table", table=(Literal[tables], FieldInfo(
+                    description="The most relevant table based on the user query; if none are relevant, select the first."
+                )))
+                result = await self.llm.invoke(
+                    messages,
+                    system=system_prompt,
+                    response_model=table_model,
+                    allow_partial=False,
+                )
+                table = result.table
+            else:
+                table = tables[0]
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
