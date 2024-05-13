@@ -29,7 +29,7 @@ from .memory import memory
 from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
 
-FUZZY_TABLE_LENGTH = 1
+FUZZY_TABLE_LENGTH = 10
 
 
 def format_schema(schema):
@@ -539,7 +539,7 @@ class TableAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="You are an agent responsible for displaying correct table based on the user prompt."
+        default="You are an agent responsible for finding the correct table based on the user prompt."
     )
 
     requires = param.List(default=["current_source"], readonly=True)
