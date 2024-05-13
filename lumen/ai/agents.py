@@ -498,6 +498,8 @@ class LumenBaseAgent(Agent):
             "stats": df_describe_dict,
             "head": df_head_dict
         }
+
+        memory["current_columns"] = df.columns.tolist()
         return str(data)
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
@@ -657,7 +659,6 @@ class SQLAgent(LumenBaseAgent):
             table = memory["current_table"]
 
             transforms = [SQLOverride(override=query)]
-            print(memory["current_pipeline"])
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -689,10 +690,9 @@ class SQLAgent(LumenBaseAgent):
         table = memory["current_table"]
         if not hasattr(source, "get_sql_expr"):
             return None
-        sql_expr = source.get_sql_expr(table)
         system_prompt = await self._system_prompt_with_context(messages)
         schema = self._get_schema(source, table)
-        print(schema, "SCHEMA...")
+        sql_expr = source.get_sql_expr(table)
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
         async for chunk in self.llm.stream(
             messages,
@@ -711,12 +711,16 @@ class SQLAgent(LumenBaseAgent):
         if message.object is None:
             return
         sql_out = message.object.replace("```sql", "").replace("```", "").strip()
-        if f"FROM {table}" in sql_out:
-            sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
-                "SELECT * from ", ""
-            )
-            sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
-        memory["current_sql"] = sql_out
+
+        # TODO: find a better way to replace for all tables
+        for table in memory.get("closest_tables", [table]):
+            sql_expr = source.get_sql_expr(table)
+            if f"FROM {table}" in sql_out:
+                sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
+                    "SELECT * from ", ""
+                )
+                sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
+            memory["current_sql"] = sql_out
         return sql_out
 
     async def invoke(self, messages: list | str):
