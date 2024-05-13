@@ -322,10 +322,10 @@ class ChatAgent(Agent):
 
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
-        if len(tables) > 1:
+        if len(tables) > 10:
             closest_tables = await self._get_closest_tables(messages, tables, n=5)
             if len(closest_tables) == 0:
-                # if no tables are found, ask the user to select oness
+                # if no tables are found, ask the user to select ones and load it
                 tables = await self._select_table(tables)
                 return self.requires + ['current_table']
 
@@ -353,8 +353,8 @@ class ChatAgent(Agent):
     ) -> str:
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
-        if len(tables) > 10:
-            if len(tables) > 1 and "current_table" not in memory:
+        if len(tables) > 1:
+            if len(tables) > 10 and "current_table" not in memory:
                 tables = await self._get_closest_tables(messages, tables, n=5)
             context = f"Available tables: {', '.join(tables)}"
         else:
@@ -537,7 +537,6 @@ class TableAgent(LumenBaseAgent):
         else:
             if len(tables) > 10:
                 tables = await self._get_closest_tables(messages, tables)
-
             system_prompt = await self._system_prompt_with_context(messages)
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
