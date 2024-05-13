@@ -93,9 +93,7 @@ def parameter_to_field(
             field_info.default_factory = default_factory
     elif param_type in [param.List, param.ListSelector]:
         type_ = List
-        if parameter.default == [] or parameter.default is None:
-            field_info.default_factory = list
-        elif parameter.default is not None:
+        if parameter.default is not None:
             field_info.default_factory = parameter.default
         if param_type is param.List and parameter.item_type:
             type_ = List[_get_model(parameter.item_type, created_models)]
@@ -108,6 +106,7 @@ def parameter_to_field(
         elif parameter.default is not None:
             field_info.default_factory = parameter.default
     elif param_type in [param.Selector, param.ObjectSelector]:
+        field_info.default = parameter.default
         if literals:
             type_ = _create_literal(literals)
         elif parameter.objects:

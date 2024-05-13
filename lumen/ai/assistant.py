@@ -250,7 +250,7 @@ class Assistant(Viewer):
         return prompt
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        print("NEW" + "-" * 100)
+        print("\033[94mNEW\033[0m" + "-" * 100)
         await self.invoke(contents)
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent]):
