@@ -549,7 +549,7 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            if len(tables) > 10:
+            if len(tables) > FUZZY_TABLE_LENGTH:
                 tables = await self._get_closest_tables(messages, tables)
             system_prompt = await self._system_prompt_with_context(messages)
             if self.debug:
