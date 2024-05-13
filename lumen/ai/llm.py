@@ -70,10 +70,13 @@ class Llm(param.Parameterized):
                 output = await self.run_client(model_key, messages, **kwargs)
                 break
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 print(f"Error encountered: {e}")
                 if 'response_model' in kwargs:
                     kwargs['response_model'] = response_model
-                messages = messages + [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }]
+                messages = [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }] + messages
+                print("MESSAGES", messages)
         print(f"\033[33mInvoked LLM output: {output!r}\033[0m")
         return output
 

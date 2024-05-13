@@ -181,27 +181,25 @@ class Assistant(Viewer):
 
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
-        pipeline = memory.get("current_pipeline")
-        if not pipeline:
+        sql = memory.get("current_sql")
+        if not sql:
             return
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
 
-        Then, does the pipeline include all the necessary datasets or columns
+        Then, does the SQL include all the necessary datasets or columns
         to answer the user's query? If an does the SQL transform is included, do those
         transformations contain all the necessary columns to answer the user's query?
-        FOCUS only on the columns, and **disregard** everything else,
-        like whether the pipeline contains visualization or not.
 
         ### Current Table:
         ```
         {table}
         ```
 
-        ### Current Pipeline:
+        ### Current SQL:
         ```
-        {pipeline.to_spec()}
+        {sql}
         ```
         """
         validity = await self.llm.invoke(
@@ -209,15 +207,14 @@ class Assistant(Viewer):
             system=system,
             response_model=Validity,
             allow_partial=False,
+            model_key="reasoning"
         )
         if validity and validity.is_invalid:
             invalid_key = validity.invalid_key
             if invalid_key == "table":
                 memory.pop("current_table", None)
-                memory.pop("current_data", None)
-            memory.pop("current_pipeline", None)
-            memory.pop("current_sql", None)
-            memory.pop("current_transform", None)
+            elif invalid_key == "sql":
+                memory.pop("current_sql", None)
             print(f"\033[91mInvalidated {invalid_key!r} from memory.\033[0m")
 
     def _create_suggestion(self, instance, event):
@@ -253,7 +250,7 @@ class Assistant(Viewer):
         print("\033[94mNEW\033[0m" + "-" * 100)
         await self.invoke(contents)
 
-    async def _choose_agent(self, messages: list | str, agents: list[Agent]):
+    async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -266,7 +263,7 @@ class Assistant(Viewer):
                 FieldInfo(
                     description=(
                         "Think step by step out loud, focused on application and how it could be useful to the "
-                        "tying into the available agents. Provide up to two sentence description."
+                        "tying into the available agents. Provide up to two sentence description. "
                     )
                 ),
             ),
@@ -281,18 +278,22 @@ class Assistant(Viewer):
                 model_key="reasoning",
                 allow_partial=False
             )
-            if out:
-                return out.agent
+            if return_reasoning:
+                return out.agent, out.chain_of_thought
+            return out.agent
 
     async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
             return self.agents[0]
         agent_types = tuple(agent.name[:-5] for agent in self.agents)
         agents = {agent.name[:-5]: agent for agent in self.agents}
+
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            agent = await self._choose_agent(messages, self.agents)
+            agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
+            messages.append({"role": "assistant", "content": reasoning})
+
         print(
             f"Assistant decided on \033[95m{agent!r}\033[0m"
         )
@@ -332,7 +333,7 @@ class Assistant(Viewer):
         await self._invalidate_memory(messages[-2:])
         agent = await self._get_agent(messages[-3:])
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-
+        print("\n\033[95mMESSAGES:\033[0m")
         for message in messages:
             print(f"{message['role']!r}: {message['content']}")
             print("ENTRY" + "-" * 10)

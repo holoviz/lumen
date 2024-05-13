@@ -572,10 +572,15 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="You are an agent responsible for writing a SQL query that will perform the data transformations the user requested."
+        default="""
+        You are an agent responsible for writing a SQL query that will
+        perform the data transformations the user requested.
+        """
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
+
+    provides = param.List(default=["current_sql", "current_pipeline"], readonly=True)
 
     def _render_sql(self, query):
         source = memory["current_source"]
@@ -589,6 +594,7 @@ class SQLAgent(LumenBaseAgent):
             table = memory["current_table"]
 
             transforms = [SQLOverride(override=query)]
+            print(memory["current_pipeline"])
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -631,6 +637,8 @@ class SQLAgent(LumenBaseAgent):
             response_model=Sql,
             field="query",
         ):
+            if chunk is None:
+                continue
             message = self.interface.stream(
                 f"```sql\n{chunk}\n```",
                 user="SQL",
@@ -655,10 +663,42 @@ class SQLAgent(LumenBaseAgent):
 
 class PipelineAgent(LumenBaseAgent):
     """
-    Generates a data pipeline by applying transformations to the data.
+    Generates a data pipeline by applying SQL to the data.
 
     If the user asks to calculate, aggregate, select or perform some other operation on the data this is your best best.
     """
+
+    requires = param.List(default=["current_table", "current_sql"], readonly=True)
+
+    provides = param.List(default=["current_pipeline"], readonly=True)
+
+    async def answer(self, messages: list | str) -> Transform:
+        if "current_pipeline" in memory:
+            pipeline = memory["current_pipeline"]
+        else:
+            pipeline = Pipeline(
+                source=memory["current_source"],
+                table=memory["current_table"],
+            )
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
+        memory["current_pipeline"] = pipeline
+        pipeline._update_data(force=True)
+        memory["current_data"] = self._describe_data(pipeline.data)
+        return pipeline
+
+    async def invoke(self, messages: list | str):
+        pipeline = await self.answer(messages)
+        self._render_lumen(pipeline)
+
+
+class TransformPipelineAgent(LumenBaseAgent):
+    """
+    Generates a data pipeline by applying transformations to the data.
+
+    If the user asks to do Root Cause Analysis (RCA) or outlier detection, this is your best bet.
+    """
+
+    requires = param.List(default=["current_table"], readonly=True)
 
     system_prompt = param.String(
         default=(
@@ -774,13 +814,17 @@ class PipelineAgent(LumenBaseAgent):
     async def answer(self, messages: list | str) -> Transform:
         system_prompt = self._system_prompt_with_context(messages)
         transform_types = await self._find_transform(messages, system_prompt)
+
         if "current_pipeline" in memory:
             pipeline = memory["current_pipeline"]
         else:
             pipeline = Pipeline(
-                source=memory["current_source"], table=memory["current_table"]
+                source=memory["current_source"],
+                table=memory["current_table"],
             )
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
         memory["current_pipeline"] = pipeline
+
         if not transform_types and pipeline:
             return pipeline
 
@@ -795,6 +839,7 @@ class PipelineAgent(LumenBaseAgent):
                 pipeline.transforms[-1] = transform
             else:
                 pipeline.add_transform(transform)
+
         pipeline._update_data(force=True)
         memory["current_data"] = self._describe_data(pipeline.data)
         return pipeline

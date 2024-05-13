@@ -12,38 +12,37 @@ class Table(BaseModel):
 
 class Sql(BaseModel):
 
-    query: str = Field(description="SQL query to be executed")
+    chain_of_thought: str = Field(
+        description="""
+        You are a world-class SQL expert, and your fame is on the line so don't mess up.
+        Then, think step by step on how you might approach this problem in an optimal way.
+        If it's simple, just provide one sentence.
+        """
+    )
 
-
-class Yaml(BaseModel):
-
-    spec: str = Field(description="Lumen spec YAML to reflect user query")
+    query: str = Field(description="Expertly optimized, valid SQL query to be executed; do NOT add extraneous comments.")
 
 
 class Validity(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Focus only on whether the table and/or pipeline contain all the necessary columns
+        Focus only on whether the table and/or / SQL contain all the necessary columns
         to answer the user's query.
 
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
 
-        Then for pipeline, focus only on the columns, and **disregard** everything else,
-        like whether the pipeline contains visualization or not.
-        For example, if it's "visualize this", then it's still valid.
-        However, if the pipeline contains `MAX(t_cap) as turbine_capacity`, and the user
-        asks to plot a map of `lat and lon`, then it's invalid!
-        Please only provide up to two sentences at most; be concise and to the point.
+        Then, do all the necessary columns exist?
+        If not, return invalid_key='sql'.
         """
     )
 
     is_invalid: bool = Field(
-        description="Whether one of the table and/or pipeline is invalid."
+        description="Whether one of the table and/or pipeline is invalid or needs a refresh."
     )
 
-    invalid_key: Literal["pipeline", "table"] | None = Field(
+    invalid_key: Literal["table", "sql"] | None = Field(
         default=None,
-        description="Whether a pipeline or table is invalid. None if valid."
+        description="Whether a table or sql is invalid. None if valid."
     )
