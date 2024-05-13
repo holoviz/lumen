@@ -29,6 +29,8 @@ from .memory import memory
 from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
 
+FUZZY_TABLE_LENGTH = 1
+
 
 def format_schema(schema):
     formatted = {}
@@ -182,8 +184,18 @@ class Agent(Viewer):
         if not fuzzy_table.required:
             return [memory.get("current_table") or tables[0]]
 
-        table_keywords = fuzzy_table.keywords
-        closest_tables = difflib.get_close_matches(table_keywords or "", tables, n=n)
+        # make case insensitive, but keep original case to transform back
+        if not fuzzy_table.keywords:
+            return []
+
+        table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
+        tables_lower = {table.lower(): table for table in tables}
+
+        # get closest matches
+        closest_tables = set()
+        for keyword in table_keywords:
+            closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
+        closest_tables = [tables_lower[table] for table in closest_tables]
         return tuple(closest_tables)
 
     async def _select_table(self, tables):
@@ -322,11 +334,13 @@ class ChatAgent(Agent):
 
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
-        if len(tables) > 10:
+        if len(tables) > FUZZY_TABLE_LENGTH:
             closest_tables = await self._get_closest_tables(messages, tables, n=5)
             if len(closest_tables) == 0:
                 # if no tables are found, ask the user to select ones and load it
                 tables = await self._select_table(tables)
+                return self.requires + ['current_table']
+            elif len(closest_tables) == 1:
                 return self.requires + ['current_table']
 
         for i in range(3):
@@ -354,7 +368,7 @@ class ChatAgent(Agent):
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
         if len(tables) > 1:
-            if len(tables) > 10 and "current_table" not in memory:
+            if len(tables) > FUZZY_TABLE_LENGTH:
                 tables = await self._get_closest_tables(messages, tables, n=5)
             context = f"Available tables: {', '.join(tables)}"
         else:
