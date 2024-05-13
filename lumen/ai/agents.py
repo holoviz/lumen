@@ -29,7 +29,7 @@ from .memory import memory
 from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
 
-FUZZY_TABLE_LENGTH = 1
+FUZZY_TABLE_LENGTH = 10
 
 
 def format_schema(schema):
