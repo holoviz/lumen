@@ -166,15 +166,19 @@ class Agent(Viewer):
 
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
+        system = (
+            "You are great at extracting keywords based on the user query to find the correct table."
+        )
         table_keywords = (await self.llm.invoke(
             messages,
-            system=self.system_prompt,
+            system=system,
             response_model=FuzzyTable,
             allow_partial=False
         )).keywords
-        print(table_keywords, "KEYWORDS")
         tables = tuple(table.replace('"', "") for table in tables)
         closest_tables = difflib.get_close_matches(table_keywords, tables, n=n)
+        if not closest_tables:
+            closest_tables = tables[:n]
         return tuple(closest_tables)
 
     async def requirements(self, messages: list | str):
@@ -323,11 +327,9 @@ class ChatAgent(Agent):
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
         if len(tables) > 1:
-            if len(tables) < 10:
-                context = f"Available tables: {', '.join(tables)}"
-            else:
+            if len(tables) > 10:
                 tables = await self._get_closest_tables(messages, tables, n=5)
-                context = f"Top 5 closest tables: {', '.join(tables)}"
+            context = f"Available tables: {', '.join(tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
             schema = self._get_schema(memory["current_source"], table)

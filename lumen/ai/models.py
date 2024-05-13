@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class FuzzyTable(BaseModel):
 
-    keywords: list[str] = Field(description="The table keywords from the user query.")
+    keywords: list[str] = Field(description="The most likely keywords related to a table name that the user might be referring to.")
 
 
 class Sql(BaseModel):
