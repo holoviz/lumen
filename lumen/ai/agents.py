@@ -1,3 +1,4 @@
+import asyncio
 import difflib
 import io
 import textwrap
@@ -25,7 +26,7 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import FuzzyTable, Sql
+from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
 
 
@@ -167,19 +168,38 @@ class Agent(Viewer):
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
         system = (
-            "You are great at extracting keywords based on the user query to find the correct table."
+            f"You are great at extracting keywords based on the user query to find the correct table. "
+            f"The current table selected: `{memory.get('current_table', 'N/A')}`. "
         )
-        table_keywords = (await self.llm.invoke(
+        tables = tuple(table.replace('"', "") for table in tables)
+
+        fuzzy_table = (await self.llm.invoke(
             messages,
             system=system,
             response_model=FuzzyTable,
             allow_partial=False
-        )).keywords
-        tables = tuple(table.replace('"', "") for table in tables)
-        closest_tables = difflib.get_close_matches(table_keywords, tables, n=n)
-        if not closest_tables:
-            closest_tables = tables[:n]
+        ))
+        if not fuzzy_table.required:
+            return [memory.get("current_table") or tables[0]]
+
+        table_keywords = fuzzy_table.keywords
+        closest_tables = difflib.get_close_matches(table_keywords or "", tables, n=n)
         return tuple(closest_tables)
+
+    async def _select_table(self, tables):
+        input_widget = pn.widgets.AutocompleteInput(
+            placeholder="Start typing the table name you are looking for",
+            case_sensitive=False,
+            options=list(tables),
+            search_strategy="includes",
+            min_characters=1,
+        )
+        self.interface.send(input_widget, user="Assistant", respond=False)
+        while not input_widget.value:
+            await asyncio.sleep(0.05)
+        tables = [input_widget.value]
+        self.interface.pop(-1)
+        return tables
 
     async def requirements(self, messages: list | str):
         return self.requires
@@ -299,18 +319,25 @@ class ChatAgent(Agent):
     async def requirements(self, messages: list | str):
         if 'current_data' in memory:
             return self.requires
-        required_model = create_model("DataRequired", data_required=(bool, FieldInfo(
-            description="Whether the user is asking about a specific dataset."
-        )))
+
+        source = memory.get("current_source")
+        tables = source.get_tables() if source else []
+        if len(tables) > 1:
+            closest_tables = await self._get_closest_tables(messages, tables, n=5)
+            if len(closest_tables) == 0:
+                # if no tables are found, ask the user to select oness
+                tables = await self._select_table(tables)
+                return self.requires + ['current_table']
+
         for i in range(3):
             result = await self.llm.invoke(
                 messages,
                 system=(
                     "The user may or may not want to chat about a particular dataset. "
                     "Determine whether the provided user prompt requires access to "
-                    "actual data."
+                    "actual data. If they're only searching for one, it's not required."
                 ),
-                response_model=required_model,
+                response_model=DataRequired,
                 allow_partial=False,
             )
             if result is None:
@@ -326,8 +353,8 @@ class ChatAgent(Agent):
     ) -> str:
         source = memory.get("current_source")
         tables = source.get_tables() if source else []
-        if len(tables) > 1:
-            if len(tables) > 10:
+        if len(tables) > 10:
+            if len(tables) > 1 and "current_table" not in memory:
                 tables = await self._get_closest_tables(messages, tables, n=5)
             context = f"Available tables: {', '.join(tables)}"
         else:
