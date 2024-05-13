@@ -216,6 +216,7 @@ class Assistant(Viewer):
                 memory.pop("current_table", None)
                 memory.pop("current_data", None)
                 memory.pop("current_pipeline", None)
+                memory.pop("closest_tables", None)
             elif invalid_key == "sql":
                 memory.pop("current_sql", None)
             print(f"\033[91mInvalidated {invalid_key!r} from memory.\033[0m")
