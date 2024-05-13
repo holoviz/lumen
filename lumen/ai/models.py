@@ -5,9 +5,24 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class Table(BaseModel):
+class FuzzyTable(BaseModel):
 
-    table: str = Field(description="The full path name")
+    required: bool = Field(description="Whether the user's query requires looking for a new table.")
+
+    keywords: list[str] | None = Field(default=None, description="The most likely keywords related to a table name that the user might be referring to.")
+
+
+class DataRequired(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="""
+        Thoughts on whether the user's query requires data loaded;
+        if the user wants to explore a dataset, it's required.
+        If only finding a dataset, it's not required.
+        """
+    )
+
+    data_required: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
 
 
 class Sql(BaseModel):
