@@ -182,8 +182,9 @@ class Assistant(Viewer):
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
         sql = memory.get("current_sql")
-        if not sql:
+        if not table and not sql:
             return
+
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
@@ -213,6 +214,9 @@ class Assistant(Viewer):
             invalid_key = validity.invalid_key
             if invalid_key == "table":
                 memory.pop("current_table", None)
+                memory.pop("current_data", None)
+                memory.pop("current_pipeline", None)
+                memory.pop("closest_tables", None)
             elif invalid_key == "sql":
                 memory.pop("current_sql", None)
             print(f"\033[91mInvalidated {invalid_key!r} from memory.\033[0m")
@@ -263,7 +267,7 @@ class Assistant(Viewer):
                 FieldInfo(
                     description=(
                         "Think step by step out loud, focused on application and how it could be useful to the "
-                        "tying into the available agents. Provide up to two sentence description. "
+                        "tying into the available agents. Provide up to two sentence description; be concise."
                     )
                 ),
             ),
