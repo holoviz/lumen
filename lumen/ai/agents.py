@@ -35,8 +35,8 @@ FUZZY_TABLE_LENGTH = 10
 def format_schema(schema):
     formatted = {}
     for field, spec in schema.items():
-        if "enum" in spec:
-            spec["enum"] = spec["enum"][:20] + ["..."]
+        if "enum" in spec and len(spec["enum"]) > 5:
+            spec["enum"] = spec["enum"][:5] + ["..."]
         formatted[field] = spec
     return formatted
 
@@ -164,8 +164,6 @@ class Agent(Viewer):
             schema = source.get_schema(table, limit=100)
         schema = dict(schema)
         for field, spec in schema.items():
-            if "enum" in spec:
-                spec.pop("enum")
             if "inclusiveMinimum" in spec:
                 spec["min"] = spec.pop("inclusiveMinimum")
             if "inclusiveMaximum" in spec:
