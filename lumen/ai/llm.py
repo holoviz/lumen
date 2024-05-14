@@ -21,7 +21,7 @@ class Llm(param.Parameterized):
     use_logfire = param.Boolean(default=False)
 
     # Allows defining a dictionary of default models.
-    _models_kwargs = {}
+    model_kwargs = param.Dict(default={})
 
     __abstract = True
 
@@ -32,10 +32,10 @@ class Llm(param.Parameterized):
             return patch(create=create, mode=self.mode)
 
     def _get_model_kwargs(self, model_key):
-        if model_key in self._models_kwargs:
-            model_kwargs = self._models_kwargs.get(model_key)
+        if model_key in self.model_kwargs:
+            model_kwargs = self.model_kwargs.get(model_key)
         else:
-            model_kwargs = self._models_kwargs["default"]
+            model_kwargs = self.model_kwargs["default"]
         return dict(model_kwargs)
 
     @property
@@ -132,7 +132,7 @@ class Llama(Llm):
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
 
-    _models_kwargs = {
+    model_kwargs = param.Dict(default={
         "default": {
             "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
             "model_file": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
@@ -143,7 +143,7 @@ class Llama(Llm):
             "model_file": "sqlcoder2.Q5_K_M.gguf",
             "chat_format": "chatml",
         },
-    }
+    })
 
     @property
     def _client_kwargs(self):
@@ -191,10 +191,10 @@ class OpenAI(Llm):
 
     organization = param.String()
 
-    _models_kwargs = {
+    model_kwargs = param.Dict(default={
         "default": {"model": "gpt-3.5-turbo"},
         "reasoning": {"model": "gpt-4-turbo-preview"},
-    }
+    })
 
     @property
     def _client_kwargs(self):
@@ -259,7 +259,7 @@ class AILauncher(OpenAI):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
-    _models_kwargs = {
+    model_kwargs = param.Dict(default={
         "default": {"model": "gpt-3.5-turbo"},
         "reasoning": {"model": "gpt-4-turbo-preview"},
-    }
+    })
