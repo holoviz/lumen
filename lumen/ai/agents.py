@@ -371,7 +371,7 @@ class ChatAgent(Agent):
             if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
                 closest_tables = await self._get_closest_tables(messages, tables, n=5)
             else:
-                closest_tables = memory.get("closest_tables", None)
+                closest_tables = memory.get("closest_tables", tables)
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
@@ -553,7 +553,7 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            closest_tables = memory.pop("closest_tables", None)
+            closest_tables = memory.pop("closest_tables", [])
             if closest_tables:
                 tables = closest_tables
             elif len(tables) > FUZZY_TABLE_LENGTH:
