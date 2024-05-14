@@ -682,10 +682,11 @@ class SQLAgent(LumenBaseAgent):
         tabs.active = 1
 
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
-        prompt = f"The SQL expression for the table {table!r} is {sql!r}."
-        if "current_data" in memory:
-            prompt += f"\n\nHere's the head of the dataset:\n```\n{memory['current_data']['head']}\n```"
-        prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
+        prompt = (
+            f"The SQL expression for the table {table!r} is {sql!r}.\n\n"
+            f"The data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
+        )
+        print(prompt)
         return prompt
 
     async def answer(self, messages: list | str):
