@@ -17,10 +17,11 @@ from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
-from ..dashboard import load_yaml
+from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
+from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
@@ -30,7 +31,6 @@ from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
 
 FUZZY_TABLE_LENGTH = 10
-
 
 def format_schema(schema):
     formatted = {}
@@ -93,6 +93,11 @@ class Agent(Viewer):
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
+
+        if state.config is None:
+            state.config = Config(raise_with_notifications=True)
+        else:
+            state.config.raise_with_notifications = True
 
     def _link_code_editor(self, value, callback, language):
         code_editor = pn.widgets.CodeEditor(
@@ -499,8 +504,7 @@ class LumenBaseAgent(Agent):
             "head": df_head_dict
         }
 
-        memory["current_columns"] = df.columns.tolist()
-        return str(data)
+        return data
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         async def _render_component(spec, active):
@@ -520,7 +524,7 @@ class LumenBaseAgent(Agent):
                 import traceback
                 traceback.print_exc()
                 yield pn.pane.Alert(
-                    f"Error rendering component: {e}. Please press undo, edit the YAML, or continue the conversation.",
+                    f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
                     alert_type="danger",
                 )
                 # maybe offer undo
@@ -668,8 +672,10 @@ class SQLAgent(LumenBaseAgent):
                     memory["current_data"] = self._describe_data(df)
                 yield memory["current_pipeline"].__panel__()
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 yield pn.pane.Alert(
-                    f"Error executing SQL query: {e}; please press undo, edit the YAML, or continue the conversation",
+                    f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
                     alert_type="danger",
                 )
 
@@ -679,8 +685,8 @@ class SQLAgent(LumenBaseAgent):
 
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
         prompt = f"The SQL expression for the table {table!r} is {sql!r}."
-        if "current_sql" in memory:
-            prompt += f"In case the user is following up on a previous request here is the SQL you just generated: `{memory['current_sql']}`"
+        if "current_data" in memory:
+            prompt += f"\n\nHere's the head of the dataset:\n```\n{memory['current_data']['head']}\n```"
         prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
         return prompt
 

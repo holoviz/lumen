@@ -184,7 +184,7 @@ class Assistant(Viewer):
         if not table:
             return
 
-        columns = memory.get("current_columns")
+        columns = list(memory["current_data"]["stats"].keys())
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
@@ -204,7 +204,6 @@ class Assistant(Viewer):
             system=system,
             response_model=Validity,
             allow_partial=False,
-            model_key="reasoning"
         )
         if validity and validity.is_invalid:
             memory.pop("current_table", None)
