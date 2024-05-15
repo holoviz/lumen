@@ -101,6 +101,9 @@ class Config(Component):
         Callback that fires when a pipeline is updated. The updated
         pipeline is passed as the first argument.""")
 
+    raise_with_notifications = param.Boolean(default=True, constant=True, doc="""
+        Whether to raise exceptions when notifications are enabled.""")
+
     reloadable = param.Boolean(default=True, constant=True, doc="""
         Whether to allow reloading data from source(s) using a button.""")
 
