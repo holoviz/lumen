@@ -17,10 +17,11 @@ from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
-from ..dashboard import load_yaml
+from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
+from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
@@ -31,12 +32,11 @@ from .translate import param_to_pydantic
 
 FUZZY_TABLE_LENGTH = 10
 
-
 def format_schema(schema):
     formatted = {}
     for field, spec in schema.items():
-        if "enum" in spec:
-            spec["enum"] = spec["enum"][:20] + ["..."]
+        if "enum" in spec and len(spec["enum"]) > 5:
+            spec["enum"] = spec["enum"][:5] + ["..."]
         formatted[field] = spec
     return formatted
 
@@ -93,6 +93,11 @@ class Agent(Viewer):
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
+
+        if state.config is None:
+            state.config = Config(raise_with_notifications=True)
+        else:
+            state.config.raise_with_notifications = True
 
     def _link_code_editor(self, value, callback, language):
         code_editor = pn.widgets.CodeEditor(
@@ -159,8 +164,6 @@ class Agent(Viewer):
             schema = source.get_schema(table, limit=100)
         schema = dict(schema)
         for field, spec in schema.items():
-            if "enum" in spec:
-                spec.pop("enum")
             if "inclusiveMinimum" in spec:
                 spec["min"] = spec.pop("inclusiveMinimum")
             if "inclusiveMaximum" in spec:
@@ -371,7 +374,7 @@ class ChatAgent(Agent):
             if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
                 closest_tables = await self._get_closest_tables(messages, tables, n=5)
             else:
-                closest_tables = memory.get("closest_tables", None)
+                closest_tables = memory.get("closest_tables", tables)
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
@@ -498,7 +501,8 @@ class LumenBaseAgent(Agent):
             "stats": df_describe_dict,
             "head": df_head_dict
         }
-        return str(data)
+
+        return data
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         async def _render_component(spec, active):
@@ -518,7 +522,7 @@ class LumenBaseAgent(Agent):
                 import traceback
                 traceback.print_exc()
                 yield pn.pane.Alert(
-                    f"Error rendering component: {e}. Please press undo, edit the YAML, or continue the conversation.",
+                    f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
                     alert_type="danger",
                 )
                 # maybe offer undo
@@ -551,7 +555,7 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            closest_tables = memory.pop("closest_tables", None)
+            closest_tables = memory.pop("closest_tables", [])
             if closest_tables:
                 tables = closest_tables
             elif len(tables) > FUZZY_TABLE_LENGTH:
@@ -657,7 +661,6 @@ class SQLAgent(LumenBaseAgent):
             table = memory["current_table"]
 
             transforms = [SQLOverride(override=query)]
-            print(memory["current_pipeline"])
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -667,8 +670,10 @@ class SQLAgent(LumenBaseAgent):
                     memory["current_data"] = self._describe_data(df)
                 yield memory["current_pipeline"].__panel__()
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 yield pn.pane.Alert(
-                    f"Error executing SQL query: {e}; please press undo, edit the YAML, or continue the conversation",
+                    f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
                     alert_type="danger",
                 )
 
@@ -677,10 +682,11 @@ class SQLAgent(LumenBaseAgent):
         tabs.active = 1
 
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
-        prompt = f"The SQL expression for the table {table!r} is {sql!r}."
-        if "current_sql" in memory:
-            prompt += f"In case the user is following up on a previous request here is the SQL you just generated: `{memory['current_sql']}`"
-        prompt += f"\n\nThe data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
+        prompt = (
+            f"The SQL expression for the table {table!r} is {sql!r}.\n\n"
+            f"The data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
+        )
+        print(prompt)
         return prompt
 
     async def answer(self, messages: list | str):
@@ -689,10 +695,9 @@ class SQLAgent(LumenBaseAgent):
         table = memory["current_table"]
         if not hasattr(source, "get_sql_expr"):
             return None
-        sql_expr = source.get_sql_expr(table)
         system_prompt = await self._system_prompt_with_context(messages)
         schema = self._get_schema(source, table)
-        print(schema, "SCHEMA...")
+        sql_expr = source.get_sql_expr(table)
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
         async for chunk in self.llm.stream(
             messages,
@@ -711,12 +716,16 @@ class SQLAgent(LumenBaseAgent):
         if message.object is None:
             return
         sql_out = message.object.replace("```sql", "").replace("```", "").strip()
-        if f"FROM {table}" in sql_out:
-            sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
-                "SELECT * from ", ""
-            )
-            sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
-        memory["current_sql"] = sql_out
+
+        # TODO: find a better way to replace for all tables
+        for table in memory.get("closest_tables", [table]):
+            sql_expr = source.get_sql_expr(table)
+            if f"FROM {table}" in sql_out:
+                sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
+                    "SELECT * from ", ""
+                )
+                sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
+            memory["current_sql"] = sql_out
         return sql_out
 
     async def invoke(self, messages: list | str):

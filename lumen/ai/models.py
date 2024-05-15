@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
@@ -42,22 +40,11 @@ class Validity(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Focus only on whether the table and/or / SQL contain all the necessary columns
+        Focus only on whether the table contain all the necessary columns
         to answer the user's query.
-
-        Based on the latest user's query, is the table relevant?
-        If not, return invalid_key='table'.
-
-        Then, do all the necessary columns exist?
-        If not, return invalid_key='sql'.
         """
     )
 
     is_invalid: bool = Field(
         description="Whether one of the table and/or pipeline is invalid or needs a refresh."
-    )
-
-    invalid_key: Literal["table", "sql"] | None = Field(
-        default=None,
-        description="Whether a table or sql is invalid. None if valid."
     )

@@ -181,26 +181,22 @@ class Assistant(Viewer):
 
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
-        sql = memory.get("current_sql")
-        if not table and not sql:
+        if not table:
             return
 
+        columns = list(memory["current_data"]["stats"].keys())
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
-
-        Then, does the SQL include all the necessary datasets or columns
-        to answer the user's query? If an does the SQL transform is included, do those
-        transformations contain all the necessary columns to answer the user's query?
 
         ### Current Table:
         ```
         {table}
         ```
 
-        ### Current SQL:
+        ### Current Columns:
         ```
-        {sql}
+        {columns}
         ```
         """
         validity = await self.llm.invoke(
@@ -208,18 +204,13 @@ class Assistant(Viewer):
             system=system,
             response_model=Validity,
             allow_partial=False,
-            model_key="reasoning"
         )
         if validity and validity.is_invalid:
-            invalid_key = validity.invalid_key
-            if invalid_key == "table":
-                memory.pop("current_table", None)
-                memory.pop("current_data", None)
-                memory.pop("current_pipeline", None)
-                memory.pop("closest_tables", None)
-            elif invalid_key == "sql":
-                memory.pop("current_sql", None)
-            print(f"\033[91mInvalidated {invalid_key!r} from memory.\033[0m")
+            memory.pop("current_table", None)
+            memory.pop("current_data", None)
+            memory.pop("current_pipeline", None)
+            memory.pop("closest_tables", None)
+            print("\033[91mInvalidated from memory.\033[0m")
 
     def _create_suggestion(self, instance, event):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
