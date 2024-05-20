@@ -333,13 +333,12 @@ class Assistant(Viewer):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         await self._invalidate_memory(messages[-2:])
         agent = await self._get_agent(messages[-3:])
-        agent = None
         if agent is None:
             msg = (
                 "Assistant could not settle on an agent to perform the requested query. "
                 "Please restate your request."
             )
-            self.interface.send(msg, user='Lumen')
+            self.interface.stream(msg, user='Lumen')
             return msg
 
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
