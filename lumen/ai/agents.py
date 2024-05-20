@@ -594,8 +594,9 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    Responsible for listing the available tables if the user's request is vague;
-    do not use this if user wants a specific table.
+    Responsible for listing the available tables or datasets should the
+    user request to know what datasets are available. Do not use this if
+    the user wants a specific table.
     """
 
     system_prompt = param.String(
@@ -620,6 +621,7 @@ class TableListAgent(LumenBaseAgent):
                     "background-color": "white",
                     "padding": "10px",
                 },
+                tags=['catalog']
             )
         else:
             tables = tuple(table.replace('"', "") for table in tables)

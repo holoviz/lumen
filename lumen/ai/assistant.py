@@ -10,7 +10,7 @@ import param
 from panel import bind
 from panel.chat import ChatInterface, ChatMessage
 from panel.layout import Column, FlexBox, Tabs
-from panel.pane import Markdown
+from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload
 from pydantic import create_model
@@ -106,8 +106,6 @@ class Assistant(Viewer):
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke,
-                # remove this once dynamic reaction icons is merged
-                reaction_icons={"like": "thumb-up", "dislike": "thumb-down"}
             )
         else:
             interface.callback = self._chat_invoke
@@ -273,9 +271,12 @@ class Assistant(Viewer):
                 model_key="reasoning",
                 allow_partial=False
             )
-            if return_reasoning:
+            if not (out and out.agent):
+                continue
+            elif return_reasoning:
                 return out.agent, out.chain_of_thought
             return out.agent
+        return (None, None) if return_reasoning else None
 
     async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
@@ -288,6 +289,9 @@ class Assistant(Viewer):
         else:
             agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
             messages.append({"role": "assistant", "content": reasoning})
+
+        if agent is None:
+            return None
 
         print(
             f"Assistant decided on \033[95m{agent!r}\033[0m"
@@ -317,7 +321,9 @@ class Assistant(Viewer):
     def _serialize(self, obj):
         if isinstance(obj, (Tabs, Column)):
             return self._serialize(obj[0])
-        if hasattr(obj, "object"):
+        if isinstance(obj, HTML) and 'catalog' in obj.tags:
+            return f"Summarized table listing: {obj.object[:30]}"
+        elif hasattr(obj, "object"):
             return obj.object
         elif hasattr(obj, "value"):
             return obj.value
@@ -327,6 +333,15 @@ class Assistant(Viewer):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         await self._invalidate_memory(messages[-2:])
         agent = await self._get_agent(messages[-3:])
+        agent = None
+        if agent is None:
+            msg = (
+                "Assistant could not settle on an agent to perform the requested query. "
+                "Please restate your request."
+            )
+            self.interface.send(msg, user='Lumen')
+            return msg
+
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
         print("\n\033[95mMESSAGES:\033[0m")
         for message in messages:
