@@ -23,10 +23,10 @@ class IntakeBaseSource(Source):
         if self.dask or dask:
             try:
                 return entry.to_dask()
-            except Exception:
+            except Exception as exc:
                 if self.dask:
                     self.param.warning(
-                        f"Could not load {entry.name!r} table with dask."
+                        f"Could not load {entry.name!r} table with dask due to {exc}"
                     )
         return entry.read()
 
@@ -57,6 +57,7 @@ class IntakeBaseSource(Source):
             raise KeyError(f"'{table}' table could not be found in Intake "
                            "catalog. Available tables include: "
                            f"{list(self.cat)}.")
+        print(entry, dask)
         df = self._read(entry, dask)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
