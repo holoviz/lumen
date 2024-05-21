@@ -39,6 +39,7 @@ class IntakeBaseSource(Source):
     ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schemas = {}
         for entry in list(self.cat):
+            print(entry)
             if table is not None and entry != table:
                 continue
             elif not self.load_schema:
