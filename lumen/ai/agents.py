@@ -22,7 +22,9 @@ from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import (
+    SQLLimit, SQLOverride, SQLTransform, Transform,
+)
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
@@ -578,8 +580,11 @@ class TableAgent(LumenBaseAgent):
                 table = tables[0]
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
-            source=memory["current_source"], table=table
+            source=memory["current_source"], table=table, sql_transforms=[
+                SQLLimit(limit=500000)
+            ]
         )
+
         df = pipeline.__panel__()[-1].value
         if len(df) > 0:
             memory["current_data"] = self._describe_data(df)
@@ -662,7 +667,7 @@ class SQLAgent(LumenBaseAgent):
 
             table = memory["current_table"]
 
-            transforms = [SQLOverride(override=query)]
+            transforms = [SQLOverride(override=query), SQLLimit(limit=500000)]
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -754,7 +759,7 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"],
                 table=memory["current_table"],
             )
-        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"]), SQLLimit(limit=500000)]
         memory["current_pipeline"] = pipeline
         pipeline._update_data(force=True)
         memory["current_data"] = self._describe_data(pipeline.data)
@@ -896,7 +901,7 @@ class TransformPipelineAgent(LumenBaseAgent):
                 source=memory["current_source"],
                 table=memory["current_table"],
             )
-        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"]), SQLLimit(limit=500000)]
         memory["current_pipeline"] = pipeline
 
         if not transform_types and pipeline:
