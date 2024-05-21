@@ -14,7 +14,7 @@ class IntakeBaseSource(Source):
     cache_per_query = param.Boolean(default=False, doc="""
         Whether to query the whole dataset or individual queries.""")
 
-    load_schema = param.Boolean(default=True, doc="""
+    load_schema = param.Boolean(default=False, doc="""
         Whether to load the schema""")
 
     __abstract = True
