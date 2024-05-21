@@ -65,6 +65,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                 raise ValueError(
                     'SQLTransforms cannot be applied to non-SQL based Intake source.'
                 )
+            print("super")
             return super().get(table, **query)
         conditions = list(query.items())
         if self.filter_in_sql:
@@ -85,6 +86,9 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             tables = self.get_tables()
         else:
             tables = [table]
+
+        print(tables)
+
 
         schemas = {}
         sql_limit = SQLLimit(limit=limit or 1)

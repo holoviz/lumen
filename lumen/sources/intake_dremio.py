@@ -12,7 +12,7 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
 
     cert = param.String(default="Path to certificate file")
 
-    dask = param.Boolean(default=True, doc="""
+    dask = param.Boolean(default=False, doc="""
         Whether to return a dask DataFrame.""")
 
     uri = param.String(doc="URI of the Dremio server.")
