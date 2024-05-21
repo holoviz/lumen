@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import textwrap
 
 from typing import Any, ClassVar
@@ -97,13 +98,18 @@ class SQLLimit(SQLTransform):
     transform_type: ClassVar[str] = 'sql_limit'
 
     def apply(self, sql_in):
-        template = """
-            SELECT
-                *
-            FROM ( {{sql_in}} )
-            LIMIT {{limit}}
-        """
-        return self._render_template(template, sql_in=sql_in, limit=self.limit)
+        if re.search(r'\bLIMIT\b', sql_in, re.IGNORECASE):
+            template = """
+                SELECT
+                    *
+                FROM ( {sql_in} )
+                LIMIT {limit}
+            """
+            return self._render_template(template, sql_in=sql_in, limit=self.limit)
+        else:
+            # more efficiently apply limit directly to the query
+            template = "{sql_in} LIMIT {limit}"
+            return self._render_template(template, sql_in=sql_in, limit=self.limit)
 
 
 class SQLDistinct(SQLTransform):
