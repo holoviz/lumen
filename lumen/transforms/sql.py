@@ -102,13 +102,13 @@ class SQLLimit(SQLTransform):
             template = """
                 SELECT
                     *
-                FROM ( {sql_in} )
-                LIMIT {limit}
+                FROM ( {{sql_in}} )
+                LIMIT {{limit}}
             """
             return self._render_template(template, sql_in=sql_in, limit=self.limit)
         else:
             # more efficiently apply limit directly to the query
-            template = "{sql_in} LIMIT {limit}"
+            template = "{{sql_in}} LIMIT {{limit}}"
             return self._render_template(template, sql_in=sql_in, limit=self.limit)
 
 
