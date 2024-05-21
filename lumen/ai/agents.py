@@ -581,7 +581,7 @@ class TableAgent(LumenBaseAgent):
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table, sql_transforms=[
-                SQLLimit(limit=100000)
+                SQLLimit(limit=100)
             ]
         )
 
@@ -667,7 +667,7 @@ class SQLAgent(LumenBaseAgent):
 
             table = memory["current_table"]
 
-            transforms = [SQLOverride(override=query), SQLLimit(limit=100000)]
+            transforms = [SQLOverride(override=query), SQLLimit(limit=100)]
             try:
                 memory["current_pipeline"] = pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
@@ -759,7 +759,7 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"],
                 table=memory["current_table"],
             )
-        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"]), SQLLimit(limit=100000)]
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"]), SQLLimit(limit=100)]
         memory["current_pipeline"] = pipeline
         pipeline._update_data(force=True)
         memory["current_data"] = self._describe_data(pipeline.data)
@@ -901,7 +901,7 @@ class TransformPipelineAgent(LumenBaseAgent):
                 source=memory["current_source"],
                 table=memory["current_table"],
             )
-        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"]), SQLLimit(limit=100000)]
+        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"]), SQLLimit(limit=100)]
         memory["current_pipeline"] = pipeline
 
         if not transform_types and pipeline:
