@@ -20,6 +20,7 @@ class IntakeBaseSource(Source):
     __abstract = True
 
     def _read(self, entry, dask=True):
+        print(entry)
         if self.dask or dask:
             try:
                 return entry.to_dask()

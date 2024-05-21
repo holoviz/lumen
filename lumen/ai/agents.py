@@ -418,7 +418,7 @@ class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
 
-    sql_limit = param.Integer(default=200000)
+    sql_limit = param.Integer(default=50000)
 
     def __init__(self, **params):
         super().__init__(**params)
