@@ -28,6 +28,7 @@ class IntakeBaseSource(Source):
                     self.param.warning(
                         f"Could not load {entry.name!r} table with dask due to {exc}"
                     )
+        print(entry)
         return entry.read()
 
     def get_tables(self):
