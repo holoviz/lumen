@@ -123,6 +123,9 @@ class Config(Component):
     show_traceback = param.Boolean(default=True, doc="""
         Whether to show the traceback if an error happens.""")
 
+    sql_limit = param.Integer(default=None, bounds=(1, None), doc="""
+        The max number of rows to return in all SQL queries.""")
+
     _valid_keys: ClassVar[Literal['params']] = 'params'
     _validate_params: ClassVar[bool] = True
 
