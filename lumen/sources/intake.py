@@ -28,6 +28,7 @@ class IntakeBaseSource(Source):
                     self.param.warning(
                         f"Could not load {entry.name!r} table with dask."
                     )
+        print(entry)
         return entry.read()
 
     def get_tables(self):
@@ -39,7 +40,6 @@ class IntakeBaseSource(Source):
     ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schemas = {}
         for entry in list(self.cat):
-            print(entry)
             if table is not None and entry != table:
                 continue
             elif not self.load_schema:
