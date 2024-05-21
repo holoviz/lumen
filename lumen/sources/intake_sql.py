@@ -27,6 +27,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     __abstract = True
 
     def _apply_transforms(self, source, sql_transforms):
+        print("APPLY...")
         if not sql_transforms:
             return source
         sql_expr = source._sql_expr
@@ -35,6 +36,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         return type(source)(**dict(source._init_args, sql_expr=sql_expr))
 
     def _get_source(self, table):
+        print("GET SOURCE...")
         try:
             source = self.cat[table]
         except KeyError as e:
@@ -45,6 +47,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         return source
 
     def get_sql_expr(self, table):
+        print("GET SQL EXPR...")
         return self._get_source(table)._sql_expr
 
     @cached
@@ -53,6 +56,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         Applies SQL Transforms, creating new temp catalog on the fly
         and querying the database.
         '''
+        print("GETTING...")
         dask = query.pop('__dask', self.dask)
         sql_transforms = query.pop('sql_transforms', [])
         source = self._get_source(table)
@@ -65,6 +69,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         conditions = list(query.items())
         if self.filter_in_sql:
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
+        print(sql_transforms, "TRANSFORMS")
         source = self._apply_transforms(source, sql_transforms)
         df = self._read(source)
         if not self.filter_in_sql:
@@ -75,6 +80,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     def get_schema(
         self, table: str | None = None, limit: int | None = None
     ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+        print("GET SCHEMA...")
         if table is None:
             tables = self.get_tables()
         else:
