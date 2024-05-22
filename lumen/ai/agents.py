@@ -1,5 +1,4 @@
 import asyncio
-import difflib
 import io
 import textwrap
 
@@ -27,10 +26,10 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import DataRequired, FuzzyTable, Sql
+from .models import DataRequired, Sql
 from .translate import param_to_pydantic
 
-FUZZY_TABLE_LENGTH = 10
+FUZZY_TABLE_LENGTH = 1
 
 def format_schema(schema):
     formatted = {}
@@ -151,8 +150,6 @@ class Agent(Viewer):
         self, messages: list | str, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
-        if self.embeddings:
-            context = self.embeddings.query(messages)
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
@@ -171,34 +168,15 @@ class Agent(Viewer):
         return schema
 
 
-    async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
-        system = (
-            f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{memory.get('current_table', 'N/A')}`. "
-        )
-        tables = tuple(table.replace('"', "") for table in tables)
-
-        fuzzy_table = (await self.llm.invoke(
-            messages,
-            system=system,
-            response_model=FuzzyTable,
-            allow_partial=False
-        ))
-        if not fuzzy_table.required:
-            return [memory.get("current_table") or tables[0]]
-
-        # make case insensitive, but keep original case to transform back
-        if not fuzzy_table.keywords:
-            return tables[:n]
-
-        table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
-        tables_lower = {table.lower(): table for table in tables}
-
-        # get closest matches
-        closest_tables = set()
-        for keyword in table_keywords:
-            closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
-        closest_tables = [tables_lower[table] for table in closest_tables]
+    async def _get_closest_tables(self, messages: list | str, source: Source, tables: list[str], n: int = 3) -> list[str]:
+        if isinstance(messages, list):
+            query_text = messages[-1]["content"]
+        else:
+            query_text = messages
+        tables = [str(table) for table in tables]
+        self.embeddings.client.get_or_create_collection(source.name)
+        self.embeddings.add_documents(tables, ids=tables, upsert=True)
+        closest_tables = self.embeddings.query(query_text)
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
             tables = await self._select_table(tables)
@@ -324,7 +302,8 @@ class ChatAgent(Agent):
     """
     Responsible for chatting and providing info about high level data related topics,
     e.g. what datasets are available, the columns of the data or
-    statistics about the data, and continuing the conversation.
+    statistics about the data, and continuing the conversation, or finding
+    the closest tables based on the user query.
 
     Is capable of providing suggestions to get started.
     If data is available, it can also talk about the data itself.
@@ -372,7 +351,7 @@ class ChatAgent(Agent):
         tables = source.get_tables() if source else []
         if len(tables) > 1:
             if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
-                closest_tables = await self._get_closest_tables(messages, tables, n=5)
+                closest_tables = await self._get_closest_tables(messages, source, tables, n=5)
             else:
                 closest_tables = memory.get("closest_tables", tables)
             context = f"Available tables: {', '.join(closest_tables)}"
@@ -551,7 +530,8 @@ class TableAgent(LumenBaseAgent):
     provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
 
     async def answer(self, messages: list | str):
-        tables = tuple(memory["current_source"].get_tables())
+        source = memory["current_source"]
+        tables = tuple(source.get_tables())
         if len(tables) == 1:
             table = tables[0]
         else:
@@ -559,7 +539,7 @@ class TableAgent(LumenBaseAgent):
             if closest_tables:
                 tables = closest_tables
             elif len(tables) > FUZZY_TABLE_LENGTH:
-                tables = await self._get_closest_tables(messages, tables)
+                tables = await self._get_closest_tables(messages, source, tables)
             system_prompt = await self._system_prompt_with_context(messages)
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
@@ -594,13 +574,12 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    Responsible for listing the available tables or datasets should the
-    user request to know what datasets are available. Do not use this if
-    the user wants a specific table.
+    Responsible for showing and listing ALL the available tables or dataset.
+    Do not use this if the user want to know about a specific table or dataset, or related keywords.
     """
 
     system_prompt = param.String(
-        default="You are an agent responsible for listing the available tables in the current source."
+        default="You are an agent responsible for listing all the available tables in the current source."
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -610,6 +589,7 @@ class TableListAgent(LumenBaseAgent):
         tables = memory["current_source"].get_tables()
         if not tables:
             return
+
         if isinstance(source, IntakeBaseSQLSource) and hasattr(
             source.cat, "_repr_html_"
         ):
@@ -627,7 +607,7 @@ class TableListAgent(LumenBaseAgent):
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
             table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.send(table_listing, user=self.name, respond=False)
+            self.interface.send(table_listing, user="TableLister", respond=False)
         return tables
 
     async def invoke(self, messages: list | str):

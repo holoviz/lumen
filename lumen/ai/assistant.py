@@ -17,6 +17,7 @@ from pydantic import create_model
 from pydantic.fields import FieldInfo
 
 from .agents import Agent, ChatAgent
+from .embeddings import ChromaDb, Embeddings
 from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
@@ -44,6 +45,8 @@ class Assistant(Viewer):
 
     agents = param.List(default=[ChatAgent])
 
+    embeddings = param.ClassSelector(class_=Embeddings)
+
     llm = param.ClassSelector(class_=Llm, default=Llama())
 
     interface = param.ClassSelector(class_=ChatInterface)
@@ -54,11 +57,11 @@ class Assistant(Viewer):
         self,
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
+        embeddings: Embeddings | None = None,
         agents: list[Agent | Type[Agent]] | None = None,
         logs_filename: str = "",
         **params,
     ):
-
         def on_message(message, instance):
             def update_on_reaction(reactions):
                 self._logs.update_status(
@@ -118,15 +121,25 @@ class Assistant(Viewer):
             self._logs = ChatLogs(filename=logs_filename)
             interface.post_hook = on_message
 
+        if embeddings is None:
+            embeddings = ChromaDb("lumenai")
+
         llm = llm or self.llm
         instantiated = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
-                agent = agent(interface=interface, **kwargs)
+                agent = agent(interface=interface, embeddings=embeddings, **kwargs)
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+        super().__init__(
+            llm=llm,
+            agents=instantiated,
+            embeddings=embeddings,
+            interface=interface,
+            logs_filename=logs_filename,
+            **params
+        )
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False,
