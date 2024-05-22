@@ -1,3 +1,4 @@
+import contextlib
 import os
 import tempfile
 
@@ -8,13 +9,20 @@ import panel as pn
 import pytest
 
 from bokeh.document import Document  # type: ignore
+from hvplot.tests.util import makeMixedDataFrame
 
 from lumen.config import config
 from lumen.sources.base import FileSource, Source
 from lumen.state import state
 from lumen.variables.base import Variables
 
-pd.set_option('mode.string_storage', 'pyarrow')
+with contextlib.suppress(Exception):
+    # From Dask 2024.3.0 they now use `dask_expr` by default
+    # https://github.com/dask/dask/issues/10995
+    import dask
+
+    dask.config.set({"dataframe.query-planning": False})
+
 
 @pytest.fixture
 def set_root():
@@ -44,11 +52,11 @@ def make_variable_filesource():
     def create(root, **kwargs):
         config._root = root
         state._variable = Variables.from_spec({'tables': {'type': 'constant', 'default': {'test': 'test.csv'}}})
-        source = Source.from_spec(dict({
+        source = Source.from_spec({
             'type': 'file',
             'tables': '$variables.tables',
             'kwargs': {'parse_dates': ['D']}
-        }))
+        })
         state.sources['original'] = source
         return source
     yield create
@@ -61,14 +69,20 @@ def make_variable_filesource():
 @pytest.fixture
 def mixed_df():
     pytest.importorskip("pyarrow", "7.0", "Pyarrow is not out on Python 3.12 yet")
-    df = pd._testing.makeMixedDataFrame()
+    string = pd.get_option('mode.string_storage')
+    pd.set_option('mode.string_storage', 'pyarrow')
+    df = makeMixedDataFrame()
     df['C'] = df.C.astype("string")
     yield df
+    pd.set_option('mode.string_storage', string)
 
 @pytest.fixture
 def mixed_df_object_type():
-    df = pd._testing.makeMixedDataFrame()
+    string = pd.get_option('mode.string_storage')
+    pd.set_option('mode.string_storage', 'python')
+    df = makeMixedDataFrame()
     yield df
+    pd.set_option('mode.string_storage', string)
 
 @pytest.fixture
 def yaml_file():

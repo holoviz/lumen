@@ -31,10 +31,11 @@ extras_require = {
     'sql': [
         'duckdb',
         'intake-sql',
-        'sqlalchemy <2',  # Don't work with pandas yet
+        'sqlalchemy',
     ],
     'tests': [
         'pytest',
+        'pytest-rerunfailures',
         'flake8',
         'intake',
         'fastparquet',
@@ -42,7 +43,7 @@ extras_require = {
         'toolz',
         'pre-commit',
         'matplotlib >=3.4',  # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
-        'pandas <2.2',
+        'pandas',
     ],
     'tests_ci' : [
         'pytest-github-actions-annotate-failures',
