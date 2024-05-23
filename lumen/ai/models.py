@@ -40,8 +40,8 @@ class Validity(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Focus only on whether the table contain all the necessary columns
-        to answer the user's query.
+        Thoughts on whether the current table meets the requirement
+        to answer the user's query, i.e. table contains all necessary columns
         """
     )
 

@@ -60,7 +60,7 @@ class Agent(Viewer):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
-    user = param.String(default="Assistant")
+    user = param.String(default="Agent")
 
     requires = param.List(default=[], readonly=True)
 
@@ -419,89 +419,90 @@ class LumenBaseAgent(Agent):
     user = param.String(default="Lumen")
 
     def _describe_data(self, df: pd.DataFrame) -> str:
-        def format_float(num):
-            if pd.isna(num):
-                return num
-            # if is integer, round to 0 decimals
-            if num == int(num):
-                return f"{int(num)}"
-            elif 0.01 <= abs(num) < 100:
-                return f"{num:.1f}"  # Regular floating-point notation with two decimals
-            else:
-                return f"{num:.1e}"  # Exponential notation with two decimals
+        with self.interface.stream_step(title="Calculating summary stats...") as step:
+            def format_float(num):
+                if pd.isna(num):
+                    return num
+                # if is integer, round to 0 decimals
+                if num == int(num):
+                    return f"{int(num)}"
+                elif 0.01 <= abs(num) < 100:
+                    return f"{num:.1f}"  # Regular floating-point notation with two decimals
+                else:
+                    return f"{num:.1e}"  # Exponential notation with two decimals
 
-        size = df.size
-        shape = df.shape
-        if size < 250:
-            out = io.StringIO()
-            df.to_csv(out)
-            out.seek(0)
-            return out.read()
+            size = df.size
+            shape = df.shape
+            if size < 250:
+                out = io.StringIO()
+                df.to_csv(out)
+                out.seek(0)
+                return out.read()
 
-        is_summarized = False
-        if shape[0] > 5000:
-            is_summarized = True
-            df = df.sample(5000)
+            is_summarized = False
+            if shape[0] > 5000:
+                is_summarized = True
+                df = df.sample(5000)
 
-        df = df.sort_index()
+            df = df.sort_index()
 
-        for col in df.columns:
-            if isinstance(df[col].iloc[0], pd.Timestamp):
-                df[col] = pd.to_datetime(df[col])
+            for col in df.columns:
+                if isinstance(df[col].iloc[0], pd.Timestamp):
+                    df[col] = pd.to_datetime(df[col])
 
-        df_describe_dict = df.describe(percentiles=[]).to_dict()
+            df_describe_dict = df.describe(percentiles=[]).to_dict()
 
-        for col in df.select_dtypes(include=["object"]).columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            df_describe_dict[col]["nunique"] = df[col].nunique()
-            try:
-                df_describe_dict[col]["lengths"] = {
-                    "max": df[col].str.len().max(),
-                    "min": df[col].str.len().min(),
-                    "mean": float(df[col].str.len().mean()),
-                }
-            except AttributeError:
-                pass
+            for col in df.select_dtypes(include=["object"]).columns:
+                if col not in df_describe_dict:
+                    df_describe_dict[col] = {}
+                df_describe_dict[col]["nunique"] = df[col].nunique()
+                try:
+                    df_describe_dict[col]["lengths"] = {
+                        "max": df[col].str.len().max(),
+                        "min": df[col].str.len().min(),
+                        "mean": float(df[col].str.len().mean()),
+                    }
+                except AttributeError:
+                    pass
 
-        for col in df.columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
+            for col in df.columns:
+                if col not in df_describe_dict:
+                    df_describe_dict[col] = {}
+                df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
 
-        # select datetime64 columns
-        for col in df.select_dtypes(include=["datetime64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = str(df_describe_dict[col][key])
-            df[col] = df[col].astype(str)  # shorten output
+            # select datetime64 columns
+            for col in df.select_dtypes(include=["datetime64"]).columns:
+                for key in df_describe_dict[col]:
+                    df_describe_dict[col][key] = str(df_describe_dict[col][key])
+                df[col] = df[col].astype(str)  # shorten output
 
-        # select all numeric columns and round
-        for col in df.select_dtypes(include=["int64", "float64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+            # select all numeric columns and round
+            for col in df.select_dtypes(include=["int64", "float64"]).columns:
+                for key in df_describe_dict[col]:
+                    df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
 
-        for col in df.select_dtypes(include=["float64"]).columns:
-            df[col] = df[col].apply(format_float)
+            for col in df.select_dtypes(include=["float64"]).columns:
+                df[col] = df[col].apply(format_float)
 
-        df_head_dict = {}
-        for col in df.columns:
-            df_head_dict[col] = df[col].head(10)
-            # if all nan or none, replace with None
-            if df_head_dict[col].isnull().all():
-                df_head_dict[col] = ["all null"]
-            else:
-                df_head_dict[col] = df_head_dict[col].tolist()
+            df_head_dict = {}
+            for col in df.columns:
+                df_head_dict[col] = df[col].head(10)
+                # if all nan or none, replace with None
+                if df_head_dict[col].isnull().all():
+                    df_head_dict[col] = ["all null"]
+                else:
+                    df_head_dict[col] = df_head_dict[col].tolist()
 
-        data = {
-            "summary": {
-                "total_table_cells": size,
-                "total_shape": shape,
-                "is_summarized": is_summarized,
-            },
-            "stats": df_describe_dict,
-            "head": df_head_dict
-        }
-
+            data = {
+                "summary": {
+                    "total_table_cells": size,
+                    "total_shape": shape,
+                    "is_summarized": is_summarized,
+                },
+                "stats": df_describe_dict,
+                "head": df_head_dict
+            }
+            step.append(data["summary"])
         return data
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
@@ -555,27 +556,29 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            closest_tables = memory.pop("closest_tables", [])
-            if closest_tables:
-                tables = closest_tables
-            elif len(tables) > FUZZY_TABLE_LENGTH:
-                tables = await self._get_closest_tables(messages, tables)
-            system_prompt = await self._system_prompt_with_context(messages)
-            if self.debug:
-                print(f"{self.name} is being instructed that it should {system_prompt}")
-            if len(tables) > 1:
-                table_model = create_model("Table", table=(Literal[tables], FieldInfo(
-                    description="The most relevant table based on the user query; if none are relevant, select the first."
-                )))
-                result = await self.llm.invoke(
-                    messages,
-                    system=system_prompt,
-                    response_model=table_model,
-                    allow_partial=False,
-                )
-                table = result.table
-            else:
-                table = tables[0]
+            with self.interface.stream_step(title="Choosing the most relevant table...") as step:
+                closest_tables = memory.pop("closest_tables", [])
+                if closest_tables:
+                    tables = closest_tables
+                elif len(tables) > FUZZY_TABLE_LENGTH:
+                    tables = await self._get_closest_tables(messages, tables)
+                system_prompt = await self._system_prompt_with_context(messages)
+                if self.debug:
+                    print(f"{self.name} is being instructed that it should {system_prompt}")
+                if len(tables) > 1:
+                    table_model = create_model("Table", table=(Literal[tables], FieldInfo(
+                        description="The most relevant table based on the user query; if none are relevant, select the first."
+                    )))
+                    result = await self.llm.invoke(
+                        messages,
+                        system=system_prompt,
+                        response_model=table_model,
+                        allow_partial=False,
+                    )
+                    table = result.table
+                else:
+                    table = tables[0]
+                step.stream(f"Selected table: {table}")
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
@@ -627,7 +630,7 @@ class TableListAgent(LumenBaseAgent):
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
             table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.stream_step(table_listing, title="Table list", status="completed")
+        self.interface.stream_step(table_listing, completed_title="Table List", status="completed")
         return tables
 
     async def invoke(self, messages: list | str):
