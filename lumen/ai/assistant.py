@@ -105,7 +105,7 @@ class Assistant(Viewer):
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke,
+                callback=self._chat_invoke, load_buffer=5,
             )
         else:
             interface.callback = self._chat_invoke
