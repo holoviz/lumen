@@ -111,7 +111,7 @@ class Llm(param.Parameterized):
                     string += delta
                     yield string
                 else:
-                    yield getattr(chunk, field)
+                    yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
             for chunk in chunks:
                 if response_model is None:
@@ -119,7 +119,7 @@ class Llm(param.Parameterized):
                     string += delta
                     yield string
                 else:
-                    yield getattr(chunk, field)
+                    yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_key, messages, **kwargs):
         client = self.get_client(model_key)

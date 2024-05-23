@@ -201,12 +201,16 @@ class Assistant(Viewer):
         {columns}
         ```
         """
-        validity = await self.llm.invoke(
-            messages=messages,
-            system=system,
-            response_model=Validity,
-            allow_partial=False,
-        )
+        with self.interface.stream_step(title="Checking table relevancy...") as step:
+            validity = await self.llm.invoke(
+                messages=messages,
+                system=system,
+                response_model=Validity,
+                allow_partial=False,
+            )
+            if validity.chain_of_thought:
+                step.stream(validity.chain_of_thought, user="Assistant")
+
         if validity and validity.is_invalid:
             memory.pop("current_table", None)
             memory.pop("current_data", None)
@@ -291,7 +295,10 @@ class Assistant(Viewer):
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
+            with self.interface.stream_step(title="Choosing agent...") as step:
+                agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
+                step.stream(reasoning)
+                step.completed_title = f"Selected {agent}"
             messages.append({"role": "assistant", "content": reasoning})
 
         if agent is None:
@@ -302,24 +309,29 @@ class Assistant(Viewer):
         )
         selected = subagent = agents[agent]
         agent_chain = []
-        while unmet_dependencies := tuple(
-            r for r in await subagent.requirements(messages) if r not in memory
-        ):
-            print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
-            subagents = [
-                agent
-                for agent in self.agents
-                if any(ur in agent.provides for ur in unmet_dependencies)
-            ]
-            subagent_name = await self._choose_agent(messages, subagents)
-            if subagent_name is None:
-                continue
-            subagent = agents[subagent_name]
-            agent_chain.append((subagent, unmet_dependencies))
+        with self.interface.stream_step(title="Solving dependency chain...") as step:
+            while unmet_dependencies := tuple(
+                r for r in await subagent.requirements(messages) if r not in memory
+            ):
+                step.stream(f"Found unmet dependencies: {unmet_dependencies}")
+                print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
+                subagents = [
+                    agent
+                    for agent in self.agents
+                    if any(ur in agent.provides for ur in unmet_dependencies)
+                ]
+                subagent_name = await self._choose_agent(messages, subagents)
+                if subagent_name is None:
+                    continue
+                subagent = agents[subagent_name]
+                agent_chain.append((subagent, unmet_dependencies))
+                step.completed_title = "Finished solving dependency chain."
         for subagent, deps in agent_chain[::-1]:
-            print(f"Assistant decided the {subagent.name[:-5]!r} will provide {deps}.")
-            self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
-            await subagent.answer(messages)
+            with self.interface.stream_step(title="Choosing subagent...") as step:
+                step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
+                self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
+                await subagent.answer(messages)
+                step.completed_title = f"Selected {subagent.name[:-5]}"
         return selected
 
     def _serialize(self, obj):
@@ -335,26 +347,27 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        await self._invalidate_memory(messages[-2:])
-        agent = await self._get_agent(messages[-3:])
-        if agent is None:
-            msg = (
-                "Assistant could not settle on an agent to perform the requested query. "
-                "Please restate your request."
-            )
-            self.interface.stream(msg, user='Lumen')
-            return msg
+        with self.interface.stream_steps(user="Assistant", step_params={"collapse_on_completed": False}):
+            await self._invalidate_memory(messages[-2:])
+            agent = await self._get_agent(messages[-3:])
+            if agent is None:
+                msg = (
+                    "Assistant could not settle on an agent to perform the requested query. "
+                    "Please restate your request."
+                )
+                self.interface.stream(msg, user='Lumen')
+                return msg
 
-        self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        print("\n\033[95mMESSAGES:\033[0m")
-        for message in messages:
-            print(f"{message['role']!r}: {message['content']}")
-            print("ENTRY" + "-" * 10)
+            self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
+            print("\n\033[95mMESSAGES:\033[0m")
+            for message in messages:
+                print(f"{message['role']!r}: {message['content']}")
+                print("ENTRY" + "-" * 10)
 
-        result = await agent.invoke(messages[-2:])
-        self._current_agent.object = "## No agent active"
-        print("\033[92mDONE\033[0m", "\n\n")
-        return result
+            result = await agent.invoke(messages[-2:])
+            self._current_agent.object = "## No agent active"
+            print("\033[92mDONE\033[0m", "\n\n")
+            return result
 
     def controls(self):
         return self._controls

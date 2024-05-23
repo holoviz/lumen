@@ -627,7 +627,7 @@ class TableListAgent(LumenBaseAgent):
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
             table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.send(table_listing, user=self.name, respond=False)
+        self.interface.stream_step(table_listing, title="Table list", status="completed")
         return tables
 
     async def invoke(self, messages: list | str):
@@ -692,7 +692,6 @@ class SQLAgent(LumenBaseAgent):
         return prompt
 
     async def answer(self, messages: list | str):
-        message = None
         source = memory["current_source"]
         table = memory["current_table"]
         if not hasattr(source, "get_sql_expr"):
@@ -701,21 +700,24 @@ class SQLAgent(LumenBaseAgent):
         schema = self._get_schema(source, table)
         sql_expr = source.get_sql_expr(table)
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
-        async for chunk in self.llm.stream(
-            messages,
-            system=system_prompt + sql_prompt,
-            response_model=Sql,
-            field="query",
-        ):
-            if chunk is None:
-                continue
-            message = self.interface.stream(
-                f"```sql\n{chunk}\n```",
-                user="SQL",
-                message=message,
-                replace=True,
-            )
-        if message.object is None:
+
+        message = ""
+        with self.interface.stream_step(title="Thinking...") as step:
+            async for chunk in self.llm.stream(
+                messages,
+                system=system_prompt + sql_prompt,
+                response_model=Sql,
+                field="query",
+            ):
+                if chunk is None:
+                    continue
+                message += chunk
+                step.stream(
+                    f"```sql\n{message}\n```",
+                    user="SQL",
+                    replace=True,
+                )
+        if not message:
             return
         sql_out = message.object.replace("```sql", "").replace("```", "").strip()
 
