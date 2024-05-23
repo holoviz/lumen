@@ -110,7 +110,7 @@ class Assistant(Viewer):
         else:
             interface.callback = self._chat_invoke
         interface.callback_exception = "raise"
-        interface.reaction_icons = {"like": "thumb-up", "dislike": "thumb-down"}
+        interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
 
