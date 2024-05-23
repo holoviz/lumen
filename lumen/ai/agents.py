@@ -419,90 +419,88 @@ class LumenBaseAgent(Agent):
     user = param.String(default="Lumen")
 
     def _describe_data(self, df: pd.DataFrame) -> str:
-        with self.interface.stream_step(title="Calculating summary stats...") as step:
-            def format_float(num):
-                if pd.isna(num):
-                    return num
-                # if is integer, round to 0 decimals
-                if num == int(num):
-                    return f"{int(num)}"
-                elif 0.01 <= abs(num) < 100:
-                    return f"{num:.1f}"  # Regular floating-point notation with two decimals
-                else:
-                    return f"{num:.1e}"  # Exponential notation with two decimals
+        def format_float(num):
+            if pd.isna(num):
+                return num
+            # if is integer, round to 0 decimals
+            if num == int(num):
+                return f"{int(num)}"
+            elif 0.01 <= abs(num) < 100:
+                return f"{num:.1f}"  # Regular floating-point notation with two decimals
+            else:
+                return f"{num:.1e}"  # Exponential notation with two decimals
 
-            size = df.size
-            shape = df.shape
-            if size < 250:
-                out = io.StringIO()
-                df.to_csv(out)
-                out.seek(0)
-                return out.read()
+        size = df.size
+        shape = df.shape
+        if size < 250:
+            out = io.StringIO()
+            df.to_csv(out)
+            out.seek(0)
+            return out.read()
 
-            is_summarized = False
-            if shape[0] > 5000:
-                is_summarized = True
-                df = df.sample(5000)
+        is_summarized = False
+        if shape[0] > 5000:
+            is_summarized = True
+            df = df.sample(5000)
 
-            df = df.sort_index()
+        df = df.sort_index()
 
-            for col in df.columns:
-                if isinstance(df[col].iloc[0], pd.Timestamp):
-                    df[col] = pd.to_datetime(df[col])
+        for col in df.columns:
+            if isinstance(df[col].iloc[0], pd.Timestamp):
+                df[col] = pd.to_datetime(df[col])
 
-            df_describe_dict = df.describe(percentiles=[]).to_dict()
+        df_describe_dict = df.describe(percentiles=[]).to_dict()
 
-            for col in df.select_dtypes(include=["object"]).columns:
-                if col not in df_describe_dict:
-                    df_describe_dict[col] = {}
-                df_describe_dict[col]["nunique"] = df[col].nunique()
-                try:
-                    df_describe_dict[col]["lengths"] = {
-                        "max": df[col].str.len().max(),
-                        "min": df[col].str.len().min(),
-                        "mean": float(df[col].str.len().mean()),
-                    }
-                except AttributeError:
-                    pass
+        for col in df.select_dtypes(include=["object"]).columns:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            df_describe_dict[col]["nunique"] = df[col].nunique()
+            try:
+                df_describe_dict[col]["lengths"] = {
+                    "max": df[col].str.len().max(),
+                    "min": df[col].str.len().min(),
+                    "mean": float(df[col].str.len().mean()),
+                }
+            except AttributeError:
+                pass
 
-            for col in df.columns:
-                if col not in df_describe_dict:
-                    df_describe_dict[col] = {}
-                df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
+        for col in df.columns:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
 
-            # select datetime64 columns
-            for col in df.select_dtypes(include=["datetime64"]).columns:
-                for key in df_describe_dict[col]:
-                    df_describe_dict[col][key] = str(df_describe_dict[col][key])
-                df[col] = df[col].astype(str)  # shorten output
+        # select datetime64 columns
+        for col in df.select_dtypes(include=["datetime64"]).columns:
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
 
-            # select all numeric columns and round
-            for col in df.select_dtypes(include=["int64", "float64"]).columns:
-                for key in df_describe_dict[col]:
-                    df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+        # select all numeric columns and round
+        for col in df.select_dtypes(include=["int64", "float64"]).columns:
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
 
-            for col in df.select_dtypes(include=["float64"]).columns:
-                df[col] = df[col].apply(format_float)
+        for col in df.select_dtypes(include=["float64"]).columns:
+            df[col] = df[col].apply(format_float)
 
-            df_head_dict = {}
-            for col in df.columns:
-                df_head_dict[col] = df[col].head(10)
-                # if all nan or none, replace with None
-                if df_head_dict[col].isnull().all():
-                    df_head_dict[col] = ["all null"]
-                else:
-                    df_head_dict[col] = df_head_dict[col].tolist()
+        df_head_dict = {}
+        for col in df.columns:
+            df_head_dict[col] = df[col].head(10)
+            # if all nan or none, replace with None
+            if df_head_dict[col].isnull().all():
+                df_head_dict[col] = ["all null"]
+            else:
+                df_head_dict[col] = df_head_dict[col].tolist()
 
-            data = {
-                "summary": {
-                    "total_table_cells": size,
-                    "total_shape": shape,
-                    "is_summarized": is_summarized,
-                },
-                "stats": df_describe_dict,
-                "head": df_head_dict
-            }
-            step.append(data["summary"])
+        data = {
+            "summary": {
+                "total_table_cells": size,
+                "total_shape": shape,
+                "is_summarized": is_summarized,
+            },
+            "stats": df_describe_dict,
+            "head": df_head_dict
+        }
         return data
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
@@ -705,7 +703,7 @@ class SQLAgent(LumenBaseAgent):
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
 
         message = ""
-        with self.interface.stream_step(title="Thinking...") as step:
+        with self.interface.stream_step(title="Conjuring SQL query...") as step:
             async for chunk in self.llm.stream(
                 messages,
                 system=system_prompt + sql_prompt,
@@ -717,12 +715,12 @@ class SQLAgent(LumenBaseAgent):
                 message += chunk
                 step.stream(
                     f"```sql\n{message}\n```",
-                    user="SQL",
                     replace=True,
                 )
+            step.completed_title = "SQL Query"
         if not message:
             return
-        sql_out = message.object.replace("```sql", "").replace("```", "").strip()
+        sql_out = message.replace("```sql", "").replace("```", "").strip()
 
         # TODO: find a better way to replace for all tables
         for table in memory.get("closest_tables", [table]):
