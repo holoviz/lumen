@@ -182,7 +182,11 @@ class Assistant(Viewer):
         if not table:
             return
 
-        columns = list(memory["current_data"]["stats"].keys())
+        current_data = memory["current_data"]
+        if isinstance(current_data, dict):
+            columns = list(current_data["stats"].keys())
+        else:
+            columns = list(current_data.columns)
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
