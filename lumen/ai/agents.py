@@ -554,7 +554,7 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            with self.interface.stream_step(title="Choosing the most relevant table...") as step:
+            with self.interface.attach_step(title="Choosing the most relevant table...") as step:
                 closest_tables = memory.pop("closest_tables", [])
                 if closest_tables:
                     tables = closest_tables
@@ -628,7 +628,7 @@ class TableListAgent(LumenBaseAgent):
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
             table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.stream_step(table_listing, completed_title="Table List", status="completed")
+        self.interface.attach_step(table_listing, success_title="Table List", status="success")
         return tables
 
     async def invoke(self, messages: list | str):
@@ -703,7 +703,7 @@ class SQLAgent(LumenBaseAgent):
         sql_prompt = self._sql_prompt(sql_expr, table, schema)
 
         message = ""
-        with self.interface.stream_step(title="Conjuring SQL query...") as step:
+        with self.interface.attach_step(title="Conjuring SQL query...") as step:
             async for chunk in self.llm.stream(
                 messages,
                 system=system_prompt + sql_prompt,
@@ -717,7 +717,7 @@ class SQLAgent(LumenBaseAgent):
                     f"```sql\n{message}\n```",
                     replace=True,
                 )
-            step.completed_title = "SQL Query"
+            step.success_title = "SQL Query"
         if not message:
             return
         sql_out = message.replace("```sql", "").replace("```", "").strip()

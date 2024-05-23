@@ -201,7 +201,7 @@ class Assistant(Viewer):
         {columns}
         ```
         """
-        with self.interface.stream_step(title="Checking table relevancy...") as step:
+        with self.interface.attach_step(title="Checking table relevancy...") as step:
             validity = await self.llm.invoke(
                 messages=messages,
                 system=system,
@@ -210,7 +210,7 @@ class Assistant(Viewer):
             )
             if validity.chain_of_thought:
                 step.stream(validity.chain_of_thought)
-            step.completed_title = "Table needs refresh" if validity.is_invalid else "Table is still valid"
+            step.success_title = "Table needs refresh" if validity.is_invalid else "Table is still valid"
 
         if validity and validity.is_invalid:
             memory.pop("current_table", None)
@@ -296,10 +296,10 @@ class Assistant(Viewer):
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            with self.interface.stream_step(title="Selecting relevant agent...") as step:
+            with self.interface.attach_step(title="Selecting relevant agent...") as step:
                 agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
                 step.stream(reasoning)
-                step.completed_title = f"Selected {agent}"
+                step.success_title = f"Selected {agent}"
             messages.append({"role": "assistant", "content": reasoning})
 
         if agent is None:
@@ -313,7 +313,7 @@ class Assistant(Viewer):
         while unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in memory
         ):
-            with self.interface.stream_step(title="Solving dependency chain...") as step:
+            with self.interface.attach_step(title="Solving dependency chain...") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
                 print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [
@@ -326,13 +326,13 @@ class Assistant(Viewer):
                     continue
                 subagent = agents[subagent_name]
                 agent_chain.append((subagent, unmet_dependencies))
-                step.completed_title = "Finished solving dependency chain"
+                step.success_title = "Finished solving dependency chain"
         for subagent, deps in agent_chain[::-1]:
-            with self.interface.stream_step(title="Choosing subagent...") as step:
+            with self.interface.attach_step(title="Choosing subagent...") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
                 await subagent.answer(messages)
-                step.completed_title = f"Selected {subagent.name[:-5]}"
+                step.success_title = f"Selected {subagent.name[:-5]}"
         return selected
 
     def _serialize(self, obj):
@@ -348,7 +348,7 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        with self.interface.stream_steps(user="Assistant", step_params={"collapse_on_completed": False}):
+        with self.interface.create_steps(user="Assistant", step_params={"collapsed_on_success": False}):
             await self._invalidate_memory(messages[-2:])
             agent = await self._get_agent(messages[-3:])
             if agent is None:
