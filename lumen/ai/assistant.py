@@ -21,6 +21,7 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
+from .utils import render_template
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -187,20 +188,7 @@ class Assistant(Viewer):
             columns = list(current_data["stats"].keys())
         else:
             columns = list(current_data.columns)
-        system = f"""
-        Based on the latest user's query, is the table relevant?
-        If not, return invalid_key='table'.
-
-        ### Current Table:
-        ```
-        {table}
-        ```
-
-        ### Current Columns:
-        ```
-        {columns}
-        ```
-        """
+        system = render_template("check_validity.jinja2", table=table, columns=columns)
         validity = await self.llm.invoke(
             messages=messages,
             system=system,
@@ -228,31 +216,12 @@ class Assistant(Viewer):
         finally:
             self.interface.disabled = False
 
-    def _generate_picker_prompt(self, agents):
-        # prompt = f'Current you have the following items in memory: {list(memory)}'
-        prompt = (
-            "\nYou are the leader of a team of expert agents. "
-            "Select most relevant expert for the user's query:\n'''\n"
-            + "\n".join(
-                f"- `{agent.name[:-5]}`: {' '.join(agent.__doc__.strip().split())}"
-                for agent in agents
-            )
-            + "\n'''\nEach agent can request other agents to fill in the blanks, so pick the agent that can best answer the entire query."
-        )
-        if "current_agent" in memory:
-            prompt += f"If possible, continue using the existing agent to perform the query: {self._current_agent.object}"
-        return prompt
-
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         print("\033[94mNEW\033[0m" + "-" * 100)
         await self.invoke(contents)
 
-    async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
-        agent_names = tuple(sagent.name[:-5] for sagent in agents)
-        if len(agent_names) == 0:
-            raise ValueError("No agents available to choose from.")
-        if len(agent_names) == 1:
-            return agent_names[0]
+    @staticmethod
+    def _create_agent_model(agent_names):
         agent_model = create_model(
             "Agent",
             chain_of_thought=(
@@ -266,11 +235,24 @@ class Assistant(Viewer):
             ),
             agent=(Literal[agent_names], ...),
         )
+        return agent_model
+
+    async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
+        agent_names = tuple(sagent.name[:-5] for sagent in agents)
+        if len(agent_names) == 0:
+            raise ValueError("No agents available to choose from.")
+        if len(agent_names) == 1:
+            return agent_names[0]
         self._current_agent.object = "## **Current Agent**: Lumen.ai"
+        agent_model = self._create_agent_model(agent_names)
+        system = render_template(
+            "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
+        )
         for _ in range(3):
+            print(messages)
             out = await self.llm.invoke(
                 messages=messages,
-                system=self._generate_picker_prompt(agents),
+                system=system,
                 response_model=agent_model,
                 model_key="reasoning",
                 allow_partial=False

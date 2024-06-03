@@ -29,6 +29,7 @@ from .llm import Llm
 from .memory import memory
 from .models import DataRequired, FuzzyTable, Sql
 from .translate import param_to_pydantic
+from .utils import render_template
 
 FUZZY_TABLE_LENGTH = 10
 
@@ -550,6 +551,13 @@ class TableAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
 
+    @staticmethod
+    def _create_table_model(tables):
+        table_model = create_model("Table", table=(Literal[tables], FieldInfo(
+            description="The most relevant table based on the user query; if none are relevant, select the first."
+        )))
+        return table_model
+
     async def answer(self, messages: list | str):
         tables = tuple(memory["current_source"].get_tables())
         if len(tables) == 1:
@@ -564,9 +572,7 @@ class TableAgent(LumenBaseAgent):
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
             if len(tables) > 1:
-                table_model = create_model("Table", table=(Literal[tables], FieldInfo(
-                    description="The most relevant table based on the user query; if none are relevant, select the first."
-                )))
+                table_model = self._create_table_model(tables)
                 result = await self.llm.invoke(
                     messages,
                     system=system_prompt,
@@ -795,15 +801,6 @@ class TransformPipelineAgent(LumenBaseAgent):
             if not issubclass(transform, SQLTransform)
         }
 
-    def _transform_picker_prompt(self) -> str:
-        prompt = "This is a description of all available transforms:\n"
-        for transform in self._available_transforms.values():
-            if doc := (transform.__doc__ or "").strip():
-                doc = doc.split("\n\n")[0].strip().replace("\n", "")
-                prompt += f"- {doc}\n"
-        prompt += "- `None` No transform needed\n"
-        return prompt
-
     def _transform_prompt(
         self, model: BaseModel, transform: Transform, table: str, schema: dict
     ) -> str:
@@ -815,11 +812,8 @@ class TransformPipelineAgent(LumenBaseAgent):
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
 
-    async def _find_transform(
-        self, messages: list | str, system_prompt: str
-    ) -> Type[Transform] | None:
-        picker_prompt = self._transform_picker_prompt()
-        transforms = self._available_transforms
+    @staticmethod
+    def _create_transform_model(transforms):
         transform_model = create_model(
             "Transform",
             summary_of_query=(
@@ -837,7 +831,16 @@ class TransformPipelineAgent(LumenBaseAgent):
             ),
             transforms=(Optional[list[Literal[tuple(transforms)]]], None),
         )
+        return transform_model
 
+    async def _find_transform(
+        self, messages: list | str, system_prompt: str
+    ) -> Type[Transform] | None:
+        picker_prompt = render_template(
+            "pick_transform.jinja2", transforms=self._available_transforms.values()
+        )
+        transforms = self._available_transforms
+        transform_model = self._create_transform_model(transforms)
         transform = await self.llm.invoke(
             messages,
             system=f"{system_prompt}\n{picker_prompt}",

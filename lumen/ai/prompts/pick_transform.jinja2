@@ -1,0 +1,10 @@
+This is a description of all available transforms:
+{% for transform in {{ transforms }} %}
+    {% set doc = (transform.__doc__ or "").strip() %}
+    {% if doc %}
+        {% set doc = doc.split("\n\n")[0].strip().replace("\n", "") %}
+        - {{ doc }}
+    {% endif %}
+{% endfor %}
+- `None` No transform needed
+{% endset %}
