@@ -169,6 +169,7 @@ class Agent(Viewer):
                 spec["min"] = spec.pop("inclusiveMinimum")
             if "inclusiveMaximum" in spec:
                 spec["max"] = spec.pop("inclusiveMaximum")
+        schema = format_schema(schema)
         return schema
 
 
