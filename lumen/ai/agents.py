@@ -449,7 +449,7 @@ class LumenBaseAgent(Agent):
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
-        df_describe_dict = df.describe(percentiles=[]).to_dict()
+        df_describe_dict = df.describe(percentiles=[], exclude=["min", "max"]).to_dict()
 
         for col in df.select_dtypes(include=["object"]).columns:
             if col not in df_describe_dict:
@@ -483,15 +483,6 @@ class LumenBaseAgent(Agent):
         for col in df.select_dtypes(include=["float64"]).columns:
             df[col] = df[col].apply(format_float)
 
-        df_head_dict = {}
-        for col in df.columns:
-            df_head_dict[col] = df[col].head(10)
-            # if all nan or none, replace with None
-            if df_head_dict[col].isnull().all():
-                df_head_dict[col] = ["all null"]
-            else:
-                df_head_dict[col] = df_head_dict[col].tolist()
-
         data = {
             "summary": {
                 "total_table_cells": size,
@@ -499,7 +490,6 @@ class LumenBaseAgent(Agent):
                 "is_summarized": is_summarized,
             },
             "stats": df_describe_dict,
-            "head": df_head_dict
         }
 
         return data
