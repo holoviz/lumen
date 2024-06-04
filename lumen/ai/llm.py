@@ -216,6 +216,7 @@ class OpenAI(Llm):
 
         if self.use_logfire:
             import logfire
+            logfire.configure()
             logfire.instrument_openai(llm)
         return client
 

@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatMessage
+from panel.chat import ChatInterface, ChatMessage, ChatSteps
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
@@ -201,7 +201,7 @@ class Assistant(Viewer):
         {columns}
         ```
         """
-        with self.interface.attach_step(title="Checking table relevancy...") as step:
+        with self.interface.append_step(title="Checking table relevancy...", steps="append") as step:
             validity = await self.llm.invoke(
                 messages=messages,
                 system=system,
@@ -296,7 +296,7 @@ class Assistant(Viewer):
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            with self.interface.attach_step(title="Selecting relevant agent...") as step:
+            with self.interface.append_step(title="Selecting relevant agent...", steps="append") as step:
                 agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
                 step.stream(reasoning)
                 step.success_title = f"Selected {agent}"
@@ -313,7 +313,7 @@ class Assistant(Viewer):
         while unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in memory
         ):
-            with self.interface.attach_step(title="Solving dependency chain...") as step:
+            with self.interface.append_step(title="Solving dependency chain...", steps="append") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
                 print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [
@@ -328,7 +328,7 @@ class Assistant(Viewer):
                 agent_chain.append((subagent, unmet_dependencies))
                 step.success_title = "Finished solving dependency chain"
         for subagent, deps in agent_chain[::-1]:
-            with self.interface.attach_step(title="Choosing subagent...") as step:
+            with self.interface.append_step(title="Choosing subagent...") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
                 await subagent.answer(messages)
@@ -348,7 +348,9 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        with self.interface.create_steps(user="Assistant", step_params={"collapsed_on_success": False}):
+        chat_steps = ChatSteps()
+        self.interface.stream(chat_steps, user="Assistant")
+        with chat_steps:
             await self._invalidate_memory(messages[-2:])
             agent = await self._get_agent(messages[-3:])
             if agent is None:
