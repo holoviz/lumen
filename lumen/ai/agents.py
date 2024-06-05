@@ -158,7 +158,8 @@ class Agent(Viewer):
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    def _get_schema(self, source: Source | Pipeline, table: str = None):
+    @staticmethod
+    def _get_schema(source: Source | Pipeline, table: str = None):
         if isinstance(source, Pipeline):
             schema = source.get_schema()
         else:
@@ -451,7 +452,7 @@ class LumenBaseAgent(Agent):
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
-        df_describe_dict = df.describe(percentiles=[], exclude=["min", "max"]).to_dict()
+        df_describe_dict = df.describe(percentiles=[]).to_dict()
 
         for col in df.select_dtypes(include=["object"]).columns:
             if col not in df_describe_dict:
@@ -485,6 +486,15 @@ class LumenBaseAgent(Agent):
         for col in df.select_dtypes(include=["float64"]).columns:
             df[col] = df[col].apply(format_float)
 
+        df_head_dict = {}
+        for col in df.columns:
+            df_head_dict[col] = df[col].head(10)
+            # if all nan or none, replace with None
+            if df_head_dict[col].isnull().all():
+                df_head_dict[col] = ["all null"]
+            else:
+                df_head_dict[col] = df_head_dict[col].tolist()
+
         data = {
             "summary": {
                 "total_table_cells": size,
@@ -492,6 +502,7 @@ class LumenBaseAgent(Agent):
                 "is_summarized": is_summarized,
             },
             "stats": df_describe_dict,
+            "head": df_head_dict
         }
 
         return data
@@ -937,8 +948,25 @@ class hvPlotAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_plot"], readonly=True)
 
+    @staticmethod
+    def _get_model(view, schema):
+        # Find parameters
+        excluded = view._internal_params + [
+            "controls",
+            "type",
+            "source",
+            "pipeline",
+            "transforms",
+            "download",
+            "field",
+            "selection_group",
+        ]
+        model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
+        return model
+
+    @staticmethod
     def _view_prompt(
-        self, model: BaseModel, view: hvPlotUIView, table: str, schema: dict
+        model: BaseModel, view: hvPlotUIView, table: str, schema: dict
     ) -> str:
         doc = view.__doc__.split("\n\n")[0]
         prompt = f"{doc}"
@@ -952,20 +980,9 @@ class hvPlotAgent(LumenBaseAgent):
         table = memory["current_table"]
         system_prompt = await self._system_prompt_with_context(messages)
 
-        # Find parameters
         view = hvPlotUIView
         schema = self._get_schema(pipeline)
-        excluded = view._internal_params + [
-            "controls",
-            "type",
-            "source",
-            "pipeline",
-            "transforms",
-            "download",
-            "field",
-            "selection_group",
-        ]
-        model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
+        model = self._get_model(view, schema)
         view_prompt = self._view_prompt(model, view, table, schema)
         if self.debug:
             print(f"{self.name} is being instructed that {view_prompt}.")
