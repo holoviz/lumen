@@ -223,17 +223,17 @@ class Assistant(Viewer):
     @staticmethod
     def _create_agent_model(agent_names):
         agent_model = create_model(
-            "Agent",
+            "RelevantAgent",
             chain_of_thought=(
                 str,
                 FieldInfo(
-                    description=(
-                        "Think step by step out loud, focused on application and how it could be useful to the "
-                        "tying into the available agents. Provide up to two sentence description; be concise."
-                    )
+                    description="Explain in your own words, what the user wants."
                 ),
             ),
-            agent=(Literal[agent_names], ...),
+            agent=(
+                Literal[agent_names],
+                FieldInfo(default=..., description="The most relevant agent to use.")
+            ),
         )
         return agent_model
 

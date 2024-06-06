@@ -329,7 +329,7 @@ class ChatAgent(Agent):
     e.g. what datasets are available, the columns of the data or
     statistics about the data, and continuing the conversation.
 
-    Is capable of providing suggestions to get started.
+    Is capable of providing suggestions to get started or comment on interesting tidbits.
     If data is available, it can also talk about the data itself.
     """
 

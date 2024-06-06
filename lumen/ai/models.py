@@ -39,12 +39,9 @@ class Sql(BaseModel):
 class Validity(BaseModel):
 
     chain_of_thought: str = Field(
-        description="""
-        Focus only on whether the table contain all the necessary columns
-        to answer the user's query.
-        """
+        description="Can the current table name and columns match the user's query?"
     )
 
     is_invalid: bool = Field(
-        description="Whether one of the table and/or pipeline is invalid or needs a refresh."
+        description="Whether the table needs a refresh."
     )
