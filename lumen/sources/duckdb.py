@@ -74,6 +74,8 @@ class DuckDBSource(Source):
 
     @cached
     def get(self, table, **query):
+        from ..state import state as session_state
+
         query.pop('__dask', None)
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
@@ -82,6 +84,11 @@ class DuckDBSource(Source):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
+
+        if session_state.config and session_state.config.sql_limit:
+            limit = session_state.config.sql_limit
+            sql_expr = SQLLimit(limit=limit).apply(sql_expr)
+
         df = self._connection.execute(sql_expr).fetch_df(date_as_object=True)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)

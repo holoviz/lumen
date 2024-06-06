@@ -419,6 +419,12 @@ class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
 
+    sql_limit = param.Integer(default=50000)
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        state.config.sql_limit = self.sql_limit
+
     def _describe_data(self, df: pd.DataFrame) -> str:
         def format_float(num):
             if pd.isna(num):
@@ -568,6 +574,7 @@ class TableAgent(LumenBaseAgent):
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
         )
+
         df = pipeline.__panel__()[-1].value
         if len(df) > 0:
             memory["current_data"] = self._describe_data(df)

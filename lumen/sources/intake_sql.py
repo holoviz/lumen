@@ -27,11 +27,18 @@ class IntakeBaseSQLSource(IntakeBaseSource):
     __abstract = True
 
     def _apply_transforms(self, source, sql_transforms):
+        from ..state import state as session_state
+
         if not sql_transforms:
             return source
         sql_expr = source._sql_expr
         for sql_transform in sql_transforms:
             sql_expr = sql_transform.apply(sql_expr)
+
+        if session_state.config and session_state.config.sql_limit:
+            limit = session_state.config.sql_limit
+            sql_expr = SQLLimit(limit=limit).apply(sql_expr)
+
         return type(source)(**dict(source._init_args, sql_expr=sql_expr))
 
     def _get_source(self, table):
@@ -81,7 +88,8 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
+        schema_limit = SQLLimit(limit=limit or 1)
+
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -90,7 +98,7 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             if not hasattr(source, '_sql_expr'):
                 schemas[entry] = super().get_schema(table)
                 continue
-            data = self._read(self._apply_transforms(source, [sql_limit]))
+            data = self._read(self._apply_transforms(source, [schema_limit]))
             schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 schemas[entry] = schema
