@@ -1,6 +1,7 @@
-Based on the latest user's query, is the table relevant?
-Does it contain all the necessary columns?
-Return is_invalid=True if not; else return is_invalid=False.
+Based on the latest user's query, decide whether the
+current table and columns contain all the required info to
+provide a reliable, accurate answer to the user's query.
+Return `is_invalid=True` if not; else return `is_invalid=False`.
 
 ### Current Table:
 ```

@@ -27,7 +27,9 @@ from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import DataRequired, FuzzyTable, Sql
+from .models import (
+    DataRequired, FuzzyTable, Sql, Topic,
+)
 from .translate import param_to_pydantic
 from .utils import render_template
 
@@ -325,7 +327,7 @@ class SourceAgent(Agent):
 
 class ChatAgent(Agent):
     """
-    Responsible for chatting and providing info about high level data related topics,
+    Chats and provides info about high level data related topics,
     e.g. what datasets are available, the columns of the data or
     statistics about the data, and continuing the conversation.
 
@@ -400,21 +402,45 @@ class ChatDetailsAgent(ChatAgent):
     """
     Responsible for chatting and providing info about details about the table values,
     e.g. what should be noted about the data values, valuable, applicable insights about the data,
-    and continuing the conversation. Does not provide overviews; only details and meaning of the data.
+    and continuing the conversation. Does not provide overviews;
+    only details, meaning, relationships, and trends of the data.
     """
 
     requires = param.List(default=["current_source", "current_table"], readonly=True)
 
     system_prompt = param.String(
         default=(
-            "You are a world-class, subject expert on the topic. Help provide guidance and meaning "
+            "You are a world-class, subject scientist on the topic. Help provide guidance and meaning "
             "about the data values, highlight valuable and applicable insights. Be very precise "
             "on your subject matter expertise and do not be afraid to use specialized terminology or "
             "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
-            "instead, focus on the details and meaning of the data. If it's unclear what the user is asking, "
-            "ask clarifying questions to get more information."
+            "instead, focus on the details and meaning of the data. Highlight relationships "
+            "between the columns and what could be interesting to dive deeper into."
         )
     )
+
+    async def _system_prompt_with_context(
+        self, messages: list | str, context: str = ""
+    ) -> str:
+        system_prompt = self.system_prompt
+        topic = (await self.llm.invoke(
+            messages,
+            system="What is the topic of the table?",
+            response_model=Topic,
+            allow_partial=False,
+        )).result
+        context += f"Topic you are a world-class expert on: {topic}"
+
+        current_data = memory["current_data"]
+        if isinstance(current_data, dict):
+            columns = list(current_data["stats"].keys())
+        else:
+            columns = list(current_data.columns)
+        context += f"\nHere are the columns of the table: {columns}"
+
+        if context:
+            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
+        return system_prompt
 
 
 class LumenBaseAgent(Agent):
@@ -539,7 +565,7 @@ class LumenBaseAgent(Agent):
 
 class TableAgent(LumenBaseAgent):
     """
-    Responsible for only displaying a set of tables / datasets, no discussion.
+    Displays a single table / dataset. Does not discuss.
     """
 
     system_prompt = param.String(
@@ -599,9 +625,8 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    Responsible for listing the available tables or datasets should the
-    user request to know what datasets are available. Do not use this if
-    the user wants a specific table.
+    List all of the available tables or datasets inventory. Not useful
+    if the user requests a specific table.
     """
 
     system_prompt = param.String(
@@ -669,13 +694,14 @@ class SQLAgent(LumenBaseAgent):
 
             transforms = [SQLOverride(override=query)]
             try:
-                memory["current_pipeline"] = pipeline = Pipeline(
+                pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
                 )
                 df = pipeline.data
                 if len(df) > 0:
                     memory["current_data"] = self._describe_data(df)
                 yield memory["current_pipeline"].__panel__()
+                memory["current_pipeline"] = pipeline
             except Exception as e:
                 import traceback
                 traceback.print_exc()

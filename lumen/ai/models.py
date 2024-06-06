@@ -38,10 +38,15 @@ class Sql(BaseModel):
 
 class Validity(BaseModel):
 
-    chain_of_thought: str = Field(
-        description="Can the current table name and columns match the user's query?"
+    missing_table_or_columns: list[str] = Field(
+        description="List out all the missing tables or columns requested by the user."
     )
 
     is_invalid: bool = Field(
         description="Whether the table needs a refresh."
     )
+
+
+class Topic(BaseModel):
+
+    result: str = Field(description="A word or up-to-three-words phrase that describes the topic of the table.")
