@@ -328,7 +328,7 @@ class Assistant(Viewer):
                 agent_chain.append((subagent, unmet_dependencies))
                 step.success_title = "Finished solving dependency chain"
         for subagent, deps in agent_chain[::-1]:
-            with self.interface.append_step(title="Choosing subagent...") as step:
+            with self.interface.append_step(title="Choosing subagent...", steps="append") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
                 await subagent.answer(messages)
