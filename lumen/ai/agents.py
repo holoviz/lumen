@@ -691,7 +691,8 @@ class SQLAgent(LumenBaseAgent):
     def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
         prompt = (
             f"The SQL expression for the table {table!r} is {sql!r}.\n\n"
-            f"The data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
+            f"The data for table {table!r} follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
+            f"Be sure to only use columns from the schema for {sql!r}."
         )
         print(prompt)
         return prompt
