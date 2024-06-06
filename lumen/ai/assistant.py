@@ -254,7 +254,6 @@ class Assistant(Viewer):
                 messages=messages,
                 system=system,
                 response_model=agent_model,
-                model_key="reasoning",
                 allow_partial=False
             )
             if not (out and out.agent):
