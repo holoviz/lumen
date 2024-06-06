@@ -272,7 +272,6 @@ class Assistant(Viewer):
                 messages=messages,
                 system=self._generate_picker_prompt(agents),
                 response_model=agent_model,
-                model_key="reasoning",
                 allow_partial=False
             )
             if not (out and out.agent):

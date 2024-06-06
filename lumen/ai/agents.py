@@ -434,10 +434,7 @@ class LumenBaseAgent(Agent):
         size = df.size
         shape = df.shape
         if size < 250:
-            out = io.StringIO()
-            df.to_csv(out)
-            out.seek(0)
-            return out.read()
+            return df
 
         is_summarized = False
         if shape[0] > 5000:
@@ -450,7 +447,7 @@ class LumenBaseAgent(Agent):
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
-        df_describe_dict = df.describe(percentiles=[], exclude=["min", "max"]).to_dict()
+        df_describe_dict = df.describe(percentiles=[]).drop(["min", "max"]).to_dict()
 
         for col in df.select_dtypes(include=["object"]).columns:
             if col not in df_describe_dict:
