@@ -176,14 +176,14 @@ class Agent(Viewer):
         tables = [str(table) for table in tables]
         self.embeddings.client.get_or_create_collection(source.name)
         self.embeddings.add_documents(tables, ids=tables, upsert=True)
-        closest_tables = self.embeddings.query(query_text)
+        closest_tables = self.embeddings.query(query_text, n_results=n)
         print(f"Closest tables: {closest_tables}")
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
             print("No tables found")
             tables = await self._select_table(tables)
         memory["closest_tables"] = tables
-        return tuple(tables)
+        return tuple(closest_tables)
 
     async def _select_table(self, tables):
         input_widget = pn.widgets.AutocompleteInput(
@@ -597,7 +597,7 @@ class TableListAgent(LumenBaseAgent):
             return
 
         if len(tables) > FUZZY_TABLE_LENGTH:
-            tables = await self._get_closest_tables(messages, source, tables)
+            tables = await self._get_closest_tables(messages, source, tables, n=10)
         else:
             tables = tuple(tables)
 
