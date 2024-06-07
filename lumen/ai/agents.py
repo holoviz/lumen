@@ -177,6 +177,7 @@ class Agent(Viewer):
         self.embeddings.client.get_or_create_collection(source.name)
         self.embeddings.add_documents(tables, ids=tables, upsert=True)
         closest_tables = self.embeddings.query(query_text)
+        print(f"Closest tables: {closest_tables}")
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
             tables = await self._select_table(tables)

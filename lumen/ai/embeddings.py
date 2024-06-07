@@ -21,12 +21,14 @@ class ChromaDb(Embeddings):
 
         self.client = chromadb.PersistentClient(path=str(persist_dir / collection))
         self.collection = self.client.get_or_create_collection(collection)
+        print(f"Using ChromaDB for embeddings at {persist_dir}")
 
     def _add_to_collection(self, upsert: bool = True, **add_kwargs):
         if upsert:
             self.collection.upsert(**add_kwargs)
         else:
             self.collection.add(**add_kwargs)
+        print(f"Added {len(add_kwargs['ids'])} documents to collection {self.collection.name}")
 
     def add_directory(self, data_dir: Path, file_type="json", upsert: bool = True, **add_kwargs):
         ids = []
@@ -35,6 +37,7 @@ class ChromaDb(Embeddings):
             ids.append(uuid.uuid4().hex)
             documents.append(path.read_text())
         self._add_to_collection(upsert=upsert, ids=ids, documents=documents, **add_kwargs)
+        print(f"Added {len(ids)} documents to collection {self.collection.name}")
 
     def add_documents(self, documents: list, ids: list | None = None, upsert: bool = True, **add_kwargs):
         if ids is None:
@@ -42,6 +45,8 @@ class ChromaDb(Embeddings):
         else:
             ids = list(ids)
         self._add_to_collection(upsert=upsert, ids=ids, documents=documents, **add_kwargs)
+        print(f"Added {len(ids)} documents to collection {self.collection.name}")
 
     def query(self, query_text: list | str, n_results: int = 1, **query_kwargs) -> list:
+        print(f"Querying collection {self.collection.name} for {query_text}")
         return self.collection.query(query_texts=[query_text], n_results=n_results, **query_kwargs)["documents"][0]
