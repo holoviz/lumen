@@ -833,9 +833,13 @@ class DropNA(Transform):
     transform_type: ClassVar[str] = 'dropna'
 
     def apply(self, table: DataFrame) -> DataFrame:
-        return table.dropna(
-            axis=self.axis, how=self.how, thresh=self.thresh, subset=self.subset
-        )
+        kwargs = {'axis': self.axis, 'subset': self.subset}
+        if self.how:
+            kwargs['how'] = self.how
+        if self.thresh:
+            kwargs['thresh'] = self.thresh
+        return table.dropna(**kwargs)
+
 
 class project_lnglat(Transform):
     """

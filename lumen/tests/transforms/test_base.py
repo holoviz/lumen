@@ -5,7 +5,7 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, Eval, Sum, Transform,
+    Count, DropNA, Eval, Sum, Transform,
 )
 
 
@@ -71,3 +71,12 @@ def test_eval_transform(mixed_df):
     df2['B'] = df.A * 2
 
     pd.testing.assert_frame_equal(eval_df, df2)
+
+
+def test_dropna_transform(mixed_df):
+    mixed_df.loc[1, 'A'] = float('NaN')
+
+    assert len(DropNA.apply_to(mixed_df)) == 4
+    assert len(DropNA.apply_to(mixed_df, how='all')) == 5
+    assert len(DropNA.apply_to(mixed_df, axis=1).columns) == 3
+    assert len(DropNA.apply_to(mixed_df, axis=1, how='all').columns) == 4

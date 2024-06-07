@@ -104,10 +104,10 @@ class DuckDBSource(Source):
                 continue
             sql_expr = self.get_sql_expr(entry)
             data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
-            schema = get_dataframe_schema(data)['items']['properties']
+            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
-                schemas[entry] = schema
                 continue
+
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
                 if 'enum' in col_schema:
@@ -120,12 +120,12 @@ class DuckDBSource(Source):
                 distinct = self._connection.execute(distinct_expr).fetch_df()
                 schema[col]['enum'] = distinct[col].tolist()
 
-            if min_maxes:
-                minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
-                minmax_expr = ' '.join(minmax_expr.splitlines())
-                minmax_data = self._connection.execute(minmax_expr).fetch_df()
-            else:
-                minmax_data = None
+            if not min_maxes:
+                continue
+
+            minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_data = self._connection.execute(minmax_expr).fetch_df()
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':
@@ -138,5 +138,4 @@ class DuckDBSource(Source):
                     cast = lambda v: v
                 schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
                 schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
-            schemas[entry] = schema
         return schemas if table is None else schemas[table]
