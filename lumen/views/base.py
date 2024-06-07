@@ -659,7 +659,14 @@ class IndicatorView(View):
 
 class hvPlotBaseView(View):
 
-    kind = param.String(default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.")
+    kind = param.Selector(
+        default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.",
+        objects=[
+            'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
+            'errorbars', 'hist', 'image', 'kde', 'labels',
+            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'points', 'step', 'violin'
+        ]
+    )
 
     x = param.Selector(doc="The column to render on the x-axis.")
 
@@ -668,6 +675,8 @@ class hvPlotBaseView(View):
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
+
+    _field_params = ['x', 'y', 'by', 'groupby']
 
     __abstract = True
 
@@ -736,8 +745,6 @@ class hvPlotView(hvPlotBaseView):
         on the plot.""")
 
     view_type = 'hvplot'
-
-    _field_params = ['x', 'y', 'by', 'groupby']
 
     _ignore_kwargs = ['tables']
 
