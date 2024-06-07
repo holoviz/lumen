@@ -52,7 +52,7 @@ jobs:
           (github.event_name == 'workflow_run' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
         run: |
           conda activate test
-          ae5 login --hostname pyviz.demo.anaconda.com --username ${{ secrets.AE5_USERNAME }} --password ${{ secrets.AE5_PASSWORD }}
+          ae5 login --hostname holoviz-demo.anaconda.com --username ${{ secrets.AE5_USERNAME }} --password ${{ secrets.AE5_PASSWORD }}
           ae5 deployment stop lumen-gallery-dev --yes || :
           ae5 project delete lumen-gallery-dev --yes || :
           ae5 project upload examples/gallery --name lumen-gallery-dev --tag ${{ steps.vars.outputs.tag || '0.0.1dev' }}
