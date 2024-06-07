@@ -180,6 +180,7 @@ class Agent(Viewer):
         print(f"Closest tables: {closest_tables}")
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
+            print("No tables found")
             tables = await self._select_table(tables)
         memory["closest_tables"] = tables
         return tuple(tables)
@@ -590,17 +591,12 @@ class TableListAgent(LumenBaseAgent):
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
-        print(source)
         tables = memory["current_source"].get_tables()
-        print(tables)
         if not tables:
             print("No tables found...")
             return
 
-        closest_tables = memory.pop("closest_tables", [])
-        if closest_tables:
-            tables = closest_tables
-        elif len(tables) > FUZZY_TABLE_LENGTH:
+        if len(tables) > FUZZY_TABLE_LENGTH:
             tables = await self._get_closest_tables(messages, source, tables)
         else:
             tables = tuple(tables)
