@@ -537,27 +537,12 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            closest_tables = memory.pop("closest_tables", [])
-            if closest_tables:
-                tables = closest_tables
-            elif len(tables) > FUZZY_TABLE_LENGTH:
-                tables = await self._get_closest_tables(messages, source, tables)
+            if len(tables) > FUZZY_TABLE_LENGTH:
+                tables = await self._get_closest_tables(messages, source, tables, n=1)
+            table = tables[0]
             system_prompt = await self._system_prompt_with_context(messages)
             if self.debug:
                 print(f"{self.name} is being instructed that it should {system_prompt}")
-            if len(tables) > 1:
-                table_model = create_model("Table", table=(Literal[tables], FieldInfo(
-                    description="The most relevant table based on the user query; if none are relevant, select the first."
-                )))
-                result = await self.llm.invoke(
-                    messages,
-                    system=system_prompt,
-                    response_model=table_model,
-                    allow_partial=False,
-                )
-                table = result.table
-            else:
-                table = tables[0]
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
