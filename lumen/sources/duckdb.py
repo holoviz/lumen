@@ -94,8 +94,6 @@ class DuckDBSource(Source):
         if table is None:
             tables = self.get_tables()
         else:
-            if isinstance(self.tables, dict):
-                table = self.tables[table]
             tables = [table]
 
         schemas = {}
