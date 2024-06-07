@@ -1,6 +1,5 @@
 import asyncio
 import io
-import textwrap
 
 from typing import Literal, Optional, Type
 
@@ -10,7 +9,6 @@ import param
 import yaml
 
 from panel.chat import ChatInterface
-from panel.pane import HTML
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -19,7 +17,6 @@ from ..base import Component
 from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
-from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import hvPlotUIView
@@ -181,8 +178,8 @@ class Agent(Viewer):
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
             print("No tables found")
-            tables = await self._select_table(tables)
-        memory["closest_tables"] = tables
+            closest_tables = await self._select_table(tables)
+        memory["closest_tables"] = closest_tables
         return tuple(closest_tables)
 
     async def _select_table(self, tables):
@@ -601,27 +598,26 @@ class TableListAgent(LumenBaseAgent):
         else:
             tables = tuple(tables)
 
-        if isinstance(source, IntakeBaseSQLSource) and hasattr(
-            source.cat, "_repr_html_"
-        ):
-            print("Using intake catalog")
-            table_listing = HTML(
-                textwrap.dedent(source.cat._repr_html_()),
-                margin=10,
-                styles={
-                    "overflow": "auto",
-                    "background-color": "white",
-                    "padding": "10px",
-                },
-                tags=['catalog']
-            )
-            self.interface.send(table_listing, user="TableLister", respond=False)
-        else:
-            print("Using tables")
-            tables = tuple(table.replace('"', "") for table in tables)
-            table_bullets = "\n".join(f"- {table}" for table in tables)
-            table_listing = f"Available tables:\n{table_bullets}"
-            self.interface.send(table_listing, user="TableLister", respond=False)
+        # if isinstance(source, IntakeBaseSQLSource) and hasattr(
+        #     source.cat, "_repr_html_"
+        # ):
+        #     print("Using intake catalog")
+        #     table_listing = HTML(
+        #         textwrap.dedent(source.cat._repr_html_()),
+        #         margin=10,
+        #         styles={
+        #             "overflow": "auto",
+        #             "background-color": "white",
+        #             "padding": "10px",
+        #         },
+        #         tags=['catalog']
+        #     )
+        #     self.interface.send(table_listing, user="TableLister", respond=False)
+        print("Using tables")
+        tables = tuple(table.replace('"', "") for table in tables)
+        table_bullets = "\n".join(f"- {table}" for table in tables)
+        table_listing = f"Available tables:\n{table_bullets}"
+        self.interface.send(table_listing, user="TableLister", respond=False)
         return tables
 
     async def invoke(self, messages: list | str):
