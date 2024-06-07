@@ -91,9 +91,8 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                 schemas[entry] = super().get_schema(table)
                 continue
             data = self._read(self._apply_transforms(source, [sql_limit]))
-            schema = get_dataframe_schema(data)['items']['properties']
+            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
-                schemas[entry] = schema
                 continue
 
             enums, min_maxes = [], []
@@ -128,7 +127,6 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                     cast = lambda v: v
                 schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
                 schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
-            schemas[entry] = schema
         return schemas if table is None else schemas[table]
 
 
