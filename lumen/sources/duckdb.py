@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any, Dict
+
 import duckdb
 import param
 
@@ -59,12 +63,19 @@ class DuckDBSource(Source):
             return list(self.tables)
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 
+    def get_sql_expr(self, table: str):
+        if isinstance(self.tables, dict):
+            table = self.tables[table]
+        if 'select ' in table.lower():
+            sql_expr = table
+        else:
+            sql_expr = self.sql_expr.format(table=table)
+        return sql_expr
+
     @cached
     def get(self, table, **query):
         query.pop('__dask', None)
-        if isinstance(self.tables, dict):
-            table = self.tables[table]
-        sql_expr = self.sql_expr.format(table=table)
+        sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
         conditions = list(query.items())
         if self.filter_in_sql:
@@ -77,7 +88,9 @@ class DuckDBSource(Source):
         return df
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         if table is None:
             tables = self.get_tables()
         else:
@@ -86,14 +99,17 @@ class DuckDBSource(Source):
             tables = [table]
 
         schemas = {}
-        limit = SQLLimit(limit=1)
+        sql_limit = SQLLimit(limit=limit or 1)
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
-            sql_expr = self.sql_expr.format(table=table)
-            data = self._connection.execute(limit.apply(sql_expr)).fetch_df()
+            sql_expr = self.get_sql_expr(entry)
+            data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
             schema = get_dataframe_schema(data)['items']['properties']
+            if limit:
+                schemas[entry] = schema
+                continue
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
                 if 'enum' in col_schema:
@@ -105,6 +121,9 @@ class DuckDBSource(Source):
                 distinct_expr = ' '.join(distinct_expr.splitlines())
                 distinct = self._connection.execute(distinct_expr).fetch_df()
                 schema[col]['enum'] = distinct[col].tolist()
+
+            if not min_maxes:
+                continue
 
             minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
             minmax_expr = ' '.join(minmax_expr.splitlines())
