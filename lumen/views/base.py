@@ -660,7 +660,7 @@ class IndicatorView(View):
 class hvPlotBaseView(View):
 
     kind = param.Selector(
-        default="scatter", doc="The kind of plot, e.g. 'scatter' or 'line'.",
+        default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.",
         objects=[
             'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
             'errorbars', 'hist', 'image', 'kde', 'labels',
