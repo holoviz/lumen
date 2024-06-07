@@ -359,6 +359,7 @@ class ChatAgent(Agent):
                 closest_tables = memory.get("closest_tables", tables)
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
+            print("Only one table available")
             memory["current_table"] = table = memory.get("current_table", tables[0])
             schema = self._get_schema(memory["current_source"], table)
             if schema:
