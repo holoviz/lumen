@@ -352,8 +352,10 @@ class ChatAgent(Agent):
         tables = source.get_tables() if source else []
         if len(tables) > 1:
             if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
+                print("Searching for closest tables")
                 closest_tables = await self._get_closest_tables(messages, source, tables, n=5)
             else:
+                print("Using closest tables")
                 closest_tables = memory.get("closest_tables", tables)
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
