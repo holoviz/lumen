@@ -29,7 +29,7 @@ from .memory import memory
 from .models import DataRequired, Sql
 from .translate import param_to_pydantic
 
-FUZZY_TABLE_LENGTH = 1
+FUZZY_TABLE_LENGTH = 10
 
 def format_schema(schema):
     formatted = {}
@@ -597,9 +597,18 @@ class TableListAgent(LumenBaseAgent):
             print("No tables found...")
             return
 
+        closest_tables = memory.pop("closest_tables", [])
+        if closest_tables:
+            tables = closest_tables
+        elif len(tables) > FUZZY_TABLE_LENGTH:
+            tables = await self._get_closest_tables(messages, source, tables)
+        else:
+            tables = tuple(tables)
+
         if isinstance(source, IntakeBaseSQLSource) and hasattr(
             source.cat, "_repr_html_"
         ):
+            print("Using intake catalog")
             table_listing = HTML(
                 textwrap.dedent(source.cat._repr_html_()),
                 margin=10,
@@ -610,7 +619,9 @@ class TableListAgent(LumenBaseAgent):
                 },
                 tags=['catalog']
             )
+            self.interface.send(table_listing, user="TableLister", respond=False)
         else:
+            print("Using tables")
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
             table_listing = f"Available tables:\n{table_bullets}"
