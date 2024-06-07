@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import datetime as dt
 import urllib.parse as urlparse
 
 from collections import defaultdict
 from concurrent import futures
+from typing import Any, Dict
 
 import pandas as pd
 import panel as pn
@@ -218,7 +221,9 @@ class PrometheusSource(Source):
         else:
             return pd.DataFrame(columns=list(self.get_schema('timeseries')))
 
-    def get_schema(self, table=None):
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         dt_start, dt_end = self._format_timestamps()
         schema = {
             "id": {

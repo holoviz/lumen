@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import datetime as dt
+
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
@@ -290,7 +294,9 @@ class AE5Source(Source):
         return getattr(self, f'_get_{table}')()
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schemas = {}
         for t in self._tables:
             if table is None or t == table:

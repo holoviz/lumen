@@ -97,7 +97,7 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table=None):
+    def wrapped(self, table: str | None = None, limit: int | None = None):
         if self in locks:
             main_lock = locks[self]['main']
         else:
@@ -106,7 +106,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
         with main_lock:
             schema = self._get_schema_cache() or {}
         tables = self.get_tables() if table is None else [table]
-        if all(table in schema for table in tables):
+        if all(table in schema for table in tables) and limit is None:
             return schema if table is None else schema[table]
         for missing in tables:
             if missing in schema:
@@ -119,10 +119,10 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
             with lock:
                 with main_lock:
                     new_schema = self._get_schema_cache() or {}
-                if missing in new_schema:
+                if missing in new_schema and limit is None:
                     schema[missing] = new_schema[missing]
                 else:
-                    schema[missing] = method(self, missing)
+                    schema[missing] = method(self, missing, limit)
             with main_lock:
                 self._set_schema_cache(schema)
         return schema if table is None else schema[table]
@@ -417,16 +417,20 @@ class Source(MultiTypeComponent):
         """
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         """
         Returns JSON schema describing the tables returned by the
         Source.
 
         Parameters
         ----------
-        table : str or None
+        table : str | None
             The name of the table to return the schema for. If None
             returns schema for all available tables.
+        limit : int | None
+            Limits the number of rows considered for the schema calculation
 
         Returns
         -------
@@ -480,7 +484,9 @@ class RESTSource(Source):
     source_type: ClassVar[str] = 'rest'
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
         return {table: schema['items']['properties'] for table, schema in
@@ -739,7 +745,9 @@ class WebsiteSource(Source):
     source_type: ClassVar[str] = 'live'
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schema = {
             "status": {
                 "url": {"type": "string", 'enum': self.urls},
@@ -786,7 +794,9 @@ class PanelSessionSource(Source):
     source_type: ClassVar[str] = 'session_info'
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schema = {
             "summary": {
                 "url": {"type": "string", "enum": self.urls},
@@ -926,7 +936,9 @@ class JoinedSource(Source):
         return list(self.tables)
 
     @cached_schema
-    def get_schema(self, table: str | None = None) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         schemas: Dict[str, Dict[str, Any]] = {}
         for name, specs in self.tables.items():
             if table is not None and name != table:

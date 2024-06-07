@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any, Dict
+
 import param  # type: ignore
 
 from ..transforms.base import Filter
@@ -40,6 +44,9 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             ) from e
         return source
 
+    def get_sql_expr(self, table):
+        return self._get_source(table)._sql_expr
+
     @cached
     def get(self, table, **query):
         '''
@@ -65,14 +72,16 @@ class IntakeBaseSQLSource(IntakeBaseSource):
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
     @cached_schema
-    def get_schema(self, table=None):
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
         if table is None:
             tables = self.get_tables()
         else:
             tables = [table]
 
         schemas = {}
-        limit = SQLLimit(limit=1)
+        sql_limit = SQLLimit(limit=limit or 1)
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -81,20 +90,31 @@ class IntakeBaseSQLSource(IntakeBaseSource):
             if not hasattr(source, '_sql_expr'):
                 schemas[entry] = super().get_schema(table)
                 continue
-            data = self._read(self._apply_transforms(source, [limit]))
+            data = self._read(self._apply_transforms(source, [sql_limit]))
             schema = get_dataframe_schema(data)['items']['properties']
+            if limit:
+                schemas[entry] = schema
+                continue
+
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
                 if 'enum' in col_schema:
                     enums.append(name)
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
+
+            # Calculate enum schemas
             for col in enums:
                 distinct_transforms = [SQLDistinct(columns=[col])]
                 distinct = self._read(
                     self._apply_transforms(source, distinct_transforms)
                 )
                 schema[col]['enum'] = distinct[col].to_list()
+
+            if not min_maxes:
+                continue
+
+            # Calculate numeric schemas
             minmax_data = self._read(
                 self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
             )
