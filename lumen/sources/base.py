@@ -283,6 +283,31 @@ class Source(MultiTypeComponent):
             sha.update(_generate_hash(v))
         return sha.hexdigest()
 
+    def _get_schema_cache(self) -> Dict[str, Dict[str, Any]]:
+        schema = self._schema_cache if self._schema_cache else None
+        sha = self._get_source_hash()
+        if self.cache_dir:
+            path = self.root / self.cache_dir / f'{self.name}_{sha}.json'
+            if not path.is_file():
+                return schema
+            with open(path) as f:
+                json_schema = json.load(f)
+            if schema is None:
+                schema = {}
+            for table, tschema in json_schema.items():
+                if table in schema:
+                    continue
+                for col, cschema in tschema.items():
+                    if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
+                        cschema['inclusiveMinimum'] = pd.to_datetime(
+                            cschema['inclusiveMinimum']
+                        )
+                        cschema['inclusiveMaximum'] = pd.to_datetime(
+                            cschema['inclusiveMaximum']
+                        )
+                schema[table] = tschema
+        return schema
+
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
         if not self.cache_dir:
