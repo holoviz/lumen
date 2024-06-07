@@ -590,8 +590,11 @@ class TableListAgent(LumenBaseAgent):
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
+        print(source)
         tables = memory["current_source"].get_tables()
+        print(tables)
         if not tables:
+            print("No tables found...")
             return
 
         if isinstance(source, IntakeBaseSQLSource) and hasattr(
