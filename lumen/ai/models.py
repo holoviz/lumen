@@ -23,6 +23,24 @@ class DataRequired(BaseModel):
     data_required: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
 
 
+class JoinRequired(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="""
+        Explain whether a table join is required to answer the user's query.
+        """
+    )
+
+    join_required: bool = Field(description="Whether a table join is required to answer the user's query.")
+
+
+class TableJoins(BaseModel):
+
+    tables: list[str] | None = Field(
+        default=None,
+        description="List of tables that need to be joined to answer the user's query.",
+    )
+
 class Sql(BaseModel):
 
     chain_of_thought: str = Field(
