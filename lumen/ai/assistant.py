@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from io import StringIO
@@ -29,11 +30,13 @@ GETTING_STARTED_SUGGESTIONS = [
     "Find the min and max of the values.",
 ]
 
-GETTING_STARTED_SUGGESTIONS = [
-    "What datasets do you have?",
+DEMO_MESSAGES = [
+    "What data is available?",
+    "Can I see the first one?",
     "Tell me about the dataset.",
-    "Create a plot of the dataset.",
-    "Find the min and max of the values.",
+    "What could be interesting to analyze?",
+    "Perform a SQL query on one of these.",
+    "Show it to me as a scatter plot."
 ]
 
 
@@ -47,6 +50,10 @@ class Assistant(Viewer):
     llm = param.ClassSelector(class_=Llm, default=Llama())
 
     interface = param.ClassSelector(class_=ChatInterface)
+
+    suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS)
+
+    demo_inputs = param.List(default=DEMO_MESSAGES)
 
     logs_filename = param.String()
 
@@ -136,7 +143,7 @@ class Assistant(Viewer):
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
         }
-        self._add_suggestions_to_footer(GETTING_STARTED_SUGGESTIONS)
+        self._add_suggestions_to_footer(self.suggestions)
 
         self._current_agent = Markdown("## No agent active", margin=0)
         download_button = FileDownload(
@@ -167,6 +174,14 @@ class Assistant(Viewer):
             margin=(5, 5),
         )
 
+        if self.demo_inputs:
+            suggestion_buttons.append(Button(
+                name="Show a demo",
+                button_type="primary",
+                on_click=self._run_demo,
+                margin=5,
+            ))
+
         message = self.interface.objects[-1]
         message = ChatMessage(
             footer_objects=[suggestion_buttons],
@@ -176,6 +191,14 @@ class Assistant(Viewer):
         if inplace:
             self.interface.objects[-1] = message
         return message
+
+    async def _run_demo(self, event):
+        with self.interface.active_widget.param.update(loading=True):
+            for demo_message in self.demo_inputs:
+                while self.interface.disabled:
+                    await asyncio.sleep(1.25)
+                self.interface.active_widget.value = demo_message
+                await asyncio.sleep(2)
 
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
