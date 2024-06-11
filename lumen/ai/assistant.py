@@ -249,7 +249,6 @@ class Assistant(Viewer):
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
         )
         for _ in range(3):
-            print(messages)
             out = await self.llm.invoke(
                 messages=messages,
                 system=system,
