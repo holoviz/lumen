@@ -157,10 +157,23 @@ class Assistant(Viewer):
         self._controls = Column(download_button, self._current_agent, Tabs(("Memory", memory)))
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
-        def use_suggestion(event):
+        async def hide_suggestions(_=None):
+            if len(self.interface.objects) > 1:
+                suggestion_buttons.visible = False
+
+        async def use_suggestion(event):
             contents = event.obj.name
-            suggestion_buttons.visible = False
+            await hide_suggestions()
             self.interface.send(contents)
+
+        async def run_demo(self, event):
+            await hide_suggestions()
+            with self.interface.active_widget.param.update(loading=True):
+                for demo_message in self.demo_inputs:
+                    while self.interface.disabled:
+                        await asyncio.sleep(1.25)
+                    self.interface.active_widget.value = demo_message
+                    await asyncio.sleep(2)
 
         suggestion_buttons = FlexBox(
             *[
@@ -179,7 +192,7 @@ class Assistant(Viewer):
             suggestion_buttons.append(Button(
                 name="Show a demo",
                 button_type="primary",
-                on_click=self._run_demo,
+                on_click=run_demo,
                 margin=5,
             ))
 
@@ -191,15 +204,9 @@ class Assistant(Viewer):
         )
         if inplace:
             self.interface.objects[-1] = message
-        return message
 
-    async def _run_demo(self, event):
-        with self.interface.active_widget.param.update(loading=True):
-            for demo_message in self.demo_inputs:
-                while self.interface.disabled:
-                    await asyncio.sleep(1.25)
-                self.interface.active_widget.value = demo_message
-                await asyncio.sleep(2)
+        self.interface.param.watch(hide_suggestions, "objects")
+        return message
 
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
