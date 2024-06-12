@@ -28,7 +28,7 @@ from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
 from .models import (
-    DataRequired, FuzzyTable, Sql, Topic,
+    DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
 )
 from .translate import param_to_pydantic
 from .utils import render_template
@@ -161,17 +161,25 @@ class Agent(Viewer):
         return system_prompt
 
     @staticmethod
-    def _get_schema(source: Source | Pipeline, table: str = None):
+    def _get_schema(source: Source | Pipeline, table: str = None, include_min_max: bool = True):
         if isinstance(source, Pipeline):
             schema = source.get_schema()
         else:
             schema = source.get_schema(table, limit=100)
         schema = dict(schema)
-        for field, spec in schema.items():
-            if "inclusiveMinimum" in spec:
-                spec["min"] = spec.pop("inclusiveMinimum")
-            if "inclusiveMaximum" in spec:
-                spec["max"] = spec.pop("inclusiveMaximum")
+
+        if include_min_max:
+            for field, spec in schema.items():
+                if "inclusiveMinimum" in spec:
+                    spec["min"] = spec.pop("inclusiveMinimum")
+                if "inclusiveMaximum" in spec:
+                    spec["max"] = spec.pop("inclusiveMaximum")
+        else:
+            for field, spec in schema.items():
+                if "inclusiveMinimum" in spec:
+                    spec.pop("inclusiveMinimum")
+                if "inclusiveMaximum" in spec:
+                    spec.pop("inclusiveMaximum")
         schema = format_schema(schema)
         return schema
 
@@ -704,28 +712,45 @@ class SQLAgent(LumenBaseAgent):
         self.interface.stream(tabs, user="SQL", replace=True)
         tabs.active = 1
 
-    def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
-        prompt = (
-            f"The SQL expression for the table {table!r} is {sql!r}.\n\n"
-            f"The data for table {table!r} follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
-            f"Be sure to only use columns from the schema for {sql!r}."
-        )
-        print(prompt)
-        return prompt
-
     async def answer(self, messages: list | str):
         message = None
         source = memory["current_source"]
         table = memory["current_table"]
         if not hasattr(source, "get_sql_expr"):
             return None
-        system_prompt = await self._system_prompt_with_context(messages)
-        schema = self._get_schema(source, table)
-        sql_expr = source.get_sql_expr(table)
-        sql_prompt = self._sql_prompt(sql_expr, table, schema)
+
+        join_required = (await self.llm.invoke(
+            messages,
+            system="Determine whether a table join is required to answer the user's query.",
+            response_model=JoinRequired,
+            allow_partial=False,
+        )).join_required
+
+        if join_required:
+            available_tables = source.get_tables()
+            tables = (await self.llm.invoke(
+                messages,
+                system=f"List the tables that need to be joined: {available_tables}.",
+                response_model=TableJoins,
+                allow_partial=False,
+            )).tables
+        else:
+            tables = [table]
+
+        tables_sql_schemas = {
+            table: {
+                "schema": self._get_schema(source, table, include_min_max=False),
+                 "sql": source.get_sql_expr(table)
+            } for table in tables
+        }
+        sql_prompt = render_template(
+            "sql_query.jinja2",
+            tables_sql_schemas=tables_sql_schemas,
+        )
+        system_prompt = await self._system_prompt_with_context(messages) + sql_prompt
         async for chunk in self.llm.stream(
             messages,
-            system=system_prompt + sql_prompt,
+            system=system_prompt,
             response_model=Sql,
             field="query",
         ):
@@ -740,16 +765,7 @@ class SQLAgent(LumenBaseAgent):
         if message.object is None:
             return
         sql_out = message.object.replace("```sql", "").replace("```", "").strip()
-
-        # TODO: find a better way to replace for all tables
-        for table in memory.get("closest_tables", [table]):
-            sql_expr = source.get_sql_expr(table)
-            if f"FROM {table}" in sql_out:
-                sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
-                    "SELECT * from ", ""
-                )
-                sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
-            memory["current_sql"] = sql_out
+        memory["current_sql"] = sql_out
         return sql_out
 
     async def invoke(self, messages: list | str):
