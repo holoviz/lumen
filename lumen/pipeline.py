@@ -191,7 +191,7 @@ class Pipeline(Viewer, Component):
         self._update_data()
 
     def __panel__(self) -> pn.Row:
-        return pn.Row(self.control_panel, self.param.data)
+        return pn.Row(self.control_panel, pn.widgets.Tabulator(self.param.data, pagination='remote'))
 
     def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """
@@ -287,6 +287,19 @@ class Pipeline(Viewer, Component):
         for transform in self.transforms:
             data = transform.apply(data)
         return data
+
+    def get_schema(self):
+        """
+        Generates a JSON schema for the current data held by the Pipeline.
+
+        Returns
+        -------
+        schema: dict[str, any]
+          JSON schema for each column in the current data.
+        """
+        if self._stale:
+            self._update_data(force=True)
+        return get_dataframe_schema(self.data)['items']['properties']
 
     @catch_and_notify
     def _update_data(self, *events: param.parameterized.Event, force: bool = False):
@@ -523,16 +536,19 @@ class Pipeline(Viewer, Component):
         filt: Transform
            The Transform instance to add.
         """
+        fields = list(self.schema)
         if isinstance(transform, str):
             transform = Transform._get_type(transform)(**kwargs)
+            for fparam in transform._field_params:
+                transform.param[fparam].objects = fields
+                transform.param.update(**{fparam: kwargs.get(fparam, fields)})
+        else:
+            for fparam in transform._field_params:
+                transform.param[fparam].objects = fields
         if isinstance(transform, SQLTransform):
             self.sql_transforms.append(transform)
         else:
             self.transforms.append(transform)
-        fields = list(self.schema)
-        for fparam in transform._field_params:
-            transform.param[fparam].objects = fields
-            transform.param.update(**{fparam: kwargs.get(fparam, fields)})
         transform.param.watch(self._update_data, list(transform.param))
         self._stale = True
 
