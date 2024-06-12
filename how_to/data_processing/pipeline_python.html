@@ -1,0 +1,699 @@
+
+<!DOCTYPE html>
+
+<html data-content_root="../../" data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="width=device-width, initial-scale=1" name="viewport"/>
+<link href="../../site.webmanifest" rel="manifest"/>
+<title>Build a Pipeline in Python — Lumen 1.5.0a3 documentation</title>
+<script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+<!-- Loaded before other Sphinx assets -->
+<link href="../../_static/styles/theme.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="../../_static/styles/bootstrap.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="../../_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link as="font" crossorigin="" href="../../_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="../../_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="../../_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" rel="preload" type="font/woff2"/>
+<link href="../../_static/pygments.css?v=a746c00c" rel="stylesheet" type="text/css"/>
+<link href="../../_static/mystnb.4510f1fc1dee50b3e5859aac5469c37c29e427902b24a333a5f9fcb2f0b3ac41.css" rel="stylesheet" type="text/css"/>
+<link href="../../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../../_static/runbutton.css?v=880c2f88" rel="stylesheet" type="text/css"/>
+<link href="../../_static/custom.css?v=aacd715d" rel="stylesheet" type="text/css"/>
+<link href="../../_static/dataframe.css?v=302d74fa" rel="stylesheet" type="text/css"/>
+<link href="../../_static/design-style.1e8bd061cd6da7fc9cf755528e8ffc24.min.css?v=0a3b3ea7" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/tabulator-tables@5.5.0/dist/css/tabulator_simple.min.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/tabulator-tables@5.5.0/dist/css/tabulator_simple.min.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/katex.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridstack.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/booleanstatus.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridspec.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loadingspinner.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/editable_slider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/alerts.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/divider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_interface.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/select.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/widgetbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/floatpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/regular_table.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/debugger.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/markdown.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_message.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/notifications.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/listpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/json.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/progress.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/pyscript.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/swipe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_copy_icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/dataframe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/layout.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/widgets.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/button.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loading.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_reaction_icons.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_feed.css" rel="stylesheet" type="text/css"/>
+<!-- Pre-loaded scripts that we'll load fully later -->
+<link as="script" href="../../_static/scripts/bootstrap.js?digest=3ee479438cf8b5e0d341" rel="preload"/>
+<link as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=3ee479438cf8b5e0d341" rel="preload"/>
+<script src="../../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=3ee479438cf8b5e0d341"></script>
+<script src="../../_static/documentation_options.js?v=8952209f"></script>
+<script src="../../_static/doctools.js?v=9a2dae69"></script>
+<script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../../_static/copybutton.js?v=f281be69"></script>
+<script src="../../_static/run_cell.js?v=2c5d2cd6"></script>
+<script src="../../_static/WorkerHandler.js"></script>
+<script src="../../_static/design-tabs.js?v=36754332"></script>
+<script src="../../_static/ServiceHandler.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.4.1.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.4.1.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-3.4.1.min.js"></script>
+<script src="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/panel.min.js"></script>
+<script src="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/tabulator-tables@5.5.0/dist/js/tabulator.min.js"></script>
+<script src="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/luxon/build/global/luxon.min.js"></script>
+<script src="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/tabulator-tables@5.5.0/dist/js/tabulator.min.js"></script>
+<script src="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/luxon/build/global/luxon.min.js"></script>
+<script>DOCUMENTATION_OPTIONS.pagename = 'how_to/data_processing/pipeline_python';</script>
+<link href="../../_static/favicon.ico" rel="icon"/>
+<link href="../../genindex.html" rel="index" title="Index"/>
+<link href="../../search.html" rel="search" title="Search"/>
+<link href="branch_pipeline.html" rel="next" title="Branch a pipeline"/>
+<link href="index.html" rel="prev" title="Data Processing"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="en" name="docsearch:language"/>
+</head>
+<body data-bs-root-margin="0px 0px -60%" data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-default-mode="light" data-offset="180">
+<div class="skip-link d-print-none" id="pst-skip-link"><a href="#main-content">Skip to main content</a></div>
+<div id="pst-scroll-pixel-helper"></div>
+<button class="btn rounded-pill" id="pst-back-to-top" type="button">
+<i class="fa-solid fa-arrow-up"></i>Back to top</button>
+<input class="sidebar-toggle" id="pst-primary-sidebar-checkbox" type="checkbox"/>
+<label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+<input class="sidebar-toggle" id="pst-secondary-sidebar-checkbox" type="checkbox"/>
+<label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+<div class="search-button__wrapper">
+<div class="search-button__overlay"></div>
+<div class="search-button__search-container">
+<form action="../../search.html" class="bd-search d-flex align-items-center" method="get">
+<i class="fa-solid fa-magnifying-glass"></i>
+<input aria-label="Search the docs ..." autocapitalize="off" autocomplete="off" autocorrect="off" class="form-control" id="search-input" name="q" placeholder="Search the docs ..." spellcheck="false" type="search"/>
+<span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+</div>
+<div class="pst-async-banner-revealer d-none">
+<aside aria-label="Version warning" class="d-none d-print-none" id="bd-header-version-warning"></aside>
+</div>
+<header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+<button aria-label="Site navigation" class="sidebar-toggle primary-toggle">
+<span class="fa-solid fa-bars"></span>
+</button>
+<div class="col-lg-3 navbar-header-items__start">
+<div class="navbar-item">
+<a class="navbar-brand logo" href="../../index.html">
+<img alt="Lumen 1.5.0a3 documentation - Home" class="logo__image only-light" src="../../_static/logo_horizontal.png"/>
+<script>document.write(`<img src="../../_static/logo_horizontal.png" class="logo__image only-dark" alt="Lumen 1.5.0a3 documentation - Home"/>`);</script>
+</a></div>
+</div>
+<div class="col-lg-9 navbar-header-items">
+<div class="me-auto navbar-header-items__center">
+<div class="navbar-item">
+<nav class="navbar-nav">
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../index.html">
+    Home
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../getting_started/index.html">
+    Getting Started
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item current active">
+<a class="nav-link nav-internal" href="../index.html">
+    How to
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../gallery/index.html">
+    Gallery
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../reference/index.html">
+    Reference
+  </a>
+</li>
+<li class="nav-item dropdown pst-header-nav-item">
+<button aria-controls="pst-nav-more-links" aria-expanded="false" class="btn dropdown-toggle nav-item" data-bs-toggle="dropdown" type="button">
+                    More
+                </button>
+<ul class="dropdown-menu" id="pst-nav-more-links">
+<li class="nav-item">
+<a class="nav-link dropdown-item nav-internal" href="../../background/index.html">
+    Background
+  </a>
+</li>
+</ul>
+</li>
+</ul>
+</nav></div>
+</div>
+<div class="navbar-header-items__end">
+<div class="navbar-item navbar-persistent--container">
+<script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+</div>
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i aria-hidden="true" class="fa-brands fa-square-github fa-lg"></i></span>
+<span class="sr-only">GitHub</span></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i aria-hidden="true" class="fab fa-discourse fa-lg"></i></span>
+<span class="sr-only">Discourse</span></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="navbar-persistent--mobile">
+<script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+</div>
+<button aria-label="On this page" class="sidebar-toggle secondary-toggle">
+<span class="fa-solid fa-outdent"></span>
+</button>
+</div>
+</header>
+<div class="bd-container">
+<div class="bd-container__inner bd-page-width">
+<div class="bd-sidebar-primary bd-sidebar">
+<div class="sidebar-header-items sidebar-primary__section">
+<div class="sidebar-header-items__center">
+<div class="navbar-item">
+<nav class="navbar-nav">
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../index.html">
+    Home
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../getting_started/index.html">
+    Getting Started
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item current active">
+<a class="nav-link nav-internal" href="../index.html">
+    How to
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../gallery/index.html">
+    Gallery
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../reference/index.html">
+    Reference
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../../background/index.html">
+    Background
+  </a>
+</li>
+</ul>
+</nav></div>
+</div>
+<div class="sidebar-header-items__end">
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i aria-hidden="true" class="fa-brands fa-square-github fa-lg"></i></span>
+<span class="sr-only">GitHub</span></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i aria-hidden="true" class="fab fa-discourse fa-lg"></i></span>
+<span class="sr-only">Discourse</span></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="sidebar-primary-items__start sidebar-primary__section">
+<div class="sidebar-primary-item">
+<nav aria-label="Section Navigation" class="bd-docs-nav bd-links">
+<p aria-level="1" class="bd-links__title" role="heading">Section Navigation</p>
+<div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_intake/index.html">Data Intake</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_intake/files.html">Access Files</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_intake/cache.html">Cache Data</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Data Processing</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Build Pipelines with Python</a></li>
+<li class="toctree-l2"><a class="reference internal" href="branch_pipeline.html">Branch a Pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_visualization/index.html">Visualize and Deploy</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_visualization/views.html">Define Views</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_visualization/dashboard_python.html">Visualize Dashboards with Python</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data_visualization/deploy.html">Deploy</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../validation/index.html">Validation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../validation/validate.html">Validate Specification</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data_output/index.html">Data Output</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data_output/download_data.html">Enable Data Download</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../advanced/index.html">Advanced Topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../advanced/local_components.html">Access Custom Components</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../advanced/auth.html">Configure Authentication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../advanced/variables_and_references.html">Reference Variables</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../advanced/callbacks.html">Declare Callbacks</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+</div>
+<div class="sidebar-primary-items__end sidebar-primary__section">
+</div>
+<div id="rtd-footer-container"></div>
+</div>
+<main class="bd-main" id="main-content" role="main">
+<div class="bd-content">
+<div class="bd-article-container">
+<div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+<div class="header-article-items__start">
+<div class="header-article-item">
+<nav aria-label="Breadcrumb" class="d-print-none">
+<ul class="bd-breadcrumbs">
+<li class="breadcrumb-item breadcrumb-home">
+<a aria-label="Home" class="nav-link" href="../../index.html">
+<i class="fa-solid fa-home"></i>
+</a>
+</li>
+<li class="breadcrumb-item"><a class="nav-link" href="../index.html">How to Guides</a></li>
+<li class="breadcrumb-item"><a class="nav-link" href="index.html">Data Processing</a></li>
+<li aria-current="page" class="breadcrumb-item active">Build a...</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+</div>
+<div id="searchbox"></div>
+<article class="bd-article">
+<section id="build-a-pipeline-in-python">
+<h1>Build a Pipeline in Python<a class="headerlink" href="#build-a-pipeline-in-python" title="Link to this heading">#</a></h1>
+<div class="important admonition">
+<p class="admonition-title">What does this guide solve?</p>
+<p>Although the primary interface for building a Lumen dashboard is the YAML specification file, this guide shows you an alternate approaches for building with Python. To learn more, visit the <a class="reference internal" href="#../conceptual/lumen_python"><span class="xref myst">Lumen in Python</span></a> Conceptual Guide.</p>
+</div>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>When building with Lumen in Python, the main object that defines a dashboard is the <a class="reference internal" href="../../reference/Pipeline.html#lumen.pipeline.Pipeline" title="lumen.pipeline.Pipeline"><span class="xref myst py py-class">Pipeline</span></a>. With this Pipeline object, you can specify the data source, filters, and transforms. There are two approaches to add these specifications to a <code class="docutils literal notranslate"><span class="pre">Pipeline</span></code> object, <strong>declaratively or programmatically</strong>. While the declarative approach is more compact, the programmatic approach allows you to seperate the pipeline creation steps.</p>
+<p><img alt="Pipeline Diagram" src="../../_images/pipeline_diagram.png"/></p>
+</section>
+<section id="declaratively-specifying-a-pipeline">
+<h2>Declaratively specifying a pipeline<a class="headerlink" href="#declaratively-specifying-a-pipeline" title="Link to this heading">#</a></h2>
+<p>The declarative specification approach looks similar to a YAML file hierarchy, but consists of nested Python dictionary and list objects.</p>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">lumen</span> <span class="k">as</span> <span class="nn">lm</span>
+
+<span class="n">data_url</span> <span class="o">=</span> <span class="s1">'https://datasets.holoviz.org/penguins/v1/penguins.csv'</span>
+
+<span class="n">pipeline</span> <span class="o">=</span> <span class="n">lm</span><span class="o">.</span><span class="n">Pipeline</span><span class="o">.</span><span class="n">from_spec</span><span class="p">({</span>
+    <span class="s1">'source'</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s1">'type'</span><span class="p">:</span> <span class="s1">'file'</span><span class="p">,</span>
+        <span class="s1">'tables'</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s1">'penguins'</span><span class="p">:</span> <span class="n">data_url</span>
+        <span class="p">}</span>
+    <span class="p">},</span>
+    <span class="s1">'filters'</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s1">'type'</span><span class="p">:</span> <span class="s1">'widget'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">:</span> <span class="s1">'species'</span><span class="p">},</span>
+        <span class="p">{</span><span class="s1">'type'</span><span class="p">:</span> <span class="s1">'widget'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">:</span> <span class="s1">'island'</span><span class="p">},</span>
+        <span class="p">{</span><span class="s1">'type'</span><span class="p">:</span> <span class="s1">'widget'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">:</span> <span class="s1">'sex'</span><span class="p">},</span>
+        <span class="p">{</span><span class="s1">'type'</span><span class="p">:</span> <span class="s1">'widget'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">:</span> <span class="s1">'year'</span><span class="p">}</span>
+    <span class="p">],</span>
+    <span class="s1">'transforms'</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s1">'type'</span><span class="p">:</span> <span class="s1">'aggregate'</span><span class="p">,</span> <span class="s1">'method'</span><span class="p">:</span> <span class="s1">'mean'</span><span class="p">,</span> <span class="s1">'by'</span><span class="p">:</span> <span class="p">[</span><span class="s1">'species'</span><span class="p">,</span> <span class="s1">'sex'</span><span class="p">,</span> <span class="s1">'year'</span><span class="p">]}</span>
+    <span class="p">]</span>
+<span class="p">})</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell0-py"></pre><pre class="pyodide-stderr" id="stderr-codecell0-py"></pre></section>
+<section id="programmatically-specifying-a-pipeline">
+<h2>Programmatically specifying a pipeline<a class="headerlink" href="#programmatically-specifying-a-pipeline" title="Link to this heading">#</a></h2>
+<p>The programmatic specification approach uses Lumen objects to build the pipeline step by step.</p>
+<section id="add-source">
+<h3>Add source<a class="headerlink" href="#add-source" title="Link to this heading">#</a></h3>
+<p>First, add a valid <a class="reference internal" href="../../reference/source/index.html#lumen.sources.base.Source" title="lumen.sources.base.Source"><span class="xref myst py py-class">Source</span></a> to your <a class="reference internal" href="../../reference/Pipeline.html#lumen.pipeline.Pipeline" title="lumen.pipeline.Pipeline"><span class="xref myst py py-class">Pipeline</span></a>. A common choice is <a class="reference internal" href="../../reference/source/FileSource.html#lumen.sources.base.FileSource" title="lumen.sources.base.FileSource"><span class="xref myst py py-class">FileSource</span></a>, which can load CSV, Excel, JSON and Parquet files, but see the <a class="reference internal" href="../../reference/source/index.html#lumen.sources.base.Source" title="lumen.sources.base.Source"><span class="xref myst py py-class">Source Reference</span></a> for all options.</p>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">lumen.sources</span> <span class="kn">import</span> <span class="n">FileSource</span>
+
+<span class="n">data_url</span> <span class="o">=</span> <span class="s1">'https://datasets.holoviz.org/penguins/v1/penguins.csv'</span>
+
+<span class="n">pipeline</span> <span class="o">=</span> <span class="n">lm</span><span class="o">.</span><span class="n">Pipeline</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="n">FileSource</span><span class="p">(</span><span class="n">tables</span><span class="o">=</span><span class="p">{</span><span class="s1">'penguins'</span><span class="p">:</span> <span class="n">data_url</span><span class="p">}),</span> <span class="n">table</span><span class="o">=</span><span class="s1">'penguins'</span><span class="p">)</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell1-py"></pre><pre class="pyodide-stderr" id="stderr-codecell1-py"></pre><div class="note admonition">
+<p class="admonition-title">Preview the data</p>
+<p>At any point after defining the source in your pipeline, you can inspect the data in a notebook with <code class="docutils literal notranslate"><span class="pre">pipeline.data</span></code></p>
+</div>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pipeline</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell2-py"></pre><pre class="pyodide-stderr" id="stderr-codecell2-py"></pre><div class="pyodide-output embedded" id="output-codecell2-py"><div class="pyodide-output-wrapper"><table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>species</th>
+<th>island</th>
+<th>bill_length_mm</th>
+<th>bill_depth_mm</th>
+<th>flipper_length_mm</th>
+<th>body_mass_g</th>
+<th>sex</th>
+<th>year</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>39.1</td>
+<td>18.7</td>
+<td>181.0</td>
+<td>3750.0</td>
+<td>male</td>
+<td>2007</td>
+</tr>
+<tr>
+<th>1</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>39.5</td>
+<td>17.4</td>
+<td>186.0</td>
+<td>3800.0</td>
+<td>female</td>
+<td>2007</td>
+</tr>
+<tr>
+<th>2</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>40.3</td>
+<td>18.0</td>
+<td>195.0</td>
+<td>3250.0</td>
+<td>female</td>
+<td>2007</td>
+</tr>
+<tr>
+<th>3</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>NaN</td>
+<td>NaN</td>
+<td>NaN</td>
+<td>NaN</td>
+<td>NaN</td>
+<td>2007</td>
+</tr>
+<tr>
+<th>4</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>36.7</td>
+<td>19.3</td>
+<td>193.0</td>
+<td>3450.0</td>
+<td>female</td>
+<td>2007</td>
+</tr>
+</tbody>
+</table></div></div>
+</section>
+<section id="add-filter">
+<h3>Add filter<a class="headerlink" href="#add-filter" title="Link to this heading">#</a></h3>
+<p>Next, you can add <code class="docutils literal notranslate"><span class="pre">widgets</span></code> for certain columns of your source. When displaying the dashboard, these widgets will allows your dashboard users to filter the data. See the <a class="reference internal" href="../../reference/filter/index.html#lumen.filters.base.Filter" title="lumen.filters.base.Filter"><span class="xref myst py py-class">Filter Reference</span></a> for all options.</p>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pipeline</span><span class="o">.</span><span class="n">add_filter</span><span class="p">(</span><span class="s1">'widget'</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">'species'</span><span class="p">)</span>
+<span class="n">pipeline</span><span class="o">.</span><span class="n">add_filter</span><span class="p">(</span><span class="s1">'widget'</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">'island'</span><span class="p">)</span>
+<span class="n">pipeline</span><span class="o">.</span><span class="n">add_filter</span><span class="p">(</span><span class="s1">'widget'</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">'sex'</span><span class="p">)</span>
+<span class="n">pipeline</span><span class="o">.</span><span class="n">add_filter</span><span class="p">(</span><span class="s1">'widget'</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">'year'</span><span class="p">)</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell3-py"></pre><pre class="pyodide-stderr" id="stderr-codecell3-py"></pre></section>
+<section id="add-transform">
+<h3>Add transform<a class="headerlink" href="#add-transform" title="Link to this heading">#</a></h3>
+<p>Now you can apply a <code class="docutils literal notranslate"><span class="pre">transform</span></code> to the data, such as computing the mean or selecting certain columns. See the <a class="reference internal" href="../../reference/transform/index.html#lumen.transforms.base.Transform" title="lumen.transforms.base.Transform"><span class="xref myst py py-class">Transform Reference</span></a> for more.</p>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">columns</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'species'</span><span class="p">,</span> <span class="s1">'island'</span><span class="p">,</span> <span class="s1">'sex'</span><span class="p">,</span> <span class="s1">'year'</span><span class="p">,</span> <span class="s1">'bill_length_mm'</span><span class="p">,</span> <span class="s1">'bill_depth_mm'</span><span class="p">]</span>
+
+<span class="n">pipeline</span><span class="o">.</span><span class="n">add_transform</span><span class="p">(</span><span class="s1">'columns'</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">columns</span><span class="p">)</span>
+
+<span class="n">pipeline</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell4-py"></pre><pre class="pyodide-stderr" id="stderr-codecell4-py"></pre><div class="pyodide-output embedded" id="output-codecell4-py"><div class="pyodide-output-wrapper"><table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>species</th>
+<th>island</th>
+<th>sex</th>
+<th>year</th>
+<th>bill_length_mm</th>
+<th>bill_depth_mm</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>male</td>
+<td>2007</td>
+<td>39.1</td>
+<td>18.7</td>
+</tr>
+<tr>
+<th>1</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>female</td>
+<td>2007</td>
+<td>39.5</td>
+<td>17.4</td>
+</tr>
+<tr>
+<th>2</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>female</td>
+<td>2007</td>
+<td>40.3</td>
+<td>18.0</td>
+</tr>
+<tr>
+<th>3</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>NaN</td>
+<td>2007</td>
+<td>NaN</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>4</th>
+<td>Adelie</td>
+<td>Torgersen</td>
+<td>female</td>
+<td>2007</td>
+<td>36.7</td>
+<td>19.3</td>
+</tr>
+</tbody>
+</table></div></div>
+<div class="note admonition">
+<p class="admonition-title">Manually update dashboard</p>
+<p>By default, every interaction will update the dashboard. If this behavior is unwanted, for instance, if you want to select multiple filter widgets and not have the dashboard update after every individual selection, set <code class="docutils literal notranslate"><span class="pre">auto_update=False</span></code> on the Pipeline. This will require you to manually trigger an update by clicking a button.</p>
+</div>
+</section>
+</section>
+<section id="display-the-pipeline">
+<h2>Display the pipeline<a class="headerlink" href="#display-the-pipeline" title="Link to this heading">#</a></h2>
+<p>Once you have built your pipeline it is extremely easy to view it interactively. As long as you have loaded the Panel extension with <code class="docutils literal notranslate"><span class="pre">pn.extension('tabulator')</span></code> simply displaying a <code class="docutils literal notranslate"><span class="pre">pipeline</span></code> in a notebook cell will render it:</p>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">panel</span> <span class="k">as</span> <span class="nn">pn</span>
+
+<span class="n">pn</span><span class="o">.</span><span class="n">extension</span><span class="p">(</span><span class="s1">'tabulator'</span><span class="p">)</span>
+
+<span class="n">pipeline</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell5-py"></pre><pre class="pyodide-stderr" id="stderr-codecell5-py"></pre><div class="pyodide-output embedded" id="output-codecell5-py"></div>
+<script>
+              async function embed_bokeh_6 () {
+                if (window.Bokeh && window.Bokeh.Panel && window.Tabulator) {
+                  await Bokeh.embed.embed_item({"target_id": "output-codecell5-py", "root_id": "p1002", "doc": {"version": "3.4.1", "title": "Panel Application", "roots": [{"type": "object", "name": "Row", "id": "p1002", "attributes": {"name": "Row00184", "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"type": "object", "name": "ImportedStyleSheet", "id": "p1006", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loading.css"}}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1021", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/listpanel.css"}}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1004", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/theme/default.css"}}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1005", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/theme/native.css"}}], "margin": 0, "align": "start", "children": [{"type": "object", "name": "panel.models.layout.Column", "id": "p1003", "attributes": {"name": "Column00176", "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"id": "p1021"}, {"id": "p1004"}, {"id": "p1005"}], "margin": 0, "align": "start", "children": [{"type": "object", "name": "panel.models.markup.HTML", "id": "p1008", "attributes": {"css_classes": ["markdown"], "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1007", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/markdown.css"}}, {"id": "p1004"}, {"id": "p1005"}], "margin": [5, 10], "align": "start", "text": "&lt;div style=&quot;font-size: 1.5em; font-weight: bold;&quot;&gt;Filters&lt;/div&gt;"}}, {"type": "object", "name": "panel.models.widgets.CustomMultiSelect", "id": "p1011", "attributes": {"subscribed_events": {"type": "set", "entries": ["dblclick_event"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1010", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/select.css"}}, {"id": "p1004"}, {"id": "p1005"}], "width": 300, "min_width": 300, "margin": [5, 10], "align": "start", "title": "Species", "options": ["Adelie", "Chinstrap", "Gentoo"]}}, {"type": "object", "name": "panel.models.widgets.CustomMultiSelect", "id": "p1014", "attributes": {"subscribed_events": {"type": "set", "entries": ["dblclick_event"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"id": "p1010"}, {"id": "p1004"}, {"id": "p1005"}], "width": 300, "min_width": 300, "margin": [5, 10], "align": "start", "title": "Island", "options": ["Biscoe", "Dream", "Torgersen"]}}, {"type": "object", "name": "panel.models.widgets.CustomMultiSelect", "id": "p1017", "attributes": {"subscribed_events": {"type": "set", "entries": ["dblclick_event"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"id": "p1010"}, {"id": "p1004"}, {"id": "p1005"}], "width": 300, "min_width": 300, "margin": [5, 10], "align": "start", "title": "Sex", "options": ["male", "female", "nan"]}}, {"type": "object", "name": "RangeSlider", "id": "p1019", "attributes": {"stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"id": "p1004"}, {"id": "p1005"}], "margin": [5, 10], "align": "start", "title": "Year", "value": [2007, 2009], "start": 2007, "end": 2009}}]}}, {"type": "object", "name": "panel.models.tabulator.DataTabulator", "id": "p1064", "attributes": {"subscribed_events": {"type": "set", "entries": ["cell-click", "table-edit", "selection-change"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1006"}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1024", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/font-awesome/css/all.min.css"}}, {"id": "p1004"}, {"id": "p1005"}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1022", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/datatabulator/tabulator-tables@5.5.0/dist/css/tabulator_simple.min.css"}}], "margin": [5, 10], "align": "start", "configuration": {"type": "map", "entries": [["selectable", true], ["columns", [{"type": "map", "entries": [["field", "index"], ["sorter", "number"]]}, {"type": "map", "entries": [["field", "species"]]}, {"type": "map", "entries": [["field", "island"]]}, {"type": "map", "entries": [["field", "sex"]]}, {"type": "map", "entries": [["field", "year"], ["sorter", "number"]]}, {"type": "map", "entries": [["field", "bill_length_mm"], ["sorter", "number"]]}, {"type": "map", "entries": [["field", "bill_depth_mm"], ["sorter", "number"]]}]], ["dataTree", false]]}, "columns": [{"type": "object", "name": "TableColumn", "id": "p1028", "attributes": {"field": "index", "title": "index", "width": 0, "formatter": {"type": "object", "name": "NumberFormatter", "id": "p1027", "attributes": {"text_align": {"type": "value", "value": "left"}}}, "editor": {"type": "object", "name": "CellEditor", "id": "p1026"}}}, {"type": "object", "name": "TableColumn", "id": "p1033", "attributes": {"field": "species", "title": "species", "width": 0, "formatter": {"type": "object", "name": "StringFormatter", "id": "p1032"}, "editor": {"type": "object", "name": "StringEditor", "id": "p1031"}}}, {"type": "object", "name": "TableColumn", "id": "p1038", "attributes": {"field": "island", "title": "island", "width": 0, "formatter": {"type": "object", "name": "StringFormatter", "id": "p1037"}, "editor": {"type": "object", "name": "StringEditor", "id": "p1036"}}}, {"type": "object", "name": "TableColumn", "id": "p1043", "attributes": {"field": "sex", "title": "sex", "width": 0, "formatter": {"type": "object", "name": "StringFormatter", "id": "p1042"}, "editor": {"type": "object", "name": "StringEditor", "id": "p1041"}}}, {"type": "object", "name": "TableColumn", "id": "p1048", "attributes": {"field": "year", "title": "year", "width": 0, "formatter": {"type": "object", "name": "NumberFormatter", "id": "p1047", "attributes": {"text_align": {"type": "value", "value": "right"}}}, "editor": {"type": "object", "name": "IntEditor", "id": "p1046"}}}, {"type": "object", "name": "TableColumn", "id": "p1053", "attributes": {"field": "bill_length_mm", "title": "bill_length_mm", "width": 0, "formatter": {"type": "object", "name": "NumberFormatter", "id": "p1052", "attributes": {"text_align": {"type": "value", "value": "right"}, "format": "0,0.0[00000]"}}, "editor": {"type": "object", "name": "NumberEditor", "id": "p1051"}}}, {"type": "object", "name": "TableColumn", "id": "p1058", "attributes": {"field": "bill_depth_mm", "title": "bill_depth_mm", "width": 0, "formatter": {"type": "object", "name": "NumberFormatter", "id": "p1057", "attributes": {"text_align": {"type": "value", "value": "right"}, "format": "0,0.0[00000]"}}, "editor": {"type": "object", "name": "NumberEditor", "id": "p1056"}}}], "indexes": ["index"], "layout": "fit_data_table", "source": {"type": "object", "name": "ColumnDataSource", "id": "p1061", "attributes": {"selected": {"type": "object", "name": "Selection", "id": "p1062", "attributes": {"indices": [], "line_indices": []}}, "selection_policy": {"type": "object", "name": "UnionRenderers", "id": "p1063"}, "data": {"type": "map", "entries": [["index", {"type": "ndarray", "array": {"type": "bytes", "data": "AAAAAAEAAAACAAAAAwAAAAQAAAAFAAAABgAAAAcAAAAIAAAACQAAAAoAAAALAAAADAAAAA0AAAAOAAAADwAAABAAAAARAAAAEgAAABMAAAA="}, "shape": [20], "dtype": "int32", "order": "little"}], ["species", {"type": "ndarray", "array": ["Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie"], "shape": [20], "dtype": "object", "order": "little"}], ["island", {"type": "ndarray", "array": ["Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen", "Torgersen"], "shape": [20], "dtype": "object", "order": "little"}], ["sex", {"type": "ndarray", "array": ["male", "female", "female", {"type": "number", "value": "nan"}, "female", "male", "female", "male", {"type": "number", "value": "nan"}, {"type": "number", "value": "nan"}, {"type": "number", "value": "nan"}, {"type": "number", "value": "nan"}, "female", "male", "male", "female", "female", "male", "female", "male"], "shape": [20], "dtype": "object", "order": "little"}], ["year", {"type": "ndarray", "array": {"type": "bytes", "data": "1wcAANcHAADXBwAA1wcAANcHAADXBwAA1wcAANcHAADXBwAA1wcAANcHAADXBwAA1wcAANcHAADXBwAA1wcAANcHAADXBwAA1wcAANcHAAA="}, "shape": [20], "dtype": "int32", "order": "little"}], ["bill_length_mm", {"type": "ndarray", "array": {"type": "bytes", "data": "zczMzMyMQ0AAAAAAAMBDQGZmZmZmJkRAAAAAAAAA+H+amZmZmVlCQGZmZmZmpkNAMzMzMzNzQ0CamZmZmZlDQM3MzMzMDEFAAAAAAAAARUBmZmZmZuZCQGZmZmZm5kJAzczMzMyMREDNzMzMzExDQM3MzMzMTEFAzczMzMxMQkCamZmZmVlDQAAAAAAAQEVAMzMzMzMzQUAAAAAAAABHQA=="}, "shape": [20], "dtype": "float64", "order": "little"}], ["bill_depth_mm", {"type": "ndarray", "array": {"type": "bytes", "data": "MzMzMzOzMkBmZmZmZmYxQAAAAAAAADJAAAAAAAAA+H/NzMzMzEwzQJqZmZmZmTRAzczMzMzMMUCamZmZmZkzQJqZmZmZGTJAMzMzMzMzNECamZmZmRkxQM3MzMzMTDFAmpmZmZmZMUAzMzMzMzM1QJqZmZmZGTVAzczMzMzMMUAAAAAAAAAzQDMzMzMzszRAZmZmZmZmMkAAAAAAAIA1QA=="}, "shape": [20], "dtype": "float64", "order": "little"}]]}}}, "cell_styles": {"type": "map", "entries": [["id", "8b5623c4b53540cebd235de8db7a756f"], ["data", {"type": "map"}]]}, "pagination": "remote", "page": 1, "page_size": 20, "max_page": 18, "select_mode": true, "selectable_rows": null}}]}}, {"type": "object", "name": "panel.models.location.Location", "id": "p1067", "attributes": {"name": "location", "reload": false}}], "defs": [{"type": "model", "name": "ReactiveHTML1"}, {"type": "model", "name": "FlexBox1", "properties": [{"name": "align_content", "kind": "Any", "default": "flex-start"}, {"name": "align_items", "kind": "Any", "default": "flex-start"}, {"name": "flex_direction", "kind": "Any", "default": "row"}, {"name": "flex_wrap", "kind": "Any", "default": "wrap"}, {"name": "gap", "kind": "Any", "default": ""}, {"name": "justify_content", "kind": "Any", "default": "flex-start"}]}, {"type": "model", "name": "FloatPanel1", "properties": [{"name": "config", "kind": "Any", "default": {"type": "map"}}, {"name": "contained", "kind": "Any", "default": true}, {"name": "position", "kind": "Any", "default": "right-top"}, {"name": "offsetx", "kind": "Any", "default": null}, {"name": "offsety", "kind": "Any", "default": null}, {"name": "theme", "kind": "Any", "default": "primary"}, {"name": "status", "kind": "Any", "default": "normalized"}]}, {"type": "model", "name": "GridStack1", "properties": [{"name": "mode", "kind": "Any", "default": "warn"}, {"name": "ncols", "kind": "Any", "default": null}, {"name": "nrows", "kind": "Any", "default": null}, {"name": "allow_resize", "kind": "Any", "default": true}, {"name": "allow_drag", "kind": "Any", "default": true}, {"name": "state", "kind": "Any", "default": []}]}, {"type": "model", "name": "drag1", "properties": [{"name": "slider_width", "kind": "Any", "default": 5}, {"name": "slider_color", "kind": "Any", "default": "black"}, {"name": "value", "kind": "Any", "default": 50}]}, {"type": "model", "name": "click1", "properties": [{"name": "terminal_output", "kind": "Any", "default": ""}, {"name": "debug_name", "kind": "Any", "default": ""}, {"name": "clears", "kind": "Any", "default": 0}]}, {"type": "model", "name": "FastWrapper1", "properties": [{"name": "object", "kind": "Any", "default": null}, {"name": "style", "kind": "Any", "default": null}]}, {"type": "model", "name": "NotificationAreaBase1", "properties": [{"name": "js_events", "kind": "Any", "default": {"type": "map"}}, {"name": "position", "kind": "Any", "default": "bottom-right"}, {"name": "_clear", "kind": "Any", "default": 0}]}, {"type": "model", "name": "NotificationArea1", "properties": [{"name": "js_events", "kind": "Any", "default": {"type": "map"}}, {"name": "notifications", "kind": "Any", "default": []}, {"name": "position", "kind": "Any", "default": "bottom-right"}, {"name": "_clear", "kind": "Any", "default": 0}, {"name": "types", "kind": "Any", "default": [{"type": "map", "entries": [["type", "warning"], ["background", "#ffc107"], ["icon", {"type": "map", "entries": [["className", "fas fa-exclamation-triangle"], ["tagName", "i"], ["color", "white"]]}]]}, {"type": "map", "entries": [["type", "info"], ["background", "#007bff"], ["icon", {"type": "map", "entries": [["className", "fas fa-info-circle"], ["tagName", "i"], ["color", "white"]]}]]}]}]}, {"type": "model", "name": "Notification", "properties": [{"name": "background", "kind": "Any", "default": null}, {"name": "duration", "kind": "Any", "default": 3000}, {"name": "icon", "kind": "Any", "default": null}, {"name": "message", "kind": "Any", "default": ""}, {"name": "notification_type", "kind": "Any", "default": null}, {"name": "_destroyed", "kind": "Any", "default": false}]}, {"type": "model", "name": "TemplateActions1", "properties": [{"name": "open_modal", "kind": "Any", "default": 0}, {"name": "close_modal", "kind": "Any", "default": 0}]}, {"type": "model", "name": "BootstrapTemplateActions1", "properties": [{"name": "open_modal", "kind": "Any", "default": 0}, {"name": "close_modal", "kind": "Any", "default": 0}]}, {"type": "model", "name": "TemplateEditor1", "properties": [{"name": "layout", "kind": "Any", "default": []}]}, {"type": "model", "name": "MaterialTemplateActions1", "properties": [{"name": "open_modal", "kind": "Any", "default": 0}, {"name": "close_modal", "kind": "Any", "default": 0}]}, {"type": "model", "name": "copy_to_clipboard1", "properties": [{"name": "fill", "kind": "Any", "default": "none"}, {"name": "value", "kind": "Any", "default": null}]}, {"type": "model", "name": "DownloadButton1", "properties": [{"name": "color", "kind": "Any", "default": "grey"}, {"name": "data", "kind": "Any", "default": ""}, {"name": "filename", "kind": "Any", "default": ""}, {"name": "hide", "kind": "Any", "default": false}, {"name": "size", "kind": "Any", "default": 20}]}, {"type": "model", "name": "clicked1", "properties": [{"name": "disabled", "kind": "Any", "default": false}, {"name": "color", "kind": "Any", "default": null}, {"name": "icon", "kind": "Any", "default": null}, {"name": "size", "kind": "Any", "default": 12}]}]}, "version": "3.4.1"})
+                } else {
+                   setTimeout(embed_bokeh_6, 200)
+                }
+              };
+              embed_bokeh_6()
+            </script>
+<p>If you are working in a local REPL or from a script you can also use <code class="docutils literal notranslate"><span class="pre">pipeline.show()</span></code> to preview it.</p>
+<p>You can also easily render the control panel containing the filter widgets and variables separately:</p>
+<div class="pyodide highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pipeline</span><span class="o">.</span><span class="n">control_panel</span>
+</pre></div>
+</div>
+<pre class="pyodide-stdout" id="stdout-codecell6-py"></pre><pre class="pyodide-stderr" id="stderr-codecell6-py"></pre><div class="pyodide-output embedded" id="output-codecell6-py"></div>
+<script>
+              async function embed_bokeh_7 () {
+                if (window.Bokeh && window.Bokeh.Panel && window.Tabulator) {
+                  await Bokeh.embed.embed_item({"target_id": "output-codecell6-py", "root_id": "p1072", "doc": {"version": "3.4.1", "title": "Panel Application", "roots": [{"type": "object", "name": "panel.models.layout.Column", "id": "p1072", "attributes": {"name": "Column00194", "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"type": "object", "name": "ImportedStyleSheet", "id": "p1075", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loading.css"}}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1090", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/listpanel.css"}}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1073", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/theme/default.css"}}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1074", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/bundled/theme/native.css"}}], "margin": 0, "align": "start", "children": [{"type": "object", "name": "panel.models.markup.HTML", "id": "p1077", "attributes": {"css_classes": ["markdown"], "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1075"}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1076", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/markdown.css"}}, {"id": "p1073"}, {"id": "p1074"}], "margin": [5, 10], "align": "start", "text": "&lt;div style=&quot;font-size: 1.5em; font-weight: bold;&quot;&gt;Filters&lt;/div&gt;"}}, {"type": "object", "name": "panel.models.widgets.CustomMultiSelect", "id": "p1080", "attributes": {"subscribed_events": {"type": "set", "entries": ["dblclick_event"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1075"}, {"type": "object", "name": "ImportedStyleSheet", "id": "p1079", "attributes": {"url": "https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/select.css"}}, {"id": "p1073"}, {"id": "p1074"}], "width": 300, "min_width": 300, "margin": [5, 10], "align": "start", "title": "Species", "options": ["Adelie", "Chinstrap", "Gentoo"]}}, {"type": "object", "name": "panel.models.widgets.CustomMultiSelect", "id": "p1083", "attributes": {"subscribed_events": {"type": "set", "entries": ["dblclick_event"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1075"}, {"id": "p1079"}, {"id": "p1073"}, {"id": "p1074"}], "width": 300, "min_width": 300, "margin": [5, 10], "align": "start", "title": "Island", "options": ["Biscoe", "Dream", "Torgersen"]}}, {"type": "object", "name": "panel.models.widgets.CustomMultiSelect", "id": "p1086", "attributes": {"subscribed_events": {"type": "set", "entries": ["dblclick_event"]}, "stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1075"}, {"id": "p1079"}, {"id": "p1073"}, {"id": "p1074"}], "width": 300, "min_width": 300, "margin": [5, 10], "align": "start", "title": "Sex", "options": ["male", "female", "nan"]}}, {"type": "object", "name": "RangeSlider", "id": "p1088", "attributes": {"stylesheets": ["\n:host(.pn-loading):before, .pn-loading:before {\n  background-color: #0072B5;\n  mask-size: auto calc(min(50%, 400px));\n  -webkit-mask-size: auto calc(min(50%, 400px));\n}", {"id": "p1075"}, {"id": "p1073"}, {"id": "p1074"}], "margin": [5, 10], "align": "start", "title": "Year", "value": [2007, 2009], "start": 2007, "end": 2009}}]}}, {"type": "object", "name": "panel.models.location.Location", "id": "p1091", "attributes": {"name": "location", "reload": false}}], "defs": [{"type": "model", "name": "ReactiveHTML1"}, {"type": "model", "name": "FlexBox1", "properties": [{"name": "align_content", "kind": "Any", "default": "flex-start"}, {"name": "align_items", "kind": "Any", "default": "flex-start"}, {"name": "flex_direction", "kind": "Any", "default": "row"}, {"name": "flex_wrap", "kind": "Any", "default": "wrap"}, {"name": "gap", "kind": "Any", "default": ""}, {"name": "justify_content", "kind": "Any", "default": "flex-start"}]}, {"type": "model", "name": "FloatPanel1", "properties": [{"name": "config", "kind": "Any", "default": {"type": "map"}}, {"name": "contained", "kind": "Any", "default": true}, {"name": "position", "kind": "Any", "default": "right-top"}, {"name": "offsetx", "kind": "Any", "default": null}, {"name": "offsety", "kind": "Any", "default": null}, {"name": "theme", "kind": "Any", "default": "primary"}, {"name": "status", "kind": "Any", "default": "normalized"}]}, {"type": "model", "name": "GridStack1", "properties": [{"name": "mode", "kind": "Any", "default": "warn"}, {"name": "ncols", "kind": "Any", "default": null}, {"name": "nrows", "kind": "Any", "default": null}, {"name": "allow_resize", "kind": "Any", "default": true}, {"name": "allow_drag", "kind": "Any", "default": true}, {"name": "state", "kind": "Any", "default": []}]}, {"type": "model", "name": "drag1", "properties": [{"name": "slider_width", "kind": "Any", "default": 5}, {"name": "slider_color", "kind": "Any", "default": "black"}, {"name": "value", "kind": "Any", "default": 50}]}, {"type": "model", "name": "click1", "properties": [{"name": "terminal_output", "kind": "Any", "default": ""}, {"name": "debug_name", "kind": "Any", "default": ""}, {"name": "clears", "kind": "Any", "default": 0}]}, {"type": "model", "name": "FastWrapper1", "properties": [{"name": "object", "kind": "Any", "default": null}, {"name": "style", "kind": "Any", "default": null}]}, {"type": "model", "name": "NotificationAreaBase1", "properties": [{"name": "js_events", "kind": "Any", "default": {"type": "map"}}, {"name": "position", "kind": "Any", "default": "bottom-right"}, {"name": "_clear", "kind": "Any", "default": 0}]}, {"type": "model", "name": "NotificationArea1", "properties": [{"name": "js_events", "kind": "Any", "default": {"type": "map"}}, {"name": "notifications", "kind": "Any", "default": []}, {"name": "position", "kind": "Any", "default": "bottom-right"}, {"name": "_clear", "kind": "Any", "default": 0}, {"name": "types", "kind": "Any", "default": [{"type": "map", "entries": [["type", "warning"], ["background", "#ffc107"], ["icon", {"type": "map", "entries": [["className", "fas fa-exclamation-triangle"], ["tagName", "i"], ["color", "white"]]}]]}, {"type": "map", "entries": [["type", "info"], ["background", "#007bff"], ["icon", {"type": "map", "entries": [["className", "fas fa-info-circle"], ["tagName", "i"], ["color", "white"]]}]]}]}]}, {"type": "model", "name": "Notification", "properties": [{"name": "background", "kind": "Any", "default": null}, {"name": "duration", "kind": "Any", "default": 3000}, {"name": "icon", "kind": "Any", "default": null}, {"name": "message", "kind": "Any", "default": ""}, {"name": "notification_type", "kind": "Any", "default": null}, {"name": "_destroyed", "kind": "Any", "default": false}]}, {"type": "model", "name": "TemplateActions1", "properties": [{"name": "open_modal", "kind": "Any", "default": 0}, {"name": "close_modal", "kind": "Any", "default": 0}]}, {"type": "model", "name": "BootstrapTemplateActions1", "properties": [{"name": "open_modal", "kind": "Any", "default": 0}, {"name": "close_modal", "kind": "Any", "default": 0}]}, {"type": "model", "name": "TemplateEditor1", "properties": [{"name": "layout", "kind": "Any", "default": []}]}, {"type": "model", "name": "MaterialTemplateActions1", "properties": [{"name": "open_modal", "kind": "Any", "default": 0}, {"name": "close_modal", "kind": "Any", "default": 0}]}, {"type": "model", "name": "copy_to_clipboard1", "properties": [{"name": "fill", "kind": "Any", "default": "none"}, {"name": "value", "kind": "Any", "default": null}]}, {"type": "model", "name": "DownloadButton1", "properties": [{"name": "color", "kind": "Any", "default": "grey"}, {"name": "data", "kind": "Any", "default": ""}, {"name": "filename", "kind": "Any", "default": ""}, {"name": "hide", "kind": "Any", "default": false}, {"name": "size", "kind": "Any", "default": 20}]}, {"type": "model", "name": "clicked1", "properties": [{"name": "disabled", "kind": "Any", "default": false}, {"name": "color", "kind": "Any", "default": null}, {"name": "icon", "kind": "Any", "default": null}, {"name": "size", "kind": "Any", "default": 12}]}]}, "version": "3.4.1"})
+                } else {
+                   setTimeout(embed_bokeh_7, 200)
+                }
+              };
+              embed_bokeh_7()
+            </script>
+</section>
+<section id="related-resources">
+<h2>Related Resources<a class="headerlink" href="#related-resources" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="#chain_python"><span class="xref myst">Branch a pipeline in Python</span></a></p></li>
+<li><p><a class="reference internal" href="../data_visualization/dashboard_python.html"><span class="doc std std-doc">Build a dashboard in Python</span></a></p></li>
+</ul>
+</section>
+</section>
+</article>
+<footer class="prev-next-footer d-print-none">
+<div class="prev-next-area">
+<a class="left-prev" href="index.html" title="previous page">
+<i class="fa-solid fa-angle-left"></i>
+<div class="prev-next-info">
+<p class="prev-next-subtitle">previous</p>
+<p class="prev-next-title">Data Processing</p>
+</div>
+</a>
+<a class="right-next" href="branch_pipeline.html" title="next page">
+<div class="prev-next-info">
+<p class="prev-next-subtitle">next</p>
+<p class="prev-next-title">Branch a pipeline</p>
+</div>
+<i class="fa-solid fa-angle-right"></i>
+</a>
+</div>
+</footer>
+</div>
+<div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="sidebar-secondary-item">
+<div class="page-toc tocsection onthispage" id="pst-page-navigation-heading-2">
+<i class="fa-solid fa-list"></i> On this page
+  </div>
+<nav aria-labelledby="pst-page-navigation-heading-2" class="bd-toc-nav page-toc">
+<ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#declaratively-specifying-a-pipeline">Declaratively specifying a pipeline</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#programmatically-specifying-a-pipeline">Programmatically specifying a pipeline</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#add-source">Add source</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#add-filter">Add filter</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#add-transform">Add transform</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-the-pipeline">Display the pipeline</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#related-resources">Related Resources</a></li>
+</ul>
+</nav></div>
+<div class="sidebar-secondary-item">
+<div class="tocsection sourcelink">
+<a href="../../_sources/how_to/data_processing/pipeline_python.md.txt">
+<i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+</div>
+</div>
+</div></div>
+</div>
+<footer class="bd-footer-content">
+</footer>
+</main>
+</div>
+</div>
+<!-- Scripts loaded after <body> so the DOM is not blocked -->
+<script src="../../_static/scripts/bootstrap.js?digest=3ee479438cf8b5e0d341"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=3ee479438cf8b5e0d341"></script>
+<footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+<div class="footer-items__start">
+<div class="footer-item">
+<p class="copyright">
+    
+      © Copyright 2020-2024, HoloViz Developers.
+      <br/>
+</p>
+</div>
+<div class="footer-item">
+<p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.3.7.
+    <br/>
+</p>
+</div>
+</div>
+<div class="footer-items__end">
+<div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.3.
+</p></div>
+</div>
+</div>
+</footer>
+</body>
+</html>

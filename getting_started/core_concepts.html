@@ -1,0 +1,750 @@
+
+<!DOCTYPE html>
+
+<html data-content_root="../" data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="width=device-width, initial-scale=1" name="viewport"/>
+<link href="../site.webmanifest" rel="manifest"/>
+<title>Core Concepts — Lumen 1.5.0a3 documentation</title>
+<script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+<!-- Loaded before other Sphinx assets -->
+<link href="../_static/styles/theme.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="../_static/styles/bootstrap.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="../_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link as="font" crossorigin="" href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" rel="preload" type="font/woff2"/>
+<link href="../_static/pygments.css?v=a746c00c" rel="stylesheet" type="text/css"/>
+<link href="../_static/mystnb.4510f1fc1dee50b3e5859aac5469c37c29e427902b24a333a5f9fcb2f0b3ac41.css" rel="stylesheet" type="text/css"/>
+<link href="../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=aacd715d" rel="stylesheet" type="text/css"/>
+<link href="../_static/dataframe.css?v=302d74fa" rel="stylesheet" type="text/css"/>
+<link href="../_static/design-style.1e8bd061cd6da7fc9cf755528e8ffc24.min.css?v=0a3b3ea7" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/katex.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridstack.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/booleanstatus.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridspec.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loadingspinner.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/editable_slider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/alerts.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/divider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_interface.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/select.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/widgetbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/floatpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/regular_table.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/debugger.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/markdown.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_message.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/notifications.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/listpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/json.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/progress.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/pyscript.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/swipe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_copy_icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/dataframe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/layout.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/widgets.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/button.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loading.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_reaction_icons.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_feed.css" rel="stylesheet" type="text/css"/>
+<!-- Pre-loaded scripts that we'll load fully later -->
+<link as="script" href="../_static/scripts/bootstrap.js?digest=3ee479438cf8b5e0d341" rel="preload"/>
+<link as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=3ee479438cf8b5e0d341" rel="preload"/>
+<script src="../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=3ee479438cf8b5e0d341"></script>
+<script src="../_static/documentation_options.js?v=8952209f"></script>
+<script src="../_static/doctools.js?v=9a2dae69"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../_static/copybutton.js?v=f281be69"></script>
+<script src="../_static/design-tabs.js?v=36754332"></script>
+<script src="../_static/ServiceHandler.js"></script>
+<link href="../_static/favicon.ico" rel="icon"/>
+<link href="../genindex.html" rel="index" title="Index"/>
+<link href="../search.html" rel="search" title="Search"/>
+<link href="pipelines.html" rel="next" title="Building a data pipeline"/>
+<link href="build_dashboard.html" rel="prev" title="Build a dashboard"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="en" name="docsearch:language"/>
+</head>
+<body data-bs-root-margin="0px 0px -60%" data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-default-mode="light" data-offset="180">
+<div class="skip-link d-print-none" id="pst-skip-link"><a href="#main-content">Skip to main content</a></div>
+<div id="pst-scroll-pixel-helper"></div>
+<button class="btn rounded-pill" id="pst-back-to-top" type="button">
+<i class="fa-solid fa-arrow-up"></i>Back to top</button>
+<input class="sidebar-toggle" id="pst-primary-sidebar-checkbox" type="checkbox"/>
+<label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+<input class="sidebar-toggle" id="pst-secondary-sidebar-checkbox" type="checkbox"/>
+<label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+<div class="search-button__wrapper">
+<div class="search-button__overlay"></div>
+<div class="search-button__search-container">
+<form action="../search.html" class="bd-search d-flex align-items-center" method="get">
+<i class="fa-solid fa-magnifying-glass"></i>
+<input aria-label="Search the docs ..." autocapitalize="off" autocomplete="off" autocorrect="off" class="form-control" id="search-input" name="q" placeholder="Search the docs ..." spellcheck="false" type="search"/>
+<span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+</div>
+<div class="pst-async-banner-revealer d-none">
+<aside aria-label="Version warning" class="d-none d-print-none" id="bd-header-version-warning"></aside>
+</div>
+<header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+<button aria-label="Site navigation" class="sidebar-toggle primary-toggle">
+<span class="fa-solid fa-bars"></span>
+</button>
+<div class="col-lg-3 navbar-header-items__start">
+<div class="navbar-item">
+<a class="navbar-brand logo" href="../index.html">
+<img alt="Lumen 1.5.0a3 documentation - Home" class="logo__image only-light" src="../_static/logo_horizontal.png"/>
+<script>document.write(`<img src="../_static/logo_horizontal.png" class="logo__image only-dark" alt="Lumen 1.5.0a3 documentation - Home"/>`);</script>
+</a></div>
+</div>
+<div class="col-lg-9 navbar-header-items">
+<div class="me-auto navbar-header-items__center">
+<div class="navbar-item">
+<nav class="navbar-nav">
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../index.html">
+    Home
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item current active">
+<a class="nav-link nav-internal" href="index.html">
+    Getting Started
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../how_to/index.html">
+    How to
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../gallery/index.html">
+    Gallery
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../reference/index.html">
+    Reference
+  </a>
+</li>
+<li class="nav-item dropdown pst-header-nav-item">
+<button aria-controls="pst-nav-more-links" aria-expanded="false" class="btn dropdown-toggle nav-item" data-bs-toggle="dropdown" type="button">
+                    More
+                </button>
+<ul class="dropdown-menu" id="pst-nav-more-links">
+<li class="nav-item">
+<a class="nav-link dropdown-item nav-internal" href="../background/index.html">
+    Background
+  </a>
+</li>
+</ul>
+</li>
+</ul>
+</nav></div>
+</div>
+<div class="navbar-header-items__end">
+<div class="navbar-item navbar-persistent--container">
+<script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+</div>
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i aria-hidden="true" class="fa-brands fa-square-github fa-lg"></i></span>
+<span class="sr-only">GitHub</span></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i aria-hidden="true" class="fab fa-discourse fa-lg"></i></span>
+<span class="sr-only">Discourse</span></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="navbar-persistent--mobile">
+<script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+</div>
+<button aria-label="On this page" class="sidebar-toggle secondary-toggle">
+<span class="fa-solid fa-outdent"></span>
+</button>
+</div>
+</header>
+<div class="bd-container">
+<div class="bd-container__inner bd-page-width">
+<div class="bd-sidebar-primary bd-sidebar">
+<div class="sidebar-header-items sidebar-primary__section">
+<div class="sidebar-header-items__center">
+<div class="navbar-item">
+<nav class="navbar-nav">
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../index.html">
+    Home
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item current active">
+<a class="nav-link nav-internal" href="index.html">
+    Getting Started
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../how_to/index.html">
+    How to
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../gallery/index.html">
+    Gallery
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../reference/index.html">
+    Reference
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="../background/index.html">
+    Background
+  </a>
+</li>
+</ul>
+</nav></div>
+</div>
+<div class="sidebar-header-items__end">
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i aria-hidden="true" class="fa-brands fa-square-github fa-lg"></i></span>
+<span class="sr-only">GitHub</span></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i aria-hidden="true" class="fab fa-discourse fa-lg"></i></span>
+<span class="sr-only">Discourse</span></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="sidebar-primary-items__start sidebar-primary__section">
+<div class="sidebar-primary-item">
+<nav aria-label="Section Navigation" class="bd-docs-nav bd-links">
+<p aria-level="1" class="bd-links__title" role="heading">Section Navigation</p>
+<div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="installation.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-desktop-download sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M11.25 9.331V.75a.75.75 0 011.5 0v8.58l1.949-2.11A.75.75 0 1115.8 8.237l-3.25 3.52a.75.75 0 01-1.102 0l-3.25-3.52A.75.75 0 119.3 7.22l1.949 2.111z"></path><path d="M2.5 3.75a.25.25 0 01.25-.25h5.5a.75.75 0 100-1.5h-5.5A1.75 1.75 0 001 3.75v11.5c0 .966.784 1.75 1.75 1.75h6.204c-.171 1.375-.805 2.652-1.77 3.757A.75.75 0 007.75 22h8.5a.75.75 0 00.565-1.243c-.964-1.105-1.598-2.382-1.769-3.757h6.204A1.75 1.75 0 0023 15.25V3.75A1.75 1.75 0 0021.25 2h-5.5a.75.75 0 000 1.5h5.5a.25.25 0 01.25.25v11.5a.25.25 0 01-.25.25H2.75a.25.25 0 01-.25-.25V3.75zM10.463 17c-.126 1.266-.564 2.445-1.223 3.5h5.52c-.66-1.055-1.098-2.234-1.223-3.5h-3.074z" fill-rule="evenodd"></path></svg> Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="build_dashboard.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-tools sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M7.875 2.292a.125.125 0 00-.032.018A7.24 7.24 0 004.75 8.25a7.247 7.247 0 003.654 6.297c.57.327.982.955.941 1.682v.002l-.317 6.058a.75.75 0 11-1.498-.078l.317-6.062v-.004c.006-.09-.047-.215-.188-.296A8.747 8.747 0 013.25 8.25a8.74 8.74 0 013.732-7.169 1.547 1.547 0 011.709-.064c.484.292.809.835.809 1.46v4.714a.25.25 0 00.119.213l2.25 1.385c.08.05.182.05.262 0l2.25-1.385a.25.25 0 00.119-.213V2.478c0-.626.325-1.169.81-1.461a1.547 1.547 0 011.708.064 8.74 8.74 0 013.732 7.17 8.747 8.747 0 01-4.41 7.598c-.14.081-.193.206-.188.296v.004l.318 6.062a.75.75 0 11-1.498.078l-.317-6.058v-.002c-.041-.727.37-1.355.94-1.682A7.247 7.247 0 0019.25 8.25a7.24 7.24 0 00-3.093-5.94.125.125 0 00-.032-.018l-.01-.001c-.003 0-.014 0-.031.01-.036.022-.084.079-.084.177V7.19a1.75 1.75 0 01-.833 1.49l-2.25 1.385a1.75 1.75 0 01-1.834 0l-2.25-1.384A1.75 1.75 0 018 7.192V2.477c0-.098-.048-.155-.084-.176a.062.062 0 00-.031-.011l-.01.001z" fill-rule="evenodd"></path></svg> Build a dashboard</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#"><svg aria-hidden="true" class="sd-octicon sd-octicon-mortar-board sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M12.292 2.06a.75.75 0 00-.584 0L.458 6.81a.75.75 0 000 1.38L4.25 9.793v3.803a2.901 2.901 0 00-1.327.757c-.579.58-.923 1.41-.923 2.43v4.5c0 .248.128.486.335.624.06.04.117.073.22.124.124.062.297.138.52.213.448.149 1.09.288 1.925.288s1.477-.14 1.925-.288c.223-.075.396-.15.52-.213a2.11 2.11 0 00.21-.117A.762.762 0 008 21.28v-4.5c0-1.018-.344-1.85-.923-2.428a2.9 2.9 0 00-1.327-.758v-3.17l5.958 2.516a.75.75 0 00.584 0l5.208-2.2v4.003a2.552 2.552 0 01-.079.085 4.057 4.057 0 01-.849.65c-.826.488-2.255 1.021-4.572 1.021-.612 0-1.162-.037-1.654-.1a.75.75 0 00-.192 1.487c.56.072 1.173.113 1.846.113 2.558 0 4.254-.592 5.334-1.23.538-.316.914-.64 1.163-.896a2.84 2.84 0 00.392-.482h.001A.75.75 0 0019 15v-4.892l4.542-1.917a.75.75 0 000-1.382l-11.25-4.75zM5 15c-.377 0-.745.141-1.017.413-.265.265-.483.7-.483 1.368v4.022c.299.105.797.228 1.5.228s1.201-.123 1.5-.228V16.78c0-.669-.218-1.103-.483-1.368A1.431 1.431 0 005 15zm7-3.564L2.678 7.5 12 3.564 21.322 7.5 12 11.436z" fill-rule="evenodd"></path></svg> Core Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="pipelines.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-git-commit sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M15.5 11.75a3.5 3.5 0 11-7 0 3.5 3.5 0 017 0zm1.444-.75a5.001 5.001 0 00-9.888 0H2.75a.75.75 0 100 1.5h4.306a5.001 5.001 0 009.888 0h4.306a.75.75 0 100-1.5h-4.306z" fill-rule="evenodd"></path></svg> Building a data pipeline</a></li>
+</ul>
+</div>
+</nav></div>
+</div>
+<div class="sidebar-primary-items__end sidebar-primary__section">
+</div>
+<div id="rtd-footer-container"></div>
+</div>
+<main class="bd-main" id="main-content" role="main">
+<div class="bd-content">
+<div class="bd-article-container">
+<div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+<div class="header-article-items__start">
+<div class="header-article-item">
+<nav aria-label="Breadcrumb" class="d-print-none">
+<ul class="bd-breadcrumbs">
+<li class="breadcrumb-item breadcrumb-home">
+<a aria-label="Home" class="nav-link" href="../index.html">
+<i class="fa-solid fa-home"></i>
+</a>
+</li>
+<li class="breadcrumb-item"><a class="nav-link" href="index.html">Getting Started</a></li>
+<li aria-current="page" class="breadcrumb-item active"><svg...< li="">
+</svg...<></li></ul>
+</nav>
+</div>
+</div>
+</div>
+</div>
+<div id="searchbox"></div>
+<article class="bd-article">
+<section id="core-concepts">
+<h1><svg aria-hidden="true" class="sd-octicon sd-octicon-mortar-board sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M12.292 2.06a.75.75 0 00-.584 0L.458 6.81a.75.75 0 000 1.38L4.25 9.793v3.803a2.901 2.901 0 00-1.327.757c-.579.58-.923 1.41-.923 2.43v4.5c0 .248.128.486.335.624.06.04.117.073.22.124.124.062.297.138.52.213.448.149 1.09.288 1.925.288s1.477-.14 1.925-.288c.223-.075.396-.15.52-.213a2.11 2.11 0 00.21-.117A.762.762 0 008 21.28v-4.5c0-1.018-.344-1.85-.923-2.428a2.9 2.9 0 00-1.327-.758v-3.17l5.958 2.516a.75.75 0 00.584 0l5.208-2.2v4.003a2.552 2.552 0 01-.079.085 4.057 4.057 0 01-.849.65c-.826.488-2.255 1.021-4.572 1.021-.612 0-1.162-.037-1.654-.1a.75.75 0 00-.192 1.487c.56.072 1.173.113 1.846.113 2.558 0 4.254-.592 5.334-1.23.538-.316.914-.64 1.163-.896a2.84 2.84 0 00.392-.482h.001A.75.75 0 0019 15v-4.892l4.542-1.917a.75.75 0 000-1.382l-11.25-4.75zM5 15c-.377 0-.745.141-1.017.413-.265.265-.483.7-.483 1.368v4.022c.299.105.797.228 1.5.228s1.201-.123 1.5-.228V16.78c0-.669-.218-1.103-.483-1.368A1.431 1.431 0 005 15zm7-3.564L2.678 7.5 12 3.564 21.322 7.5 12 11.436z" fill-rule="evenodd"></path></svg> Core Concepts<a class="headerlink" href="#core-concepts" title="Link to this heading">#</a></h1>
+<div class="important admonition">
+<p class="admonition-title">What is the purpose of this page?</p>
+<p>This conceptual overview of creating a Lumen dashboard is meant to help you start generalizing what you achieved in the tutorial (<a class="reference internal" href="build_dashboard.html"><span class="doc std std-doc">Build a dashboard</span></a>). After this page you should start building your own dashboard. As you build, consult the relevant <a class="reference internal" href="../how_to/index.html"><span class="doc std std-doc">How-to</span></a> guides or <a class="reference internal" href="../reference/index.html"><span class="doc std std-doc">Reference</span></a> pages, as needed.</p>
+</div>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>Lumen is a framework for easily building powerful data-driven dashboards. The <em>ease</em> of Lumen comes from the primary interface being a simple <strong>YAML</strong> file, which reads like a cooking recipe. We call this the <strong>specification</strong>. Unlike a recipe Lumen makes it very easy to go back and forth between the specification and the final product. This makes it easy to interactively go back and forth and iteratively improve the specification. The <em>power</em> of Lumen comes from the ability to leverage different data intake, data processing, and data visualization libraries that are available in the Python data science ecosystem, but without having to code!</p>
+</section>
+<section id="yaml-specification">
+<h2>YAML specification<a class="headerlink" href="#yaml-specification" title="Link to this heading">#</a></h2>
+<p>The YAML file is a simple and human readable recipe for building a dashboard. Briefly, YAML uses consistent whitespace to denote structure, and most lines either create an association (with <strong>key: value</strong>), or a list (with a leading hyphen <strong>-</strong>). For more on YAML, we recommend this <a class="reference external" href="https://learnxinyminutes.com/docs/yaml/">quick YAML guide</a>.</p>
+<p>The four primary sections of a Lumen specification file are:</p>
+<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
+<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-1 sd-row-cols-md-1 sd-row-cols-lg-1 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<code class="docutils literal notranslate"><span class="pre">config</span></code></div>
+<p class="sd-card-text">To apply settings for the whole dashboard</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
+<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-1 sd-row-cols-md-1 sd-row-cols-lg-1 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<code class="docutils literal notranslate"><span class="pre">sources</span></code></div>
+<p class="sd-card-text">To list your data sources</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
+<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-1 sd-row-cols-md-1 sd-row-cols-lg-1 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<code class="docutils literal notranslate"><span class="pre">pipelines</span></code></div>
+<p class="sd-card-text">To specify how you want the data to be manipulated (filtered and transformed)</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
+<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-1 sd-row-cols-md-1 sd-row-cols-lg-1 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<code class="docutils literal notranslate"><span class="pre">layouts</span></code></div>
+<p class="sd-card-text">To create the views (e.g. table, plot) for your dashboard</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<p>These core sections should be not be indented in the YAML file, as they are at the top of the hierarchy:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">config</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">...</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">...</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="nt">layouts</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="w">    </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+</pre></div>
+</div>
+<p>In addition to these core sections, there is plenty of advanced functionality that we will preview towards the bottom of this page.</p>
+</section>
+<section id="config">
+<h2>Config<a class="headerlink" href="#config" title="Link to this heading">#</a></h2>
+<p>The <a class="reference internal" href="../reference/Config.html#lumen.dashboard.Config" title="lumen.dashboard.Config"><span class="xref myst py py-class">config</span></a> section provides general settings which apply to the whole dashboard to control things like the title, overall layout and theme. The structure is very simple:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">config</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">My dashboard</span>
+<span class="w">  </span><span class="nt">layout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tabs</span>
+<span class="w">  </span><span class="nt">logo</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">assets/my_logo.png</span>
+<span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+</pre></div>
+</div>
+<p>You might remember an implementation of this from what you created in the <a class="reference internal" href="build_dashboard.html"><span class="doc std std-doc">Build a dashboard</span></a> tutorial. Your config section was used to add a title and dark theme to your dashboard:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">config</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Palmer Penguins</span>
+<span class="w">  </span><span class="nt">theme</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dark</span>
+</pre></div>
+</div>
+<p>See the <a class="reference internal" href="#../reference/Config.html"><span class="xref myst">Config Reference</span></a> for a description of all parameters.</p>
+</section>
+<section id="sources">
+<h2>Sources<a class="headerlink" href="#sources" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">sources</span></code> section defines the source of your data. Depending on your source type, the specification may look a bit different, but in general it will follow this pattern:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">source_name</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type of source</span>
+<span class="w">    </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Additional source parameters</span>
+</pre></div>
+</div>
+<p>A common choice for a source type is <a class="reference internal" href="../reference/source/FileSource.html#lumen.sources.base.FileSource" title="lumen.sources.base.FileSource"><span class="xref myst py py-class">FileSource</span></a>, which can load CSV, Excel, JSON and Parquet files from either local (filepaths) or remote (URL) locations. In your tutorial, you use a remote CSV source:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_source</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file</span>
+<span class="w">    </span><span class="nt">tables</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">table_penguin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://datasets.holoviz.org/penguins/v1/penguins.csv</span>
+</pre></div>
+</div>
+<p>See the <a class="reference internal" href="#lumen.source.base.Source"><span class="xref myst">Source Reference</span></a> for other source types and for the relevant parameters.</p>
+</section>
+<section id="pipelines-data-processing">
+<h2>Pipelines (data processing)<a class="headerlink" href="#pipelines-data-processing" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">pipelines</span></code> section is where you list all the ways that you want the data to be <strong>filtered</strong> or <strong>transformed</strong>. If you don’t need the data to be manipulated, you can just exclude this section.</p>
+<section id="filters">
+<h3>Filters<a class="headerlink" href="#filters" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">filters</span></code> of a <a class="reference internal" href="../reference/Pipeline.html#lumen.pipeline.Pipeline" title="lumen.pipeline.Pipeline"><span class="xref myst py py-class">Pipeline</span></a> allows you or your dashboard’s viewers to drill down into just a subset of the data.</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="w">    </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type of filter</span>
+<span class="w">        </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Filter Parameters</span>
+</pre></div>
+</div>
+<p>A very useful filter type is <code class="docutils literal notranslate"><span class="pre">widget</span></code>, which is used to expose filtering capability in the dashboard view. Here is the implementation from your tutorial, which specifies two widgets for dashboard viewers.</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_pipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_source</span>
+<span class="w">    </span><span class="nt">table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_table</span>
+<span class="w">    </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sex</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">island</span>
+</pre></div>
+</div>
+<p>See the <a class="reference internal" href="../reference/filter/index.html#lumen.filters.base.Filter" title="lumen.filters.base.Filter"><span class="xref myst py py-class">Filter Reference</span></a> for other filter types and for the relevant parameters.</p>
+</section>
+<section id="transforms">
+<h3>Transforms<a class="headerlink" href="#transforms" title="Link to this heading">#</a></h3>
+<p>Within the pipeline section, you can also apply a <a class="reference internal" href="../reference/transform/index.html#lumen.transforms.base.Transform" title="lumen.transforms.base.Transform"><span class="xref myst py py-class">transform</span></a> to the data, such as selecting only certain columns of the data.</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="w">    </span><span class="nt">transforms</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type of transform</span>
+<span class="w">        </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Transform Parameters</span>
+</pre></div>
+</div>
+<p>Here is the complete <code class="docutils literal notranslate"><span class="pre">pipelines</span></code> section from your tutorial, which include both filters and a transform:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">pipelines</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">penguin_pipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_source</span>
+<span class="w">    </span><span class="nt">table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_table</span>
+<span class="w">    </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sex</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">        </span><span class="nt">field</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">island</span>
+<span class="hll"><span class="w">    </span><span class="nt">transforms</span><span class="p">:</span>
+</span><span class="hll"><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">columns</span>
+</span><span class="hll"><span class="w">        </span><span class="nt">columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'species'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'island'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'sex'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'year'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'bill_length_mm'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'bill_depth_mm'</span><span class="p p-Indicator">]</span>
+</span></pre></div>
+</div>
+<p>See the <a class="reference internal" href="../reference/transform/index.html#lumen.transforms.base.Transform" title="lumen.transforms.base.Transform"><span class="xref myst py py-class">Transform Reference</span></a> for other transform types and for the relevant parameters.</p>
+</section>
+</section>
+<section id="layouts-views">
+<h2>Layouts (views)<a class="headerlink" href="#layouts-views" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">layouts</span></code> section declares the actual content in the rendered application. The essential structure of a <code class="docutils literal notranslate"><span class="pre">layouts</span></code> section is as follows:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">layouts</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Dashboard title</span>
+<span class="w">    </span><span class="nt">pipeline</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The pipeline driving these views</span>
+<span class="w">    </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Dashboard parameters</span>
+<span class="w">    </span><span class="nt">views</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">View type</span>
+<span class="w">        </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">View parameters</span>
+</pre></div>
+</div>
+<details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3 sd-fade-in-slide-down">
+<summary class="sd-summary-title sd-card-header">
+Expand this dropdown for a more complex example structure of <code class="docutils literal notranslate"><span class="pre">layouts</span></code><div class="sd-summary-down docutils">
+<svg aria-hidden="true" class="sd-octicon sd-octicon-chevron-down" height="1.5em" version="1.1" viewbox="0 0 24 24" width="1.5em"><path d="M5.22 8.72a.75.75 0 000 1.06l6.25 6.25a.75.75 0 001.06 0l6.25-6.25a.75.75 0 00-1.06-1.06L12 14.44 6.28 8.72a.75.75 0 00-1.06 0z" fill-rule="evenodd"></path></svg></div>
+<div class="sd-summary-up docutils">
+<svg aria-hidden="true" class="sd-octicon sd-octicon-chevron-up" height="1.5em" version="1.1" viewbox="0 0 24 24" width="1.5em"><path d="M18.78 15.28a.75.75 0 000-1.06l-6.25-6.25a.75.75 0 00-1.06 0l-6.25 6.25a.75.75 0 101.06 1.06L12 9.56l5.72 5.72a.75.75 0 001.06 0z" fill-rule="evenodd"></path></svg></div>
+</summary><div class="sd-summary-content sd-card-body docutils">
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">layouts</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The title of the monitoring endpoint</span>
+<span class="w">    </span><span class="nt">download</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">format</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">When specified adds a section to the sidebar allowing users to download the filtered dataset</span>
+<span class="w">      </span><span class="nt">kwargs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Additional keyword arguments to pass to the pandas/dask to_&lt;format&gt; method</span>
+<span class="w">      </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Allows declaring a subset of tables to download</span>
+<span class="w">    </span><span class="nt">pipeline</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The pipeline driving the views of this layout. Each View can independently declare a pipeline or all use the shared pipeline defined at the layout level</span>
+<span class="w">    </span><span class="nt">views</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">A list of metrics to monitor and display on the endpoint</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">- pipeline</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The [Pipeline]`lumen.pipeline.Pipeline` driving the View</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">type</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The type of View to use for rendering the table</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">...</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Additional parameters for the View</span>
+<span class="w">    </span><span class="nt">layout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">The layout inside the card(s), e.g. 'row', 'column' or 'grid'</span>
+<span class="w">    </span><span class="nt">facet</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">by</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">List of fields to facet by</span>
+<span class="w">      </span><span class="nt">sort</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">List of fields to sort by</span>
+<span class="w">      </span><span class="nt">reverse</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Whether to reverse the sort order</span>
+<span class="w">    </span><span class="nt">refresh_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">How frequently to poll for updates in milliseconds</span>
+<span class="w">    </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Additional parameters passed to the Card layout(s), e.g. width or height</span>
+</pre></div>
+</div>
+</div>
+</details><p>At minimum each <a class="reference internal" href="../reference/Layout.html#lumen.layout.Layout" title="lumen.layout.Layout"><span class="xref myst py py-class">Layout</span></a> must declare a <code class="docutils literal notranslate"><span class="pre">title</span></code> and a set of <code class="docutils literal notranslate"><span class="pre">views</span></code>. Each view can be of a different type, but a good starting point is the <a class="reference internal" href="#%60lumen.views.base.hvPlotView"><span class="xref myst">hvPlotView</span></a>. This view type allows you to produce <a class="reference external" href="https://hvplot.holoviz.org/reference/index.html">many different types of plots</a> available from the <a class="reference external" href="https://hvplot.holoviz.org/">hvPlot</a> library, just by specifying the <code class="docutils literal notranslate"><span class="pre">kind</span></code> parameter.</p>
+<p>In your tutorial, the final dashboard included two <code class="docutils literal notranslate"><span class="pre">kinds</span></code> - scatter and histogram:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">layouts</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Penguins</span>
+<span class="w">    </span><span class="nt">pipeline</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">penguin_pipeline</span>
+<span class="w">    </span><span class="nt">layout</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">0</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">]]</span>
+<span class="w">    </span><span class="nt">sizing_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stretch_width</span>
+<span class="w">    </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">800</span>
+<span class="w">    </span><span class="nt">views</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">x</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_length_mm</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_depth_mm</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scatter</span>
+<span class="w">        </span><span class="nt">color</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">species</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">450</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hist</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_length_mm</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">350</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hvplot</span>
+<span class="w">        </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hist</span>
+<span class="w">        </span><span class="nt">y</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bill_depth_mm</span>
+<span class="w">        </span><span class="nt">responsive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">350</span>
+</pre></div>
+</div>
+<p>See the <a class="reference internal" href="../reference/view/index.html#lumen.views.base.View" title="lumen.views.base.View"><span class="xref myst py py-class">View Reference</span></a> for other view types and for the relevant parameters.</p>
+</section>
+<section id="advanced-functionality">
+<h2>Advanced Functionality<a class="headerlink" href="#advanced-functionality" title="Link to this heading">#</a></h2>
+<p>The following sections are meant to introduce you some of Lumen’s advanced functionality. If you want to implement some of these features, explore their associated <a class="reference internal" href="../how_to/index.html"><span class="doc std std-doc">How to</span></a> guides for complete recipes.</p>
+<section id="defaults">
+<h3>Defaults<a class="headerlink" href="#defaults" title="Link to this heading">#</a></h3>
+<p>The <a class="reference internal" href="../reference/Defaults.html#lumen.dashboard.Defaults" title="lumen.dashboard.Defaults"><span class="xref myst py py-class">defaults</span></a> section allows overriding parameter defaults on the <a class="reference internal" href="../reference/filter/index.html#lumen.filters.base.Filter" title="lumen.filters.base.Filter"><span class="xref myst py py-class">Filter</span></a>, <a class="reference internal" href="../reference/source/index.html#lumen.sources.base.Source" title="lumen.sources.base.Source"><span class="xref myst py py-class">Source</span></a>, <a class="reference internal" href="../reference/transform/index.html#lumen.transforms.base.Transform" title="lumen.transforms.base.Transform"><span class="xref myst py py-class">Transform</span></a> and <a class="reference internal" href="../reference/view/index.html#lumen.views.base.View" title="lumen.views.base.View"><span class="xref myst py py-class">View</span></a> objects.</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">defaults</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type to override the default on</span>
+<span class="w">      </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Parameter to override</span>
+<span class="w">  </span><span class="nt">sources</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type to override the default on</span>
+<span class="w">      </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Parameter to override</span>
+<span class="w">  </span><span class="nt">transforms</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type to override the default on</span>
+<span class="w">      </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Parameter to override</span>
+<span class="w">  </span><span class="nt">views</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type to override the default on</span>
+<span class="w">      </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Parameter to override</span>
+</pre></div>
+</div>
+<p>You haven’t seen an implementation of this yet, but as an example, we could have used the <code class="docutils literal notranslate"><span class="pre">defaults</span></code> section to override the default <code class="docutils literal notranslate"><span class="pre">WidgetFilter.multi</span></code> value because perhaps we wanted the widget to filter with a specific value rather than multiple values:</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">defaults</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">filters</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+<span class="w">      </span><span class="nt">multi</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+<p>For more on <code class="docutils literal notranslate"><span class="pre">defaults</span></code>, check out the <code class="docutils literal notranslate"><span class="pre">How</span> <span class="pre">to</span> <span class="pre">override</span> <span class="pre">parameter</span> <span class="pre">defaults</span></code> guide.</p>
+</section>
+<section id="variables">
+<h3>Variables<a class="headerlink" href="#variables" title="Link to this heading">#</a></h3>
+<p>The <a class="reference internal" href="#lumen.variables.base.Variables"><span class="xref myst">variables</span></a> sections allow you to link settings across your entire application. Once a variable has been declared in the <code class="docutils literal notranslate"><span class="pre">variables</span></code> section, you can reference it throughout your specification using the <code class="docutils literal notranslate"><span class="pre">$variables.&lt;variable_name&gt;</span></code> syntax.</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="nt">variables</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">variable_name</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="w">      </span><span class="nt">...</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Variable parameters</span>
+</pre></div>
+</div>
+<p>For example, you might have a <code class="docutils literal notranslate"><span class="pre">TextInput</span></code> widget where a dashboard user could enter the name of a CSV file with stock data. Establishing such a widget as a <a class="reference internal" href="../reference/variable/index.html#lumen.variables.base.Variable" title="lumen.variables.base.Variable"><span class="xref myst py py-class">Variable</span></a> would allow the dashboard to dynamically update with the new data source.</p>
+<div class="highlight-YAML notranslate"><div class="highlight"><pre><span></span><span class="hll"><span class="nt">variables</span><span class="p">:</span>
+</span><span class="hll"><span class="w">  </span><span class="nt">ticker</span><span class="p">:</span>
+</span><span class="hll"><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">widget</span>
+</span><span class="hll"><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TextInput</span>
+</span><span class="hll"><span class="w">    </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">AAPL.csv</span>
+</span>
+<span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">stock_data</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file</span>
+<span class="w">    </span><span class="nt">tables</span><span class="p">:</span>
+<span class="hll"><span class="w">      </span><span class="nt">ticker</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">$variables.ticker</span>
+</span></pre></div>
+</div>
+<p>For more on variables, check out the <a class="reference internal" href="#../how_to/general/variables_and_references"><span class="xref myst">How to use variables and references</span></a> guide.</p>
+</section>
+<section id="sources-as-variables">
+<h3>Sources as variables<a class="headerlink" href="#sources-as-variables" title="Link to this heading">#</a></h3>
+<p>In addition to the <code class="docutils literal notranslate"><span class="pre">variables</span></code> section, in which you can create arbitrary types of variables, you can also refer to sources with a similar syntax. In some scenarios you might want to refer to a <a class="reference internal" href="../reference/source/index.html#lumen.sources.base.Source" title="lumen.sources.base.Source"><span class="xref myst py py-class">Source</span></a>, a table on a <a class="reference internal" href="../reference/source/index.html#lumen.sources.base.Source" title="lumen.sources.base.Source"><span class="xref myst py py-class">Source</span></a> or a field on a table from elsewhere in the yaml specification.</p>
+<p>As an example you may have local CSV file which contains a column of URLs to monitor and feed that information to a <a class="reference internal" href="../reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource" title="lumen.sources.base.WebsiteSource"><span class="xref myst py py-class">WebsiteSource</span></a> which reports whether those URLs are live. Using the <code class="docutils literal notranslate"><span class="pre">$</span></code> syntax we can easily establish such references.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">sources</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">csv</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file</span>
+<span class="w">    </span><span class="nt">files</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">websites.csv</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">live</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">live</span>
+<span class="w">    </span><span class="nt">urls</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">$csv.websites.url</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">$csv.websites.url</span></code> syntax will look up a <a class="reference internal" href="../reference/source/index.html#lumen.sources.base.Source" title="lumen.sources.base.Source"><span class="xref myst py py-class">Source</span></a> called ‘csv’, request a table called ‘websites’ and then feed the ‘url’ column in that table to the <code class="docutils literal notranslate"><span class="pre">urls</span></code> parameter of the <a class="reference internal" href="../reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource" title="lumen.sources.base.WebsiteSource"><span class="xref myst py py-class">WebsiteSource</span></a>.</p>
+<p>For more on referring to sources, check out the <a class="reference internal" href="#../how_to/variables_and_references"><span class="xref myst">How to use variables and references</span></a> guide.</p>
+</section>
+<section id="external-variables-templating">
+<h3>External variables (templating)<a class="headerlink" href="#external-variables-templating" title="Link to this heading">#</a></h3>
+<p>In many cases you do not want to hardcode variables inside the yaml specification instead passing in variables from an environment variable, a shell command, a CLI argument, a HTTP request header or cookie, or a OAuth token variable. This can be achieved using the following templating syntax:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">{{env("USER")}}</span></code>: look in the set environment variables for the named variable</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{{shell("get_login</span> <span class="pre">thisuser</span> <span class="pre">-t")}}</span></code>: execute the command, and use the output as the value. The output will be trimmed of any trailing whitespace.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{{cookie("USER")}}</span></code>: look in the HTTP request cookies of the served application</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{{header("USER")}}</span></code>: look in the HTTP request headers of the served application</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{{oauth("USER")}}</span></code>: look in the OAuth user token</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{{USER}}</span></code>: Arguments passed in using <code class="docutils literal notranslate"><span class="pre">--template-vars="{'USER':</span> <span class="pre">'lumen_user'}"</span></code> when using <code class="docutils literal notranslate"><span class="pre">lumen</span> <span class="pre">serve</span></code> on the commandline.</p></li>
+</ul>
+<p>For more on templating, check out the <a class="reference internal" href="#../how_to/variables_and_references"><span class="xref myst">How to use variables and references</span></a> guide.</p>
+</section>
+<section id="authentication">
+<h3>Authentication<a class="headerlink" href="#authentication" title="Link to this heading">#</a></h3>
+<p>The <a class="reference internal" href="#lumen.dashboard.Auth"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">auth</span></code></span></a> field may provide a dictionary of any number of fields which are validated against the user information provided the the Auth provider, which is made available by Panel in the <code class="docutils literal notranslate"><span class="pre">panel.state.user_info</span></code> dictionary. To discover how to configure an Auth provider with Panel/Lumen see the <a class="reference external" href="https://panel.holoviz.org/user_guide/Authentication.html">Panel documentation</a>.</p>
+<p>As an example the GitHub OAuth provider returns the login of the user that is visiting the dashboard. If we add the following field to the yaml:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">auth</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">login</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">philippjfr</span><span class="p p-Indicator">]</span>
+</pre></div>
+</div>
+<p>Lumen will check the current user <code class="docutils literal notranslate"><span class="pre">login</span></code> against all user logins listed here. For a more generic Auth mechanism many Auth providers, such as Okta, make it possible to configure a list of groups a user belongs to in which case you could list the allowed groups in the auth field.</p>
+<p>For more on Authentication, check out the <code class="docutils literal notranslate"><span class="pre">How</span> <span class="pre">to</span> <span class="pre">set</span> <span class="pre">up</span> <span class="pre">authentication</span></code> guide.</p>
+</section>
+</section>
+<section id="where-to-go-from-here">
+<h2>Where to go from here?<a class="headerlink" href="#where-to-go-from-here" title="Link to this heading">#</a></h2>
+<p>As mentioned at top of this page, you should now start building your own dashboards. As you build, consult the relevant <code class="docutils literal notranslate"><span class="pre">How-to</span></code> guides or <code class="docutils literal notranslate"><span class="pre">Reference</span></code> pages, as needed. At any point, if you want deeper discussion of Lumen to solidify your understanding, take a look at the <code class="docutils literal notranslate"><span class="pre">Background</span></code> section.</p>
+</section>
+</section>
+</article>
+<footer class="prev-next-footer d-print-none">
+<div class="prev-next-area">
+<a class="left-prev" href="build_dashboard.html" title="previous page">
+<i class="fa-solid fa-angle-left"></i>
+<div class="prev-next-info">
+<p class="prev-next-subtitle">previous</p>
+<p class="prev-next-title"><svg aria-hidden="true" class="sd-octicon sd-octicon-tools sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M7.875 2.292a.125.125 0 00-.032.018A7.24 7.24 0 004.75 8.25a7.247 7.247 0 003.654 6.297c.57.327.982.955.941 1.682v.002l-.317 6.058a.75.75 0 11-1.498-.078l.317-6.062v-.004c.006-.09-.047-.215-.188-.296A8.747 8.747 0 013.25 8.25a8.74 8.74 0 013.732-7.169 1.547 1.547 0 011.709-.064c.484.292.809.835.809 1.46v4.714a.25.25 0 00.119.213l2.25 1.385c.08.05.182.05.262 0l2.25-1.385a.25.25 0 00.119-.213V2.478c0-.626.325-1.169.81-1.461a1.547 1.547 0 011.708.064 8.74 8.74 0 013.732 7.17 8.747 8.747 0 01-4.41 7.598c-.14.081-.193.206-.188.296v.004l.318 6.062a.75.75 0 11-1.498.078l-.317-6.058v-.002c-.041-.727.37-1.355.94-1.682A7.247 7.247 0 0019.25 8.25a7.24 7.24 0 00-3.093-5.94.125.125 0 00-.032-.018l-.01-.001c-.003 0-.014 0-.031.01-.036.022-.084.079-.084.177V7.19a1.75 1.75 0 01-.833 1.49l-2.25 1.385a1.75 1.75 0 01-1.834 0l-2.25-1.384A1.75 1.75 0 018 7.192V2.477c0-.098-.048-.155-.084-.176a.062.062 0 00-.031-.011l-.01.001z" fill-rule="evenodd"></path></svg> Build a dashboard</p>
+</div>
+</a>
+<a class="right-next" href="pipelines.html" title="next page">
+<div class="prev-next-info">
+<p class="prev-next-subtitle">next</p>
+<p class="prev-next-title"><svg aria-hidden="true" class="sd-octicon sd-octicon-git-commit sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M15.5 11.75a3.5 3.5 0 11-7 0 3.5 3.5 0 017 0zm1.444-.75a5.001 5.001 0 00-9.888 0H2.75a.75.75 0 100 1.5h4.306a5.001 5.001 0 009.888 0h4.306a.75.75 0 100-1.5h-4.306z" fill-rule="evenodd"></path></svg> Building a data pipeline</p>
+</div>
+<i class="fa-solid fa-angle-right"></i>
+</a>
+</div>
+</footer>
+</div>
+<div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="sidebar-secondary-item">
+<div class="page-toc tocsection onthispage" id="pst-page-navigation-heading-2">
+<i class="fa-solid fa-list"></i> On this page
+  </div>
+<nav aria-labelledby="pst-page-navigation-heading-2" class="bd-toc-nav page-toc">
+<ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#yaml-specification">YAML specification</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#config">Config</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sources">Sources</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelines-data-processing">Pipelines (data processing)</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#filters">Filters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#transforms">Transforms</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layouts-views">Layouts (views)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#advanced-functionality">Advanced Functionality</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#defaults">Defaults</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#variables">Variables</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#sources-as-variables">Sources as variables</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#external-variables-templating">External variables (templating)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#authentication">Authentication</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#where-to-go-from-here">Where to go from here?</a></li>
+</ul>
+</nav></div>
+<div class="sidebar-secondary-item">
+<div class="tocsection sourcelink">
+<a href="../_sources/getting_started/core_concepts.md.txt">
+<i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+</div>
+</div>
+</div></div>
+</div>
+<footer class="bd-footer-content">
+</footer>
+</main>
+</div>
+</div>
+<!-- Scripts loaded after <body> so the DOM is not blocked -->
+<script src="../_static/scripts/bootstrap.js?digest=3ee479438cf8b5e0d341"></script>
+<script src="../_static/scripts/pydata-sphinx-theme.js?digest=3ee479438cf8b5e0d341"></script>
+<footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+<div class="footer-items__start">
+<div class="footer-item">
+<p class="copyright">
+    
+      © Copyright 2020-2024, HoloViz Developers.
+      <br/>
+</p>
+</div>
+<div class="footer-item">
+<p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.3.7.
+    <br/>
+</p>
+</div>
+</div>
+<div class="footer-items__end">
+<div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.3.
+</p></div>
+</div>
+</div>
+</footer>
+</body>
+</html>

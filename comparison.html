@@ -1,0 +1,399 @@
+
+<!DOCTYPE html>
+
+<html data-content_root="./" data-theme="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="width=device-width, initial-scale=1" name="viewport"/>
+<link href="site.webmanifest" rel="manifest"/>
+<title>Lumen compared to other dashboarding tools — Lumen 1.5.0a3 documentation</title>
+<script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+<!-- Loaded before other Sphinx assets -->
+<link href="_static/styles/theme.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="_static/styles/bootstrap.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="_static/styles/pydata-sphinx-theme.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link href="_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=3ee479438cf8b5e0d341" rel="stylesheet"/>
+<link as="font" crossorigin="" href="_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" rel="preload" type="font/woff2"/>
+<link as="font" crossorigin="" href="_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" rel="preload" type="font/woff2"/>
+<link href="_static/pygments.css?v=a746c00c" rel="stylesheet" type="text/css"/>
+<link href="_static/mystnb.4510f1fc1dee50b3e5859aac5469c37c29e427902b24a333a5f9fcb2f0b3ac41.css" rel="stylesheet" type="text/css"/>
+<link href="_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="_static/custom.css?v=aacd715d" rel="stylesheet" type="text/css"/>
+<link href="_static/dataframe.css?v=302d74fa" rel="stylesheet" type="text/css"/>
+<link href="_static/design-style.1e8bd061cd6da7fc9cf755528e8ffc24.min.css?v=0a3b3ea7" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/katex.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridstack.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/booleanstatus.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/gridspec.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loadingspinner.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/editable_slider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/alerts.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/divider.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_interface.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/select.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/widgetbox.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/floatpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/regular_table.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/debugger.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/markdown.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_message.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/notifications.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/listpanel.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/json.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/progress.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/pyscript.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/swipe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_copy_icon.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/dataframe.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/layout.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/widgets.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/button.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/loading.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_reaction_icons.css" rel="stylesheet" type="text/css"/>
+<link href="https://cdn.holoviz.org/panel/1.5.0-a.3/dist/css/chat_feed.css" rel="stylesheet" type="text/css"/>
+<!-- Pre-loaded scripts that we'll load fully later -->
+<link as="script" href="_static/scripts/bootstrap.js?digest=3ee479438cf8b5e0d341" rel="preload"/>
+<link as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=3ee479438cf8b5e0d341" rel="preload"/>
+<script src="_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=3ee479438cf8b5e0d341"></script>
+<script src="_static/documentation_options.js?v=8952209f"></script>
+<script src="_static/doctools.js?v=9a2dae69"></script>
+<script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="_static/copybutton.js?v=f281be69"></script>
+<script src="_static/design-tabs.js?v=36754332"></script>
+<script src="_static/ServiceHandler.js"></script>
+<link href="_static/favicon.ico" rel="icon"/>
+<link href="genindex.html" rel="index" title="Index"/>
+<link href="search.html" rel="search" title="Search"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="en" name="docsearch:language"/>
+</head>
+<body data-bs-root-margin="0px 0px -60%" data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-default-mode="light" data-offset="180">
+<div class="skip-link d-print-none" id="pst-skip-link"><a href="#main-content">Skip to main content</a></div>
+<div id="pst-scroll-pixel-helper"></div>
+<button class="btn rounded-pill" id="pst-back-to-top" type="button">
+<i class="fa-solid fa-arrow-up"></i>Back to top</button>
+<input class="sidebar-toggle" id="pst-primary-sidebar-checkbox" type="checkbox"/>
+<label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+<input class="sidebar-toggle" id="pst-secondary-sidebar-checkbox" type="checkbox"/>
+<label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+<div class="search-button__wrapper">
+<div class="search-button__overlay"></div>
+<div class="search-button__search-container">
+<form action="search.html" class="bd-search d-flex align-items-center" method="get">
+<i class="fa-solid fa-magnifying-glass"></i>
+<input aria-label="Search the docs ..." autocapitalize="off" autocomplete="off" autocorrect="off" class="form-control" id="search-input" name="q" placeholder="Search the docs ..." spellcheck="false" type="search"/>
+<span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+</div>
+<div class="pst-async-banner-revealer d-none">
+<aside aria-label="Version warning" class="d-none d-print-none" id="bd-header-version-warning"></aside>
+</div>
+<header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+<button aria-label="Site navigation" class="sidebar-toggle primary-toggle">
+<span class="fa-solid fa-bars"></span>
+</button>
+<div class="col-lg-3 navbar-header-items__start">
+<div class="navbar-item">
+<a class="navbar-brand logo" href="index.html">
+<img alt="Lumen 1.5.0a3 documentation - Home" class="logo__image only-light" src="_static/logo_horizontal.png"/>
+<script>document.write(`<img src="_static/logo_horizontal.png" class="logo__image only-dark" alt="Lumen 1.5.0a3 documentation - Home"/>`);</script>
+</a></div>
+</div>
+<div class="col-lg-9 navbar-header-items">
+<div class="me-auto navbar-header-items__center">
+<div class="navbar-item">
+<nav class="navbar-nav">
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="index.html">
+    Home
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="getting_started/index.html">
+    Getting Started
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="how_to/index.html">
+    How to
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="gallery/index.html">
+    Gallery
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="reference/index.html">
+    Reference
+  </a>
+</li>
+<li class="nav-item dropdown pst-header-nav-item">
+<button aria-controls="pst-nav-more-links" aria-expanded="false" class="btn dropdown-toggle nav-item" data-bs-toggle="dropdown" type="button">
+                    More
+                </button>
+<ul class="dropdown-menu" id="pst-nav-more-links">
+<li class="nav-item">
+<a class="nav-link dropdown-item nav-internal" href="background/index.html">
+    Background
+  </a>
+</li>
+</ul>
+</li>
+</ul>
+</nav></div>
+</div>
+<div class="navbar-header-items__end">
+<div class="navbar-item navbar-persistent--container">
+<script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+</div>
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i aria-hidden="true" class="fa-brands fa-square-github fa-lg"></i></span>
+<span class="sr-only">GitHub</span></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i aria-hidden="true" class="fab fa-discourse fa-lg"></i></span>
+<span class="sr-only">Discourse</span></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="navbar-persistent--mobile">
+<script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+</div>
+<button aria-label="On this page" class="sidebar-toggle secondary-toggle">
+<span class="fa-solid fa-outdent"></span>
+</button>
+</div>
+</header>
+<div class="bd-container">
+<div class="bd-container__inner bd-page-width">
+<div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+<div class="sidebar-header-items sidebar-primary__section">
+<div class="sidebar-header-items__center">
+<div class="navbar-item">
+<nav class="navbar-nav">
+<ul class="bd-navbar-elements navbar-nav">
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="index.html">
+    Home
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="getting_started/index.html">
+    Getting Started
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="how_to/index.html">
+    How to
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="gallery/index.html">
+    Gallery
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="reference/index.html">
+    Reference
+  </a>
+</li>
+<li class="nav-item pst-header-nav-item">
+<a class="nav-link nav-internal" href="background/index.html">
+    Background
+  </a>
+</li>
+</ul>
+</nav></div>
+</div>
+<div class="sidebar-header-items__end">
+<div class="navbar-item">
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+<div class="navbar-item"><ul aria-label="Icon Links" class="navbar-icon-links navbar-nav">
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://github.com/holoviz/lumen" rel="noopener" target="_blank" title="GitHub"><span><i aria-hidden="true" class="fa-brands fa-square-github fa-lg"></i></span>
+<span class="sr-only">GitHub</span></a>
+</li>
+<li class="nav-item">
+<a class="nav-link" data-bs-placement="bottom" data-bs-toggle="tooltip" href="https://discourse.holoviz.org/c/lumen/14" rel="noopener" target="_blank" title="Discourse"><span><i aria-hidden="true" class="fab fa-discourse fa-lg"></i></span>
+<span class="sr-only">Discourse</span></a>
+</li>
+</ul></div>
+</div>
+</div>
+<div class="sidebar-primary-items__end sidebar-primary__section">
+</div>
+<div id="rtd-footer-container"></div>
+</div>
+<main class="bd-main" id="main-content" role="main">
+<div class="bd-content">
+<div class="bd-article-container">
+<div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+<div class="header-article-items__start">
+<div class="header-article-item">
+<nav aria-label="Breadcrumb" class="d-print-none">
+<ul class="bd-breadcrumbs">
+<li class="breadcrumb-item breadcrumb-home">
+<a aria-label="Home" class="nav-link" href="index.html">
+<i class="fa-solid fa-home"></i>
+</a>
+</li>
+<li aria-current="page" class="breadcrumb-item active">Lumen...</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+</div>
+<div id="searchbox"></div>
+<article class="bd-article">
+<section id="lumen-compared-to-other-dashboarding-tools">
+<h1>Lumen compared to other dashboarding tools<a class="headerlink" href="#lumen-compared-to-other-dashboarding-tools" title="Link to this heading">#</a></h1>
+<p>Here we will first talk about the most fundamental differences that set Lumen apart from other tools, and then compare Lumen to specific competitive or complementary tools so that it is clear how Lumen fits in.</p>
+<section id="general-considerations">
+<h2>General considerations<a class="headerlink" href="#general-considerations" title="Link to this heading">#</a></h2>
+<p>As listed at <a class="reference external" href="https://pyviz.org/tools.html#dashboarding">pyviz.org/tools</a> and <a class="reference external" href="https://pyviz.org/dashboarding/">pyviz.org/dashboarding</a>, there are many other Python-based open-source tools for building analytics dashboards. There are <a class="reference external" href="https://www.capterra.com/dashboard-software/">hundreds more</a> if you consider commercial tools or ones not based on Python. How can you choose between Lumen and all these other tools?</p>
+<p>What sets Lumen apart is that it lets <em>anyone</em> on your team make apps that build on custom Python code, without requiring that <em>everyone</em> learn Python. Lumen is a great choice if you have some people on a team or in an organization who can write custom Python code that does <em>precisely</em> what your organization needs in a particular case, whether that’s connecting to some custom data source, applying some custom transform or analysis method, viewing things in some custom chart or type of table, or literally anything else you can do in Python (which is literally anything!). Ideally those Python programmers will be using the Python ecosystem to do their daily work, using tools like those from <a class="reference external" href="https://holoviz.org">HoloViz</a>, and when they build custom functionality for their own work, that same functionality can be made available to non-Python users using Lumen. That way everyone in the organization can benefit from all of the innovation being developed.</p>
+<p>Of course, traditional BI analytics tools like Tableau, PowerBI, or Superset also let non-technical or non-Python users with domain knowledge build visualizations and dashboards. These longer-established BI tools will generally have a more polished and friendly user interface than Lumen has, meeting more of the needs of less-technical users with no coding at all. If those tools do what’s required, use them!</p>
+<p>But what do you do when you reach the limits of those tools? Many of them do include Python or other scripting tools for that purpose, but generally as an add-on that’s not fully integrated. Unlike those other tools, Lumen itself is built directly on the scientific Python stack, such as the Intake and Panel libraries, which lets Lumen (a) provide a very rich basis of functionality to non-technical users comparable to what is available to Python users, and (b) treat custom functionality as a “first class citizen”, provided exactly the same way as any of Lumen’s native functionality. That way an organization can customize <em>anything</em>, with new customizations requiring Python code contributed by the Python experts and then immediately usable by <em>every</em> Lumen user, technical or not.</p>
+<p>Lumen and the rest of the HoloViz and scientific Python stack are thus designed to meet <em>all</em> of the needs of an organization, no matter how specialized or esoteric those needs are. By design, standard BI tools will do a great job at the <em>typical</em> needs common across a market segment, but won’t do as well at providing “headroom” or a “release valve” for those rarer but individually important bits that can otherwise dominate a workflow or greatly reduce its effectiveness.</p>
+</section>
+<section id="tableau-powerbi-looker-spotfire-etc">
+<h2><a class="reference external" href="https://www.tableau.com">Tableau</a>, <a class="reference external" href="https://powerbi.microsoft.com">PowerBI</a>, <a class="reference external" href="https://looker.com">Looker</a>, <a class="reference external" href="https://www.tibco.com/products/tibco-spotfire">Spotfire</a>, etc.<a class="headerlink" href="#tableau-powerbi-looker-spotfire-etc" title="Link to this heading">#</a></h2>
+<p>The leading commercial dashboarding tools focus first on providing an intuitive, full-featured user interface for building apps without explicit coding, which makes them good choices for the needs of less-technical users. Unlike open-source tools like Lumen, they also include commercial support, which again can be important for the same audience. They also provide a wide swath of out-of-the-box data integrations, which can save a lot of development time for accessing supported data sources. When you reach the limits of the already-provided functionality, these tools even let you provide custom Python code that you can integrate into your applications. Finally, the tools generally include deployment platforms so that users can share deployed apps with each other in the organization, while Lumen apps need a separate deployment system.</p>
+<p>So if you can afford these tools, what’s the catch? Depends on your organization’s mix of data science and analytics users. If you have an organization dominated by non-technical analytics users, plus maybe a few Python programmers to support them, then you can make good use of the commercial tools plus a little bit of customization on the side as needed, with everything organized around the commercial tool. Lumen is designed for the opposite situation: it takes the power available in the Python open-source ecosystem, and makes much of it available immediately (plus almost anything else available with small customizations) to non-technical users. So Lumen is a good choice if you have a successful Python-based data science team driving innovation in your organization, and now your problem is how you can make them have a bigger impact on your whole organization’s processes and decision making. Lumen is designed for the case where the Python data-science team (not the commercial tool vendors!) owns the process of analytics and visualization in your organization, either directly (in their Jupyter Notebooks, Panel or Voila apps, etc.) or by making functionality available to all through Lumen. The Python users can then use Python tools through Jupyter or scripts as they normally do, with full power over their machine-learning or analytic code, while then being able to publish those same components for non-technical users when they are developed. Non-technical users with domain knowledge can then apply these tools to their problems using Lumen, feeding back requirements and desired improvements to the Python team. This way domain-specific ideas can flow freely between domain experts and the data-science team, while Python-based solutions can flow freely out from the data-science team, without costly and time-consuming artificial barriers from switching from one tool or ecosystem to the other at such departmental boundaries.</p>
+</section>
+<section id="apache-superset">
+<h2><a class="reference external" href="https://superset.apache.org">Apache Superset</a><a class="headerlink" href="#apache-superset" title="Link to this heading">#</a></h2>
+<p>Like Tableau and other commercial tools, Superset provides a very polished environment for exploring data, and like Lumen, Superset is an open-source Python+JavaScript tool that anyone can install. Compared to Lumen, however, Superset is a very heavyweight tool (despite being billed as “lightweight”), making it difficult for a Python data-science team to customize. Superset includes a database that needs installation and management, along with various user management and account features that make it difficult for a single user to install and make use of Superset locally; it’s primarily geared towards departments and companies to install with dedicated administers to maintain it. Lumen can easily be installed by an individual user, immediately giving the ability to use text-based specifications to build apps and dashboards, without necessarily requiring the central administrators to agree to support it. Lumen is also inherently extensible, accepting custom-written or existing Python-ecosystem transform, filter, and view components on the same basis as its own components, while Superset’s Python configurability is limited to specific bits of customizable behavior that a user needs to implement just for Superset. Overall, Superset focuses on providing its own world or platform to live in, while Lumen focuses narrowly on exposing the power of existing and custom Python data science code within an interface for non-technical users.</p>
+</section>
+<section id="datasette">
+<h2><a class="reference external" href="https://datasette.io">Datasette</a><a class="headerlink" href="#datasette" title="Link to this heading">#</a></h2>
+<p>Like Superset and the commercial packages, Datasette provides a web-based interface for exploring data and selecting values to plot or display in tables. As a more specialized open-source tool, Datasette’s UI is not as extensive or polished as the commercial tools, but the functionality provided is nonetheless powerful because it is based around an underlying relational database.</p>
+<p>In contrast, Lumen does not require that the data being processed be inserted into a database, and is thus more similar to working with a <a class="reference external" href="https://en.wikipedia.org/wiki/Data_lake">data lake</a> than with a database (for both good and bad!). With Lumen, the data remains wherever it was originally located, without necessarily being processed before the app begins, which is a decentralized approach that can be messier but works well for querying live data sources and for large, remote datasets processed lazily. Because only the required subsets of the data are ever pulled into the Lumen app, big-data processing tools and workflows like <a class="reference external" href="https://datashader.org">Datashader</a> can be used with Lumen, where the data is read as-needed from an efficient file format like <a class="reference external" href="https://parquet.apache.org/">Parquet</a>. This approach makes Lumen useful for a broad range of data sizes not suitable for a standard relational database approach.</p>
+</section>
+<section id="perspective">
+<h2><a class="reference external" href="https://perspective.finos.org">Perspective</a><a class="headerlink" href="#perspective" title="Link to this heading">#</a></h2>
+<p>Like the other tools listed above, Perspective provides a GUI interface for selecting dimensions and columns for plots and tables, making it simple to explore columnar data. Like the non-Lumen HoloViz tools, Perspective is usable in Jupyter, which helps integrate configurable analytics into an otherwise custom workflow. Perspective is thus an alternative to Lumen in some cases, but we suggest using both in combination: Use Perspective to design plots, then Lumen for the full workflow consisting of data sources, arbitrary transforms, and laying out the results into a polished deployable application.</p>
+</section>
+<section id="panel-and-bokeh">
+<h2><a class="reference external" href="https://panel.holoviz.org">Panel</a> and <a class="reference external" href="https://bokeh.org">Bokeh</a><a class="headerlink" href="#panel-and-bokeh" title="Link to this heading">#</a></h2>
+<p>Like Lumen, Panel and the underlying Bokeh library let users build dashboards that expose the power of the Python data-science ecosystem. Panel and Bokeh do so using a Python programming interface, with users writing Python code to configure each component and the overall dashboard. Like Lumen, Panel’s programming model is declarative in nature, but it also allows specification of arbitrary Python code as part of the configuration of each component, and it requires custom non-declarative Python code for specifying data sources and transformations. Lumen is a purely declarative approach that provides a text-based language for building <em>all</em> the components of a Panel app, keeping all Python code separate from the configuration of a particular dashboard. Lumen is thus a good choice for users who want the power of Panel and Bokeh but are not Python programmers, and is a particularly good choice for people working on a team with Panel users who can extend Lumen’s capabilities and make the custom additions available to non-Python users.</p>
+</section>
+<section id="dash-streamlit-voila-ipywidgets">
+<h2><a class="reference external" href="https://plotly.com/dash">Dash</a>, <a class="reference external" href="https://streamlit.io">Streamlit</a>, <a class="reference external" href="https://github.com/voila-dashboards/voila">Voila</a>+<a class="reference external" href="https://ipywidgets.readthedocs.io">IPyWidgets</a><a class="headerlink" href="#dash-streamlit-voila-ipywidgets" title="Link to this heading">#</a></h2>
+<p>Lumen’s underlying Panel library is one of a number of dashboarding technologies available in Python. Just as Lumen is built on Panel, declarative text-based user interfaces could be developed for the other availble dashboarding tools, such as Dash, Streamlit, or Voila+IPyWidgets. For data-science teams built around one of these other dashboarding tools, such a declarative interface could play a similar role to Lumen for that developer and user commnunity. In the meantime, because Panel supports nearly every common visualization tool available for Python, Lumen can already be useful as a declarative interface providing the power of the same underlying Python data-science libraries that will be used in those dashboarding tools, such as Plotly, Matplotlib, bqplot, and ipywidgets, all of which can be used in Panel apps and thus potentially with Lumen.</p>
+</section>
+</section>
+</article>
+<footer class="prev-next-footer d-print-none">
+<div class="prev-next-area">
+</div>
+</footer>
+</div>
+<div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="sidebar-secondary-item">
+<div class="page-toc tocsection onthispage" id="pst-page-navigation-heading-2">
+<i class="fa-solid fa-list"></i> On this page
+  </div>
+<nav aria-labelledby="pst-page-navigation-heading-2" class="bd-toc-nav page-toc">
+<ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#general-considerations">General considerations</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tableau-powerbi-looker-spotfire-etc">Tableau, PowerBI, Looker, Spotfire, etc.</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#apache-superset">Apache Superset</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#datasette">Datasette</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#perspective">Perspective</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#panel-and-bokeh">Panel and Bokeh</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#dash-streamlit-voila-ipywidgets">Dash, Streamlit, Voila+IPyWidgets</a></li>
+</ul>
+</nav></div>
+<div class="sidebar-secondary-item">
+<div class="tocsection sourcelink">
+<a href="_sources/comparison.md.txt">
+<i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+</div>
+</div>
+</div></div>
+</div>
+<footer class="bd-footer-content">
+</footer>
+</main>
+</div>
+</div>
+<!-- Scripts loaded after <body> so the DOM is not blocked -->
+<script src="_static/scripts/bootstrap.js?digest=3ee479438cf8b5e0d341"></script>
+<script src="_static/scripts/pydata-sphinx-theme.js?digest=3ee479438cf8b5e0d341"></script>
+<footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+<div class="footer-items__start">
+<div class="footer-item">
+<p class="copyright">
+    
+      © Copyright 2020-2024, HoloViz Developers.
+      <br/>
+</p>
+</div>
+<div class="footer-item">
+<p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.3.7.
+    <br/>
+</p>
+</div>
+</div>
+<div class="footer-items__end">
+<div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.3.
+</p></div>
+</div>
+</div>
+</footer>
+</body>
+</html>
