@@ -153,7 +153,7 @@ class View(MultiTypeComponent, Viewer):
             panel_type = cls._panel_type
         except Exception:
             panel_type = None
-        if panel_type is None:
+        if panel_type is None or isinstance(panel_type, property):
             return None
         valid = super()._valid_keys_
         return valid + list(panel_type.param)
