@@ -22,7 +22,9 @@ from ..pipeline import Pipeline
 from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import (
+    SQLLimit, SQLOverride, SQLTransform, Transform,
+)
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
@@ -763,9 +765,22 @@ class SQLAgent(LumenBaseAgent):
             )
         if message.object is None:
             return
-        sql_out = message.object.replace("```sql", "").replace("```", "").strip()
-        memory["current_sql"] = sql_out
-        return sql_out
+        sql_query = message.object.replace("```sql", "").replace("```", "").strip()
+
+        # check whether the SQL query is valid
+        try:
+            transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
+            pipeline = Pipeline(
+                source=source, table=table, sql_transforms=transforms
+            )
+            pipeline.data
+        except Exception as e:
+            if "Table with name" in str(e):
+                raise ValueError(f"Redo the query with read_parquet: {sql_query}") from e
+            raise e
+
+        memory["current_sql"] = sql_query
+        return sql_query
 
     async def invoke(self, messages: list | str):
         sql = await self.answer(messages)
