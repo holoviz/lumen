@@ -289,6 +289,14 @@ class Pipeline(Viewer, Component):
         return data
 
     def get_schema(self):
+        """
+        Generates a JSON schema for the current data held by the Pipeline.
+
+        Returns
+        -------
+        schema: dict[str, any]
+          JSON schema for each column in the current data.
+        """
         if self._stale:
             self._update_data(force=True)
         return get_dataframe_schema(self.data)['items']['properties']

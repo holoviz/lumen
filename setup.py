@@ -75,6 +75,9 @@ setup_args = dict(
     packages=find_packages(),
     provides=["lumen"],
     include_package_data = True,
+    package_data={
+        'lumen': ['ai/prompts/*.jinja2'],
+    },
     python_requires=">=3.9",
     install_requires=dependencies,
     extras_require=extras_require,

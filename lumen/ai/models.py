@@ -16,6 +16,24 @@ class DataRequired(BaseModel):
     data_required: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
 
 
+class JoinRequired(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="""
+        Explain whether a table join is required to answer the user's query.
+        """
+    )
+
+    join_required: bool = Field(description="Whether a table join is required to answer the user's query.")
+
+
+class TableJoins(BaseModel):
+
+    tables: list[str] | None = Field(
+        default=None,
+        description="List of tables that need to be joined to answer the user's query.",
+    )
+
 class Sql(BaseModel):
 
     chain_of_thought: str = Field(
@@ -31,13 +49,15 @@ class Sql(BaseModel):
 
 class Validity(BaseModel):
 
-    chain_of_thought: str = Field(
-        description="""
-        Focus only on whether the table contain all the necessary columns
-        to answer the user's query.
-        """
+    missing_table_or_columns: list[str] = Field(
+        description="List out all the missing tables or columns requested by the user."
     )
 
     is_invalid: bool = Field(
-        description="Whether one of the table and/or pipeline is invalid or needs a refresh."
+        description="Whether the table needs a refresh."
     )
+
+
+class Topic(BaseModel):
+
+    result: str = Field(description="A word or up-to-three-words phrase that describes the topic of the table.")

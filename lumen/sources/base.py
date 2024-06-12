@@ -97,7 +97,7 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table=None, limit=None):
+    def wrapped(self, table: str | None = None, limit: int | None = None):
         if self in locks:
             main_lock = locks[self]['main']
         else:
