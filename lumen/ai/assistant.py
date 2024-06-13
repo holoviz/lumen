@@ -166,7 +166,7 @@ class Assistant(Viewer):
             await hide_suggestions()
             self.interface.send(contents)
 
-        async def run_demo(self, event):
+        async def run_demo(event):
             await hide_suggestions()
             with self.interface.active_widget.param.update(loading=True):
                 for demo_message in self.demo_inputs:
