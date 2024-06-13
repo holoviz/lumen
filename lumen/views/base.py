@@ -676,6 +676,10 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
+    geo = param.Boolean(
+        default=False, doc="Toggle True if the plot is on a geographic map."
+    )
+
     _field_params = ['x', 'y', 'by', 'groupby']
 
     __abstract = True
@@ -691,6 +695,8 @@ class hvPlotBaseView(View):
             params['by'] = [params['by']]
         if 'groupby' in params and isinstance(params['groupby'], str):
             params['groupby'] = [params['groupby']]
+        if params.get("geo") and params.get("kind") in (None, "scatter"):
+            params["kind"] = "points"
         super().__init__(**params)
 
     @classproperty
@@ -706,10 +712,11 @@ class hvPlotUIView(hvPlotBaseView):
     view_type = 'hvplot_ui'
 
     def _get_args(self):
-        from hvplot.ui import hvPlotExplorer  # type: ignore
+        from hvplot.ui import Geographic, hvPlotExplorer  # type: ignore
         params = {
             k: v for k, v in self.param.values().items()
-            if k in hvPlotExplorer.param and v is not None and k != 'name'
+            if (k in hvPlotExplorer.param or k in Geographic.param)
+            and v is not None and k != 'name'
         }
         return (self.get_data(),), dict(params, **self.kwargs)
 
