@@ -56,23 +56,12 @@ class Sql(BaseModel):
 
 class Validity(BaseModel):
 
-    chain_of_thought: str = Field(
-        description="""
-        Think about the validity of the current table.
-        Does it sufficiently include all the necessary data to answer the user's query?
-        """
-    )
-
-    missing_tables: list[str] | None = Field(
-        description="List out all the missing tables or columns requested by the user. Be mindful of name aliases."
-    )
-
-    missing_columns: list[str] | None = Field(
-        description="List out all the missing columns requested by the user."
+    missing_table_or_columns: list[str] = Field(
+        description="List out all the tables or columns requested by the user that are currently missing in the spec."
     )
 
     is_invalid: bool = Field(
-        description="Whether the table needs a refresh based on missing tables or columns."
+        description="Whether the table needs a refresh."
     )
 
 
