@@ -57,7 +57,7 @@ class Sql(BaseModel):
 class Validity(BaseModel):
 
     missing_table_or_columns: list[str] = Field(
-        description="List out all the missing tables or columns requested by the user."
+        description="List out all the tables or columns requested by the user that are currently missing in the spec."
     )
 
     is_invalid: bool = Field(
