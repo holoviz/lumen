@@ -33,7 +33,7 @@ from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
 )
 from .translate import param_to_pydantic
-from .utils import render_template
+from .utils import render_template, retry_llm_output
 
 FUZZY_TABLE_LENGTH = 10
 
@@ -82,12 +82,12 @@ class Agent(Viewer):
             if self._retries_left > 0:
                 self._retries_left -= 1
                 self.interface.send(
-                    f"Attempting to fix: {exception}.",
+                    f"Taking a different approach to expertly resolve this issue {str(exception)!r} using world-class knowledge.",
                     user="Exception",
                 )
             else:
                 self.interface.send(
-                    f"Error cannot be resolved: {exception}.",
+                    f"Error cannot be resolved: {str(exception)!r}.",
                     user="System",
                     respond=False
                 )
@@ -714,8 +714,50 @@ class SQLAgent(LumenBaseAgent):
         self.interface.stream(tabs, user="SQL", replace=True)
         tabs.active = 1
 
-    async def answer(self, messages: list | str):
+    @retry_llm_output()
+    async def _create_valid_sql(self, messages, source, tables, error=None):
         message = None
+        tables_sql_schemas = {
+            table: {
+                "schema": self._get_schema(source, table, include_min_max=False),
+                 "sql": source.get_sql_expr(table)
+            } for table in tables
+        }
+        sql_prompt = render_template(
+            "sql_query.jinja2",
+            tables_sql_schemas=tables_sql_schemas,
+        )
+        system_prompt = await self._system_prompt_with_context(messages) + sql_prompt
+        if error:
+            system_prompt += f"\nBe mindful of these past issues: {error!r}."
+
+        async for chunk in self.llm.stream(
+            messages,
+            system=system_prompt,
+            response_model=Sql,
+            field="query",
+        ):
+            if chunk is None:
+                continue
+            message = self.interface.stream(
+                f"```sql\n{chunk}\n```",
+                user="SQL",
+                message=message,
+                replace=True,
+            )
+        if message.object is None:
+            return
+        sql_query = message.object.replace("```sql", "").replace("```", "").strip()
+
+        # check whether the SQL query is valid
+        transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
+        pipeline = Pipeline(
+            source=source, table=tables[0], sql_transforms=transforms
+        )
+        pipeline.data
+        return sql_query
+
+    async def answer(self, messages: list | str):
         source = memory["current_source"]
         table = memory["current_table"]
         if not hasattr(source, "get_sql_expr"):
@@ -739,46 +781,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = [table]
 
-        tables_sql_schemas = {
-            table: {
-                "schema": self._get_schema(source, table, include_min_max=False),
-            } for table in tables
-        }
-        sql_prompt = render_template(
-            "sql_query.jinja2",
-            tables_sql_schemas=tables_sql_schemas,
-        )
-        system_prompt = await self._system_prompt_with_context(messages) + sql_prompt
-        async for chunk in self.llm.stream(
-            messages,
-            system=system_prompt,
-            response_model=Sql,
-            field="query",
-        ):
-            if chunk is None:
-                continue
-            message = self.interface.stream(
-                f"```sql\n{chunk}\n```",
-                user="SQL",
-                message=message,
-                replace=True,
-            )
-        if message.object is None:
-            return
-        sql_query = message.object.replace("```sql", "").replace("```", "").strip()
-
-        # check whether the SQL query is valid
-        try:
-            transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
-            pipeline = Pipeline(
-                source=source, table=table, sql_transforms=transforms
-            )
-            pipeline.data
-        except Exception as e:
-            if "Table with name" in str(e):
-                raise ValueError(f"Redo the query with read_parquet: {sql_query}") from e
-            raise e
-
+        sql_query = await self._create_valid_sql(messages, source, tables)
         memory["current_sql"] = sql_query
         return sql_query
 

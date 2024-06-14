@@ -22,7 +22,7 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
-from .utils import render_template
+from .utils import render_template, retry_llm_output
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -267,6 +267,23 @@ class Assistant(Viewer):
         )
         return agent_model
 
+    @retry_llm_output()
+    async def _create_valid_agent(self, messages, system, agent_model, return_reasoning, error=None):
+        if error:
+            system += f"\nBe mindful of these past issues: {error!r}"
+
+        out = await self.llm.invoke(
+            messages=messages,
+            system=system,
+            response_model=agent_model,
+            allow_partial=False
+        )
+        if not (out and out.agent):
+            raise ValueError("No agent selected.")
+        elif return_reasoning:
+            return out.agent, out.chain_of_thought
+        return out.agent
+
     async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
@@ -278,19 +295,7 @@ class Assistant(Viewer):
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
         )
-        for _ in range(3):
-            out = await self.llm.invoke(
-                messages=messages,
-                system=system,
-                response_model=agent_model,
-                allow_partial=False
-            )
-            if not (out and out.agent):
-                continue
-            elif return_reasoning:
-                return out.agent, out.chain_of_thought
-            return out.agent
-        return (None, None) if return_reasoning else None
+        return await self._create_valid_agent(messages, system, agent_model, return_reasoning)
 
     async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
