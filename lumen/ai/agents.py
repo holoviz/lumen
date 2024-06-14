@@ -82,12 +82,12 @@ class Agent(Viewer):
             if self._retries_left > 0:
                 self._retries_left -= 1
                 self.interface.send(
-                    f"Taking a different approach to expertly resolve this issue {str(exception)!r} using world-class knowledge.",
+                    f"Taking a different approach to expertly resolve this issue `{exception}` using world-class knowledge.",
                     user="Exception",
                 )
             else:
                 self.interface.send(
-                    f"Error cannot be resolved: {str(exception)!r}.",
+                    f"Error cannot be resolved: `{exception}`.",
                     user="System",
                     respond=False
                 )
@@ -671,10 +671,10 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="""
+        default=textwrap.dedent("""
         You are an agent responsible for writing a SQL query that will
         perform the data transformations the user requested.
-        """
+        """)
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
@@ -715,25 +715,23 @@ class SQLAgent(LumenBaseAgent):
         tabs.active = 1
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, source, tables, error=None):
-        message = None
-        tables_sql_schemas = {
-            table: {
-                "schema": self._get_schema(source, table, include_min_max=False),
-                 "sql": source.get_sql_expr(table)
-            } for table in tables
-        }
-        sql_prompt = render_template(
-            "sql_query.jinja2",
-            tables_sql_schemas=tables_sql_schemas,
-        )
-        system_prompt = await self._system_prompt_with_context(messages) + sql_prompt
-        if error:
-            system_prompt += f"\nBe mindful of these past issues: {error!r}."
+    async def _create_valid_sql(self, messages, system, source, tables, errors=None):
+        if errors:
+            last_query = self.interface.objects[-1].object.replace("```sql", "").rstrip("```").strip()
+            errors = '\n'.join(errors)
+            messages += [
+                {
+                    "role": "user",
+                    "content": (
+                        f"Your last query `{last_query}` did not work as intended, "
+                        f"expertly revise, and please do not repeat these issues:\n{errors}")
+                }
+            ]
 
+        message = None
         async for chunk in self.llm.stream(
             messages,
-            system=system_prompt,
+            system=system,
             response_model=Sql,
             field="query",
         ):
@@ -781,7 +779,18 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = [table]
 
-        sql_query = await self._create_valid_sql(messages, source, tables)
+        tables_sql_schemas = {
+            table: {
+                "schema": self._get_schema(source, table),
+                 "sql": source.get_sql_expr(table)
+            } for table in tables
+        }
+        sql_prompt = render_template(
+            "sql_query.jinja2",
+            tables_sql_schemas=tables_sql_schemas,
+        )
+        system = await self._system_prompt_with_context(messages) + sql_prompt
+        sql_query = await self._create_valid_sql(messages, system, source, tables)
         memory["current_sql"] = sql_query
         return sql_query
 

@@ -268,9 +268,10 @@ class Assistant(Viewer):
         return agent_model
 
     @retry_llm_output()
-    async def _create_valid_agent(self, messages, system, agent_model, return_reasoning, error=None):
-        if error:
-            system += f"\nBe mindful of these past issues: {error!r}"
+    async def _create_valid_agent(self, messages, system, agent_model, return_reasoning, errors=None):
+        if errors:
+            errors = '\n'.join(errors)
+            messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
 
         out = await self.llm.invoke(
             messages=messages,

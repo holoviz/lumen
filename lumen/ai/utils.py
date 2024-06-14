@@ -20,7 +20,7 @@ def render_template(template, **context):
     return template.render(context).strip()
 
 
-def retry_llm_output(retries=2, sleep=1):
+def retry_llm_output(retries=3, sleep=1):
     """
     Retry a function that returns a response from the LLM API.
     If the function raises an exception, retry it up to `retries` times.
@@ -33,15 +33,16 @@ def retry_llm_output(retries=2, sleep=1):
 
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
-                error = None
+                errors = []
                 for i in range(retries):
-                    kwargs["error"] = error
+                    if errors:
+                        kwargs["errors"] = errors
                     try:
                         return await func(*args, **kwargs)
                     except Exception as e:
                         if i == retries - 1:
-                            raise e
-                        error = str(e)
+                            return "" # do not re-raise due to outer exception handler
+                        errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -50,15 +51,16 @@ def retry_llm_output(retries=2, sleep=1):
 
             @wraps(func)
             def sync_wrapper(*args, **kwargs):
-                error = None
+                errors = []
                 for i in range(retries):
-                    kwargs["error"] = error
+                    if errors:
+                        kwargs["errors"] = errors
                     try:
                         return func(*args, **kwargs)
                     except Exception as e:
                         if i == retries - 1:
-                            raise e
-                        error = str(e)
+                            return "" # do not re-raise due to outer exception handler
+                        errors.append(str(e))
                         if sleep:
                             time.sleep(sleep)
 
