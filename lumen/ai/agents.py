@@ -783,7 +783,6 @@ class SQLAgent(LumenBaseAgent):
         tables_sql_schemas = {
             table: {
                 "schema": self._get_schema(source, table),
-                 "sql": sql_expr
             } for table in tables
         }
         sql_prompt = render_template(
