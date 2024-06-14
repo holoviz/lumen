@@ -271,10 +271,10 @@ class SourceAgent(Agent):
 
     on_init = param.Boolean(default=True)
 
-    async def invoke(self, messages: list[str] | str):
+    async def answer(self, messages: list | str):
         name = pn.widgets.TextInput(name="Name your table", align="center")
         upload = pn.widgets.FileInput(align="end")
-        url = pn.widgets.TextInput(name="Add a file from a URL")
+        url = pn.widgets.TextInput(placeholder="Add a file from a URL")
         add = pn.widgets.Button(
             name="Add table",
             icon="table-plus",
@@ -296,7 +296,7 @@ class SourceAgent(Agent):
                         if col in df.columns:
                             df[col] = pd.to_datetime(df[col])
                 elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value.decode("utf-8")))
+                    df = pd.read_parquet(io.BytesIO(upload.value))
                 mem_source.add_table(name.value, df)
                 memory["current_source"] = mem_source
             elif url.value:
@@ -317,22 +317,26 @@ class SourceAgent(Agent):
         upload.param.watch(add_name, "filename")
 
         def enable_add(event):
-            add.disabled = not bool(name.value and (upload.value or url.value))
+            add.disabled = not bool(upload.value or url.value)
 
-        name.param.watch(enable_add, "value")
         upload.param.watch(enable_add, "value")
         url.param.watch(enable_add, "value")
         add.on_click(add_table)
         menu = pn.Column(
             pn.Row(
-                name,
                 pn.Tabs(("Upload", upload), ("URL", url)),
+                name,
                 add,
                 sizing_mode="stretch_width",
             ),
             tables,
         )
         self.interface.send(menu, respond=False, user="SourceAgent")
+        while not add.clicks:
+            await asyncio.sleep(0.05)
+
+    async def invoke(self, messages: list[str] | str):
+        await self.answer(messages)
 
 
 class ChatAgent(Agent):
