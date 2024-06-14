@@ -715,7 +715,7 @@ class SQLAgent(LumenBaseAgent):
         tabs.active = 1
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, source, tables, errors=None):
+    async def _create_valid_sql(self, messages, system, source, tables, sql_expr, errors=None):
         if errors:
             last_query = self.interface.objects[-1].object.replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -779,10 +779,11 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = [table]
 
+        sql_expr = source.get_sql_expr(table)
         tables_sql_schemas = {
             table: {
                 "schema": self._get_schema(source, table),
-                 "sql": source.get_sql_expr(table)
+                 "sql": sql_expr
             } for table in tables
         }
         sql_prompt = render_template(
@@ -790,7 +791,7 @@ class SQLAgent(LumenBaseAgent):
             tables_sql_schemas=tables_sql_schemas,
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
-        sql_query = await self._create_valid_sql(messages, system, source, tables)
+        sql_query = await self._create_valid_sql(messages, system, source, tables, sql_expr)
         memory["current_sql"] = sql_query
         return sql_query
 
