@@ -19,7 +19,7 @@ from pydantic.fields import FieldInfo
 from ..base import Component
 from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
-from ..sources import FileSource, InMemorySource, Source
+from ..sources import FileSource, InMemorySource
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import (
@@ -33,17 +33,9 @@ from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
 )
 from .translate import param_to_pydantic
-from .utils import render_template, retry_llm_output
+from .utils import get_schema, render_template, retry_llm_output
 
 FUZZY_TABLE_LENGTH = 10
-
-def format_schema(schema):
-    formatted = {}
-    for field, spec in schema.items():
-        if "enum" in spec and len(spec["enum"]) > 5:
-            spec["enum"] = spec["enum"][:5] + ["..."]
-        formatted[field] = spec
-    return formatted
 
 
 class Agent(Viewer):
@@ -161,30 +153,6 @@ class Agent(Viewer):
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
-
-    @staticmethod
-    def _get_schema(source: Source | Pipeline, table: str = None, include_min_max: bool = True):
-        if isinstance(source, Pipeline):
-            schema = source.get_schema()
-        else:
-            schema = source.get_schema(table, limit=100)
-        schema = dict(schema)
-
-        if include_min_max:
-            for field, spec in schema.items():
-                if "inclusiveMinimum" in spec:
-                    spec["min"] = spec.pop("inclusiveMinimum")
-                if "inclusiveMaximum" in spec:
-                    spec["max"] = spec.pop("inclusiveMaximum")
-        else:
-            for field, spec in schema.items():
-                if "inclusiveMinimum" in spec:
-                    spec.pop("inclusiveMinimum")
-                if "inclusiveMaximum" in spec:
-                    spec.pop("inclusiveMaximum")
-        schema = format_schema(schema)
-        return schema
-
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
         system = (
@@ -393,7 +361,7 @@ class ChatAgent(Agent):
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
-            schema = self._get_schema(memory["current_source"], table)
+            schema = get_schema(memory["current_source"], table)
             if schema:
                 context = f"{table} with schema: {schema}"
 
@@ -782,7 +750,8 @@ class SQLAgent(LumenBaseAgent):
         sql_expr = source.get_sql_expr(table)
         tables_sql_schemas = {
             table: {
-                "schema": self._get_schema(source, table),
+                "schema": get_schema(source, table, include_min_max=False),
+                 "sql": source.get_sql_expr(table)
             } for table in tables
         }
         sql_prompt = render_template(
@@ -865,7 +834,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         prompt = f"{transform.__doc__}"
         if not schema:
             raise ValueError(f"No schema found for table {table!r}")
-        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
+        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{schema}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -930,7 +899,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         self, messages: list | str, transform: Type[Transform], system_prompt: str
     ) -> Transform:
         excluded = transform._internal_params + ["controls", "type"]
-        schema = self._get_schema(memory["current_pipeline"])
+        schema = get_schema(memory["current_pipeline"])
         table = memory["current_table"]
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[
             transform.__name__
@@ -1037,7 +1006,7 @@ class hvPlotAgent(LumenBaseAgent):
         system_prompt = await self._system_prompt_with_context(messages)
 
         view = hvPlotUIView
-        schema = self._get_schema(pipeline)
+        schema = get_schema(pipeline)
         model = self._get_model(view, schema)
         view_prompt = self._view_prompt(model, view, table, schema)
         if self.debug:
