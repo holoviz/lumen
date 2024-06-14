@@ -22,7 +22,7 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
-from .utils import render_template, retry_llm_output
+from .utils import get_schema, render_template, retry_llm_output
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -213,18 +213,16 @@ class Assistant(Viewer):
         if not table:
             return
 
-        current_data = memory["current_data"]
-        if isinstance(current_data, dict):
-            columns = list(current_data["stats"].keys())
-        else:
-            columns = list(current_data.columns)
-        system = render_template("check_validity.jinja2", table=table, columns=columns)
+        source = memory.get("current_source")
+        spec = get_schema(source, table=table)
+        system = render_template("check_validity.jinja2", table=table, spec=spec)
         validity = await self.llm.invoke(
             messages=messages,
             system=system,
             response_model=Validity,
             allow_partial=False,
         )
+        print(system)
         if validity and validity.is_invalid:
             memory.pop("current_table", None)
             memory.pop("current_data", None)
