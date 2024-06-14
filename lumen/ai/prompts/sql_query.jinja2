@@ -1,15 +1,10 @@
 {% for table, details in tables_sql_schemas.items() %}
-The SQL expression for the table '{{ table }}' is '{{ details.sql }}'.
 
 The data for table '{{ table }}' follows the following JSON schema:
 
 ```json
 {{ details.schema }}
-Only use columns from the schema for '{{ details.sql }}'.
-
-{% if "read_parquet" in details.sql %}
-Be sure to include `FROM read_parquet` in your query.
-{% endif %}
+```
 {% endfor %}
 
 If no limit is specified, specify 10000 as the limit.
