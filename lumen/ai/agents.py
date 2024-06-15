@@ -16,10 +16,11 @@ from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.sources.duckdb import DuckDBSource
+
 from ..base import Component
 from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
-from ..sources import FileSource, InMemorySource
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import (
@@ -240,65 +241,61 @@ class SourceAgent(Agent):
     on_init = param.Boolean(default=True)
 
     async def answer(self, messages: list | str):
-        name = pn.widgets.TextInput(name="Name your table", align="center")
-        upload = pn.widgets.FileInput(align="end")
-        url = pn.widgets.TextInput(placeholder="Add a file from a URL")
+        def add_table(event):
+            if input_tabs.active == 0 and upload.value:
+                if upload.filename.endswith("csv"):
+                    df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
+                elif upload.filename.endswith((".parq", ".parquet")):
+                    df = pd.read_parquet(io.BytesIO(upload.value))
+                duckdb_source._connection.from_df(df).to_table(name.value)
+                duckdb_source.tables = [name.value]
+                memory["current_source"] = duckdb_source
+            # TODO: add URL + xlsx support
+            name.value = ""
+            upload.value = None
+            upload.filename = ""
+            src = memory["current_source"]
+            tables[:] = [
+                (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
+            ]
+            input_column.visible = False
+
+        def add_name(event):
+            if "/" in event.new:
+                name.value = event.new.split("/")[-1].split(".")[0].replace("-", "_")
+            elif not name.value and event.new:
+                name.value = event.new.split(".")[0].replace("-", "_")
+                name.visible = True
+
+        def enable_add(event):
+            add.visible = not bool(name.value)
+
+        name = pn.widgets.TextInput(name="Name your table", visible=False)
+        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq")
         add = pn.widgets.Button(
             name="Add table",
             icon="table-plus",
-            disabled=True,
-            align="center",
+            visible=False,
             button_type="success",
         )
+        input_tabs = pn.Tabs(("Upload", upload), sizing_mode="stretch_width")
         tables = pn.Tabs(sizing_mode="stretch_width")
-        mem_source = InMemorySource()
-        file_source = FileSource()
-
-        def add_table(event):
-            if upload.value:
-                if upload.filename.endswith("csv"):
-                    df = pd.read_csv(
-                        io.StringIO(upload.value.decode("utf-8")), parse_dates=True
-                    )
-                    for col in ("date", "Date"):
-                        if col in df.columns:
-                            df[col] = pd.to_datetime(df[col])
-                elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value))
-                mem_source.add_table(name.value, df)
-                memory["current_source"] = mem_source
-            elif url.value:
-                file_source.tables[name.value] = url.value
-                memory["current_source"] = file_source
-            name.value = ""
-            url.value = ""
-            upload.value = None
-            src = memory["current_source"]
-            tables[:] = [
-                (t, pn.widgets.Tabulator(src.get(t))) for t in src.get_tables()
-            ]
-
-        def add_name(event):
-            if not name.value and event.new:
-                name.value = event.new.split(".")[0]
-
-        upload.param.watch(add_name, "filename")
-
-        def enable_add(event):
-            add.disabled = not bool(upload.value or url.value)
-
-        upload.param.watch(enable_add, "value")
-        url.param.watch(enable_add, "value")
-        add.on_click(add_table)
-        menu = pn.Column(
-            pn.Row(
-                pn.Tabs(("Upload", upload), ("URL", url)),
-                name,
-                add,
-                sizing_mode="stretch_width",
-            ),
-            tables,
+        duckdb_source = DuckDBSource(uri=":memory:")
+        input_column = pn.Column(
+            input_tabs,
+            name,
+            add,
+            sizing_mode="stretch_width",
         )
+        menu = pn.Column(
+            input_column,
+            tables,
+            sizing_mode="stretch_width",
+        )
+        upload.param.watch(add_name, "filename")
+        upload.param.watch(enable_add, "value")
+        add.on_click(add_table)
+
         self.interface.send(menu, respond=False, user="SourceAgent")
         while not add.clicks:
             await asyncio.sleep(0.05)
@@ -672,8 +669,8 @@ class SQLAgent(LumenBaseAgent):
                 df = pipeline.data
                 if len(df) > 0:
                     memory["current_data"] = self._describe_data(df)
-                yield memory["current_pipeline"].__panel__()
                 memory["current_pipeline"] = pipeline
+                yield memory["current_pipeline"].__panel__()
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -730,8 +727,6 @@ class SQLAgent(LumenBaseAgent):
     async def answer(self, messages: list | str):
         source = memory["current_source"]
         table = memory["current_table"]
-        if not hasattr(source, "get_sql_expr"):
-            return None
 
         join_required = (await self.llm.invoke(
             messages,
