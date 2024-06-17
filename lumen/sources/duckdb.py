@@ -81,7 +81,7 @@ class DuckDBSource(Source):
         if self.filter_in_sql:
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
-            sql_expr = st.apply(sql_expr)
+            sql_expr = st.apply(sql_expr.rstrip(";"))
         df = self._connection.execute(sql_expr).fetch_df(date_as_object=True)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)

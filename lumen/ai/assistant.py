@@ -338,13 +338,18 @@ class Assistant(Viewer):
 
     def _serialize(self, obj):
         if isinstance(obj, (Tabs, Column)):
-            return self._serialize(obj[0])
+            for o in obj:
+                if hasattr(o, "visible") and o.visible:
+                    break
+            return self._serialize(o)
+
         if isinstance(obj, HTML) and 'catalog' in obj.tags:
             return f"Summarized table listing: {obj.object[:30]}"
-        elif hasattr(obj, "object"):
-            return obj.object
+
+        if hasattr(obj, "object"):
+            obj = obj.object
         elif hasattr(obj, "value"):
-            return obj.value
+            obj = obj.value
         return str(obj)
 
     async def invoke(self, messages: list | str) -> str:
