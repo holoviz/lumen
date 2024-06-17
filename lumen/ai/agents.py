@@ -16,13 +16,16 @@ from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.sources.duckdb import DuckDBSource
+
 from ..base import Component
 from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
-from ..sources import FileSource, InMemorySource
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import (
+    SQLLimit, SQLOverride, SQLTransform, Transform,
+)
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
@@ -31,7 +34,7 @@ from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
 )
 from .translate import param_to_pydantic
-from .utils import get_schema, render_template
+from .utils import get_schema, render_template, retry_llm_output
 
 FUZZY_TABLE_LENGTH = 10
 
@@ -72,12 +75,12 @@ class Agent(Viewer):
             if self._retries_left > 0:
                 self._retries_left -= 1
                 self.interface.send(
-                    f"Attempting to fix: {exception}.",
+                    f"Taking a different approach to expertly resolve this issue `{exception}` using world-class knowledge.",
                     user="Exception",
                 )
             else:
                 self.interface.send(
-                    f"Error cannot be resolved: {exception}.",
+                    f"Error cannot be resolved: `{exception}`.",
                     user="System",
                     respond=False
                 )
@@ -237,68 +240,68 @@ class SourceAgent(Agent):
 
     on_init = param.Boolean(default=True)
 
-    async def invoke(self, messages: list[str] | str):
-        name = pn.widgets.TextInput(name="Name your table", align="center")
-        upload = pn.widgets.FileInput(align="end")
-        url = pn.widgets.TextInput(name="Add a file from a URL")
+    async def answer(self, messages: list | str):
+        def add_table(event):
+            if input_tabs.active == 0 and upload.value:
+                if upload.filename.endswith("csv"):
+                    df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
+                elif upload.filename.endswith((".parq", ".parquet")):
+                    df = pd.read_parquet(io.BytesIO(upload.value))
+                duckdb_source._connection.from_df(df).to_table(name.value)
+                duckdb_source.tables = [name.value]
+                memory["current_source"] = duckdb_source
+            # TODO: add URL + xlsx support
+            name.value = ""
+            upload.value = None
+            upload.filename = ""
+            src = memory["current_source"]
+            tables[:] = [
+                (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
+            ]
+            input_column.visible = False
+
+        def add_name(event):
+            if "/" in event.new:
+                name.value = event.new.split("/")[-1].split(".")[0].replace("-", "_")
+            elif not name.value and event.new:
+                name.value = event.new.split(".")[0].replace("-", "_")
+                name.visible = True
+
+        def enable_add(event):
+            add.visible = not bool(name.value)
+
+        name = pn.widgets.TextInput(name="Name your table", visible=False)
+        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq")
         add = pn.widgets.Button(
             name="Add table",
             icon="table-plus",
-            disabled=True,
-            align="center",
+            visible=False,
             button_type="success",
         )
+        input_tabs = pn.Tabs(("Upload", upload), sizing_mode="stretch_width")
         tables = pn.Tabs(sizing_mode="stretch_width")
-        mem_source = InMemorySource()
-        file_source = FileSource()
-
-        def add_table(event):
-            if upload.value:
-                if upload.filename.endswith("csv"):
-                    df = pd.read_csv(
-                        io.StringIO(upload.value.decode("utf-8")), parse_dates=True
-                    )
-                    for col in ("date", "Date"):
-                        if col in df.columns:
-                            df[col] = pd.to_datetime(df[col])
-                elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value.decode("utf-8")))
-                mem_source.add_table(name.value, df)
-                memory["current_source"] = mem_source
-            elif url.value:
-                file_source.tables[name.value] = url.value
-                memory["current_source"] = file_source
-            name.value = ""
-            url.value = ""
-            upload.value = None
-            src = memory["current_source"]
-            tables[:] = [
-                (t, pn.widgets.Tabulator(src.get(t))) for t in src.get_tables()
-            ]
-
-        def add_name(event):
-            if not name.value and event.new:
-                name.value = event.new.split(".")[0]
-
-        upload.param.watch(add_name, "filename")
-
-        def enable_add(event):
-            add.disabled = not bool(name.value and (upload.value or url.value))
-
-        name.param.watch(enable_add, "value")
-        upload.param.watch(enable_add, "value")
-        url.param.watch(enable_add, "value")
-        add.on_click(add_table)
-        menu = pn.Column(
-            pn.Row(
-                name,
-                pn.Tabs(("Upload", upload), ("URL", url)),
-                add,
-                sizing_mode="stretch_width",
-            ),
-            tables,
+        duckdb_source = DuckDBSource(uri=":memory:")
+        input_column = pn.Column(
+            input_tabs,
+            name,
+            add,
+            sizing_mode="stretch_width",
         )
+        menu = pn.Column(
+            input_column,
+            tables,
+            sizing_mode="stretch_width",
+        )
+        upload.param.watch(add_name, "filename")
+        upload.param.watch(enable_add, "value")
+        add.on_click(add_table)
+
         self.interface.send(menu, respond=False, user="SourceAgent")
+        while not add.clicks:
+            await asyncio.sleep(0.05)
+
+    async def invoke(self, messages: list[str] | str):
+        await self.answer(messages)
 
 
 class ChatAgent(Agent):
@@ -637,10 +640,10 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="""
+        default=textwrap.dedent("""
         You are an agent responsible for writing a SQL query that will
         perform the data transformations the user requested.
-        """
+        """)
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
@@ -666,8 +669,8 @@ class SQLAgent(LumenBaseAgent):
                 df = pipeline.data
                 if len(df) > 0:
                     memory["current_data"] = self._describe_data(df)
-                yield memory["current_pipeline"].__panel__()
                 memory["current_pipeline"] = pipeline
+                yield memory["current_pipeline"].__panel__()
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -680,12 +683,50 @@ class SQLAgent(LumenBaseAgent):
         self.interface.stream(tabs, user="SQL", replace=True)
         tabs.active = 1
 
-    async def answer(self, messages: list | str):
+    @retry_llm_output()
+    async def _create_valid_sql(self, messages, system, source, tables, sql_expr, errors=None):
+        if errors:
+            last_query = self.interface.objects[-1].object.replace("```sql", "").rstrip("```").strip()
+            errors = '\n'.join(errors)
+            messages += [
+                {
+                    "role": "user",
+                    "content": (
+                        f"Your last query `{last_query}` did not work as intended, "
+                        f"expertly revise, and please do not repeat these issues:\n{errors}")
+                }
+            ]
+
         message = None
+        async for chunk in self.llm.stream(
+            messages,
+            system=system,
+            response_model=Sql,
+            field="query",
+        ):
+            if chunk is None:
+                continue
+            message = self.interface.stream(
+                f"```sql\n{chunk}\n```",
+                user="SQL",
+                message=message,
+                replace=True,
+            )
+        if message.object is None:
+            return
+        sql_query = message.object.replace("```sql", "").replace("```", "").strip()
+
+        # check whether the SQL query is valid
+        transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
+        pipeline = Pipeline(
+            source=source, table=tables[0], sql_transforms=transforms
+        )
+        pipeline.data
+        return sql_query
+
+    async def answer(self, messages: list | str):
         source = memory["current_source"]
         table = memory["current_table"]
-        if not hasattr(source, "get_sql_expr"):
-            return None
 
         join_required = (await self.llm.invoke(
             messages,
@@ -705,6 +746,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = [table]
 
+        sql_expr = source.get_sql_expr(table)
         tables_sql_schemas = {
             table: {
                 "schema": get_schema(source, table, include_min_max=False),
@@ -715,26 +757,10 @@ class SQLAgent(LumenBaseAgent):
             "sql_query.jinja2",
             tables_sql_schemas=tables_sql_schemas,
         )
-        system_prompt = await self._system_prompt_with_context(messages) + sql_prompt
-        async for chunk in self.llm.stream(
-            messages,
-            system=system_prompt,
-            response_model=Sql,
-            field="query",
-        ):
-            if chunk is None:
-                continue
-            message = self.interface.stream(
-                f"```sql\n{chunk}\n```",
-                user="SQL",
-                message=message,
-                replace=True,
-            )
-        if message.object is None:
-            return
-        sql_out = message.object.replace("```sql", "").replace("```", "").strip()
-        memory["current_sql"] = sql_out
-        return sql_out
+        system = await self._system_prompt_with_context(messages) + sql_prompt
+        sql_query = await self._create_valid_sql(messages, system, source, tables, sql_expr)
+        memory["current_sql"] = sql_query
+        return sql_query
 
     async def invoke(self, messages: list | str):
         sql = await self.answer(messages)

@@ -22,7 +22,7 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
-from .utils import get_schema, render_template
+from .utils import get_schema, render_template, retry_llm_output
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -265,6 +265,24 @@ class Assistant(Viewer):
         )
         return agent_model
 
+    @retry_llm_output()
+    async def _create_valid_agent(self, messages, system, agent_model, return_reasoning, errors=None):
+        if errors:
+            errors = '\n'.join(errors)
+            messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
+
+        out = await self.llm.invoke(
+            messages=messages,
+            system=system,
+            response_model=agent_model,
+            allow_partial=False
+        )
+        if not (out and out.agent):
+            raise ValueError("No agent selected.")
+        elif return_reasoning:
+            return out.agent, out.chain_of_thought
+        return out.agent
+
     async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
@@ -276,19 +294,7 @@ class Assistant(Viewer):
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
         )
-        for _ in range(3):
-            out = await self.llm.invoke(
-                messages=messages,
-                system=system,
-                response_model=agent_model,
-                allow_partial=False
-            )
-            if not (out and out.agent):
-                continue
-            elif return_reasoning:
-                return out.agent, out.chain_of_thought
-            return out.agent
-        return (None, None) if return_reasoning else None
+        return await self._create_valid_agent(messages, system, agent_model, return_reasoning)
 
     async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
@@ -332,13 +338,18 @@ class Assistant(Viewer):
 
     def _serialize(self, obj):
         if isinstance(obj, (Tabs, Column)):
-            return self._serialize(obj[0])
+            for o in obj:
+                if hasattr(o, "visible") and o.visible:
+                    break
+            return self._serialize(o)
+
         if isinstance(obj, HTML) and 'catalog' in obj.tags:
             return f"Summarized table listing: {obj.object[:30]}"
-        elif hasattr(obj, "object"):
-            return obj.object
+
+        if hasattr(obj, "object"):
+            obj = obj.object
         elif hasattr(obj, "value"):
-            return obj.value
+            obj = obj.value
         return str(obj)
 
     async def invoke(self, messages: list | str) -> str:
