@@ -20,6 +20,8 @@ class _Memory(Viewer):
 
     _views: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
 
+    _global_view = None
+
     _global_context = {}
 
     @property
@@ -34,18 +36,18 @@ class _Memory(Viewer):
             return self._global_context
 
     def __contains__(self, key):
-        return key in self._curcontext
+        return key in self._curcontext or key in self._global_context
 
     def __getitem__(self, key):
         return self._curcontext[key]
 
     def __setitem__(self, key, value):
         self._curcontext[key] = value
-        if state.curdoc in self._views:
+        if state.curdoc in self._views or (state.curdoc is None and self._global_view is not None):
             self._update_view(key, value)
 
     def get(self, key, default=None):
-        obj = self._curcontext.get(key, default)
+        obj = dict(self._global_context, **self._curcontext).get(key, default)
         if hasattr(obj, "copy"):
             obj = obj.copy()
         return obj
@@ -54,7 +56,7 @@ class _Memory(Viewer):
         return self._curcontext.pop(key, default)
 
     def keys(self):
-        return self._curcontext.keys()
+        return dict(self._global_context, **self._curcontext).keys()
 
     def _render_item(self, key, item):
         if isinstance(item, Component):
@@ -72,7 +74,7 @@ class _Memory(Viewer):
         ), sizing_mode='stretch_width', active=list(range(len(self._curcontext))))
 
     def _update_view(self, key, value):
-        view = self._views[state.curdoc]
+        view = self._views[state.curdoc] if state.curdoc else self._global_view
         accordion = view[0]
         new_item = self._render_item(key, value)
         i = 0
@@ -85,7 +87,11 @@ class _Memory(Viewer):
             accordion.active = accordion.active + [i+1]
 
     def __panel__(self):
-        self._views[state.curdoc] = view = pn.Column(self._render_memories())
+        view = pn.Column(self._render_memories())
+        if state.curdoc is None:
+            self._global_view = view
+        else:
+            self._views[state.curdoc] = view
         return view
 
 
