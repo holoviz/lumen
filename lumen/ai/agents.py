@@ -8,7 +8,6 @@ from typing import Literal, Optional, Type
 import pandas as pd
 import panel as pn
 import param
-import yaml
 
 from panel.chat import ChatInterface
 from panel.pane import HTML
@@ -19,7 +18,7 @@ from pydantic.fields import FieldInfo
 from lumen.sources.duckdb import DuckDBSource
 
 from ..base import Component
-from ..dashboard import Config, load_yaml
+from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
@@ -34,7 +33,10 @@ from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
 )
 from .translate import param_to_pydantic
-from .utils import get_schema, render_template, retry_llm_output
+from .utils import (
+    describe_data, get_schema, render_template, retry_llm_output,
+)
+from .views import LumenOutput, SQLOutput
 
 FUZZY_TABLE_LENGTH = 10
 
@@ -96,47 +98,6 @@ class Agent(Viewer):
             state.config = Config(raise_with_notifications=True)
         else:
             state.config.raise_with_notifications = True
-
-    def _link_code_editor(self, value, callback, language):
-        code_editor = pn.widgets.CodeEditor(
-            value=value, language=language, sizing_mode="stretch_both", min_height=300
-        )
-        copy_icon = pn.widgets.ButtonIcon(
-            icon="copy", active_icon="check", toggle_duration=1000
-        )
-        copy_icon.js_on_click(
-            args={"code_editor": code_editor},
-            code="navigator.clipboard.writeText(code_editor.code);",
-        )
-        download_icon = pn.widgets.ButtonIcon(
-            icon="download", active_icon="check", toggle_duration=1000
-        )
-        download_icon.js_on_click(
-            args={"code_editor": code_editor},
-            code="""
-            var text = code_editor.code;
-            var blob = new Blob([text], {type: 'text/plain'});
-            var url = window.URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url;
-            a.download = 'lumen_spec.yaml';
-            document.body.appendChild(a); // we need to append the element to the dom -> otherwise it will not work in firefox
-            a.click();
-            a.parentNode.removeChild(a);  //afterwards we remove the element again
-            """,
-        )
-        icons = pn.Row(copy_icon, download_icon)
-        code_col = pn.Column(code_editor, icons, sizing_mode="stretch_both")
-        placeholder = pn.Column(sizing_mode="stretch_both")
-        tabs = pn.Tabs(
-            ("Code", code_col),
-            ("Output", placeholder),
-            styles={'min-width': "100%"}
-        )
-        placeholder.objects = [
-            pn.bind(callback, code_editor.param.value, tabs.param.active)
-        ]
-        return tabs
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         await self.invoke(contents)
@@ -426,109 +387,10 @@ class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
 
-    def _describe_data(self, df: pd.DataFrame) -> str:
-        def format_float(num):
-            if pd.isna(num):
-                return num
-            # if is integer, round to 0 decimals
-            if num == int(num):
-                return f"{int(num)}"
-            elif 0.01 <= abs(num) < 100:
-                return f"{num:.1f}"  # Regular floating-point notation with two decimals
-            else:
-                return f"{num:.1e}"  # Exponential notation with two decimals
-
-        size = df.size
-        shape = df.shape
-        if size < 250:
-            return df
-
-        is_summarized = False
-        if shape[0] > 5000:
-            is_summarized = True
-            df = df.sample(5000)
-
-        df = df.sort_index()
-
-        for col in df.columns:
-            if isinstance(df[col].iloc[0], pd.Timestamp):
-                df[col] = pd.to_datetime(df[col])
-
-        df_describe_dict = df.describe(percentiles=[]).drop(["min", "max"]).to_dict()
-
-        for col in df.select_dtypes(include=["object"]).columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            df_describe_dict[col]["nunique"] = df[col].nunique()
-            try:
-                df_describe_dict[col]["lengths"] = {
-                    "max": df[col].str.len().max(),
-                    "min": df[col].str.len().min(),
-                    "mean": float(df[col].str.len().mean()),
-                }
-            except AttributeError:
-                pass
-
-        for col in df.columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
-
-        # select datetime64 columns
-        for col in df.select_dtypes(include=["datetime64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = str(df_describe_dict[col][key])
-            df[col] = df[col].astype(str)  # shorten output
-
-        # select all numeric columns and round
-        for col in df.select_dtypes(include=["int64", "float64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
-
-        for col in df.select_dtypes(include=["float64"]).columns:
-            df[col] = df[col].apply(format_float)
-
-        data = {
-            "summary": {
-                "total_table_cells": size,
-                "total_shape": shape,
-                "is_summarized": is_summarized,
-            },
-            "stats": df_describe_dict,
-        }
-        return data
-
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
-        async def _render_component(spec, active):
-            yield pn.indicators.LoadingSpinner(
-                value=True, name="Rendering component...", height=50, width=50
-            )
-
-            if active != 1:
-                return
-
-            # store the spec in the cache instead of memory to save tokens
-            memory["current_spec"] = spec
-            try:
-                output = type(component).from_spec(load_yaml(spec)).__panel__()
-                yield output
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                yield pn.pane.Alert(
-                    f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
-                    alert_type="danger",
-                )
-                # maybe offer undo
-
-        # layout widgets
-        component_spec = component.to_spec()
-        spec = yaml.safe_dump(component_spec)
-        spec = f"# Here's the generated Lumen spec; modify if needed\n{spec}"
-        tabs = self._link_code_editor(spec, _render_component, "yaml")
-        message_kwargs = dict(value=tabs, user=self.user)
+        out = LumenOutput(component=component)
+        message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True)
-        tabs.active = 1
 
 
 class TableAgent(LumenBaseAgent):
@@ -583,7 +445,7 @@ class TableAgent(LumenBaseAgent):
         )
         df = pipeline.__panel__()[-1].value
         if len(df) > 0:
-            memory["current_data"] = self._describe_data(df)
+            memory["current_data"] = describe_data(df)
         if self.debug:
             print(f"{self.name} thinks that the user is talking about {table=!r}.")
         return pipeline
@@ -652,37 +514,9 @@ class SQLAgent(LumenBaseAgent):
     provides = param.List(default=["current_sql", "current_pipeline"], readonly=True)
 
     def _render_sql(self, query):
-        source = memory["current_source"]
-
-        async def _render_sql_result(query, active):
-            if active == 0:
-                yield pn.indicators.LoadingSpinner(
-                    value=True, name="Executing SQL query...", height=50, width=50
-                )
-
-            table = memory["current_table"]
-
-            transforms = [SQLOverride(override=query)]
-            try:
-                pipeline = Pipeline(
-                    source=source, table=table, sql_transforms=transforms
-                )
-                df = pipeline.data
-                if len(df) > 0:
-                    memory["current_data"] = self._describe_data(df)
-                memory["current_pipeline"] = pipeline
-                yield memory["current_pipeline"].__panel__()
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                yield pn.pane.Alert(
-                    f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
-                    alert_type="danger",
-                )
-
-        tabs = self._link_code_editor(query, _render_sql_result, "sql")
-        self.interface.stream(tabs, user="SQL", replace=True)
-        tabs.active = 1
+        pipeline = memory['current_pipeline']
+        out = SQLOutput(component=pipeline, spec=query)
+        self.interface.stream(out, user="SQL", replace=True)
 
     @retry_llm_output()
     async def _create_valid_sql(self, messages, system, source, tables, sql_expr, errors=None):
@@ -797,7 +631,7 @@ class PipelineAgent(LumenBaseAgent):
         pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
         memory["current_pipeline"] = pipeline
         pipeline._update_data(force=True)
-        memory["current_data"] = self._describe_data(pipeline.data)
+        memory["current_data"] = describe_data(pipeline.data)
         return pipeline
 
     async def invoke(self, messages: list | str):
@@ -952,7 +786,7 @@ class TransformPipelineAgent(LumenBaseAgent):
                 pipeline.add_transform(transform)
 
         pipeline._update_data(force=True)
-        memory["current_data"] = self._describe_data(pipeline.data)
+        memory["current_data"] = describe_data(pipeline.data)
         return pipeline
 
     async def invoke(self, messages: list | str):
