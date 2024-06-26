@@ -701,7 +701,7 @@ class SQLAgent(LumenBaseAgent):
         with self.interface.add_step(title="Conjuring SQL query...", success_title="SQL Query") as step:
             async for chunk in self.llm.stream(
                 messages,
-                system=system_prompt + sql_prompt,
+                system=system,
                 response_model=Sql,
                 field="query",
             ):
@@ -714,7 +714,7 @@ class SQLAgent(LumenBaseAgent):
                 )
         if not message:
             return
-        sql_out = message.replace("```sql", "").replace("```", "").strip()
+        sql_query = message.replace("```sql", "").replace("```", "").strip()
 
         # check whether the SQL query is valid
         transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
@@ -727,7 +727,7 @@ class SQLAgent(LumenBaseAgent):
     async def answer(self, messages: list | str):
         source = memory["current_source"]
         table = memory["current_table"]
-        
+
         if not hasattr(source, "get_sql_expr"):
             return None
 
