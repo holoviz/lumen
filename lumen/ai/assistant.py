@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatMessage, ChatSteps
+from panel.chat import ChatInterface, ChatMessage
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
@@ -182,11 +182,6 @@ class Assistant(Viewer):
         if not table:
             return
 
-        current_data = memory["current_data"]
-        if isinstance(current_data, dict):
-            columns = list(current_data["stats"].keys())
-        else:
-            columns = list(current_data.columns)
         system = f"""
         Based on the latest user's query, is the table relevant?
         If not, return invalid_key='table'.
@@ -195,13 +190,20 @@ class Assistant(Viewer):
         ```
         {table}
         ```
-
+        """
+        if "current_data" in memory:
+            current_data = memory["current_data"]
+            if isinstance(current_data, dict):
+                columns = list(current_data["stats"].keys())
+            else:
+                columns = list(current_data.columns)
+            system += f"""
         ### Current Columns:
         ```
         {columns}
         ```
         """
-        with self.interface.append_step(title="Checking table relevancy...", steps="append") as step:
+        with self.interface.add_step(title="Checking table relevancy...", user="Assistant") as step:
             validity = await self.llm.invoke(
                 messages=messages,
                 system=system,
@@ -296,7 +298,7 @@ class Assistant(Viewer):
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            with self.interface.append_step(title="Selecting relevant agent...", steps="append") as step:
+            with self.interface.add_step(title="Selecting relevant agent...", user="Assistant") as step:
                 agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
                 step.stream(reasoning)
                 step.success_title = f"Selected {agent}"
@@ -313,7 +315,7 @@ class Assistant(Viewer):
         while unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in memory
         ):
-            with self.interface.append_step(title="Solving dependency chain...", steps="append") as step:
+            with self.interface.add_step(title="Solving dependency chain...") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
                 print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [
@@ -328,7 +330,7 @@ class Assistant(Viewer):
                 agent_chain.append((subagent, unmet_dependencies))
                 step.success_title = "Finished solving dependency chain"
         for subagent, deps in agent_chain[::-1]:
-            with self.interface.append_step(title="Choosing subagent...", steps="append") as step:
+            with self.interface.add_step(title="Choosing subagent...") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
                 await subagent.answer(messages)
@@ -348,29 +350,26 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        chat_steps = ChatSteps()
-        self.interface.stream(chat_steps, user="Assistant")
-        with chat_steps:
-            await self._invalidate_memory(messages[-2:])
-            agent = await self._get_agent(messages[-3:])
-            if agent is None:
-                msg = (
-                    "Assistant could not settle on an agent to perform the requested query. "
-                    "Please restate your request."
-                )
-                self.interface.stream(msg, user='Lumen')
-                return msg
+        await self._invalidate_memory(messages[-2:])
+        agent = await self._get_agent(messages[-3:])
+        if agent is None:
+            msg = (
+                "Assistant could not settle on an agent to perform the requested query. "
+                "Please restate your request."
+            )
+            self.interface.stream(msg, user='Lumen')
+            return msg
 
-            self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-            print("\n\033[95mMESSAGES:\033[0m")
-            for message in messages:
-                print(f"{message['role']!r}: {message['content']}")
-                print("ENTRY" + "-" * 10)
+        self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
+        print("\n\033[95mMESSAGES:\033[0m")
+        for message in messages:
+            print(f"{message['role']!r}: {message['content']}")
+            print("ENTRY" + "-" * 10)
 
-            result = await agent.invoke(messages[-2:])
-            self._current_agent.object = "## No agent active"
-            print("\033[92mDONE\033[0m", "\n\n")
-            return result
+        result = await agent.invoke(messages[-2:])
+        self._current_agent.object = "## No agent active"
+        print("\033[92mDONE\033[0m", "\n\n")
+        return result
 
     def controls(self):
         return self._controls
