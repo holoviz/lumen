@@ -1,0 +1,10 @@
+{% for table, details in tables_sql_schemas.items() %}
+
+The data for table '{{ table }}' follows the following JSON schema:
+```json
+{{ details.schema }}
+```
+{% endfor %}
+Checklist
+- If it's a date column (excluding individual year/month/day integers), cast as date
+- If no limit is specified, specify 10000 as the limit.

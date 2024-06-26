@@ -444,7 +444,6 @@ class Source(MultiTypeComponent):
                 continue
             df = self.get(name, __dask=True)
             schemas[name] = get_dataframe_schema(df)['items']['properties']
-
         try:
             return schemas if table is None else schemas[table]
         except KeyError as e:
@@ -498,6 +497,35 @@ class RESTSource(Source):
         r = requests.get(self.url+'/data', params=query)
         df = pd.DataFrame(r.json())
         return df
+
+
+class InMemorySource(Source):
+    """
+    `InMemorySource` can be used to work with in-memory data.
+    """
+
+    tables = param.Dict(default={})
+
+    def get_tables(self) -> list[str]:
+        return list(self.tables)
+
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+        if table:
+            df = self.get(table)
+            return get_dataframe_schema(df)['items']['properties']
+        else:
+            return {t: get_dataframe_schema(self.get(t))['items']['properties'] for t in self.get_tables()}
+
+    def get(self, table: str, **query) -> pd.DataFrame:
+        dask = query.pop('__dask', False)
+        table = self.tables.get(table)
+        df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        return df if dask or not hasattr(df, 'compute') else df.compute()
+
+    def add_table(self, name, table):
+        self.tables[name] = table
 
 
 class FileSource(Source):

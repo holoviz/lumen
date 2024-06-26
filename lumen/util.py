@@ -314,6 +314,8 @@ def catch_and_notify(message=None):
                         f"{func.__qualname__!r} raised {type(e).__name__}: {e}"
                     )
                     state.notifications.error(message.format(e=e))
+                    if session_state.config and session_state.config.raise_with_notifications:
+                        raise e
                 else:
                     raise e
         return wrapper

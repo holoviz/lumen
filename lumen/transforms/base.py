@@ -840,6 +840,7 @@ class DropNA(Transform):
             kwargs['thresh'] = self.thresh
         return table.dropna(**kwargs)
 
+
 class project_lnglat(Transform):
     """
     `project_lnglat` projects the given longitude/latitude columns to Web Mercator.

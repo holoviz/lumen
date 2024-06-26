@@ -1,0 +1,11 @@
+Based on the latest user's query, decide whether the current table and data contains the the required data. If the user is referencing "this data" or "that" they probably are referring to the current data. Pay particular attention to whether the data actually contains the columns required to answer the query, e.g. if they are asking for a location but there are no location related column the data is invalid.
+
+### Current Table:
+```
+{{ table }}
+```
+
+### Current Data `{column: stat}`:
+```
+{{ spec }}
+```

@@ -58,6 +58,13 @@ class DuckDBSource(Source):
         for init in self.initializers:
             self._connection.execute(init)
 
+    def add_table(self, name, sql_expr):
+        if isinstance(self.tables, list):
+            self.tables = {
+                table: table for table in self.tables
+            }
+        self.tables[name] = sql_expr
+
     def get_tables(self):
         if isinstance(self.tables, (dict, list)):
             return list(self.tables)
