@@ -122,7 +122,7 @@ class Filter(MultiTypeComponent):
         filter_type = Filter._get_type(spec.pop('type', None))
         if not filter_type._requires_field:
             return filter_type(**spec)
-        elif not 'field' in spec:
+        elif 'field' not in spec:
             raise ValueError('Filter specification must declare field to filter on.')
         field = spec['field']
         if 'label' not in spec:

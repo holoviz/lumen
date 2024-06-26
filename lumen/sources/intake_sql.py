@@ -91,28 +91,32 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                 schemas[entry] = super().get_schema(table)
                 continue
             data = self._read(self._apply_transforms(source, [sql_limit]))
-            schema = get_dataframe_schema(data)['items']['properties']
+            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
-                schemas[entry] = schema
                 continue
+
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
                 if 'enum' in col_schema:
                     enums.append(name)
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
+
+            # Calculate enum schemas
             for col in enums:
                 distinct_transforms = [SQLDistinct(columns=[col])]
                 distinct = self._read(
                     self._apply_transforms(source, distinct_transforms)
                 )
                 schema[col]['enum'] = distinct[col].to_list()
-            if min_maxes:
-                minmax_data = self._read(
-                    self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
-                )
-            else:
-                minmax_data = None
+
+            if not min_maxes:
+                continue
+
+            # Calculate numeric schemas
+            minmax_data = self._read(
+                self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
+            )
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':
@@ -123,7 +127,6 @@ class IntakeBaseSQLSource(IntakeBaseSource):
                     cast = lambda v: v
                 schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
                 schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
-            schemas[entry] = schema
         return schemas if table is None else schemas[table]
 
 

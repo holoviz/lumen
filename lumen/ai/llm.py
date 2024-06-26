@@ -75,8 +75,15 @@ class Llm(param.Parameterized):
                 print(f"Error encountered: {e}")
                 if 'response_model' in kwargs:
                     kwargs['response_model'] = response_model
-                messages = [{"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: {e}" }] + messages
+                system_message = {"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: \n\n`{e}`"}
+                if "system" not in messages[0]:
+                    messages = [system_message] + messages
+                else:
+                    messages = [system_message] + messages[1:]
+                print("MESSAGES", messages)
         print(f"\033[33mInvoked LLM output: {output!r}\033[0m")
+        if output is None:
+            raise ValueError("LLM failed to return valid output.")
         return output
 
     @classmethod

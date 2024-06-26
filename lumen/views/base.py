@@ -153,7 +153,7 @@ class View(MultiTypeComponent, Viewer):
             panel_type = cls._panel_type
         except Exception:
             panel_type = None
-        if panel_type is None:
+        if panel_type is None or isinstance(panel_type, property):
             return None
         valid = super()._valid_keys_
         return valid + list(panel_type.param)
@@ -660,7 +660,7 @@ class IndicatorView(View):
 class hvPlotBaseView(View):
 
     kind = param.Selector(
-        default="scatter", doc="The kind of plot, e.g. 'scatter' or 'line'.",
+        default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.",
         objects=[
             'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
             'errorbars', 'hist', 'image', 'kde', 'labels',
@@ -675,6 +675,10 @@ class hvPlotBaseView(View):
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
+
+    geo = param.Boolean(
+        default=False, doc="Toggle True if the plot is on a geographic map."
+    )
 
     _field_params = ['x', 'y', 'by', 'groupby']
 
@@ -691,6 +695,8 @@ class hvPlotBaseView(View):
             params['by'] = [params['by']]
         if 'groupby' in params and isinstance(params['groupby'], str):
             params['groupby'] = [params['groupby']]
+        if params.get("geo") and params.get("kind") in (None, "scatter"):
+            params["kind"] = "points"
         super().__init__(**params)
 
     @classproperty
@@ -706,10 +712,11 @@ class hvPlotUIView(hvPlotBaseView):
     view_type = 'hvplot_ui'
 
     def _get_args(self):
-        from hvplot.ui import hvPlotExplorer  # type: ignore
+        from hvplot.ui import Geographic, hvPlotExplorer  # type: ignore
         params = {
             k: v for k, v in self.param.values().items()
-            if k in hvPlotExplorer.param and v is not None and k != 'name'
+            if (k in hvPlotExplorer.param or k in Geographic.param)
+            and v is not None and k != 'name'
         }
         return (self.get_data(),), dict(params, **self.kwargs)
 

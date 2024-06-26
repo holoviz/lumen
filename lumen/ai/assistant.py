@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from io import StringIO
@@ -21,6 +22,7 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
+from .utils import get_schema, render_template, retry_llm_output
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
@@ -29,11 +31,13 @@ GETTING_STARTED_SUGGESTIONS = [
     "Find the min and max of the values.",
 ]
 
-GETTING_STARTED_SUGGESTIONS = [
-    "What datasets do you have?",
+DEMO_MESSAGES = [
+    "What data is available?",
+    "Can I see the first one?",
     "Tell me about the dataset.",
-    "Create a plot of the dataset.",
-    "Find the min and max of the values.",
+    "What could be interesting to analyze?",
+    "Perform a SQL query on one of these.",
+    "Show it to me as a scatter plot."
 ]
 
 
@@ -47,6 +51,10 @@ class Assistant(Viewer):
     llm = param.ClassSelector(class_=Llm, default=Llama())
 
     interface = param.ClassSelector(class_=ChatInterface)
+
+    suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS)
+
+    demo_inputs = param.List(default=DEMO_MESSAGES)
 
     logs_filename = param.String()
 
@@ -136,7 +144,7 @@ class Assistant(Viewer):
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
         }
-        self._add_suggestions_to_footer(GETTING_STARTED_SUGGESTIONS)
+        self._add_suggestions_to_footer(self.suggestions)
 
         self._current_agent = Markdown("## No agent active", margin=0)
         download_button = FileDownload(
@@ -149,10 +157,23 @@ class Assistant(Viewer):
         self._controls = Column(download_button, self._current_agent, Tabs(("Memory", memory)))
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
-        def use_suggestion(event):
+        async def hide_suggestions(_=None):
+            if len(self.interface.objects) > 1:
+                suggestion_buttons.visible = False
+
+        async def use_suggestion(event):
             contents = event.obj.name
-            suggestion_buttons.visible = False
+            await hide_suggestions()
             self.interface.send(contents)
+
+        async def run_demo(event):
+            await hide_suggestions()
+            with self.interface.active_widget.param.update(loading=True):
+                for demo_message in self.demo_inputs:
+                    while self.interface.disabled:
+                        await asyncio.sleep(1.25)
+                    self.interface.active_widget.value = demo_message
+                    await asyncio.sleep(2)
 
         suggestion_buttons = FlexBox(
             *[
@@ -167,6 +188,14 @@ class Assistant(Viewer):
             margin=(5, 5),
         )
 
+        if self.demo_inputs:
+            suggestion_buttons.append(Button(
+                name="Show a demo",
+                button_type="primary",
+                on_click=run_demo,
+                margin=5,
+            ))
+
         message = self.interface.objects[-1]
         message = ChatMessage(
             footer_objects=[suggestion_buttons],
@@ -175,6 +204,8 @@ class Assistant(Viewer):
         )
         if inplace:
             self.interface.objects[-1] = message
+
+        self.interface.param.watch(hide_suggestions, "objects")
         return message
 
     async def _invalidate_memory(self, messages):
@@ -182,27 +213,9 @@ class Assistant(Viewer):
         if not table:
             return
 
-        system = f"""
-        Based on the latest user's query, is the table relevant?
-        If not, return invalid_key='table'.
-
-        ### Current Table:
-        ```
-        {table}
-        ```
-        """
-        if "current_data" in memory:
-            current_data = memory["current_data"]
-            if isinstance(current_data, dict):
-                columns = list(current_data["stats"].keys())
-            else:
-                columns = list(current_data.columns)
-            system += f"""
-        ### Current Columns:
-        ```
-        {columns}
-        ```
-        """
+        source = memory.get("current_source")
+        spec = get_schema(source, table=table)
+        system = render_template("check_validity.jinja2", table=table, spec=spec)
         with self.interface.add_step(title="Checking table relevancy...", user="Assistant") as step:
             validity = await self.llm.invoke(
                 messages=messages,
@@ -210,6 +223,7 @@ class Assistant(Viewer):
                 response_model=Validity,
                 allow_partial=False,
             )
+            print(system)
             if validity.chain_of_thought:
                 step.stream(validity.chain_of_thought)
             step.success_title = "Table needs refresh" if validity.is_invalid else "Table is still valid"
@@ -235,24 +249,44 @@ class Assistant(Viewer):
         finally:
             self.interface.disabled = False
 
-    def _generate_picker_prompt(self, agents):
-        # prompt = f'Current you have the following items in memory: {list(memory)}'
-        prompt = (
-            "\nYou are the leader of a team of expert agents. "
-            "Select most relevant expert for the user's query:\n'''\n"
-            + "\n".join(
-                f"- `{agent.name[:-5]}`: {' '.join(agent.__doc__.strip().split())}"
-                for agent in agents
-            )
-            + "\n'''\nEach agent can request other agents to fill in the blanks, so pick the agent that can best answer the entire query."
-        )
-        if "current_agent" in memory:
-            prompt += f"If possible, continue using the existing agent to perform the query: {self._current_agent.object}"
-        return prompt
-
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         print("\033[94mNEW\033[0m" + "-" * 100)
         await self.invoke(contents)
+
+    @staticmethod
+    def _create_agent_model(agent_names):
+        agent_model = create_model(
+            "RelevantAgent",
+            chain_of_thought=(
+                str,
+                FieldInfo(
+                    description="Explain in your own words, what the user wants."
+                ),
+            ),
+            agent=(
+                Literal[agent_names],
+                FieldInfo(default=..., description="The most relevant agent to use.")
+            ),
+        )
+        return agent_model
+
+    @retry_llm_output()
+    async def _create_valid_agent(self, messages, system, agent_model, return_reasoning, errors=None):
+        if errors:
+            errors = '\n'.join(errors)
+            messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
+
+        out = await self.llm.invoke(
+            messages=messages,
+            system=system,
+            response_model=agent_model,
+            allow_partial=False
+        )
+        if not (out and out.agent):
+            raise ValueError("No agent selected.")
+        elif return_reasoning:
+            return out.agent, out.chain_of_thought
+        return out.agent
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
@@ -260,34 +294,12 @@ class Assistant(Viewer):
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_names[0]
-        agent_model = create_model(
-            "Agent",
-            chain_of_thought=(
-                str,
-                FieldInfo(
-                    description=(
-                        "Think step by step out loud, focused on application and how it could be useful to the "
-                        "tying into the available agents. Provide up to two sentence description; be concise."
-                    )
-                ),
-            ),
-            agent=(Literal[agent_names], ...),
-        )
         self._current_agent.object = "## **Current Agent**: Lumen.ai"
-        for _ in range(3):
-            out = await self.llm.invoke(
-                messages=messages,
-                system=self._generate_picker_prompt(agents),
-                response_model=agent_model,
-                model_key="reasoning",
-                allow_partial=False
-            )
-            if not (out and out.agent):
-                continue
-            elif return_reasoning:
-                return out.agent, out.chain_of_thought
-            return out.agent
-        return (None, None) if return_reasoning else None
+        agent_model = self._create_agent_model(agent_names)
+        system = render_template(
+            "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
+        )
+        return await self._create_valid_agent(messages, system, agent_model, return_reasoning)
 
     async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
@@ -339,13 +351,18 @@ class Assistant(Viewer):
 
     def _serialize(self, obj):
         if isinstance(obj, (Tabs, Column)):
-            return self._serialize(obj[0])
+            for o in obj:
+                if hasattr(o, "visible") and o.visible:
+                    break
+            return self._serialize(o)
+
         if isinstance(obj, HTML) and 'catalog' in obj.tags:
             return f"Summarized table listing: {obj.object[:30]}"
-        elif hasattr(obj, "object"):
-            return obj.object
+
+        if hasattr(obj, "object"):
+            obj = obj.object
         elif hasattr(obj, "value"):
-            return obj.value
+            obj = obj.value
         return str(obj)
 
     async def invoke(self, messages: list | str) -> str:

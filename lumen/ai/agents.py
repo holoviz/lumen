@@ -16,29 +16,27 @@ from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.sources.duckdb import DuckDBSource
+
 from ..base import Component
 from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
-from ..sources import FileSource, InMemorySource, Source
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import (
+    SQLLimit, SQLOverride, SQLTransform, Transform,
+)
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
-from .models import DataRequired, FuzzyTable, Sql
+from .models import (
+    DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
+)
 from .translate import param_to_pydantic
+from .utils import get_schema, render_template, retry_llm_output
 
 FUZZY_TABLE_LENGTH = 10
-
-def format_schema(schema):
-    formatted = {}
-    for field, spec in schema.items():
-        if "enum" in spec and len(spec["enum"]) > 5:
-            spec["enum"] = spec["enum"][:5] + ["..."]
-        formatted[field] = spec
-    return formatted
 
 
 class Agent(Viewer):
@@ -77,12 +75,12 @@ class Agent(Viewer):
             if self._retries_left > 0:
                 self._retries_left -= 1
                 self.interface.send(
-                    f"Attempting to fix: {exception}.",
+                    f"Taking a different approach to expertly resolve this issue `{exception}` using world-class knowledge.",
                     user="Exception",
                 )
             else:
                 self.interface.send(
-                    f"Error cannot be resolved: {exception}.",
+                    f"Error cannot be resolved: `{exception}`.",
                     user="System",
                     respond=False
                 )
@@ -156,20 +154,6 @@ class Agent(Viewer):
         if context:
             system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
-
-    def _get_schema(self, source: Source | Pipeline, table: str = None):
-        if isinstance(source, Pipeline):
-            schema = source.get_schema()
-        else:
-            schema = source.get_schema(table, limit=100)
-        schema = dict(schema)
-        for field, spec in schema.items():
-            if "inclusiveMinimum" in spec:
-                spec["min"] = spec.pop("inclusiveMinimum")
-            if "inclusiveMaximum" in spec:
-                spec["max"] = spec.pop("inclusiveMaximum")
-        return schema
-
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
         system = (
@@ -256,77 +240,77 @@ class SourceAgent(Agent):
 
     on_init = param.Boolean(default=True)
 
-    async def invoke(self, messages: list[str] | str):
-        name = pn.widgets.TextInput(name="Name your table", align="center")
-        upload = pn.widgets.FileInput(align="end")
-        url = pn.widgets.TextInput(name="Add a file from a URL")
+    async def answer(self, messages: list | str):
+        def add_table(event):
+            if input_tabs.active == 0 and upload.value:
+                if upload.filename.endswith("csv"):
+                    df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
+                elif upload.filename.endswith((".parq", ".parquet")):
+                    df = pd.read_parquet(io.BytesIO(upload.value))
+                duckdb_source._connection.from_df(df).to_table(name.value)
+                duckdb_source.tables = [name.value]
+                memory["current_source"] = duckdb_source
+            # TODO: add URL + xlsx support
+            name.value = ""
+            upload.value = None
+            upload.filename = ""
+            src = memory["current_source"]
+            tables[:] = [
+                (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
+            ]
+            input_column.visible = False
+
+        def add_name(event):
+            if "/" in event.new:
+                name.value = event.new.split("/")[-1].split(".")[0].replace("-", "_")
+            elif not name.value and event.new:
+                name.value = event.new.split(".")[0].replace("-", "_")
+                name.visible = True
+
+        def enable_add(event):
+            add.visible = not bool(name.value)
+
+        name = pn.widgets.TextInput(name="Name your table", visible=False)
+        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq")
         add = pn.widgets.Button(
             name="Add table",
             icon="table-plus",
-            disabled=True,
-            align="center",
+            visible=False,
             button_type="success",
         )
+        input_tabs = pn.Tabs(("Upload", upload), sizing_mode="stretch_width")
         tables = pn.Tabs(sizing_mode="stretch_width")
-        mem_source = InMemorySource()
-        file_source = FileSource()
-
-        def add_table(event):
-            if upload.value:
-                if upload.filename.endswith("csv"):
-                    df = pd.read_csv(
-                        io.StringIO(upload.value.decode("utf-8")), parse_dates=True
-                    )
-                    for col in ("date", "Date"):
-                        if col in df.columns:
-                            df[col] = pd.to_datetime(df[col])
-                elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value.decode("utf-8")))
-                mem_source.add_table(name.value, df)
-                memory["current_source"] = mem_source
-            elif url.value:
-                file_source.tables[name.value] = url.value
-                memory["current_source"] = file_source
-            name.value = ""
-            url.value = ""
-            upload.value = None
-            src = memory["current_source"]
-            tables[:] = [
-                (t, pn.widgets.Tabulator(src.get(t))) for t in src.get_tables()
-            ]
-
-        def add_name(event):
-            if not name.value and event.new:
-                name.value = event.new.split(".")[0]
-
-        upload.param.watch(add_name, "filename")
-
-        def enable_add(event):
-            add.disabled = not bool(name.value and (upload.value or url.value))
-
-        name.param.watch(enable_add, "value")
-        upload.param.watch(enable_add, "value")
-        url.param.watch(enable_add, "value")
-        add.on_click(add_table)
-        menu = pn.Column(
-            pn.Row(
-                name,
-                pn.Tabs(("Upload", upload), ("URL", url)),
-                add,
-                sizing_mode="stretch_width",
-            ),
-            tables,
+        duckdb_source = DuckDBSource(uri=":memory:")
+        input_column = pn.Column(
+            input_tabs,
+            name,
+            add,
+            sizing_mode="stretch_width",
         )
+        menu = pn.Column(
+            input_column,
+            tables,
+            sizing_mode="stretch_width",
+        )
+        upload.param.watch(add_name, "filename")
+        upload.param.watch(enable_add, "value")
+        add.on_click(add_table)
+
         self.interface.send(menu, respond=False, user="SourceAgent")
+        while not add.clicks:
+            await asyncio.sleep(0.05)
+
+    async def invoke(self, messages: list[str] | str):
+        await self.answer(messages)
 
 
 class ChatAgent(Agent):
     """
-    Responsible for chatting and providing info about high level data related topics,
+    Chats and provides info about high level data related topics,
     e.g. what datasets are available, the columns of the data or
     statistics about the data, and continuing the conversation.
 
-    Is capable of providing suggestions to get started.
+    Is capable of providing suggestions to get started or comment on interesting tidbits.
     If data is available, it can also talk about the data itself.
     """
 
@@ -378,7 +362,7 @@ class ChatAgent(Agent):
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
-            schema = self._get_schema(memory["current_source"], table)
+            schema = get_schema(memory["current_source"], table)
             if schema:
                 context = f"{table} with schema: {schema}"
 
@@ -397,21 +381,45 @@ class ChatDetailsAgent(ChatAgent):
     """
     Responsible for chatting and providing info about details about the table values,
     e.g. what should be noted about the data values, valuable, applicable insights about the data,
-    and continuing the conversation. Does not provide overviews; only details and meaning of the data.
+    and continuing the conversation. Does not provide overviews;
+    only details, meaning, relationships, and trends of the data.
     """
 
     requires = param.List(default=["current_source", "current_table"], readonly=True)
 
     system_prompt = param.String(
         default=(
-            "You are a world-class, subject expert on the topic. Help provide guidance and meaning "
+            "You are a world-class, subject scientist on the topic. Help provide guidance and meaning "
             "about the data values, highlight valuable and applicable insights. Be very precise "
             "on your subject matter expertise and do not be afraid to use specialized terminology or "
             "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
-            "instead, focus on the details and meaning of the data. If it's unclear what the user is asking, "
-            "ask clarifying questions to get more information."
+            "instead, focus on the details and meaning of the data. Highlight relationships "
+            "between the columns and what could be interesting to dive deeper into."
         )
     )
+
+    async def _system_prompt_with_context(
+        self, messages: list | str, context: str = ""
+    ) -> str:
+        system_prompt = self.system_prompt
+        topic = (await self.llm.invoke(
+            messages,
+            system="What is the topic of the table?",
+            response_model=Topic,
+            allow_partial=False,
+        )).result
+        context += f"Topic you are a world-class expert on: {topic}"
+
+        current_data = memory["current_data"]
+        if isinstance(current_data, dict):
+            columns = list(current_data["stats"].keys())
+        else:
+            columns = list(current_data.columns)
+        context += f"\nHere are the columns of the table: {columns}"
+
+        if context:
+            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
+        return system_prompt
 
 
 class LumenBaseAgent(Agent):
@@ -433,10 +441,7 @@ class LumenBaseAgent(Agent):
         size = df.size
         shape = df.shape
         if size < 250:
-            out = io.StringIO()
-            df.to_csv(out)
-            out.seek(0)
-            return out.read()
+            return df
 
         is_summarized = False
         if shape[0] > 5000:
@@ -449,7 +454,7 @@ class LumenBaseAgent(Agent):
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
-        df_describe_dict = df.describe(percentiles=[]).to_dict()
+        df_describe_dict = df.describe(percentiles=[]).drop(["min", "max"]).to_dict()
 
         for col in df.select_dtypes(include=["object"]).columns:
             if col not in df_describe_dict:
@@ -483,15 +488,6 @@ class LumenBaseAgent(Agent):
         for col in df.select_dtypes(include=["float64"]).columns:
             df[col] = df[col].apply(format_float)
 
-        df_head_dict = {}
-        for col in df.columns:
-            df_head_dict[col] = df[col].head(10)
-            # if all nan or none, replace with None
-            if df_head_dict[col].isnull().all():
-                df_head_dict[col] = ["all null"]
-            else:
-                df_head_dict[col] = df_head_dict[col].tolist()
-
         data = {
             "summary": {
                 "total_table_cells": size,
@@ -499,7 +495,6 @@ class LumenBaseAgent(Agent):
                 "is_summarized": is_summarized,
             },
             "stats": df_describe_dict,
-            "head": df_head_dict
         }
         return data
 
@@ -538,7 +533,7 @@ class LumenBaseAgent(Agent):
 
 class TableAgent(LumenBaseAgent):
     """
-    Responsible for only displaying a set of tables / datasets, no discussion.
+    Displays a single table / dataset. Does not discuss.
     """
 
     system_prompt = param.String(
@@ -548,6 +543,13 @@ class TableAgent(LumenBaseAgent):
     requires = param.List(default=["current_source"], readonly=True)
 
     provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
+
+    @staticmethod
+    def _create_table_model(tables):
+        table_model = create_model("Table", table=(Literal[tables], FieldInfo(
+            description="The most relevant table based on the user query; if none are relevant, select the first."
+        )))
+        return table_model
 
     async def answer(self, messages: list | str):
         tables = tuple(memory["current_source"].get_tables())
@@ -564,9 +566,7 @@ class TableAgent(LumenBaseAgent):
                 if self.debug:
                     print(f"{self.name} is being instructed that it should {system_prompt}")
                 if len(tables) > 1:
-                    table_model = create_model("Table", table=(Literal[tables], FieldInfo(
-                        description="The most relevant table based on the user query; if none are relevant, select the first."
-                    )))
+                    table_model = self._create_table_model(tables)
                     result = await self.llm.invoke(
                         messages,
                         system=system_prompt,
@@ -595,9 +595,8 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    Responsible for listing the available tables or datasets should the
-    user request to know what datasets are available. Do not use this if
-    the user wants a specific table.
+    List all of the available tables or datasets inventory. Not useful
+    if the user requests a specific table.
     """
 
     system_prompt = param.String(
@@ -642,10 +641,10 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default="""
+        default=textwrap.dedent("""
         You are an agent responsible for writing a SQL query that will
         perform the data transformations the user requested.
-        """
+        """)
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
@@ -665,12 +664,13 @@ class SQLAgent(LumenBaseAgent):
 
             transforms = [SQLOverride(override=query)]
             try:
-                memory["current_pipeline"] = pipeline = Pipeline(
+                pipeline = Pipeline(
                     source=source, table=table, sql_transforms=transforms
                 )
                 df = pipeline.data
                 if len(df) > 0:
                     memory["current_data"] = self._describe_data(df)
+                memory["current_pipeline"] = pipeline
                 yield memory["current_pipeline"].__panel__()
             except Exception as e:
                 import traceback
@@ -684,24 +684,19 @@ class SQLAgent(LumenBaseAgent):
         self.interface.stream(tabs, user="SQL", replace=True)
         tabs.active = 1
 
-    def _sql_prompt(self, sql: str, table: str, schema: dict) -> str:
-        prompt = (
-            f"The SQL expression for the table {table!r} is {sql!r}.\n\n"
-            f"The data for table {table!r} follows the following JSON schema:\n\n```{format_schema(schema)}```"
-        )
-        print(prompt)
-        return prompt
-
-    async def answer(self, messages: list | str):
-        source = memory["current_source"]
-        table = memory["current_table"]
-        if not hasattr(source, "get_sql_expr"):
-            return None
-        system_prompt = await self._system_prompt_with_context(messages)
-        schema = self._get_schema(source, table)
-        sql_expr = source.get_sql_expr(table)
-        sql_prompt = self._sql_prompt(sql_expr, table, schema)
-
+    @retry_llm_output()
+    async def _create_valid_sql(self, messages, system, source, tables, sql_expr, errors=None):
+        if errors:
+            last_query = self.interface.objects[-1].object.replace("```sql", "").rstrip("```").strip()
+            errors = '\n'.join(errors)
+            messages += [
+                {
+                    "role": "user",
+                    "content": (
+                        f"Your last query `{last_query}` did not work as intended, "
+                        f"expertly revise, and please do not repeat these issues:\n{errors}")
+                }
+            ]
         message = ""
         with self.interface.add_step(title="Conjuring SQL query...", success_title="SQL Query") as step:
             async for chunk in self.llm.stream(
@@ -721,16 +716,59 @@ class SQLAgent(LumenBaseAgent):
             return
         sql_out = message.replace("```sql", "").replace("```", "").strip()
 
-        # TODO: find a better way to replace for all tables
-        for table in memory.get("closest_tables", [table]):
-            sql_expr = source.get_sql_expr(table)
-            if f"FROM {table}" in sql_out:
-                sql_in = sql_expr.replace("SELECT * FROM ", "").replace(
-                    "SELECT * from ", ""
-                )
-                sql_out = sql_out.replace(f"FROM {table}", f"FROM {sql_in}")
-            memory["current_sql"] = sql_out
-        return sql_out
+        # check whether the SQL query is valid
+        transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
+        pipeline = Pipeline(
+            source=source, table=tables[0], sql_transforms=transforms
+        )
+        pipeline.data
+        return sql_query
+
+    async def answer(self, messages: list | str):
+        source = memory["current_source"]
+        table = memory["current_table"]
+        
+        if not hasattr(source, "get_sql_expr"):
+            return None
+
+        with self.interface.add_step(title="Checking if join is required") as step:
+            join_required = (await self.llm.invoke(
+                messages,
+                system="Determine whether a table join is required to answer the user's query.",
+                response_model=JoinRequired,
+                allow_partial=False,
+            )).join_required
+            step.success_title = 'Query requires join' if join_required else 'No join required'
+
+        if join_required:
+            available_tables = source.get_tables()
+            with self.interface.add_step(title="Determining tables required for join") as step:
+                tables = (await self.llm.invoke(
+                    messages,
+                    system=f"List the tables that need to be joined: {available_tables}.",
+                    response_model=TableJoins,
+                    allow_partial=False,
+                )).tables
+                step.stream(f'Join requires following tables: {tables}')
+                step.success_title = 'Found tables required for join'
+        else:
+            tables = [table]
+
+        sql_expr = source.get_sql_expr(table)
+        tables_sql_schemas = {
+            table: {
+                "schema": get_schema(source, table, include_min_max=False),
+                 "sql": source.get_sql_expr(table)
+            } for table in tables
+        }
+        sql_prompt = render_template(
+            "sql_query.jinja2",
+            tables_sql_schemas=tables_sql_schemas,
+        )
+        system = await self._system_prompt_with_context(messages) + sql_prompt
+        sql_query = await self._create_valid_sql(messages, system, source, tables, sql_expr)
+        memory["current_sql"] = sql_query
+        return sql_query
 
     async def invoke(self, messages: list | str):
         sql = await self.answer(messages)
@@ -797,31 +835,19 @@ class TransformPipelineAgent(LumenBaseAgent):
             if not issubclass(transform, SQLTransform)
         }
 
-    def _transform_picker_prompt(self) -> str:
-        prompt = "This is a description of all available transforms:\n"
-        for transform in self._available_transforms.values():
-            if doc := (transform.__doc__ or "").strip():
-                doc = doc.split("\n\n")[0].strip().replace("\n", "")
-                prompt += f"- {doc}\n"
-        prompt += "- `None` No transform needed\n"
-        return prompt
-
     def _transform_prompt(
         self, model: BaseModel, transform: Transform, table: str, schema: dict
     ) -> str:
         prompt = f"{transform.__doc__}"
         if not schema:
             raise ValueError(f"No schema found for table {table!r}")
-        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
+        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{schema}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
 
-    async def _find_transform(
-        self, messages: list | str, system_prompt: str
-    ) -> Type[Transform] | None:
-        picker_prompt = self._transform_picker_prompt()
-        transforms = self._available_transforms
+    @staticmethod
+    def _create_transform_model(transforms):
         transform_model = create_model(
             "Transform",
             summary_of_query=(
@@ -839,7 +865,16 @@ class TransformPipelineAgent(LumenBaseAgent):
             ),
             transforms=(Optional[list[Literal[tuple(transforms)]]], None),
         )
+        return transform_model
 
+    async def _find_transform(
+        self, messages: list | str, system_prompt: str
+    ) -> Type[Transform] | None:
+        picker_prompt = render_template(
+            "pick_transform.jinja2", transforms=self._available_transforms.values()
+        )
+        transforms = self._available_transforms
+        transform_model = self._create_transform_model(transforms)
         transform = await self.llm.invoke(
             messages,
             system=f"{system_prompt}\n{picker_prompt}",
@@ -871,7 +906,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         self, messages: list | str, transform: Type[Transform], system_prompt: str
     ) -> Transform:
         excluded = transform._internal_params + ["controls", "type"]
-        schema = self._get_schema(memory["current_pipeline"])
+        schema = get_schema(memory["current_pipeline"])
         table = memory["current_table"]
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[
             transform.__name__
@@ -945,8 +980,25 @@ class hvPlotAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_plot"], readonly=True)
 
+    @staticmethod
+    def _get_model(view, schema):
+        # Find parameters
+        excluded = view._internal_params + [
+            "controls",
+            "type",
+            "source",
+            "pipeline",
+            "transforms",
+            "download",
+            "field",
+            "selection_group",
+        ]
+        model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
+        return model
+
+    @staticmethod
     def _view_prompt(
-        self, model: BaseModel, view: hvPlotUIView, table: str, schema: dict
+        model: BaseModel, view: hvPlotUIView, table: str, schema: dict
     ) -> str:
         doc = view.__doc__.split("\n\n")[0]
         prompt = f"{doc}"
@@ -960,20 +1012,9 @@ class hvPlotAgent(LumenBaseAgent):
         table = memory["current_table"]
         system_prompt = await self._system_prompt_with_context(messages)
 
-        # Find parameters
         view = hvPlotUIView
-        schema = self._get_schema(pipeline)
-        excluded = view._internal_params + [
-            "controls",
-            "type",
-            "source",
-            "pipeline",
-            "transforms",
-            "download",
-            "field",
-            "selection_group",
-        ]
-        model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
+        schema = get_schema(pipeline)
+        model = self._get_model(view, schema)
         view_prompt = self._view_prompt(model, view, table, schema)
         if self.debug:
             print(f"{self.name} is being instructed that {view_prompt}.")
