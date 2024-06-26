@@ -18,6 +18,7 @@ from pydantic import create_model
 from pydantic.fields import FieldInfo
 
 from .agents import Agent, ChatAgent
+from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
@@ -111,6 +112,10 @@ class Assistant(Viewer):
                 raise ValueError("No messages to download.")
             return StringIO(json.dumps(messages))
 
+        def download_notebook():
+            nb = export_notebook(self)
+            return StringIO(nb)
+
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke, load_buffer=5,
@@ -154,7 +159,16 @@ class Assistant(Viewer):
             filename="favorited_messages.json",
             sizing_mode="stretch_width",
         )
-        self._controls = Column(download_button, self._current_agent, Tabs(("Memory", memory)))
+        notebook_button = FileDownload(
+            icon="notebook",
+            button_type="success",
+            callback=download_notebook,
+            filename="Lumen_ai.ipynb",
+            sizing_mode="stretch_width",
+        )
+        self._controls = Column(
+            download_button, notebook_button, self._current_agent, Tabs(("Memory", memory))
+        )
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
         async def hide_suggestions(_=None):
