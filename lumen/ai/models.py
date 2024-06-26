@@ -56,6 +56,13 @@ class Sql(BaseModel):
 
 class Validity(BaseModel):
 
+    chain_of_thought: str = Field(
+        description="""
+        Thoughts on whether the current table meets the requirement
+        to answer the user's query, i.e. table contains all necessary columns
+        """
+    )
+
     missing_table_or_columns: list[str] = Field(
         description="List out all the tables or columns requested by the user that are currently missing in the spec."
     )

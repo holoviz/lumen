@@ -58,7 +58,7 @@ class Agent(Viewer):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
-    user = param.String(default="Assistant")
+    user = param.String(default="Agent")
 
     requires = param.List(default=[], readonly=True)
 
@@ -496,7 +496,6 @@ class LumenBaseAgent(Agent):
             },
             "stats": df_describe_dict,
         }
-
         return data
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
@@ -557,25 +556,27 @@ class TableAgent(LumenBaseAgent):
         if len(tables) == 1:
             table = tables[0]
         else:
-            closest_tables = memory.pop("closest_tables", [])
-            if closest_tables:
-                tables = closest_tables
-            elif len(tables) > FUZZY_TABLE_LENGTH:
-                tables = await self._get_closest_tables(messages, tables)
-            system_prompt = await self._system_prompt_with_context(messages)
-            if self.debug:
-                print(f"{self.name} is being instructed that it should {system_prompt}")
-            if len(tables) > 1:
-                table_model = self._create_table_model(tables)
-                result = await self.llm.invoke(
-                    messages,
-                    system=system_prompt,
-                    response_model=table_model,
-                    allow_partial=False,
-                )
-                table = result.table
-            else:
-                table = tables[0]
+            with self.interface.add_step(title="Choosing the most relevant table...") as step:
+                closest_tables = memory.pop("closest_tables", [])
+                if closest_tables:
+                    tables = closest_tables
+                elif len(tables) > FUZZY_TABLE_LENGTH:
+                    tables = await self._get_closest_tables(messages, tables)
+                system_prompt = await self._system_prompt_with_context(messages)
+                if self.debug:
+                    print(f"{self.name} is being instructed that it should {system_prompt}")
+                if len(tables) > 1:
+                    table_model = self._create_table_model(tables)
+                    result = await self.llm.invoke(
+                        messages,
+                        system=system_prompt,
+                        response_model=table_model,
+                        allow_partial=False,
+                    )
+                    table = result.table
+                else:
+                    table = tables[0]
+                step.stream(f"Selected table: {table}")
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
@@ -626,7 +627,7 @@ class TableListAgent(LumenBaseAgent):
             tables = tuple(table.replace('"', "") for table in tables)
             table_bullets = "\n".join(f"- {table}" for table in tables)
             table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.send(table_listing, user=self.name, respond=False)
+        self.interface.add_step(table_listing, success_title="Table List", status="success")
         return tables
 
     async def invoke(self, messages: list | str):
@@ -696,25 +697,24 @@ class SQLAgent(LumenBaseAgent):
                         f"expertly revise, and please do not repeat these issues:\n{errors}")
                 }
             ]
-
-        message = None
-        async for chunk in self.llm.stream(
-            messages,
-            system=system,
-            response_model=Sql,
-            field="query",
-        ):
-            if chunk is None:
-                continue
-            message = self.interface.stream(
-                f"```sql\n{chunk}\n```",
-                user="SQL",
-                message=message,
-                replace=True,
-            )
-        if message.object is None:
+        message = ""
+        with self.interface.add_step(title="Conjuring SQL query...", success_title="SQL Query") as step:
+            async for chunk in self.llm.stream(
+                messages,
+                system=system,
+                response_model=Sql,
+                field="query",
+            ):
+                if chunk is None:
+                    continue
+                message = chunk
+                step.stream(
+                    f"```sql\n{message}\n```",
+                    replace=True,
+                )
+        if not message:
             return
-        sql_query = message.object.replace("```sql", "").replace("```", "").strip()
+        sql_query = message.replace("```sql", "").replace("```", "").strip()
 
         # check whether the SQL query is valid
         transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
@@ -728,21 +728,29 @@ class SQLAgent(LumenBaseAgent):
         source = memory["current_source"]
         table = memory["current_table"]
 
-        join_required = (await self.llm.invoke(
-            messages,
-            system="Determine whether a table join is required to answer the user's query.",
-            response_model=JoinRequired,
-            allow_partial=False,
-        )).join_required
+        if not hasattr(source, "get_sql_expr"):
+            return None
+
+        with self.interface.add_step(title="Checking if join is required") as step:
+            join_required = (await self.llm.invoke(
+                messages,
+                system="Determine whether a table join is required to answer the user's query.",
+                response_model=JoinRequired,
+                allow_partial=False,
+            )).join_required
+            step.success_title = 'Query requires join' if join_required else 'No join required'
 
         if join_required:
             available_tables = source.get_tables()
-            tables = (await self.llm.invoke(
-                messages,
-                system=f"List the tables that need to be joined: {available_tables}.",
-                response_model=TableJoins,
-                allow_partial=False,
-            )).tables
+            with self.interface.add_step(title="Determining tables required for join") as step:
+                tables = (await self.llm.invoke(
+                    messages,
+                    system=f"List the tables that need to be joined: {available_tables}.",
+                    response_model=TableJoins,
+                    allow_partial=False,
+                )).tables
+                step.stream(f'Join requires following tables: {tables}')
+                step.success_title = 'Found tables required for join'
         else:
             tables = [table]
 

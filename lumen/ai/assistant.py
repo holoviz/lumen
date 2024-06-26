@@ -113,7 +113,7 @@ class Assistant(Viewer):
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke,
+                callback=self._chat_invoke, load_buffer=5,
             )
         else:
             interface.callback = self._chat_invoke
@@ -216,13 +216,18 @@ class Assistant(Viewer):
         source = memory.get("current_source")
         spec = get_schema(source, table=table)
         system = render_template("check_validity.jinja2", table=table, spec=spec)
-        validity = await self.llm.invoke(
-            messages=messages,
-            system=system,
-            response_model=Validity,
-            allow_partial=False,
-        )
-        print(system)
+        with self.interface.add_step(title="Checking table relevancy...", user="Assistant") as step:
+            validity = await self.llm.invoke(
+                messages=messages,
+                system=system,
+                response_model=Validity,
+                allow_partial=False,
+            )
+            print(system)
+            if validity.chain_of_thought:
+                step.stream(validity.chain_of_thought)
+            step.success_title = "Table needs refresh" if validity.is_invalid else "Table is still valid"
+
         if validity and validity.is_invalid:
             memory.pop("current_table", None)
             memory.pop("current_data", None)
@@ -230,7 +235,7 @@ class Assistant(Viewer):
             memory.pop("closest_tables", None)
             print("\033[91mInvalidated from memory.\033[0m")
 
-    def _create_suggestion(self, instance, event):
+    async def _create_suggestion(self, instance, event):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
         string = self.llm.stream(
             messages,
@@ -239,7 +244,7 @@ class Assistant(Viewer):
         )
         try:
             self.interface.disabled = True
-            for chunk in string:
+            async for chunk in string:
                 self.interface.active_widget.value_input = chunk
         finally:
             self.interface.disabled = False
@@ -305,7 +310,10 @@ class Assistant(Viewer):
         if len(agent_types) == 1:
             agent = agent_types[0]
         else:
-            agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
+            with self.interface.add_step(title="Selecting relevant agent...", user="Assistant") as step:
+                agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
+                step.stream(reasoning)
+                step.success_title = f"Selected {agent}"
             messages.append({"role": "assistant", "content": reasoning})
 
         if agent is None:
@@ -319,21 +327,26 @@ class Assistant(Viewer):
         while unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in memory
         ):
-            print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
-            subagents = [
-                agent
-                for agent in self.agents
-                if any(ur in agent.provides for ur in unmet_dependencies)
-            ]
-            subagent_name = await self._choose_agent(messages, subagents)
-            if subagent_name is None:
-                continue
-            subagent = agents[subagent_name]
-            agent_chain.append((subagent, unmet_dependencies))
+            with self.interface.add_step(title="Solving dependency chain...") as step:
+                step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
+                print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
+                subagents = [
+                    agent
+                    for agent in self.agents
+                    if any(ur in agent.provides for ur in unmet_dependencies)
+                ]
+                subagent_name = await self._choose_agent(messages, subagents)
+                if subagent_name is None:
+                    continue
+                subagent = agents[subagent_name]
+                agent_chain.append((subagent, unmet_dependencies))
+                step.success_title = "Finished solving dependency chain"
         for subagent, deps in agent_chain[::-1]:
-            print(f"Assistant decided the {subagent.name[:-5]!r} will provide {deps}.")
-            self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
-            await subagent.answer(messages)
+            with self.interface.add_step(title="Choosing subagent...") as step:
+                step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
+                self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
+                await subagent.answer(messages)
+                step.success_title = f"Selected {subagent.name[:-5]}"
         return selected
 
     def _serialize(self, obj):

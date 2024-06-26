@@ -75,7 +75,6 @@ class Llm(param.Parameterized):
                 print(f"Error encountered: {e}")
                 if 'response_model' in kwargs:
                     kwargs['response_model'] = response_model
-
                 system_message = {"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: \n\n`{e}`"}
                 if "system" not in messages[0]:
                     messages = [system_message] + messages
@@ -118,7 +117,7 @@ class Llm(param.Parameterized):
                     string += delta
                     yield string
                 else:
-                    yield getattr(chunk, field)
+                    yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
             for chunk in chunks:
                 if response_model is None:
@@ -126,7 +125,7 @@ class Llm(param.Parameterized):
                     string += delta
                     yield string
                 else:
-                    yield getattr(chunk, field)
+                    yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_key, messages, **kwargs):
         client = self.get_client(model_key)
@@ -224,6 +223,7 @@ class OpenAI(Llm):
 
         if self.use_logfire:
             import logfire
+            logfire.configure()
             logfire.instrument_openai(llm)
         return client
 
