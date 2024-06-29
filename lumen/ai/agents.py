@@ -72,13 +72,10 @@ class Agent(Viewer):
     def __init__(self, **params):
         self._retries_left = 1
         def _exception_handler(exception):
-            if isinstance(exception, UNRECOVERABLE_ERRORS):
-                raise
-
             import traceback
             traceback.print_exc()
 
-            if self._retries_left > 0:
+            if self._retries_left > 0 and not isinstance(exception, UNRECOVERABLE_ERRORS):
                 self._retries_left -= 1
                 self.interface.send(
                     f"Taking a different approach to expertly resolve this issue `{exception}` using world-class knowledge.",
