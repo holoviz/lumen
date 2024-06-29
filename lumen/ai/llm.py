@@ -16,8 +16,6 @@ class Llm(param.Parameterized):
         default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS]
     )
 
-    retry = param.Integer(default=2)
-
     use_logfire = param.Boolean(default=False)
 
     # Allows defining a dictionary of default models.
@@ -64,25 +62,8 @@ class Llm(param.Parameterized):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
 
-        output = None
-        for r in range(self.retry):
-            try:
-                output = await self.run_client(model_key, messages, **kwargs)
-                break
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                print(f"Error encountered: {e}")
-                if 'response_model' in kwargs:
-                    kwargs['response_model'] = response_model
-                system_message = {"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: \n\n`{e}`"}
-                if "system" not in messages[0]:
-                    messages = [system_message] + messages
-                else:
-                    messages = [system_message] + messages[1:]
-                print("MESSAGES", messages)
-        print(f"\033[33mInvoked LLM output: {output!r}\033[0m")
-        if output is None:
+        output = await self.run_client(model_key, messages, **kwargs)
+        if output is None or output == "":
             raise ValueError("LLM failed to return valid output.")
         return output
 
@@ -182,7 +163,7 @@ class Llama(Llm):
 
     async def run_client(self, model_key, messages, **kwargs):
         client = self.get_client(model_key)
-        return client(messages=messages, **kwargs)
+        return await client(messages=messages, **kwargs)
 
 
 class OpenAI(Llm):

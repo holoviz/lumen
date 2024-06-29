@@ -14,6 +14,21 @@ from lumen.sources.base import Source
 THIS_DIR = Path(__file__).parent
 
 
+class LlmSetupError(Exception):
+    """
+    Raised when an error occurs during the setup of the LLM.
+    """
+
+    pass
+
+
+UNRECOVERABLE_ERRORS = (
+    ImportError,
+    LlmSetupError,
+    RecursionError,
+)
+
+
 def render_template(template, **context):
     template_path = Path(template)
     if not template_path.exists():
@@ -32,6 +47,7 @@ def retry_llm_output(retries=3, sleep=1):
     If an error occurs, pass the error message into kwargs for the function
     to manually handle by including it.
     """
+
     def decorator(func):
         if inspect.iscoroutinefunction(func):
 
@@ -41,11 +57,15 @@ def retry_llm_output(retries=3, sleep=1):
                 for i in range(retries):
                     if errors:
                         kwargs["errors"] = errors
+
                     try:
-                        return await func(*args, **kwargs)
+                        output = await func(*args, **kwargs)
+                        if not output:
+                            raise Exception("No valid output from LLM.")
+                        return output
                     except Exception as e:
-                        if i == retries - 1:
-                            return "" # do not re-raise due to outer exception handler
+                        if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
+                            raise
                         errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)
@@ -60,10 +80,13 @@ def retry_llm_output(retries=3, sleep=1):
                     if errors:
                         kwargs["errors"] = errors
                     try:
-                        return func(*args, **kwargs)
+                        output = func(*args, **kwargs)
+                        if not output:
+                            raise Exception("No valid output from LLM.")
+                        return output
                     except Exception as e:
-                        if i == retries - 1:
-                            return "" # do not re-raise due to outer exception handler
+                        if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
+                            raise
                         errors.append(str(e))
                         if sleep:
                             time.sleep(sleep)
