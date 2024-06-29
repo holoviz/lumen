@@ -9,6 +9,8 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
+from .utils import LlmSetupError
+
 
 class Llm(param.Parameterized):
 
@@ -64,24 +66,7 @@ class Llm(param.Parameterized):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
 
-        output = None
-        for r in range(self.retry):
-            try:
-                output = await self.run_client(model_key, messages, **kwargs)
-                break
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                print(f"Error encountered: {e}")
-                if 'response_model' in kwargs:
-                    kwargs['response_model'] = response_model
-                system_message = {"role": "system", "content": f"You just encountered the following error, make sure you don't repeat it: \n\n`{e}`"}
-                if "system" not in messages[0]:
-                    messages = [system_message] + messages
-                else:
-                    messages = [system_message] + messages[1:]
-                print("MESSAGES", messages)
-        print(f"\033[33mInvoked LLM output: {output!r}\033[0m")
+        output = await self.run_client(model_key, messages, **kwargs)
         if output is None:
             raise ValueError("LLM failed to return valid output.")
         return output
@@ -128,8 +113,8 @@ class Llm(param.Parameterized):
                     yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_key, messages, **kwargs):
-        client = self.get_client(model_key)
-        return await client(messages=messages, **kwargs)
+        client = await self.get_client(model_key)
+        return client(messages=messages, **kwargs)
 
 
 class Llama(Llm):
@@ -155,7 +140,7 @@ class Llama(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str):
+    async def get_client(self, model_key: str):
         if client := pn.state.cache.get(model_key):
             return client
         from huggingface_hub import hf_hub_download
@@ -181,7 +166,7 @@ class Llama(Llm):
         return client
 
     async def run_client(self, model_key, messages, **kwargs):
-        client = self.get_client(model_key)
+        client = await self.get_client(model_key)
         return client(messages=messages, **kwargs)
 
 
@@ -206,7 +191,11 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str):
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._key_valid = False
+
+    async def get_client(self, model_key: str):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -220,6 +209,13 @@ class OpenAI(Llm):
         llm = openai.AsyncOpenAI(**model_kwargs)
         raw_client = llm.chat.completions.create
         client = self._create_client(raw_client, model)
+
+        if not self._key_valid:
+            try:
+                await llm.models.list()
+                self._key_valid = True
+            except Exception as e:
+                raise LlmSetupError(f"Error setting up OpenAI: {e}")
 
         if self.use_logfire:
             import logfire
@@ -243,7 +239,7 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str):
+    async def get_client(self, model_key: str):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)

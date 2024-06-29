@@ -34,7 +34,8 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    describe_data, get_schema, render_template, retry_llm_output,
+    UNRECOVERABLE_ERRORS, describe_data, get_schema, render_template,
+    retry_llm_output,
 )
 from .views import LumenOutput, SQLOutput
 
@@ -71,9 +72,12 @@ class Agent(Viewer):
     def __init__(self, **params):
         self._retries_left = 1
         def _exception_handler(exception):
+            if isinstance(exception, UNRECOVERABLE_ERRORS):
+                raise
+
             import traceback
-            tb = traceback.format_exc()
-            print(tb)
+            traceback.print_exc()
+
             if self._retries_left > 0:
                 self._retries_left -= 1
                 self.interface.send(
@@ -86,7 +90,6 @@ class Agent(Viewer):
                     user="System",
                     respond=False
                 )
-
 
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
@@ -287,27 +290,23 @@ class ChatAgent(Agent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    async def requirements(self, messages: list | str):
+    @retry_llm_output()
+    async def requirements(self, messages: list | str, errors=None):
         if 'current_data' in memory:
             return self.requires
 
-        for i in range(3):
-            result = await self.llm.invoke(
-                messages,
-                system=(
-                    "The user may or may not want to chat about a particular dataset. "
-                    "Determine whether the provided user prompt requires access to "
-                    "actual data. If they're only searching for one, it's not required."
-                ),
-                response_model=DataRequired,
-                allow_partial=False,
-            )
-            if result is None:
-                continue
-            elif result.data_required:
-                return self.requires + ['current_table']
-            else:
-                break
+        result = await self.llm.invoke(
+            messages,
+            system=(
+                "The user may or may not want to chat about a particular dataset. "
+                "Determine whether the provided user prompt requires access to "
+                "actual data. If they're only searching for one, it's not required."
+            ),
+            response_model=DataRequired,
+            allow_partial=False,
+        )
+        if result.data_required:
+            return self.requires + ['current_table']
         return self.requires
 
     async def _system_prompt_with_context(
