@@ -21,7 +21,12 @@ class LlmSetupError(Exception):
 
     pass
 
-UNRECOVERABLE_ERRORS = (ImportError, LlmSetupError, RecursionError)
+
+UNRECOVERABLE_ERRORS = (
+    ImportError,
+    LlmSetupError,
+    RecursionError,
+)
 
 
 def render_template(template, **context):
@@ -52,17 +57,15 @@ def retry_llm_output(retries=3, sleep=1):
                 for i in range(retries):
                     if errors:
                         kwargs["errors"] = errors
+
                     try:
                         output = await func(*args, **kwargs)
                         if output is None:
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
-                        if isinstance(e, UNRECOVERABLE_ERRORS):
+                        if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
                             raise
-
-                        if i == retries - 1:
-                            return ""  # do not re-raise due to outer exception handler
                         errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)
@@ -82,11 +85,9 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
-                        if isinstance(e, UNRECOVERABLE_ERRORS):
+                        print(f"Retrying due to {e}")
+                        if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
                             raise
-
-                        if i == retries - 1:
-                            return ""  # do not re-raise due to outer exception handler
                         errors.append(str(e))
                         if sleep:
                             time.sleep(sleep)

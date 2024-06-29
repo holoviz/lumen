@@ -296,6 +296,7 @@ class Assistant(Viewer):
             response_model=agent_model,
             allow_partial=False
         )
+
         if not (out and out.agent):
             raise ValueError("No agent selected.")
         elif return_reasoning:

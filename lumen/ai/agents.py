@@ -34,8 +34,7 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    UNRECOVERABLE_ERRORS, describe_data, get_schema, render_template,
-    retry_llm_output,
+    describe_data, get_schema, render_template, retry_llm_output,
 )
 from .views import LumenOutput, SQLOutput
 
@@ -70,23 +69,17 @@ class Agent(Viewer):
     __abstract = True
 
     def __init__(self, **params):
-        self._retries_left = 1
         def _exception_handler(exception):
+            if str(exception) in self.interface.serialize()[-1]["content"]:
+                return
+
             import traceback
             traceback.print_exc()
-
-            if self._retries_left > 0 and not isinstance(exception, UNRECOVERABLE_ERRORS):
-                self._retries_left -= 1
-                self.interface.send(
-                    f"Taking a different approach to expertly resolve this issue `{exception}` using world-class knowledge.",
-                    user="Exception",
-                )
-            else:
-                self.interface.send(
-                    f"Error cannot be resolved: `{exception}`.",
-                    user="System",
-                    respond=False
-                )
+            self.interface.send(
+                f"Error cannot be resolved:\n\n{exception}",
+                user="System",
+                respond=False
+            )
 
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
@@ -310,7 +303,9 @@ class ChatAgent(Agent):
         self, messages: list | str, context: str = ""
     ) -> str:
         source = memory.get("current_source")
-        tables = source.get_tables() if source else []
+        if not source:
+            raise ValueError("No source found in memory.")
+        tables = source.get_tables()
         if len(tables) > 1:
             if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
                 closest_tables = await self._get_closest_tables(messages, tables, n=5)
