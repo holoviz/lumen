@@ -187,10 +187,6 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._key_valid = False
-
     def get_client(self, model_key: str):
         import openai
 
@@ -205,13 +201,6 @@ class OpenAI(Llm):
         llm = openai.AsyncOpenAI(**model_kwargs)
         raw_client = llm.chat.completions.create
         client = self._create_client(raw_client, model)
-
-        # if not self._key_valid:
-        #     try:
-        #         await llm.models.list()
-        #         self._key_valid = True
-        #     except Exception as e:
-        #         raise LlmSetupError(f"Error setting up OpenAI: {e}")
 
         if self.use_logfire:
             import logfire
