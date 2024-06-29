@@ -60,7 +60,7 @@ def retry_llm_output(retries=3, sleep=1):
 
                     try:
                         output = await func(*args, **kwargs)
-                        if output is None:
+                        if not output:
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
@@ -81,11 +81,10 @@ def retry_llm_output(retries=3, sleep=1):
                         kwargs["errors"] = errors
                     try:
                         output = func(*args, **kwargs)
-                        if output is None:
+                        if not output:
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
-                        print(f"Retrying due to {e}")
                         if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
                             raise
                         errors.append(str(e))
