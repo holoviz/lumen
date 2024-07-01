@@ -57,6 +57,8 @@ class Assistant(Viewer):
 
     demo_inputs = param.List(default=DEMO_MESSAGES)
 
+    deploy_callback = param.Action(doc="Must accept one argument, the Button clicks event object.")
+
     logs_filename = param.String()
 
     def __init__(
@@ -152,6 +154,7 @@ class Assistant(Viewer):
         self._add_suggestions_to_footer(self.suggestions)
 
         self._current_agent = Markdown("## No agent active", margin=0)
+
         download_button = FileDownload(
             icon="download",
             button_type="success",
@@ -166,8 +169,18 @@ class Assistant(Viewer):
             filename="Lumen_ai.ipynb",
             sizing_mode="stretch_width",
         )
+        deploy_button = Button(
+            icon="cloud-upload",
+            name="Deploy notebook",
+            button_type="success",
+            sizing_mode="stretch_width",
+            visible=bool(self.deploy_callback),
+            on_click=self.deploy_callback,
+        )
+
         self._controls = Column(
-            download_button, notebook_button, self._current_agent, Tabs(("Memory", memory))
+            download_button, notebook_button, deploy_button,
+            self._current_agent, Tabs(("Memory", memory))
         )
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
