@@ -390,7 +390,7 @@ class LumenBaseAgent(Agent):
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
         out = LumenOutput(component=component)
         message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(message=message, **message_kwargs, replace=True)
+        self.interface.stream(message=message, replace=True, **message_kwargs)
 
 
 class TableAgent(LumenBaseAgent):
