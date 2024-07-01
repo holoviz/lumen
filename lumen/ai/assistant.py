@@ -57,6 +57,8 @@ class Assistant(Viewer):
 
     demo_inputs = param.List(default=DEMO_MESSAGES)
 
+    notebook_preamble = param.String()
+
     deploy_callback = param.Action(doc="Must accept one argument, the Button clicks event object.")
 
     logs_filename = param.String()
@@ -115,7 +117,7 @@ class Assistant(Viewer):
             return StringIO(json.dumps(messages))
 
         def download_notebook():
-            nb = export_notebook(self)
+            nb = export_notebook(self, preamble=self.notebook_preamble)
             return StringIO(nb)
 
         if interface is None:
