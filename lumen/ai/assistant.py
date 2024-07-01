@@ -308,7 +308,7 @@ class Assistant(Viewer):
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_names[0]
-        self._current_agent.object = "## **Current Agent**: Lumen.ai"
+        self._current_agent.object = "## **Current Agent**: [Lumen.ai](https://lumen.holoviz.org/)"
         agent_model = self._create_agent_model(agent_names)
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
