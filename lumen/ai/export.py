@@ -1,6 +1,8 @@
 import datetime as dt
 import json
 
+from textwrap import dedent
+
 import nbformat
 
 from lumen.ai.views import LumenOutput
@@ -8,14 +10,18 @@ from lumen.pipeline import Pipeline
 from lumen.views import View
 
 
-def make_preamble():
+def make_preamble(preamble):
     now = dt.datetime.now()
     header = nbformat.v4.new_markdown_cell(source=f'# Lumen.ai - Chat Logs {now}')
-    imports = nbformat.v4.new_code_cell(source="""\
-import lumen as lm
-import panel as pn
+    source = preamble + dedent(
+        """
+        import lumen as lm
+        import panel as pn
 
-pn.extension('tabulator')""")
+        pn.extension('tabulator')
+        """
+    ).strip()
+    imports = nbformat.v4.new_code_cell(source=source)
     return [header, imports]
 
 def format_markdown(msg):
@@ -44,8 +50,8 @@ def format_output(msg):
         ])
     return [nbformat.v4.new_code_cell(source='\n'.join(code))]
 
-def export_notebook(assistant):
-    cells = make_preamble()
+def export_notebook(assistant, preamble: str = ""):
+    cells = make_preamble(preamble)
     for msg in assistant.interface.objects:
         if msg.user == 'Help':
             continue
