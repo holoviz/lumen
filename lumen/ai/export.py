@@ -13,14 +13,14 @@ from lumen.views import View
 def make_preamble(preamble):
     now = dt.datetime.now()
     header = nbformat.v4.new_markdown_cell(source=f'# Lumen.ai - Chat Logs {now}')
-    source = preamble + dedent(
+    source = (preamble + dedent(
         """
         import lumen as lm
         import panel as pn
 
         pn.extension('tabulator')
         """
-    ).strip()
+    )).strip()
     imports = nbformat.v4.new_code_cell(source=source)
     return [header, imports]
 
