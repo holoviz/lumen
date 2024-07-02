@@ -122,12 +122,16 @@ class SQLOutput(LumenOutput):
             )
 
         source = memory["current_source"]
-        memory["current_table"] = self.name
         if hasattr(source, "add_table"):
+            # self.name -> SQLOutput02697?
+            memory["current_table"] = self.name
             source.add_table(self.name, self.spec)
+            table = self.name
+        else:
+            table = memory["current_table"]
 
         try:
-            pipeline = Pipeline(source=source, table=self.name)
+            pipeline = Pipeline(source=source, table=table)
             df = pipeline.data
             if len(df) > 0:
                 memory["current_data"] = describe_data(df)
