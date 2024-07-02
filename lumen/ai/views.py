@@ -123,7 +123,9 @@ class SQLOutput(LumenOutput):
 
         source = memory["current_source"]
         memory["current_table"] = self.name
-        source.add_table(self.name, self.spec)
+        if hasattr(source, "add_table"):
+            source.add_table(self.name, self.spec)
+
         try:
             pipeline = Pipeline(source=source, table=self.name)
             df = pipeline.data
