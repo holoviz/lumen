@@ -135,7 +135,8 @@ def describe_data(df: pd.DataFrame) -> str:
         if isinstance(df[col].iloc[0], pd.Timestamp):
             df[col] = pd.to_datetime(df[col])
 
-    df_describe_dict = df.describe(percentiles=[]).drop(["min", "max"]).to_dict()
+    df_describe_dict = df.describe(percentiles=[]).drop(
+        ["min", "max"], errors="ignore").to_dict()
 
     for col in df.select_dtypes(include=["object"]).columns:
         if col not in df_describe_dict:
