@@ -29,7 +29,7 @@ class LumenOutput(Viewer):
             params['spec'] = yaml.safe_dump(component_spec)
         super().__init__(**params)
         code_editor = pn.widgets.CodeEditor(
-            value=self.spec, language=self.language, sizing_mode="stretch_both", min_height=300
+            value=self.spec, language=self.language, sizing_mode="stretch_both",
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = pn.widgets.ButtonIcon(
@@ -62,7 +62,9 @@ class LumenOutput(Viewer):
         self._tabs = pn.Tabs(
             ("Code", code_col),
             ("Output", placeholder),
-            styles={'min-width': "100%"}, active=1
+            styles={'min-width': "100%"},
+            height=700,
+            active=1
         )
         self._tabs.link(self, bidirectional=True, active='active')
         placeholder.objects = [
