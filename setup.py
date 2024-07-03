@@ -63,7 +63,8 @@ extras_require = {
         'nbsite >=0.8.2',
     ]
 }
-extras_require["ai_llama"] = extras_require["ai"] + ["huggingface_hub", "llama-cpp-python"]
+extras_require["ai_local"] = extras_require["ai"] + ["huggingface_hub"]
+extras_require["ai_llama"] = extras_require["ai_local"] + ["llama-cpp-python"]
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
 ########## metadata for setuptools ##########
