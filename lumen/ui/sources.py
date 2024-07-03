@@ -293,7 +293,7 @@ class IntakeSourceEditor(SourceEditor):
     def __init__(self, **params):
         import lumen.sources.intake  # noqa
         params.pop('source_type', None)
-        self.editor = pn.widgets.Ace(language='yaml', theme='dracula', margin=0, sizing_mode='stretch_width')
+        self.editor = pn.widgets.CodeEditor(language='yaml', theme='dracula', margin=0, sizing_mode='stretch_width')
         self.upload = pn.widgets.FileInput(sizing_mode='stretch_width', margin=0)
         super().__init__(**params)
 
