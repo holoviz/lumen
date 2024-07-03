@@ -68,9 +68,9 @@ class DashboardGallery(WizardItem, Gallery):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.editor = pn.widgets.Ace(
+        self.editor = pn.widgets.CodeEditor(
             language='yml', sizing_mode='stretch_both', theme='dracula',
-            margin=(0, 20), height=400
+            margin=(0, 20), min_height=400
         )
         self.upload = pn.widgets.FileInput(
             sizing_mode='stretch_width', margin=(0, 20), height=50
