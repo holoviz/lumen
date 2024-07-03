@@ -135,7 +135,10 @@ def describe_data(df: pd.DataFrame) -> str:
         if isinstance(df[col].iloc[0], pd.Timestamp):
             df[col] = pd.to_datetime(df[col])
 
-    df_describe_dict = df.describe(percentiles=[]).drop(["min", "max"]).to_dict()
+    describe_df = df.describe(percentiles=[])
+    columns_to_drop = ["min", "max"] # present if any numeric
+    columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
+    df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
     for col in df.select_dtypes(include=["object"]).columns:
         if col not in df_describe_dict:
