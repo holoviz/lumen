@@ -553,7 +553,7 @@ class SQLAgent(LumenBaseAgent):
             raise ValueError("No SQL query was generated.")
 
         # check whether the SQL query is valid
-        transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
+        transforms = [SQLOverride(override=sql_query)]
         pipeline = Pipeline(
             source=source, table=tables[0], sql_transforms=transforms
         )
