@@ -72,6 +72,13 @@ class AIHandler(CodeHandler):
         table = os.path.abspath(kwargs['filename'])
         if table.endswith(".parq"):
             table = f"read_parquet('{table}')"
+        elif table.endswith(".csv"):
+            table = f"read_csv('{table}')"
+        elif table.endswith(".json"):
+            table = f"read_json_auto('{table}')"
+        else:
+            raise ValueError('Unsupported file format. Please provide a .parq, .csv, or .json file.')
+        
         kwargs['source'] = SOURCE_CODE.format(table=table)
         super().__init__(*args, **kwargs)
 
