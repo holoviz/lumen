@@ -549,6 +549,8 @@ class SQLAgent(LumenBaseAgent):
         if not message:
             return
         sql_query = message.replace("```sql", "").replace("```", "").strip()
+        if not sql_query:
+            raise ValueError("No SQL query was generated.")
 
         # check whether the SQL query is valid
         transforms = [SQLOverride(override=sql_query), SQLLimit(limit=1)]
@@ -556,6 +558,7 @@ class SQLAgent(LumenBaseAgent):
             source=source, table=tables[0], sql_transforms=transforms
         )
         pipeline.data
+        memory["current_pipeline"] = pipeline
         return sql_query
 
     async def answer(self, messages: list | str):
