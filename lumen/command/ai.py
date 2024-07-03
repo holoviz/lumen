@@ -78,7 +78,7 @@ class AIHandler(CodeHandler):
             table = f"read_json_auto('{table}')"
         else:
             raise ValueError('Unsupported file format. Please provide a .parq, .csv, or .json file.')
-        
+
         kwargs['source'] = SOURCE_CODE.format(table=table)
         super().__init__(*args, **kwargs)
 
