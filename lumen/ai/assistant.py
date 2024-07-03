@@ -240,7 +240,7 @@ class Assistant(Viewer):
             )
             if validity.correct_assessment:
                 step.stream(validity.correct_assessment)
-            step.success_title = f"{validity.is_invalid} needs refresh" if validity.is_invalid else "Memory still valid"
+            step.success_title = f"{validity.is_invalid.title()} needs refresh" if validity.is_invalid else "Memory still valid"
 
         if validity and validity.is_invalid:
             if validity.is_invalid == "table":
@@ -252,6 +252,7 @@ class Assistant(Viewer):
                 print("\033[91mInvalidated from memory.\033[0m")
             elif validity.is_invalid == "sql":
                 memory.pop("current_sql", None)
+                memory.pop("current_data", None)
                 memory.pop("current_pipeline", None)
                 print("\033[91mInvalidated SQL from memory.\033[0m")
 

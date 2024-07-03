@@ -22,9 +22,7 @@ from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
-from ..transforms.sql import (
-    SQLLimit, SQLOverride, SQLTransform, Transform,
-)
+from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
