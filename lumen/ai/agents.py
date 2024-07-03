@@ -557,7 +557,9 @@ class SQLAgent(LumenBaseAgent):
         pipeline = Pipeline(
             source=source, table=tables[0], sql_transforms=transforms
         )
-        pipeline.data
+        df = pipeline.data
+        if len(df) > 0:
+            memory["current_data"] = describe_data(df)
         memory["current_pipeline"] = pipeline
         return sql_query
 
