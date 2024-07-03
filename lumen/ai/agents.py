@@ -566,15 +566,16 @@ class SQLAgent(LumenBaseAgent):
             return None
 
         with self.interface.add_step(title="Checking if join is required") as step:
-            join_required = (await self.llm.invoke(
+            join = (await self.llm.invoke(
                 messages,
                 system="Determine whether a table join is required to answer the user's query.",
                 response_model=JoinRequired,
                 allow_partial=False,
-            )).join_required
-            step.success_title = 'Query requires join' if join_required else 'No join required'
+            ))
+            step.stream(join.chain_of_thought)
+            step.success_title = 'Query requires join' if join.join_required else 'No join required'
 
-        if join_required:
+        if join.join_required:
             available_tables = source.get_tables()
             with self.interface.add_step(title="Determining tables required for join") as step:
                 tables = (await self.llm.invoke(
@@ -583,7 +584,7 @@ class SQLAgent(LumenBaseAgent):
                     response_model=TableJoins,
                     allow_partial=False,
                 )).tables
-                step.stream(f'Join requires following tables: {tables}')
+                step.stream(f'\nJoin requires following tables: {tables}')
                 step.success_title = 'Found tables required for join'
         else:
             tables = [table]
