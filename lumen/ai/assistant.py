@@ -229,25 +229,31 @@ class Assistant(Viewer):
 
         source = memory.get("current_source")
         spec = get_schema(source, table=table)
-        system = render_template("check_validity.jinja2", table=table, spec=spec)
-        with self.interface.add_step(title="Checking table relevancy...", user="Assistant") as step:
+        sql = memory.get("current_sql")
+        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql)
+        with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             validity = await self.llm.invoke(
                 messages=messages,
                 system=system,
                 response_model=Validity,
                 allow_partial=False,
             )
-            print(system)
-            if validity.chain_of_thought:
-                step.stream(validity.chain_of_thought)
-            step.success_title = "Table needs refresh" if validity.is_invalid else "Table is still valid"
+            if validity.correct_assessment:
+                step.stream(validity.correct_assessment)
+            step.success_title = f"{validity.is_invalid} needs refresh" if validity.is_invalid else "Memory still valid"
 
         if validity and validity.is_invalid:
-            memory.pop("current_table", None)
-            memory.pop("current_data", None)
-            memory.pop("current_pipeline", None)
-            memory.pop("closest_tables", None)
-            print("\033[91mInvalidated from memory.\033[0m")
+            if validity.is_invalid == "table":
+                memory.pop("current_table", None)
+                memory.pop("current_data", None)
+                memory.pop("current_sql", None)
+                memory.pop("current_pipeline", None)
+                memory.pop("closest_tables", None)
+                print("\033[91mInvalidated from memory.\033[0m")
+            elif validity.is_invalid == "sql":
+                memory.pop("current_sql", None)
+                memory.pop("current_pipeline", None)
+                print("\033[91mInvalidated SQL from memory.\033[0m")
 
     async def _create_suggestion(self, instance, event):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
@@ -354,7 +360,7 @@ class Assistant(Viewer):
                     continue
                 subagent = agents[subagent_name]
                 agent_chain.append((subagent, unmet_dependencies))
-                step.success_title = "Finished solving dependency chain"
+                step.success_title = f"Solved a dependency with {subagent_name}"
         for subagent, deps in agent_chain[::-1]:
             with self.interface.add_step(title="Choosing subagent...") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
