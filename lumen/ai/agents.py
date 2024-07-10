@@ -69,24 +69,17 @@ class Agent(Viewer):
     __abstract = True
 
     def __init__(self, **params):
-        self._retries_left = 1
         def _exception_handler(exception):
-            import traceback
-            tb = traceback.format_exc()
-            print(tb)
-            if self._retries_left > 0:
-                self._retries_left -= 1
-                self.interface.send(
-                    f"Taking a different approach to expertly resolve this issue `{exception}` using world-class knowledge.",
-                    user="Exception",
-                )
-            else:
-                self.interface.send(
-                    f"Error cannot be resolved: `{exception}`.",
-                    user="System",
-                    respond=False
-                )
+            if str(exception) in self.interface.serialize()[-1]["content"]:
+                return
 
+            import traceback
+            traceback.print_exc()
+            self.interface.send(
+                f"Error cannot be resolved:\n\n{exception}",
+                user="System",
+                respond=False
+            )
 
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
@@ -287,34 +280,32 @@ class ChatAgent(Agent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    async def requirements(self, messages: list | str):
+    @retry_llm_output()
+    async def requirements(self, messages: list | str, errors=None):
         if 'current_data' in memory:
             return self.requires
 
-        for i in range(3):
-            result = await self.llm.invoke(
-                messages,
-                system=(
-                    "The user may or may not want to chat about a particular dataset. "
-                    "Determine whether the provided user prompt requires access to "
-                    "actual data. If they're only searching for one, it's not required."
-                ),
-                response_model=DataRequired,
-                allow_partial=False,
-            )
-            if result is None:
-                continue
-            elif result.data_required:
-                return self.requires + ['current_table']
-            else:
-                break
+        result = await self.llm.invoke(
+            messages,
+            system=(
+                "The user may or may not want to chat about a particular dataset. "
+                "Determine whether the provided user prompt requires access to "
+                "actual data. If they're only searching for one, it's not required."
+            ),
+            response_model=DataRequired,
+            allow_partial=False,
+        )
+        if result.data_required:
+            return self.requires + ['current_table']
         return self.requires
 
     async def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
     ) -> str:
         source = memory.get("current_source")
-        tables = source.get_tables() if source else []
+        if not source:
+            raise ValueError("No source found in memory.")
+        tables = source.get_tables()
         if len(tables) > 1:
             if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
                 closest_tables = await self._get_closest_tables(messages, tables, n=5)
