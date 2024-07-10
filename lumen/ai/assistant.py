@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 from io import StringIO
 from typing import Literal, Type
@@ -59,7 +58,7 @@ class Assistant(Viewer):
 
     notebook_preamble = param.String()
 
-    deploy_callback = param.Action(doc="Must accept one argument, the Button clicks event object.")
+    sidebar_widgets = param.List()
 
     logs_filename = param.String()
 
@@ -103,19 +102,6 @@ class Assistant(Viewer):
             for message in messages:
                 self._logs.update_status(message_id=id(message), removed=True)
 
-        def download_messages():
-            def filter_by_reactions(messages):
-                return [
-                    message for message in messages if "favorite" in message.reactions
-                ]
-
-            messages = self.interface.serialize(filter_by=filter_by_reactions)
-            if len(messages) == 0:
-                messages = self.interface.serialize()
-            if len(messages) == 0:
-                raise ValueError("No messages to download.")
-            return StringIO(json.dumps(messages))
-
         def download_notebook():
             nb = export_notebook(self, preamble=self.notebook_preamble)
             return StringIO(nb)
@@ -157,13 +143,6 @@ class Assistant(Viewer):
 
         self._current_agent = Markdown("## No agent active", margin=0)
 
-        download_button = FileDownload(
-            icon="download",
-            button_type="success",
-            callback=download_messages,
-            filename="favorited_messages.json",
-            sizing_mode="stretch_width",
-        )
         notebook_button = FileDownload(
             icon="notebook",
             button_type="success",
@@ -171,18 +150,9 @@ class Assistant(Viewer):
             filename="Lumen_ai.ipynb",
             sizing_mode="stretch_width",
         )
-        deploy_button = Button(
-            icon="cloud-upload",
-            name="Deploy notebook",
-            button_type="success",
-            sizing_mode="stretch_width",
-            visible=bool(self.deploy_callback),
-            on_click=self.deploy_callback,
-        )
 
         self._controls = Column(
-            download_button, notebook_button, deploy_button,
-            self._current_agent, Tabs(("Memory", memory))
+            notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
         )
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
