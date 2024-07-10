@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import ast
 import os
 import sys
@@ -9,14 +8,13 @@ import bokeh.command.util  # type: ignore
 
 from bokeh.application.handlers.code import CodeHandler  # type: ignore
 from bokeh.command.util import (  # type: ignore
-    build_single_handler_application as _build_application, die,
+    build_single_handler_application as _build_application,
 )
 from bokeh.document import Document
-from panel.command import Serve, main as _pn_main, transform_cmds
+from panel.command import main as _pn_main
 from panel.io.server import Application
 from panel.io.state import set_curdoc
 
-from .. import __version__
 from ..config import config
 
 SOURCE_CODE = """
@@ -125,31 +123,6 @@ def main(args=None):
 
     _pn_main()
 
-    parser = argparse.ArgumentParser(
-        prog="lumen-ai", epilog="See '<command> --help' to read about a specific subcommand."
-    )
-
-    parser.add_argument(
-        '-v', '--version', action='version', version=__version__
-    )
-
-    subs = parser.add_subparsers(help="Sub-commands")
-
-    serve_parser = subs.add_parser(Serve.name, help=Serve.help)
-    Serve(parser=serve_parser)
-
-    sys.argv = transform_cmds(sys.argv)
-    args = parser.parse_args(sys.argv[1:])
-
-    try:
-        ret = args.invoke(args)
-    except Exception as e:
-        die("ERROR: " + str(e))
-
-    if ret is False:
-        sys.exit(1)
-    elif ret is not True and isinstance(ret, int) and ret != 0:
-        sys.exit(ret)
 
 if __name__ == "__main__":
     main()
