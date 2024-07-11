@@ -517,7 +517,7 @@ class SQLAgent(LumenBaseAgent):
         self.interface.stream(out, user="SQL", replace=True)
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, source, tables, sql_expr, errors=None):
+    async def _create_valid_sql(self, messages, system, source, tables, errors=None):
         if errors:
             last_query = self.interface.objects[-1].object.replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -531,12 +531,13 @@ class SQLAgent(LumenBaseAgent):
             ]
         message = ""
         with self.interface.add_step(title="Conjuring SQL query...", success_title="SQL Query") as step:
-            async for chunk in self.llm.stream(
+            async for model in self.llm.stream(
                 messages,
                 system=system,
                 response_model=Sql,
-                field="query",
+                field=None
             ):
+                chunk = model.query
                 if chunk is None:
                     continue
                 message = chunk
@@ -551,9 +552,9 @@ class SQLAgent(LumenBaseAgent):
             raise ValueError("No SQL query was generated.")
 
         # check whether the SQL query is valid
-        transforms = [SQLOverride(override=sql_query)]
+        sql_expr_source = source.create_sql_expr_source({model.expr_name: sql_query})
         pipeline = Pipeline(
-            source=source, table=tables[0], sql_transforms=transforms
+            source=sql_expr_source, table=model.expr_name
         )
         df = pipeline.data
         if len(df) > 0:
@@ -591,11 +592,10 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = [table]
 
-        sql_expr = source.get_sql_expr(table)
         tables_sql_schemas = {
             table: {
                 "schema": get_schema(source, table, include_min_max=False),
-                 "sql": source.get_sql_expr(table)
+                "sql": source.get_sql_expr(table)
             } for table in tables
         }
         sql_prompt = render_template(
@@ -603,7 +603,7 @@ class SQLAgent(LumenBaseAgent):
             tables_sql_schemas=tables_sql_schemas,
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
-        sql_query = await self._create_valid_sql(messages, system, source, tables, sql_expr)
+        sql_query = await self._create_valid_sql(messages, system, source, tables)
         memory["current_sql"] = sql_query
         return sql_query
 
@@ -631,7 +631,6 @@ class PipelineAgent(LumenBaseAgent):
                 source=memory["current_source"],
                 table=memory["current_table"],
             )
-        pipeline.sql_transforms = [SQLOverride(override=memory["current_sql"])]
         memory["current_pipeline"] = pipeline
         pipeline._update_data(force=True)
         memory["current_data"] = describe_data(pipeline.data)

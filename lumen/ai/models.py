@@ -53,6 +53,11 @@ class Sql(BaseModel):
         """
     )
 
+    expr_name: str = Field(
+        description="""
+        Give the SQL expression a descriptive name that includes whatever transforms were applied to it."""
+    )
+
     query: str = Field(description="Expertly optimized, valid SQL query to be executed; do NOT add extraneous comments.")
 
 

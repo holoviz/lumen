@@ -122,7 +122,8 @@ class SQLOutput(LumenOutput):
                 value=True, name="Executing SQL query...", height=50, width=50
             )
 
-        pipeline = memory["current_pipeline"]
+        pipeline = self.component
+        pipeline.source = pipeline.source.create_sql_expr_source({pipeline.table: self.spec})
         try:
             table = Table(
                 pipeline=pipeline, pagination='remote',

@@ -112,7 +112,7 @@ class Pipeline(Viewer, Component):
         manually using the update event or the update button in the UI."""
     )
 
-    source = param.ClassSelector(class_=Source, constant=True, doc="""
+    source = param.ClassSelector(class_=Source, doc="""
         The Source this pipeline is fed by."""
     )
 
@@ -175,6 +175,7 @@ class Pipeline(Viewer, Component):
 
     def _init_callbacks(self):
         self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
+        self._source_watcher = self.param.watch(self._sync_source, 'source')
         self.source.param.watch(self._update_data, self.source._reload_params)
         for filt in self.filters:
             filt.param.watch(self._update_data, ['value'])
@@ -186,6 +187,11 @@ class Pipeline(Viewer, Component):
         if self.pipeline is not None:
             self.pipeline.param.watch(self._update_stale, '_stale')
             self.pipeline.param.watch(self._update_data, 'data')
+
+    def _sync_source(self, event):
+        event.old.param.unwatch(self._source_watcher)
+        self._source_watcher = self.param.watch(self._sync_source, 'source')
+        self._update_data()
 
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()

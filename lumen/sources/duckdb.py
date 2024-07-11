@@ -10,10 +10,10 @@ from ..transforms.sql import (
     SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
 from ..util import get_dataframe_schema
-from .base import Source, cached, cached_schema
+from .base import BaseSQLSource, cached, cached_schema
 
 
-class DuckDBSource(Source):
+class DuckDBSource(BaseSQLSource):
     """
     DuckDBSource provides a simple wrapper around the DuckDB SQL
     connector.
@@ -50,20 +50,20 @@ class DuckDBSource(Source):
 
     source_type = 'duckdb'
 
-    _supports_sql = True
-
     def __init__(self, **params):
         super().__init__(**params)
         self._connection = duckdb.connect(self.uri)
         for init in self.initializers:
             self._connection.execute(init)
 
-    def add_table(self, name, sql_expr):
-        if isinstance(self.tables, list):
-            self.tables = {
-                table: table for table in self.tables
-            }
-        self.tables[name] = sql_expr
+    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+        """
+        Creates a new SQL Source given a set of table names and
+        corresponding SQL expressions.
+        """
+        params = dict(self.param.values(), **kwargs)
+        params['tables'] = tables
+        return type(self)(**params)
 
     def get_tables(self):
         if isinstance(self.tables, (dict, list)):
