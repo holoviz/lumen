@@ -121,10 +121,11 @@ class SQLOutput(LumenOutput):
 
     @param.depends('spec', 'active')
     async def _render_component(self):
-        if self.active == 0:
-            yield pn.indicators.LoadingSpinner(
-                value=True, name="Executing SQL query...", height=50, width=50
-            )
+        yield pn.indicators.LoadingSpinner(
+            value=True, name="Executing SQL query...", height=50, width=50
+        )
+        if self.active != 1:
+            return
 
         pipeline = self.component
         pipeline.source = pipeline.source.create_sql_expr_source({pipeline.table: self.spec})
