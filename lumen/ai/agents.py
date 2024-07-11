@@ -510,7 +510,7 @@ class SQLAgent(LumenBaseAgent):
     @retry_llm_output()
     async def _create_valid_sql(self, messages, system, source, tables, errors=None):
         if errors:
-            last_query = self.interface.objects[-1].object.replace("```sql", "").rstrip("```").strip()
+            last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
             messages += [
                 {

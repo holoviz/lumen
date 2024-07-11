@@ -111,6 +111,10 @@ class LumenOutput(Viewer):
         return self._tabs
 
 
+    def __str__(self):
+        return self.spec
+
+
 class SQLOutput(LumenOutput):
 
     language = "sql"

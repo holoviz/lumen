@@ -71,7 +71,7 @@ class Validity(BaseModel):
     )
 
     is_invalid: Literal["table", "sql"] | None = Field(
-        description="Whether the table or sql is invalid or no longer relevant. None if valid."
+        description="Whether the `table` or `sql` is invalid or no longer relevant depending on correct assessment. None if valid."
     )
 
 
