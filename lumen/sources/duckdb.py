@@ -50,6 +50,8 @@ class DuckDBSource(BaseSQLSource):
 
     source_type = 'duckdb'
 
+    dialect = 'duckdb'
+
     def __init__(self, **params):
         connection = params.pop('_connection', None)
         super().__init__(**params)
