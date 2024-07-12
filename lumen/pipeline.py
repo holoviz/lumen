@@ -175,8 +175,8 @@ class Pipeline(Viewer, Component):
 
     def _init_callbacks(self):
         self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
-        self._source_watcher = self.param.watch(self._sync_source, 'source')
-        self.source.param.watch(self._update_data, self.source._reload_params)
+        self.param.watch(self._sync_source, 'source')
+        self._source_watcher = self.source.param.watch(self._update_data, self.source._reload_params)
         for filt in self.filters:
             filt.param.watch(self._update_data, ['value'])
         for transform in self.transforms+self.sql_transforms:
@@ -189,8 +189,8 @@ class Pipeline(Viewer, Component):
             self.pipeline.param.watch(self._update_data, 'data')
 
     def _sync_source(self, event):
-        self.param.unwatch(self._source_watcher)
-        self._source_watcher = self.param.watch(self._sync_source, 'source')
+        event.old.param.unwatch(self._source_watcher)
+        self._source_watcher = self.source.param.watch(self._update_data, self.source._reload_params)
         self._update_data()
 
     def _update_refs(self, *events: param.parameterized.Event):
