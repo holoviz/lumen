@@ -990,6 +990,26 @@ class PerspectiveView(View):
         return self._panel_type(**self._normalize_params(self._get_params()))
 
 
+class VegaLiteView(View):
+    """
+    `VegaLite` provides a declarative way to render vega-lite charts.
+    """
+
+    spec = param.Dict()
+
+    view_type = 'vegalite'
+
+    _extension = 'vega'
+
+    def _get_params(self) -> Dict[str, Any]:
+        df = self.get_data()
+        encoded = dict(self.spec, data={'values': df})
+        return dict(object=encoded, **self.kwargs)
+
+    def get_panel(self) -> pn.pane.Vega:
+        return pn.pane.Vega(**self._normalize_params(self._get_params()))
+
+
 class AltairView(View):
     """
     `AltairView` provides a declarative way to render Altair charts.
