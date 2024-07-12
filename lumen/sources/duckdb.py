@@ -39,7 +39,7 @@ class DuckDBSource(BaseSQLSource):
 
     uri = param.String(doc="The URI of the DuckDB database")
 
-    sql_expr = param.String(default='SELECT * FROM {table}', doc="""
+    sql_expr = param.String(default='SELECT * FROM "{table}"', doc="""
         The SQL expression to execute.""")
 
     tables = param.ClassSelector(class_=(list, dict), doc="""
@@ -51,10 +51,14 @@ class DuckDBSource(BaseSQLSource):
     source_type = 'duckdb'
 
     def __init__(self, **params):
+        connection = params.pop('_connection', None)
         super().__init__(**params)
-        self._connection = duckdb.connect(self.uri)
-        for init in self.initializers:
-            self._connection.execute(init)
+        if connection:
+            self._connection = connection
+        else:
+            self._connection = duckdb.connect(self.uri)
+            for init in self.initializers:
+                self._connection.execute(init)
 
     def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
         """
@@ -63,6 +67,9 @@ class DuckDBSource(BaseSQLSource):
         """
         params = dict(self.param.values(), **kwargs)
         params['tables'] = tables
+        # Reuse connection unless it has changed
+        if 'uri' not in kwargs and 'initializers' not in kwargs:
+            params['_connection'] = self._connection
         return type(self)(**params)
 
     def get_tables(self):
