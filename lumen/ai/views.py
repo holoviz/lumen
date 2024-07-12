@@ -10,7 +10,6 @@ from ..downloads import Download
 from ..pipeline import Pipeline
 from ..views.base import Table
 from .memory import memory
-from .utils import describe_data
 
 
 class LumenOutput(Viewer):
@@ -112,25 +111,25 @@ class LumenOutput(Viewer):
         return self._tabs
 
 
+    def __repr__(self):
+        return self.spec
+
+
 class SQLOutput(LumenOutput):
 
     language = "sql"
 
     @param.depends('spec', 'active')
     async def _render_component(self):
-        if self.active == 0:
-            yield pn.indicators.LoadingSpinner(
-                value=True, name="Executing SQL query...", height=50, width=50
-            )
+        yield pn.indicators.LoadingSpinner(
+            value=True, name="Executing SQL query...", height=50, width=50
+        )
+        if self.active != 1:
+            return
 
-        source = memory["current_source"]
-        memory["current_table"] = self.name
-        source.add_table(self.name, self.spec)
+        pipeline = self.component
+        pipeline.source = pipeline.source.create_sql_expr_source({pipeline.table: self.spec})
         try:
-            pipeline = Pipeline(source=source, table=self.name)
-            df = pipeline.data
-            if len(df) > 0:
-                memory["current_data"] = describe_data(df)
             table = Table(
                 pipeline=pipeline, pagination='remote',
                 height=458, page_size=12
@@ -144,7 +143,6 @@ class SQLOutput(LumenOutput):
             download_pane.styles = {'position': 'absolute', 'right': '-50px'}
             output = pn.Column(download_pane, table)
             yield output
-            memory["current_pipeline"] = self.component = pipeline
         except Exception as e:
             import traceback
             traceback.print_exc()

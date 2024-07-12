@@ -698,6 +698,29 @@ class FileSource(Source):
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
+class BaseSQLSource(Source):
+    """
+    The BaseSQLSource implements the additional API required by
+    a SQL based data source.
+    """
+
+    # Declare this source supports SQL transforms
+    _supports_sql = True
+
+    def get_sql_expr(self, table: str):
+        """
+        Returns the SQL expression corresponding to a particular table.
+        """
+        raise NotImplementedError
+
+    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+        """
+        Creates a new SQL Source given a set of table names and
+        corresponding SQL expressions.
+        """
+        raise NotImplementedError
+
+
 class JSONSource(FileSource):
     """
     The JSONSource is very similar to the FileSource but loads json files.

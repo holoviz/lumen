@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -51,24 +53,25 @@ class Sql(BaseModel):
         """
     )
 
+    expr_name: str = Field(
+        description="""
+        Give the SQL expression a descriptive name that includes whatever transforms were applied to it."""
+    )
+
     query: str = Field(description="Expertly optimized, valid SQL query to be executed; do NOT add extraneous comments.")
 
 
 class Validity(BaseModel):
 
-    chain_of_thought: str = Field(
+    correct_assessment: str = Field(
         description="""
         Thoughts on whether the current table meets the requirement
         to answer the user's query, i.e. table contains all necessary columns
         """
     )
 
-    missing_table_or_columns: list[str] = Field(
-        description="List out all the tables or columns requested by the user that are currently missing in the spec."
-    )
-
-    is_invalid: bool = Field(
-        description="Whether the table needs a refresh."
+    is_invalid: Literal["table", "sql"] | None = Field(
+        description="Whether the `table` or `sql` is invalid or no longer relevant depending on correct assessment. None if valid."
     )
 
 

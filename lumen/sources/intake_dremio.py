@@ -32,6 +32,15 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
             table = tables[normalized_tables.index(normalized_table)]
         return super()._get_source(table)
 
+    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+        """
+        Creates a new SQL Source given a set of table names and
+        corresponding SQL expressions.
+        """
+        params = dict(self.param.values(), **kwargs)
+        params['tables'] = tables
+        return IntakeDremioSQLSource(**params)
+
 
 class IntakeDremioSource(IntakeBaseDremioSource):
     """
