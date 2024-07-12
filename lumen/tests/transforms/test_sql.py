@@ -26,19 +26,19 @@ def test_sql_limit():
 def test_sql_columns():
     assert (
         SQLColumns.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
-        """SELECT\n    A, B\nFROM ( SELECT * FROM TABLE )"""
+        """SELECT\n    "A", "B"\nFROM ( SELECT * FROM TABLE )"""
     )
 
 def test_sql_distinct():
     assert (
         SQLDistinct.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
-        """SELECT DISTINCT\n    A, B\nFROM ( SELECT * FROM TABLE )"""
+        """SELECT DISTINCT\n    "A", "B"\nFROM ( SELECT * FROM TABLE )"""
     )
 
 def test_sql_min_max():
     assert (
         SQLMinMax.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
-        """SELECT\n    MIN(A) as A_min, MAX(A) as A_max, MIN(B) as B_min, MAX(B) as B_max\nFROM ( SELECT * FROM TABLE )"""
+        """SELECT\n    MIN("A") as "A_min", MAX("A") as "A_max", MIN("B") as "B_min", MAX("B") as "B_max"\nFROM ( SELECT * FROM TABLE )"""
     )
 
 def test_sql_filter_none():
