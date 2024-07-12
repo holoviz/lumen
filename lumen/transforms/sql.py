@@ -13,6 +13,10 @@ from jinja2 import Template
 from .base import Transform
 
 
+def quote(string):
+    return f'"{string}"'
+
+
 class SQLTransform(Transform):
     """
     Base class for SQL transforms.
@@ -117,7 +121,7 @@ class SQLDistinct(SQLTransform):
             SELECT DISTINCT
                 {{columns}}
             FROM ( {{sql_in}} )"""
-        return self._render_template(template, sql_in=sql_in, columns=', '.join(self.columns))
+        return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
 
 
 class SQLMinMax(SQLTransform):
@@ -129,8 +133,8 @@ class SQLMinMax(SQLTransform):
     def apply(self, sql_in):
         aggs = []
         for col in self.columns:
-            aggs.append(f'MIN({col}) as {col}_min')
-            aggs.append(f'MAX({col}) as {col}_max')
+            aggs.append(f'MIN("{col}") as "{col}_min"')
+            aggs.append(f'MAX("{col}") as "{col}_max"')
         template = """
             SELECT
                 {{columns}}
@@ -150,7 +154,7 @@ class SQLColumns(SQLTransform):
                 {{columns}}
             FROM ( {{sql_in}} )
         """
-        return self._render_template(template, sql_in=sql_in, columns=', '.join(self.columns))
+        return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
 
 
 class SQLFilter(SQLTransform):

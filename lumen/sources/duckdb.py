@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+
 from typing import Any, Dict
 
 import duckdb
@@ -39,7 +41,7 @@ class DuckDBSource(BaseSQLSource):
 
     uri = param.String(doc="The URI of the DuckDB database")
 
-    sql_expr = param.String(default='SELECT * FROM {table}', doc="""
+    sql_expr = param.String(default='SELECT * FROM "{table}"', doc="""
         The SQL expression to execute.""")
 
     tables = param.ClassSelector(class_=(list, dict), doc="""
@@ -52,9 +54,14 @@ class DuckDBSource(BaseSQLSource):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._connection = duckdb.connect(self.uri)
+        self._connection = self._init_connection(self.uri)
         for init in self.initializers:
             self._connection.execute(init)
+
+    @classmethod
+    @functools.cache
+    def _init_connection(cls, uri):
+        return duckdb.connect(uri)
 
     def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
         """
