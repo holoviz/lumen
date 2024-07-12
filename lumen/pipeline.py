@@ -189,7 +189,7 @@ class Pipeline(Viewer, Component):
             self.pipeline.param.watch(self._update_data, 'data')
 
     def _sync_source(self, event):
-        event.old.param.unwatch(self._source_watcher)
+        self.param.unwatch(self._source_watcher)
         self._source_watcher = self.param.watch(self._sync_source, 'source')
         self._update_data()
 
