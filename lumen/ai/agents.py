@@ -590,9 +590,11 @@ class SQLAgent(LumenBaseAgent):
                 "sql": source.get_sql_expr(table)
             } for table in tables
         }
+        dialect = source.dialect
         sql_prompt = render_template(
             "sql_query.jinja2",
             tables_sql_schemas=tables_sql_schemas,
+            dialect=dialect,
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
         sql_query = await self._create_valid_sql(messages, system, source, tables)

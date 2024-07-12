@@ -21,6 +21,8 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     filter_in_sql = param.Boolean(default=True, doc="")
 
+    dialect = 'any'
+
     # Declare this source supports SQL transforms
     _supports_sql = True
 

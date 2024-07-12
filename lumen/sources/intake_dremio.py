@@ -23,6 +23,8 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
 
     password = param.String(default=None, doc="Dremio password or token")
 
+    dialect = 'dremio'
+
     def _get_source(self, table):
         # Fuzzy matching to ignore quoting issues
         normalized_table = table.replace('"', '').lower()
