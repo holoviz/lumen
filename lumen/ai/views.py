@@ -111,7 +111,7 @@ class LumenOutput(Viewer):
         return self._tabs
 
 
-    def __str__(self):
+    def __repr__(self):
         return self.spec
 
 
