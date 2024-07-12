@@ -105,7 +105,6 @@ bokeh.command.util.build_single_handler_application = build_single_handler_appli
 
 
 def main(args=None):
-    """Merges commands offered by pyct and bokeh and provides help for both"""
     start, template_vars = None, None
     for i, arg in enumerate(sys.argv):
         if '--template-vars' in arg:
