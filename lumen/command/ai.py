@@ -8,13 +8,9 @@ import sys
 import bokeh.command.util  # type: ignore
 
 from bokeh.application.handlers.code import CodeHandler  # type: ignore
-from bokeh.command.util import (  # type: ignore
-    build_single_handler_application as _build_application, die,
-)
-from bokeh.document import Document
+from bokeh.command.util import die  # type: ignore
 from panel.command import Serve, transform_cmds
 from panel.io.server import Application
-from panel.io.state import set_curdoc
 
 from ..config import config
 
@@ -31,11 +27,7 @@ pn.extension("tabulator", "codeeditor", inline=False, template="fast")
 
 llm = lmai.llm.OpenAI()
 
-lmai.memory["current_source"] = DuckDBSource(
-    tables=["{table}"],
-    uri=":memory:",
-    initializers=["INSTALL httpfs;", "LOAD httpfs;"],
-)
+{table_initializer}
 
 assistant = lmai.Assistant(
     llm=llm,
@@ -64,45 +56,74 @@ class AIHandler(CodeHandler):
 
         Keywords:
             filename (str) : a path to a dataset
+            no_data (bool) : if True, do not load data
 
         '''
-        if 'filename' not in kwargs:
-            raise ValueError('Must pass a filename to Lumen AI')
-        table = os.path.abspath(kwargs['filename'])
-        if table.endswith(".parq"):
-            table = f"read_parquet('{table}')"
-        elif table.endswith(".csv"):
-            table = f"read_csv('{table}')"
-        elif table.endswith(".json"):
-            table = f"read_json_auto('{table}')"
-        else:
-            raise ValueError('Unsupported file format. Please provide a .parq, .csv, or .json file.')
+        table_initializer = ""
+        if 'filename' in kwargs:
+            table = os.path.abspath(kwargs['filename'])
+            if table.endswith(".parq") or table.endswith(".parquet"):
+                table = f"read_parquet('{table}')"
+            elif table.endswith(".csv"):
+                table = f"read_csv('{table}')"
+            elif table.endswith(".json"):
+                table = f"read_json_auto('{table}')"
+            else:
+                raise ValueError('Unsupported file format. Please provide a .parq, .parquet, .csv, or .json file.')
 
-        kwargs['source'] = SOURCE_CODE.format(table=table)
+            table_initializer = f"""
+lmai.memory["current_source"] = DuckDBSource(
+    tables=["{table}"],
+    uri=":memory:",
+    initializers=["INSTALL httpfs;", "LOAD httpfs;"],
+)
+            """
+
+        if 'no_data' in kwargs:
+            kwargs.pop('no_data')
+            kwargs['filename'] = 'no_data'
+
+        kwargs['source'] = SOURCE_CODE.format(table_initializer=table_initializer)
         super().__init__(*args, **kwargs)
 
 
-    def modify_document(self, doc: Document) -> None:
-        # Temporary fix for issues with --warm flag
-        with set_curdoc(doc):
-            super().modify_document(doc)
+def build_single_handler_application(path: str | None, argv):
 
+    if path is None or not os.path.isfile(path):
+        handler = AIHandler(no_data=True)
+    else:
+        handler = AIHandler(filename=path)
 
-def build_single_handler_application(path, argv):
-    if not os.path.isfile(path):
-        return _build_application(path, argv)
-
-    handler = AIHandler(filename=path)
     if handler.failed:
         raise RuntimeError("Error loading %s:\n\n%s\n%s " % (path, handler.error, handler.error_detail))
 
     application = Application(handler)
-
     return application
 
+def build_single_handler_applications(paths: list[str], argvs: dict[str, list[str]] | None = None) -> dict[str, Application]:
+    ''' Custom to allow for standalone `lumen-ai` command to launch without data'''
+    applications: dict[str, Application] = {}
+    argvs = argvs or {}
+
+    if 'no_data' in sys.argv:
+        application = build_single_handler_application(None, [])
+        applications['/'] = application
+    else:
+        for path in paths:
+            application = build_single_handler_application(path, argvs.get(path, []))
+
+            route = application.handlers[0].url_path()
+
+            if not route:
+                if '/' in applications:
+                    raise RuntimeError(f"Don't know the URL path to use for {path}")
+                route = '/'
+            applications[route] = application
+
+    return applications
 
 bokeh.command.util.build_single_handler_application = build_single_handler_application
-
+bokeh.command.subcommands.serve.build_single_handler_applications = build_single_handler_applications
 
 def main(args=None):
     start, template_vars = None, None
@@ -113,16 +134,22 @@ def main(args=None):
                 end = i
                 template_vars = arg.split('=')[1]
             else:
-                end = i+1
+                end = i + 1
                 template_vars = sys.argv[end]
             break
 
     if start is not None:
-        sys.argv = sys.argv[:start] + sys.argv[end+1:]
+        sys.argv = sys.argv[:start] + sys.argv[end + 1:]
         config.template_vars = ast.literal_eval(template_vars)
 
     parser = argparse.ArgumentParser(
-        prog="lumen-ai", epilog="See '<command> --help' to read about a specific subcommand."
+        prog="lumen-ai",
+        description="""
+        Lumen AI - Launch Lumen AI applications easily.\n\n To start the application without any
+          data, simply run 'lumen-ai' with no additional arguments. You can upload data through
+          the chat interface afterwards.
+          """,
+        epilog="See '<command> --help' to read about a specific subcommand."
     )
 
     parser.add_argument(
@@ -131,18 +158,24 @@ def main(args=None):
 
     subs = parser.add_subparsers(help="Sub-commands")
 
-    serve_parser = subs.add_parser(Serve.name, help=Serve.help)
+    serve_parser = subs.add_parser(Serve.name, help=
+                                   """
+                                   Run a bokeh server to serve the Lumen AI application.
+                                   This command should be followed by dataset paths or directories
+                                   to add to the chat memory, which can be a .parq, .parquet, .csv,
+                                   or .json file. run `lumen-ai serve --help` for more options)
+                                   """)
     serve_command = Serve(parser=serve_parser)
     serve_parser.set_defaults(invoke=serve_command.invoke)
 
-    if len(sys.argv) == 1:
-        all_commands = [Serve.name]
-        die(f"ERROR: Must specify subcommand, one of: {', '.join(all_commands)}")
-
-    if sys.argv[1] in ('--help', '-h'):
+    if len(sys.argv) > 1 and sys.argv[1] in ('--help', '-h'):
         args = parser.parse_args(sys.argv[1:])
         args.invoke(args)
         sys.exit()
+
+    if len(sys.argv) == 1:
+    # If no command is specified, start the server with an empty application
+        sys.argv.extend(['serve', 'no_data'])
 
     sys.argv = transform_cmds(sys.argv)
     args = parser.parse_args(sys.argv[1:])
