@@ -112,8 +112,9 @@ setup_args = dict(
             "lumen = lumen.rest:lumen_rest_provider"
         ],
         'console_scripts': [
-            'lumen = lumen.command:main'
-        ]
+            'lumen = lumen.command:main',
+            'lumen-ai = lumen.command.ai:main'
+        ],
     }
 )
 
