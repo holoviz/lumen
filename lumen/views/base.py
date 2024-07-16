@@ -765,8 +765,6 @@ class hvPlotView(hvPlotBaseView):
 
     _panel_type = pn.pane.HoloViews
 
-    _requires_source: ClassVar[bool] = False
-
     _supports_selections = True
 
     def __init__(self, **params):
@@ -874,6 +872,8 @@ class hvOverlayView(View):
     view_type = 'hv_overlay'
 
     _panel_type = pn.pane.HoloViews
+
+    _requires_source: ClassVar[bool] = False
 
     _supports_selections = True
 
