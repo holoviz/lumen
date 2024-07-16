@@ -126,19 +126,20 @@ class View(MultiTypeComponent, Viewer):
         # Populate field selector parameters
         params = {k: v for k, v in params.items() if k in self.param}
         pipeline = params.pop('pipeline', None)
-        if pipeline is None:
+        if pipeline is None and self._requires_source:
             raise ValueError("Views must declare a Pipeline.")
         if isinstance(params.get("download"), str):
             *filenames, ext = params.get("download").split(".")
             filename = ".".join(filenames) or None
             params["download"] = type(self.download)(filename=filename, format=ext)
-        fields = list(pipeline.schema)
-        for fp in self._field_params:
-            if isinstance(self.param[fp], param.Selector):
-                self.param[fp].objects = fields
-        pipeline.param.watch(self.update, 'data')
-        if self.loading_indicator:
-            pipeline._update_widget.param.watch(self._update_loading, 'loading')
+        if pipeline is not None:
+            fields = list(pipeline.schema)
+            for fp in self._field_params:
+                if isinstance(self.param[fp], param.Selector):
+                    self.param[fp].objects = fields
+            pipeline.param.watch(self.update, 'data')
+            if self.loading_indicator:
+                pipeline._update_widget.param.watch(self._update_loading, 'loading')
         super().__init__(pipeline=pipeline, refs=refs, **params)
         self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'name')])
         self.download.view = self
