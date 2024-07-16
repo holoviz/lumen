@@ -75,7 +75,6 @@ class AIHandler(CodeHandler):
 lmai.memory["current_source"] = DuckDBSource(
     tables=["{table}"],
     uri=":memory:",
-    initializers=["INSTALL httpfs;", "LOAD httpfs;"],
 )
             """
 
