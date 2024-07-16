@@ -23,6 +23,8 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
 
     password = param.String(default=None, doc="Dremio password or token")
 
+    dialect = 'dremio'
+
     def _get_source(self, table):
         # Fuzzy matching to ignore quoting issues
         normalized_table = table.replace('"', '').lower()
@@ -31,6 +33,15 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
         if table not in tables and normalized_table in normalized_tables:
             table = tables[normalized_tables.index(normalized_table)]
         return super()._get_source(table)
+
+    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+        """
+        Creates a new SQL Source given a set of table names and
+        corresponding SQL expressions.
+        """
+        params = dict(self.param.values(), **kwargs)
+        params['tables'] = tables
+        return IntakeDremioSQLSource(**params)
 
 
 class IntakeDremioSource(IntakeBaseDremioSource):

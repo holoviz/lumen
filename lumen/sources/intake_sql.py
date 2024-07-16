@@ -10,16 +10,18 @@ from ..transforms.sql import (
 )
 from ..util import get_dataframe_schema
 from ..validation import ValidationError
-from .base import cached, cached_schema
+from .base import BaseSQLSource, cached, cached_schema
 from .intake import IntakeBaseSource, IntakeSource
 
 
-class IntakeBaseSQLSource(IntakeBaseSource):
+class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     cache_per_query = param.Boolean(default=True, doc="""
         Whether to query the whole dataset or individual queries.""")
 
     filter_in_sql = param.Boolean(default=True, doc="")
+
+    dialect = 'any'
 
     # Declare this source supports SQL transforms
     _supports_sql = True
