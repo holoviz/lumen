@@ -298,6 +298,16 @@ class Component(param.Parameterized):
         )
 
     @classmethod
+    def _is_param_function(cls, p):
+        pobj = cls.param[p]
+        if not isinstance(pobj, param.ClassSelector):
+            return False
+        if isinstance(pobj.class_, tuple):
+            return all(issubclass(c, param.ParameterizedFunction) for c in pobj.class_)
+        else:
+            return issubclass(pobj.class_, param.ParameterizedFunction)
+
+    @classmethod
     def _validate_spec_(
         cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
@@ -377,7 +387,8 @@ class Component(param.Parameterized):
         """
         spec = {}
         for p, value in self.param.values().items():
-            if p in self._internal_params or value == self.param[p].default:
+            pobj = self.param[p]
+            if p in self._internal_params or value == pobj.default:
                 continue
             elif self._is_component_key(p):
                 pspec = value.to_spec(context=context)
@@ -389,6 +400,10 @@ class Component(param.Parameterized):
                     None if v is None else v.to_spec(context=context)
                     for v in value
                 ]
+            elif self._is_param_function(p):
+                value_type = type(value)
+                module_spec = f'{value_type.__module__}.{value_type.__name__}'
+                value = dict(value.param.values(), type=module_spec)
             spec[p] = value
         if context is not None:
             spec.update(self._refs)

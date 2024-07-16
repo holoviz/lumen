@@ -17,7 +17,6 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
-from packaging.version import Version
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
 from panel.pane.perspective import (
@@ -337,6 +336,12 @@ class View(MultiTypeComponent, Viewer):
             if is_ref(value):
                 refs[p] = value
                 value = state.resolve_reference(value)
+            if cls._is_param_function(p):
+                if isinstance(value, dict) and 'type' in value:
+                    func_spec = dict(value)
+                    module_ref = func_spec.pop('type')
+                    func = resolve_module_reference(module_ref)
+                    value = func.instance(**func_spec)
             if isinstance(parameter, param.ObjectSelector) and parameter.names:
                 try:
                     value = parameter.names.get(value, value)
@@ -742,6 +747,9 @@ class hvPlotView(hvPlotBaseView):
     its simple API.
     """
 
+    operation = param.ClassSelector(class_=param.ParameterizedFunction, doc="""
+        Operation to apply to HoloViews plot.""")
+
     opts = param.Dict(default={}, doc="HoloViews options to apply on the plot.")
 
     streaming = param.Boolean(default=False, doc="""
@@ -756,6 +764,8 @@ class hvPlotView(hvPlotBaseView):
     _ignore_kwargs = ['tables']
 
     _panel_type = pn.pane.HoloViews
+
+    _requires_source: ClassVar[bool] = False
 
     _supports_selections = True
 
@@ -778,14 +788,9 @@ class hvPlotView(hvPlotBaseView):
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         plot = plot.opts(**self.opts) if self.opts else plot
-
-        # Param 2 compatibility
-        if Version(param.__version__) <= Version('2.0.0a2'):
-            watchers = self._param_watchers
-        else:
-            watchers = self.param.watchers
-
-        if self.selection_group or 'selection_expr' in watchers:
+        if self.operation:
+            plot = self.operation(plot)
+        if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
         return plot
 
@@ -856,6 +861,30 @@ class hvPlotView(hvPlotBaseView):
                 self.param.trigger('rerender')
         else:
             self._data_stream.send(self.get_data())
+
+
+class hvOverlayView(View):
+    """
+    `hvOverlayView` allows overlaying a list of layers consisting of
+    `hvPlotView` components.
+    """
+
+    layers = param.List(item_type=hvPlotView)
+
+    view_type = 'hv_overlay'
+
+    _panel_type = pn.pane.HoloViews
+
+    _supports_selections = True
+
+    def _get_params(self):
+        from holoviews import Overlay
+        overlay = Overlay([layer.get_plot(layer.get_data()) for layer in self.layers])
+        return dict(object=overlay)
+
+    def get_panel(self):
+        params = self._get_params()
+        return self._panel_type(**params)
 
 
 class Table(View):
@@ -931,7 +960,6 @@ class DownloadView(View):
     def _get_params(self) -> Dict[str, Any]:
         filename = f'{self.filename}.{self.format}'
         return dict(filename=filename, callback=self._table_data, **self.kwargs)
-
 
 
 class PerspectiveView(View):
