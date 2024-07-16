@@ -285,6 +285,7 @@ class View(MultiTypeComponent, Viewer):
                 "full specification for the View."
             )
         spec = spec.copy()
+        view_type = View._get_type(spec.pop('type', None))
         resolved_spec, refs = {}, {}
 
         # Resolve pipeline
@@ -307,9 +308,15 @@ class View(MultiTypeComponent, Viewer):
                 if ts in overrides:
                     overrides[ts] = [Transform.from_spec(t) for t in overrides[ts]]
             if pipeline is None:
-                if isinstance(source, str):
-                    source = state.sources[source]
-                pipeline = Pipeline(source=source, **overrides)
+                if source:
+                    if isinstance(source, str):
+                        source = state.sources[source]
+                    pipeline = Pipeline(source=source, **overrides)
+                elif view_type._requires_source:
+                    raise ValueError(
+                        'View specification must provide either a pipeline '
+                        'or a Source and table.'
+                    )
             elif 'table' in overrides and len(overrides) == 1:
                 if pipeline.table != overrides['table']:
                     raise ValidationError(
@@ -326,7 +333,6 @@ class View(MultiTypeComponent, Viewer):
             resolved_spec['pipeline'] = pipeline
 
         # Resolve View parameters
-        view_type = View._get_type(spec.pop('type', None))
         for p, value in spec.items():
             if p in resolved_spec:
                 continue
@@ -337,12 +343,14 @@ class View(MultiTypeComponent, Viewer):
             if is_ref(value):
                 refs[p] = value
                 value = state.resolve_reference(value)
-            if cls._is_param_function(p):
+            if view_type._is_param_function(p):
                 if isinstance(value, dict) and 'type' in value:
                     func_spec = dict(value)
                     module_ref = func_spec.pop('type')
                     func = resolve_module_reference(module_ref)
                     value = func.instance(**func_spec)
+            if view_type._is_list_component_key(p):
+                value = [View.from_spec(v) for v in value]
             if isinstance(parameter, param.ObjectSelector) and parameter.names:
                 try:
                     value = parameter.names.get(value, value)
@@ -360,7 +368,7 @@ class View(MultiTypeComponent, Viewer):
 
         view = view_type(refs=refs, **resolved_spec)
 
-        if filters is None:
+        if filters is None and view.pipeline is not None:
             filters = view.pipeline.traverse('filters')
             for pipeline in state.pipelines.values():
                 for filt in pipeline.traverse('filters'):
