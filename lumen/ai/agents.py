@@ -1,6 +1,7 @@
 import asyncio
 import difflib
 import io
+import json
 import textwrap
 
 from typing import Literal, Optional, Type
@@ -23,12 +24,13 @@ from ..pipeline import Pipeline
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
-from ..views import hvPlotUIView
+from ..views import VegaLiteView, hvPlotUIView
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
 from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
+    VegaLiteSpec,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -790,7 +792,48 @@ class TransformPipelineAgent(LumenBaseAgent):
         self._render_lumen(pipeline)
 
 
-class hvPlotAgent(LumenBaseAgent):
+class BaseViewAgent(LumenBaseAgent):
+
+    requires = param.List(default=["current_pipeline"], readonly=True)
+
+    provides = param.List(default=["current_plot"], readonly=True)
+
+    def _extract_spec(self, model: BaseModel):
+        return dict(model)
+
+    async def answer(self, messages: list | str) -> hvPlotUIView:
+        pipeline = memory["current_pipeline"]
+
+        # Write prompts
+        system_prompt = await self._system_prompt_with_context(messages)
+        schema = get_schema(pipeline, include_min_max=False)
+        view_prompt = render_template(
+            "plot_agent.jinja2",
+            schema=schema,
+            table=pipeline.table,
+            current_view=memory.get('current_view'),
+            doc=self.view_type.__doc__.split("\n\n")[0]
+        )
+        print(f"{self.name} is being instructed that {view_prompt}.")
+
+        # Query
+        spec_model = await self.llm.invoke(
+            messages,
+            system=system_prompt + view_prompt,
+            response_model=self._get_model(schema),
+            allow_partial=False,
+        )
+        spec = self._extract_spec(spec_model)
+        print(f"{self.name} settled on {spec=!r}.")
+        memory["current_view"] = dict(spec, type=self.view_type)
+        return self.view_type(pipeline=pipeline, **spec)
+
+    async def invoke(self, messages: list | str):
+        view = await self.answer(messages)
+        self._render_lumen(view)
+
+
+class hvPlotAgent(BaseViewAgent):
     """
     Generates a plot of the data given a user prompt.
 
@@ -806,14 +849,12 @@ class hvPlotAgent(LumenBaseAgent):
         """
     )
 
-    requires = param.List(default=["current_pipeline"], readonly=True)
+    view_type = hvPlotUIView
 
-    provides = param.List(default=["current_plot"], readonly=True)
-
-    @staticmethod
-    def _get_model(view, schema):
+    @classmethod
+    def _get_model(cls, schema):
         # Find parameters
-        excluded = view._internal_params + [
+        excluded = cls.view_type._internal_params + [
             "controls",
             "type",
             "source",
@@ -823,54 +864,51 @@ class hvPlotAgent(LumenBaseAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(view, excluded=excluded, schema=schema)[view.__name__]
-        return model
+        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema)
+        return model[cls.view_type.__name__]
 
-    @staticmethod
-    def _view_prompt(
-        model: BaseModel, view: hvPlotUIView, table: str, schema: dict
-    ) -> str:
-        doc = view.__doc__.split("\n\n")[0]
-        prompt = f"{doc}"
-        # prompt += f"\n\nThe data follows the following JSON schema:\n\n```json\n{format_schema(schema)}\n```"
-        if "current_view" in memory:
-            prompt += f"The previous view specification was: {memory['current_view']}"
-        return prompt
-
-    async def answer(self, messages: list | str) -> Transform:
+    def _extract_spec(self, model):
         pipeline = memory["current_pipeline"]
-        table = memory["current_table"]
-        system_prompt = await self._system_prompt_with_context(messages)
-
-        view = hvPlotUIView
-        schema = get_schema(pipeline)
-        model = self._get_model(view, schema)
-        view_prompt = self._view_prompt(model, view, table, schema)
-        if self.debug:
-            print(f"{self.name} is being instructed that {view_prompt}.")
-        kwargs = await self.llm.invoke(
-            messages,
-            system=system_prompt + view_prompt,
-            response_model=model,
-            allow_partial=False,
-        )
-
-        # Instantiate
-        spec = {key: val for key, val in dict(kwargs).items() if val is not None}
-        spec["responsive"] = True
-
+        spec = {
+            key: val for key, val in dict(model).items()
+            if val is not None
+        }
         spec["type"] = "hvplot_ui"
-        view.validate(spec)
-
+        self.view_type.validate(spec)
         spec.pop("type", None)
+
+        # Add defaults
+        spec["responsive"] = True
         if len(pipeline.data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             spec["rasterize"] = True
             spec["cnorm"] = "log"
-        memory["current_view"] = dict(spec, type=view.view_type)
-        if self.debug:
-            print(f"{self.name} settled on {spec=!r}.")
-        return view(pipeline=pipeline, **spec)
+        return spec
 
-    async def invoke(self, messages: list | str):
-        view = await self.answer(messages)
-        self._render_lumen(view)
+
+class VegaLiteAgent(BaseViewAgent):
+    """
+    Generates a vega-lite specification of the plot the user requested.
+
+    If the user asks to plot, visualize or render the data this is your best best.
+    """
+
+    system_prompt = param.String(
+        default="""
+        Generate the plot the user requested as a vega-lite specification.
+        """
+    )
+    view_type = VegaLiteView
+
+    @classmethod
+    def _get_model(cls, schema):
+        return VegaLiteSpec
+
+    def _extract_spec(self, model):
+        vega_spec = json.loads(model.json_spec)
+        if "$schema" not in vega_spec:
+            vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
+        if "width" not in vega_spec:
+            vega_spec["width"] = "container"
+        if "height" not in vega_spec:
+            vega_spec["height"] = "container"
+        return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 300}

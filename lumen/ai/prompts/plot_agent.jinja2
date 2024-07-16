@@ -1,0 +1,13 @@
+{{ doc }}
+
+The data to be plotted originates from a table called '{{ table }}' and follows the following JSON schema:
+```json
+{{ schema }}
+```
+
+{% if current_view %}
+The previous view specification was:
+```
+{{ current_view }}
+```
+{% endif %}

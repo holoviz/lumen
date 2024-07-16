@@ -79,3 +79,8 @@ class Validity(BaseModel):
 class Topic(BaseModel):
 
     result: str = Field(description="A word or up-to-three-words phrase that describes the topic of the table.")
+
+
+class VegaLiteSpec(BaseModel):
+
+    json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
