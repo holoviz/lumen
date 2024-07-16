@@ -401,9 +401,13 @@ class Component(param.Parameterized):
                     for v in value
                 ]
             elif self._is_param_function(p):
-                value_type = type(value)
-                module_spec = f'{value_type.__module__}.{value_type.__name__}'
-                value = dict(value.param.values(), type=module_spec)
+                func_type = type(value)
+                module_spec = f'{func_type.__module__}.{func_type.__name__}'
+                func_params = {
+                    vp: v for vp, v in value.param.values().items()
+                    if vp != 'name' and v != value.param[vp].default
+                }
+                value = dict(func_params, type=module_spec)
             spec[p] = value
         if context is not None:
             spec.update(self._refs)
