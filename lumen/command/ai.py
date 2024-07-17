@@ -61,7 +61,7 @@ class AIHandler(CodeHandler):
         '''
         table_initializer = ""
         if 'filename' in kwargs:
-            table = os.path.abspath(kwargs['filename'])
+            table = kwargs['filename']
             if table.endswith(".parq") or table.endswith(".parquet"):
                 table = f"read_parquet('{table}')"
             elif table.endswith(".csv"):

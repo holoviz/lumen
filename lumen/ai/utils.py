@@ -56,6 +56,7 @@ def retry_llm_output(retries=3, sleep=1):
                 errors = []
                 for i in range(retries):
                     if errors:
+                        print(errors)
                         kwargs["errors"] = errors
 
                     try:
