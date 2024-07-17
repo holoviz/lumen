@@ -349,6 +349,15 @@ class View(MultiTypeComponent, Viewer):
                     module_ref = func_spec.pop('type')
                     func = resolve_module_reference(module_ref)
                     value = func.instance(**func_spec)
+            if view_type._is_list_param_function(p):
+                new_value = value.copy()
+                for i, v in enumerate(value):
+                    if isinstance(v, dict) and 'type' in v:
+                        func_spec = dict(v)
+                        module_ref = func_spec.pop('type')
+                        func = resolve_module_reference(module_ref)
+                        new_value[i] = func.instance(**func_spec)
+                value = new_value
             if view_type._is_list_component_key(p):
                 value = [View.from_spec(v) for v in value]
             if isinstance(parameter, param.ObjectSelector) and parameter.names:
@@ -756,8 +765,8 @@ class hvPlotView(hvPlotBaseView):
     its simple API.
     """
 
-    operation = param.ClassSelector(class_=param.ParameterizedFunction, doc="""
-        Operation to apply to HoloViews plot.""")
+    operations = param.List(item_type=param.ParameterizedFunction, doc="""
+        Operations to apply to HoloViews plot.""")
 
     opts = param.Dict(default={}, doc="HoloViews options to apply on the plot.")
 
@@ -795,8 +804,9 @@ class hvPlotView(hvPlotBaseView):
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         plot = plot.opts(**self.opts) if self.opts else plot
-        if self.operation:
-            plot = self.operation(plot)
+        if self.operations:
+            for operation in self.operations:
+                plot = operation(plot)
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
         return plot

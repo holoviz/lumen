@@ -308,6 +308,15 @@ class Component(param.Parameterized):
             return issubclass(pobj.class_, param.ParameterizedFunction)
 
     @classmethod
+    def _is_list_param_function(cls, p):
+        pobj = cls.param[p]
+        return (
+            isinstance(pobj, param.List) and
+            isinstance(pobj.item_type, type) and
+            issubclass(pobj.item_type, param.ParameterizedFunction)
+        )
+
+    @classmethod
     def _validate_spec_(
         cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
@@ -408,6 +417,17 @@ class Component(param.Parameterized):
                     if vp != 'name' and v != value.param[vp].default
                 }
                 value = dict(func_params, type=module_spec)
+            elif self._is_list_param_function(p):
+                vs = []
+                for val in value:
+                    func_type = type(val)
+                    module_spec = f'{func_type.__module__}.{func_type.__name__}'
+                    func_params = {
+                        vp: v for vp, v in val.param.values().items()
+                        if vp != 'name' and v != val.param[vp].default
+                    }
+                    vs.append(dict(func_params, type=module_spec))
+                value = vs
             spec[p] = value
         if context is not None:
             spec.update(self._refs)

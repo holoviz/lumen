@@ -8,7 +8,7 @@ from lumen.panel import DownloadButton
 from lumen.sources.base import FileSource
 from lumen.state import state
 from lumen.variables.base import Variables
-from lumen.views.base import View, hvPlotView
+from lumen.views.base import View, hvOverlayView, hvPlotView
 
 
 def test_resolve_module_type():
@@ -284,3 +284,46 @@ def test_view_title_download_filename(set_root, view_type):
 
     assert view.download.filename == 'example'
     assert view.download.format == 'csv'
+
+
+def test_view_list_param_function_roundtrip():
+    original_spec = {
+        "layers": [
+            {
+                "kind": "line",
+                "operations": [
+                    {
+                        "rolling_window": 3,
+                        "type": "holoviews.operation.timeseries.rolling",
+                    },
+                    {
+                        "rolling_window": 3,
+                        "sigma": 0.1,
+                        "type": "holoviews.operation.timeseries.rolling_outlier_std",
+                    },
+                ],
+                "pipeline": {
+                    "source": {
+                        "tables": ["windturbines.parquet"],
+                        "uri": ":memory",
+                        "type": "duckdb",
+                    },
+                    "table": "windturbines.parquet",
+                    "transforms": [
+                        {
+                            "by": ["p_year"],
+                            "columns": ["t_cap"],
+                            "type": "aggregate",
+                        }
+                    ],
+                },
+                "x": "p_year",
+                "y": "t_cap",
+                "type": "hvplot",
+            },
+        ],
+        "type": "hv_overlay",
+    }
+    view = View.from_spec(original_spec)
+    assert isinstance(view, hvOverlayView)
+    assert view.to_spec() == original_spec
