@@ -538,7 +538,6 @@ class SQLAgent(LumenBaseAgent):
 
         if not sql_query:
             raise ValueError("No SQL query was generated.")
-        self._render_sql(sql_query)
 
         # check whether the SQL query is valid
         expr_name = output.expr_name
@@ -600,7 +599,8 @@ class SQLAgent(LumenBaseAgent):
         return sql_query
 
     async def invoke(self, messages: list | str):
-        return await self.answer(messages)
+        sql_query = await self.answer(messages)
+        self._render_sql(sql_query)
 
 
 class PipelineAgent(LumenBaseAgent):
