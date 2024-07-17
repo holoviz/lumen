@@ -286,7 +286,8 @@ def test_view_title_download_filename(set_root, view_type):
     assert view.download.format == 'csv'
 
 
-def test_view_list_param_function_roundtrip():
+def test_view_list_param_function_roundtrip(set_root):
+    set_root(str(Path(__file__).parent.parent))
     original_spec = {
         "layers": [
             {
@@ -303,22 +304,12 @@ def test_view_list_param_function_roundtrip():
                     },
                 ],
                 "pipeline": {
-                    "source": {
-                        "tables": ["windturbines.parquet"],
-                        "uri": ":memory",
-                        "type": "duckdb",
-                    },
-                    "table": "windturbines.parquet",
-                    "transforms": [
-                        {
-                            "by": ["p_year"],
-                            "columns": ["t_cap"],
-                            "type": "aggregate",
-                        }
-                    ],
+                    "source": {'tables': {'test': 'sources/test.csv'}, 'type': 'file'},
+                    "table": "test",
+                    "transforms": [{"type": "columns", "columns": ["A", "B"]}]
                 },
-                "x": "p_year",
-                "y": "t_cap",
+                "x": "A",
+                "y": "B",
                 "type": "hvplot",
             },
         ],
