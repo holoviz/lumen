@@ -45,7 +45,7 @@ class Llm(param.Parameterized):
         messages: list | str,
         system: str = "",
         response_model: BaseModel | None = None,
-        allow_partial: bool = True,
+        allow_partial: bool = False,
         model_key: str = "default",
         **input_kwargs,
     ) -> BaseModel:
@@ -53,6 +53,7 @@ class Llm(param.Parameterized):
             messages = [{"role": "user", "content": messages}]
         if system:
             messages = [{"role": "system", "content": system}] + messages
+        print(messages)
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
@@ -78,7 +79,7 @@ class Llm(param.Parameterized):
         messages: list | str,
         system: str = "",
         response_model: BaseModel | None = None,
-        field: str = "output",
+        field: str | None = None,
         model_key: str = "default",
         **kwargs,
     ):
@@ -88,6 +89,7 @@ class Llm(param.Parameterized):
             system=system,
             response_model=response_model,
             stream=True,
+            allow_partial=True,
             model_key=model_key,
             **kwargs,
         )
