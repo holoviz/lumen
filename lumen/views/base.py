@@ -17,7 +17,6 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
-from packaging.version import Version
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
 from panel.pane.perspective import (
@@ -127,19 +126,20 @@ class View(MultiTypeComponent, Viewer):
         # Populate field selector parameters
         params = {k: v for k, v in params.items() if k in self.param}
         pipeline = params.pop('pipeline', None)
-        if pipeline is None:
+        if pipeline is None and self._requires_source:
             raise ValueError("Views must declare a Pipeline.")
         if isinstance(params.get("download"), str):
             *filenames, ext = params.get("download").split(".")
             filename = ".".join(filenames) or None
             params["download"] = type(self.download)(filename=filename, format=ext)
-        fields = list(pipeline.schema)
-        for fp in self._field_params:
-            if isinstance(self.param[fp], param.Selector):
-                self.param[fp].objects = fields
-        pipeline.param.watch(self.update, 'data')
-        if self.loading_indicator:
-            pipeline._update_widget.param.watch(self._update_loading, 'loading')
+        if pipeline is not None:
+            fields = list(pipeline.schema)
+            for fp in self._field_params:
+                if isinstance(self.param[fp], param.Selector):
+                    self.param[fp].objects = fields
+            pipeline.param.watch(self.update, 'data')
+            if self.loading_indicator:
+                pipeline._update_widget.param.watch(self._update_loading, 'loading')
         super().__init__(pipeline=pipeline, refs=refs, **params)
         self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'name')])
         self.download.view = self
@@ -285,6 +285,7 @@ class View(MultiTypeComponent, Viewer):
                 "full specification for the View."
             )
         spec = spec.copy()
+        view_type = View._get_type(spec.pop('type', None))
         resolved_spec, refs = {}, {}
 
         # Resolve pipeline
@@ -307,9 +308,15 @@ class View(MultiTypeComponent, Viewer):
                 if ts in overrides:
                     overrides[ts] = [Transform.from_spec(t) for t in overrides[ts]]
             if pipeline is None:
-                if isinstance(source, str):
-                    source = state.sources[source]
-                pipeline = Pipeline(source=source, **overrides)
+                if source:
+                    if isinstance(source, str):
+                        source = state.sources[source]
+                    pipeline = Pipeline(source=source, **overrides)
+                elif view_type._requires_source:
+                    raise ValueError(
+                        'View specification must provide either a pipeline '
+                        'or a Source and table.'
+                    )
             elif 'table' in overrides and len(overrides) == 1:
                 if pipeline.table != overrides['table']:
                     raise ValidationError(
@@ -326,7 +333,6 @@ class View(MultiTypeComponent, Viewer):
             resolved_spec['pipeline'] = pipeline
 
         # Resolve View parameters
-        view_type = View._get_type(spec.pop('type', None))
         for p, value in spec.items():
             if p in resolved_spec:
                 continue
@@ -337,6 +343,23 @@ class View(MultiTypeComponent, Viewer):
             if is_ref(value):
                 refs[p] = value
                 value = state.resolve_reference(value)
+            if view_type._is_param_function(p):
+                if isinstance(value, dict) and 'type' in value:
+                    func_spec = dict(value)
+                    module_ref = func_spec.pop('type')
+                    func = resolve_module_reference(module_ref)
+                    value = func.instance(**func_spec)
+            if view_type._is_list_param_function(p):
+                new_value = value.copy()
+                for i, v in enumerate(value):
+                    if isinstance(v, dict) and 'type' in v:
+                        func_spec = dict(v)
+                        module_ref = func_spec.pop('type')
+                        func = resolve_module_reference(module_ref)
+                        new_value[i] = func.instance(**func_spec)
+                value = new_value
+            if view_type._is_list_component_key(p):
+                value = [View.from_spec(v) for v in value]
             if isinstance(parameter, param.ObjectSelector) and parameter.names:
                 try:
                     value = parameter.names.get(value, value)
@@ -354,7 +377,7 @@ class View(MultiTypeComponent, Viewer):
 
         view = view_type(refs=refs, **resolved_spec)
 
-        if filters is None:
+        if filters is None and view.pipeline is not None:
             filters = view.pipeline.traverse('filters')
             for pipeline in state.pipelines.values():
                 for filt in pipeline.traverse('filters'):
@@ -735,6 +758,9 @@ class hvPlotView(hvPlotBaseView):
     its simple API.
     """
 
+    operations = param.List(item_type=param.ParameterizedFunction, doc="""
+        Operations to apply to HoloViews plot.""")
+
     opts = param.Dict(default={}, doc="HoloViews options to apply on the plot.")
 
     streaming = param.Boolean(default=False, doc="""
@@ -771,14 +797,10 @@ class hvPlotView(hvPlotBaseView):
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         plot = plot.opts(**self.opts) if self.opts else plot
-
-        # Param 2 compatibility
-        if Version(param.__version__) <= Version('2.0.0a2'):
-            watchers = self._param_watchers
-        else:
-            watchers = self.param.watchers
-
-        if self.selection_group or 'selection_expr' in watchers:
+        if self.operations:
+            for operation in self.operations:
+                plot = operation(plot)
+        if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
         return plot
 
@@ -849,6 +871,32 @@ class hvPlotView(hvPlotBaseView):
                 self.param.trigger('rerender')
         else:
             self._data_stream.send(self.get_data())
+
+
+class hvOverlayView(View):
+    """
+    `hvOverlayView` allows overlaying a list of layers consisting of
+    `hvPlotView` components.
+    """
+
+    layers = param.List(item_type=hvPlotView)
+
+    view_type = 'hv_overlay'
+
+    _panel_type = pn.pane.HoloViews
+
+    _requires_source: ClassVar[bool] = False
+
+    _supports_selections = True
+
+    def _get_params(self):
+        from holoviews import Overlay
+        overlay = Overlay([layer.get_plot(layer.get_data()) for layer in self.layers])
+        return dict(object=overlay)
+
+    def get_panel(self):
+        params = self._get_params()
+        return self._panel_type(**params)
 
 
 class Table(View):
@@ -924,7 +972,6 @@ class DownloadView(View):
     def _get_params(self) -> Dict[str, Any]:
         filename = f'{self.filename}.{self.format}'
         return dict(filename=filename, callback=self._table_data, **self.kwargs)
-
 
 
 class PerspectiveView(View):
