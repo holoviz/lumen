@@ -803,10 +803,10 @@ class hvPlotView(hvPlotBaseView):
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
-        plot = plot.opts(**self.opts) if self.opts else plot
         if self.operations:
             for operation in self.operations:
                 plot = operation(plot)
+        plot = plot.opts(**self.opts) if self.opts else plot
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
         return plot
