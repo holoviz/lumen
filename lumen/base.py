@@ -298,6 +298,25 @@ class Component(param.Parameterized):
         )
 
     @classmethod
+    def _is_param_function(cls, p):
+        pobj = cls.param[p]
+        if not isinstance(pobj, param.ClassSelector):
+            return False
+        if isinstance(pobj.class_, tuple):
+            return all(issubclass(c, param.ParameterizedFunction) for c in pobj.class_)
+        else:
+            return issubclass(pobj.class_, param.ParameterizedFunction)
+
+    @classmethod
+    def _is_list_param_function(cls, p):
+        pobj = cls.param[p]
+        return (
+            isinstance(pobj, param.List) and
+            isinstance(pobj.item_type, type) and
+            issubclass(pobj.item_type, param.ParameterizedFunction)
+        )
+
+    @classmethod
     def _validate_spec_(
         cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
@@ -377,7 +396,8 @@ class Component(param.Parameterized):
         """
         spec = {}
         for p, value in self.param.values().items():
-            if p in self._internal_params or value == self.param[p].default:
+            pobj = self.param[p]
+            if p in self._internal_params or value == pobj.default:
                 continue
             elif self._is_component_key(p):
                 pspec = value.to_spec(context=context)
@@ -389,6 +409,25 @@ class Component(param.Parameterized):
                     None if v is None else v.to_spec(context=context)
                     for v in value
                 ]
+            elif self._is_param_function(p):
+                func_type = type(value)
+                module_spec = f'{func_type.__module__}.{func_type.__name__}'
+                func_params = {
+                    vp: v for vp, v in value.param.values().items()
+                    if vp != 'name' and v != value.param[vp].default
+                }
+                value = dict(func_params, type=module_spec)
+            elif self._is_list_param_function(p):
+                vs = []
+                for val in value:
+                    func_type = type(val)
+                    module_spec = f'{func_type.__module__}.{func_type.__name__}'
+                    func_params = {
+                        vp: v for vp, v in val.param.values().items()
+                        if vp != 'name' and v != val.param[vp].default
+                    }
+                    vs.append(dict(func_params, type=module_spec))
+                value = vs
             spec[p] = value
         if context is not None:
             spec.update(self._refs)
