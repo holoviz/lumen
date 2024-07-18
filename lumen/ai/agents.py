@@ -552,9 +552,7 @@ class SQLAgent(LumenBaseAgent):
         pipeline = Pipeline(
             source=sql_expr_source, table=model.expr_name
         )
-        print("pipeline", pipeline)
         df = pipeline.data
-        print(df)
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
         memory["current_pipeline"] = pipeline
