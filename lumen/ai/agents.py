@@ -12,6 +12,7 @@ import param
 
 from panel.chat import ChatInterface
 from panel.pane import HTML
+from panel.template import BaseTemplate
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -55,6 +56,8 @@ class Agent(Viewer):
     interface = param.ClassSelector(class_=ChatInterface)
 
     llm = param.ClassSelector(class_=Llm)
+
+    template = param.ClassSelector(class_=BaseTemplate)
 
     system_prompt = param.String()
 
@@ -379,7 +382,7 @@ class LumenBaseAgent(Agent):
     user = param.String(default="Lumen")
 
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
-        out = LumenOutput(component=component)
+        out = LumenOutput(component=component, template=self.template)
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True)
 
@@ -506,7 +509,7 @@ class SQLAgent(LumenBaseAgent):
 
     def _render_sql(self, query):
         pipeline = memory['current_pipeline']
-        out = SQLOutput(component=pipeline, spec=query)
+        out = SQLOutput(component=pipeline, spec=query, template=self.template)
         self.interface.stream(out, user="SQL", replace=True)
 
     @retry_llm_output()
@@ -549,7 +552,9 @@ class SQLAgent(LumenBaseAgent):
         pipeline = Pipeline(
             source=sql_expr_source, table=model.expr_name
         )
+        print("pipeline", pipeline)
         df = pipeline.data
+        print(df)
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
         memory["current_pipeline"] = pipeline

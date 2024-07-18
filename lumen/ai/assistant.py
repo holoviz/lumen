@@ -9,8 +9,11 @@ import param
 
 from panel import bind
 from panel.chat import ChatInterface, ChatMessage
-from panel.layout import Column, FlexBox, Tabs
+from panel.layout import (
+    Column, FlexBox, Row, Tabs,
+)
 from panel.pane import HTML, Markdown
+from panel.template import FastListTemplate
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload
 from pydantic import create_model
@@ -39,6 +42,8 @@ DEMO_MESSAGES = [
     "Perform a SQL query on one of these.",
     "Show it to me as a scatter plot."
 ]
+
+_SIDEBAR_HTML = HTML("")
 
 
 class Assistant(Viewer):
@@ -121,12 +126,23 @@ class Assistant(Viewer):
             self._logs = ChatLogs(filename=logs_filename)
             interface.post_hook = on_message
 
+        header = Row()
+        sidebar = Column(sizing_mode="stretch_both")
+        self._template = FastListTemplate(
+            title="Lumen.ai",
+            sidebar_width=600,
+            sidebar=[sidebar, _SIDEBAR_HTML],
+            main=[interface],
+            header=[header],
+            collapsed_sidebar=True,
+        )
+
         llm = llm or self.llm
         instantiated = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
-                agent = agent(interface=interface, **kwargs)
+                agent = agent(interface=interface, template=self._template, **kwargs)
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
@@ -145,15 +161,15 @@ class Assistant(Viewer):
 
         notebook_button = FileDownload(
             icon="notebook",
-            button_type="success",
+            button_type="light",
+            button_style="outline",
             callback=download_notebook,
             filename="Lumen_ai.ipynb",
-            sizing_mode="stretch_width",
+            margin=(15, 0, 0, 0),
         )
-
-        self._controls = Column(
-            notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
-        )
+        header.extend([
+            self._current_agent, notebook_button, *self.sidebar_widgets,
+        ])
 
     def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
         async def hide_suggestions(_=None):
@@ -394,8 +410,5 @@ class Assistant(Viewer):
         print("\033[92mDONE\033[0m", "\n\n")
         return result
 
-    def controls(self):
-        return self._controls
-
     def __panel__(self):
-        return self.interface
+        return self._template
