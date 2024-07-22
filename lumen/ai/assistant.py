@@ -16,7 +16,7 @@ from panel.widgets import Button, FileDownload
 from pydantic import create_model
 from pydantic.fields import FieldInfo
 
-from .agents import Agent, ChatAgent
+from .agents import Agent, ChatAgent, CustomAnalysisAgent
 from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
@@ -112,7 +112,7 @@ class Assistant(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "verbose"
+        interface.callback_exception = "raise"
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
@@ -306,6 +306,12 @@ class Assistant(Viewer):
             return agent_names[0]
         self._current_agent.object = "## **Current Agent**: [Lumen.ai](https://lumen.holoviz.org/)"
         agent_model = self._create_agent_model(agent_names)
+
+        for agent in agents:
+            if isinstance(agent, CustomAnalysisAgent):
+                analyses = "\n".join((f"`{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses))
+                agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
+
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
         )

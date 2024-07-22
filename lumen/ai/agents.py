@@ -929,7 +929,7 @@ class CustomAnalysis(param.ParameterizedFunction):
 
 class CustomAnalysisAgent(LumenBaseAgent):
     """
-    CustomAnalysis performs custom analyses on the data.
+    Perform custom analyses on the data.
     """
 
     analyses = param.List([])
@@ -1004,4 +1004,3 @@ class CustomAnalysisAgent(LumenBaseAgent):
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:
             self._render_lumen(view)
-            print("rendered")
