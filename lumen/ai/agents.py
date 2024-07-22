@@ -950,7 +950,10 @@ class CustomAnalysisAgent(LumenBaseAgent):
     ) -> str:
         system_prompt = self.system_prompt
         for name, analysis in analyses.items():
-            doc = analysis.__doc__.replace("\n", " ")
+            if analysis.__doc__ is None:
+                doc = analysis.__name__
+            else:
+                doc = analysis.__doc__.replace("\n", " ")
             system_prompt = f'- {name!r} - {doc}\n'
         current_data = memory["current_data"]
         if isinstance(current_data, dict):
@@ -963,25 +966,36 @@ class CustomAnalysisAgent(LumenBaseAgent):
     async def answer(self, messages: list | str):
         analyses = {a.name: a for a in self.analyses if a.applies()}
         if not analyses:
+            print("NONE found...")
             return None
         pipeline = memory['current_pipeline']
         type_ = Literal[tuple(analyses)]
-        analysis_model = create_model("Analysis", name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query.")))
+        analysis_model = create_model(
+            "Analysis",
+            correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
+        )
         with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
             if len(analyses) > 1:
                 system_prompt = await self._system_prompt_with_context(messages, analyses)
-                analysis = await self.llm.invoke(
+                analysis = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
                     response_model=analysis_model,
                     allow_partial=False,
-                ).name
+                )).correct_name
             else:
                 analysis = list(analyses)[0]
-            step.stream(f"Selected {analysis} analysis")
+            step.stream(f"Selected {analysis}")
+            step.success_title = f"Selected {analysis}"
+
         with self.interface.add_step(title="Creating view...") as step:
+            print(f"Creating view for {analysis}")
             view = analyses[analysis](pipeline)
-            step.stream(f"Generated view {view.to_spec()}")
+            spec = view.to_spec()
+            step.stream(f"Generated view\n```json\n{spec}\n```")
+            step.success_title = "Generated view"
+        view_type = view.view_type if hasattr(view, "view_type") else  type(view)
+        memory["current_view"] = dict(spec, type=view_type)
         return view
 
     async def invoke(self, messages: list | str):
@@ -990,3 +1004,4 @@ class CustomAnalysisAgent(LumenBaseAgent):
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:
             self._render_lumen(view)
+            print("rendered")

@@ -112,7 +112,7 @@ class Assistant(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "raise"
+        interface.callback_exception = "verbose"
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
@@ -127,6 +127,10 @@ class Assistant(Viewer):
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
                 agent = agent(interface=interface, **kwargs)
+            if agent.llm is None:
+                agent.llm = llm
+            # must use the same interface or else nothing shows
+            agent.interface = interface
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
