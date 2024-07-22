@@ -912,3 +912,81 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 500}
+
+
+class CustomAnalysis(param.ParameterizedFunction):
+
+    requires = param.List(default=[])
+
+    @classmethod
+    def applies(cls) -> bool:
+        pipeline = memory['current_pipeline']
+        return all(col in pipeline.data.columns for col in cls.requires)
+
+    def __call__(self, pipeline) -> Component:
+        return pipeline
+
+
+class CustomAnalysisAgent(LumenBaseAgent):
+    """
+    CustomAnalysis performs custom analyses on the data.
+    """
+
+    analyses = param.List([])
+
+    requires = param.List(default=['current_pipeline'])
+
+    provides = param.List(default=['current_view'])
+
+    system_prompt = param.String(
+        default=(
+            "You are in charge of picking the appropriate analysis to perform on the data "
+            "based on the user query and the available data.\n\nAvailable analyses include:\n\n"
+        )
+    )
+
+    async def _system_prompt_with_context(
+        self, messages: list | str, analyses: list[CustomAnalysis] = []
+    ) -> str:
+        system_prompt = self.system_prompt
+        for name, analysis in analyses.items():
+            doc = analysis.__doc__.replace("\n", " ")
+            system_prompt = f'- {name!r} - {doc}\n'
+        current_data = memory["current_data"]
+        if isinstance(current_data, dict):
+            columns = list(current_data["stats"].keys())
+        else:
+            columns = list(current_data.columns)
+        system_prompt += f"\nHere are the columns of the table: {columns}"
+        return system_prompt
+
+    async def answer(self, messages: list | str):
+        analyses = {a.name: a for a in self.analyses if a.applies()}
+        if not analyses:
+            return None
+        pipeline = memory['current_pipeline']
+        type_ = Literal[tuple(analyses)]
+        analysis_model = create_model("Analysis", name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query.")))
+        with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
+            if len(analyses) > 1:
+                system_prompt = await self._system_prompt_with_context(messages, analyses)
+                analysis = await self.llm.invoke(
+                    messages,
+                    system=system_prompt,
+                    response_model=analysis_model,
+                    allow_partial=False,
+                ).name
+            else:
+                analysis = list(analyses)[0]
+            step.stream(f"Selected {analysis} analysis")
+        with self.interface.add_step(title="Creating view...") as step:
+            view = analyses[analysis](pipeline)
+            step.stream(f"Generated view {view.to_spec()}")
+        return view
+
+    async def invoke(self, messages: list | str):
+        view = await self.answer(messages)
+        if view is None:
+            self.interface.stream('Failed to find an analysis that applies to this data')
+        else:
+            self._render_lumen(view)
