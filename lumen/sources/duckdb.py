@@ -39,7 +39,7 @@ class DuckDBSource(BaseSQLSource):
 
     uri = param.String(doc="The URI of the DuckDB database")
 
-    sql_expr = param.String(default='SELECT * FROM "{table}"', doc="""
+    sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression to execute.""")
 
     tables = param.ClassSelector(class_=(list, dict), doc="""
@@ -82,6 +82,8 @@ class DuckDBSource(BaseSQLSource):
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             table = self.tables[table]
+        if '(' not in table and ')' not in table:
+            table = f'"{table}"'
         if 'select ' in table.lower():
             sql_expr = table
         else:
