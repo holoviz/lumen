@@ -16,7 +16,9 @@ from panel.widgets import Button, FileDownload
 from pydantic import create_model
 from pydantic.fields import FieldInfo
 
-from .agents import Agent, ChatAgent, CustomAnalysisAgent
+from .agents import (
+    Agent, ChatAgent, CustomAnalysisAgent, SQLAgent,
+)
 from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
@@ -361,7 +363,21 @@ class Assistant(Viewer):
             with self.interface.add_step(title="Choosing subagent...") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
-                await subagent.answer(messages)
+
+                if isinstance(subagent, SQLAgent):
+                    custom_messages = messages.copy()
+                    custom_agent = next((agent for agent in self.agents if isinstance(agent, CustomAnalysisAgent)), None)
+                    if custom_agent:
+                        custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
+                        custom_message = (
+                            f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
+                            f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
+                        )
+                        custom_messages.append({"role": "user", "content": custom_message})
+                        print(custom_messages)
+                    await subagent.answer(custom_messages)
+                else:
+                    await subagent.answer(messages)
                 step.success_title = f"Selected {subagent.name[:-5]}"
         return selected
 
