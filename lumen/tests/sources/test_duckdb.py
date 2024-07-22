@@ -24,7 +24,7 @@ def duckdb_source():
             f"SET home_directory='{root}';"
         ],
         root=root,
-        sql_expr='SELECT A, B, C, D::TIMESTAMP_NS AS D FROM {table}',
+        sql_expr="SELECT A, B, C, D::TIMESTAMP_NS AS D FROM {table}",
         tables={
             'test_sql': f"sqlite_scan('{root + '/test.db'}', 'mixed')",
             'test_sql_with_none': f"sqlite_scan('{root + '/test.db'}', 'mixed_none')",

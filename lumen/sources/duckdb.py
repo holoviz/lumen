@@ -82,7 +82,7 @@ class DuckDBSource(BaseSQLSource):
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             table = self.tables[table]
-        if 'read_' not in table:
+        if '(' not in table and ')' not in table:
             table = f'"{table}"'
         if 'select ' in table.lower():
             sql_expr = table
