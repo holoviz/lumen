@@ -1138,14 +1138,15 @@ class YdataProfilingView(View):
 
     _extension = 'ydata_profiling'
 
+    _panel_type = pn.pane.HTML
+
     def _get_params(self) -> Dict[str, Any]:
         df = self.get_data()
-        encoded = dict(data={'df': df})
-        return dict(object=encoded, **self.kwargs)
+        return dict(df=df, **self.kwargs)
 
     def get_panel(self) -> pn.pane.HTML:
         from ydata_profiling import ProfileReport
-        return pn.pane.HTML(ProfileReport(**self._normalize_params(self._get_params())))
+        return self._panel_type(ProfileReport(**self._get_params()).html)
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
