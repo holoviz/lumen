@@ -916,12 +916,12 @@ class VegaLiteAgent(BaseViewAgent):
 
 class CustomAnalysis(param.ParameterizedFunction):
 
-    requires = param.List(default=[])
+    columns = param.List(default=[], doc="The columns required for the analysis.")
 
     @classmethod
     def applies(cls) -> bool:
         pipeline = memory['current_pipeline']
-        return all(col in pipeline.data.columns for col in cls.requires)
+        return all(col in pipeline.data.columns for col in cls.columns)
 
     def __call__(self, pipeline) -> Component:
         return pipeline
