@@ -426,7 +426,6 @@ class Assistant(Viewer):
             applicable_analyses = [
                 analysis for analysis in self._analyses if analysis.applies()
             ]
-            print("\n\033[94mAPPLICABLE ANALYSES:\033[0m")
             self._add_suggestions_to_footer(
                 [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
                 append_demo=False,
