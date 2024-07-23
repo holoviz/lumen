@@ -217,25 +217,24 @@ class Assistant(Viewer):
         sql = memory.get("current_sql")
         system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
-            validity = await self.llm.invoke(
+            response = self.llm.stream(
                 messages=messages,
                 system=system,
                 response_model=Validity,
-                allow_partial=False,
             )
-            if validity.correct_assessment:
-                step.stream(validity.correct_assessment)
-            step.success_title = f"{validity.is_invalid.title()} needs refresh" if validity.is_invalid else "Memory still valid"
+            async for output in response:
+                step.stream(output.correct_assessment, replace=True)
+            step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
 
-        if validity and validity.is_invalid:
-            if validity.is_invalid == "table":
+        if output and output.is_invalid:
+            if output.is_invalid == "table":
                 memory.pop("current_table", None)
                 memory.pop("current_data", None)
                 memory.pop("current_sql", None)
                 memory.pop("current_pipeline", None)
                 memory.pop("closest_tables", None)
                 print("\033[91mInvalidated from memory.\033[0m")
-            elif validity.is_invalid == "sql":
+            elif output.is_invalid == "sql":
                 memory.pop("current_sql", None)
                 memory.pop("current_data", None)
                 memory.pop("current_pipeline", None)
@@ -243,15 +242,14 @@ class Assistant(Viewer):
 
     async def _create_suggestion(self, instance, event):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
-        string = self.llm.stream(
+        response = self.llm.stream(
             messages,
             system="Generate a follow-up question that a user might ask; ask from the user POV",
-            allow_partial=True,
         )
         try:
             self.interface.disabled = True
-            async for chunk in string:
-                self.interface.active_widget.value_input = chunk
+            async for output in response:
+                self.interface.active_widget.value_input = output
         finally:
             self.interface.disabled = False
 
@@ -277,24 +275,19 @@ class Assistant(Viewer):
         return agent_model
 
     @retry_llm_output()
-    async def _create_valid_agent(self, messages, system, agent_model, return_reasoning, errors=None):
+    async def _create_valid_agent(self, messages, system, agent_model, errors=None):
         if errors:
             errors = '\n'.join(errors)
             messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
 
-        out = await self.llm.invoke(
+        out = self.llm.stream(
             messages=messages,
             system=system,
-            response_model=agent_model,
-            allow_partial=False
+            response_model=agent_model
         )
-        if not (out and out.agent):
-            raise ValueError("No agent selected.")
-        elif return_reasoning:
-            return out.agent, out.chain_of_thought
-        return out.agent
+        return out
 
-    async def _choose_agent(self, messages: list | str, agents: list[Agent], return_reasoning: bool = False):
+    async def _choose_agent(self, messages: list | str, agents: list[Agent]):
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -305,7 +298,7 @@ class Assistant(Viewer):
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
         )
-        return await self._create_valid_agent(messages, system, agent_model, return_reasoning)
+        return await self._create_valid_agent(messages, system, agent_model)
 
     async def _get_agent(self, messages: list | str):
         if len(self.agents) == 1:
@@ -317,10 +310,12 @@ class Assistant(Viewer):
             agent = agent_types[0]
         else:
             with self.interface.add_step(title="Selecting relevant agent...", user="Assistant") as step:
-                agent, reasoning = await self._choose_agent(messages, self.agents, return_reasoning=True)
-                step.stream(reasoning)
+                response = await self._choose_agent(messages, self.agents)
+                async for output in response:
+                    step.stream(output.chain_of_thought, replace=True)
+                agent = output.agent
                 step.success_title = f"Selected {agent}"
-            messages.append({"role": "assistant", "content": reasoning})
+            messages.append({"role": "assistant", "content": output.chain_of_thought})
 
         if agent is None:
             return None
@@ -341,7 +336,12 @@ class Assistant(Viewer):
                     for agent in self.agents
                     if any(ur in agent.provides for ur in unmet_dependencies)
                 ]
-                subagent_name = await self._choose_agent(messages, subagents)
+                response = await self._choose_agent(messages, subagents)
+                if isinstance(response, str):
+                    subagent_name = response
+                else:
+                    async for output in response:
+                        subagent_name = output.agent
                 if subagent_name is None:
                     continue
                 subagent = agents[subagent_name]
