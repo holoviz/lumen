@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatMessage
+from panel.chat import ChatInterface
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
@@ -125,6 +125,7 @@ class Assistant(Viewer):
 
         llm = llm or self.llm
         instantiated = []
+        self._analyses = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
@@ -133,6 +134,8 @@ class Assistant(Viewer):
                 agent.llm = llm
             # must use the same interface or else nothing shows
             agent.interface = interface
+            if isinstance(agent, CustomAnalysisAgent):
+                self._analyses.extend(agent.analyses)
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
@@ -161,9 +164,15 @@ class Assistant(Viewer):
             notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
         )
 
-    def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
+    def _add_suggestions_to_footer(
+            self,
+            suggestions: list[str],
+            num_objects: int = 1,
+            inplace: bool = True,
+            append_demo: bool = True
+        ):
         async def hide_suggestions(_=None):
-            if len(self.interface.objects) > 1:
+            if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
 
         async def use_suggestion(event):
@@ -193,7 +202,7 @@ class Assistant(Viewer):
             margin=(5, 5),
         )
 
-        if self.demo_inputs:
+        if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
                 name="Show a demo",
                 button_type="primary",
@@ -202,13 +211,8 @@ class Assistant(Viewer):
             ))
 
         message = self.interface.objects[-1]
-        message = ChatMessage(
-            footer_objects=[suggestion_buttons],
-            user=message.user,
-            object=message.object,
-        )
         if inplace:
-            self.interface.objects[-1] = message
+            message.footer_objects = [suggestion_buttons]
 
         self.interface.param.watch(hide_suggestions, "objects")
         return message
@@ -415,10 +419,21 @@ class Assistant(Viewer):
             print(f"{message['role']!r}: {message['content']}")
             print("ENTRY" + "-" * 10)
 
-        result = await agent.invoke(messages[-2:])
+        await agent.invoke(messages[-2:])
         self._current_agent.object = "## No agent active"
+
+        if "current_pipeline" in agent.provides:
+            applicable_analyses = [
+                analysis for analysis in self._analyses if analysis.applies()
+            ]
+            self._add_suggestions_to_footer(
+                [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
+                append_demo=False,
+                num_objects=len(self.interface.objects),
+            )
+
         print("\033[92mDONE\033[0m", "\n\n")
-        return result
+
 
     def controls(self):
         return self._controls
