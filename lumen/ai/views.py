@@ -85,8 +85,16 @@ class LumenOutput(Viewer):
             self.component = type(self.component).from_spec(load_yaml(self.spec))
             if isinstance(self.component, Pipeline):
                 table = Table(
-                    pipeline=self.component, pagination='remote',
-                    height=458, page_size=12
+                    pipeline=self.component, pagination='remote', page_size=21,
+                    min_height=650, sizing_mode="stretch_both", stylesheets=[
+                        """
+                        .tabulator-footer {
+                            display: flex;
+                            text-align: left;
+                            padding: 0px;
+                        }
+                        """
+                    ]
                 )
                 download = Download(
                     view=table, hide=False, filename=f'{self.component.table}',
