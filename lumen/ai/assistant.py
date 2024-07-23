@@ -225,7 +225,7 @@ class Assistant(Viewer):
         source = memory.get("current_source")
         spec = get_schema(source, table=table)
         sql = memory.get("current_sql")
-        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql)
+        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             validity = await self.llm.invoke(
                 messages=messages,

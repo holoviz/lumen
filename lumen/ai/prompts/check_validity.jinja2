@@ -14,3 +14,12 @@ Based on the latest user's query, decide whether the current table and data cont
 ```
 {{ spec }}
 ```
+
+{% if analyses %}
+If the user requests one of the current analyses, the data is assumed to be valid.
+
+### Current Analyses:
+{% for analysis in analyses %}
+- {{ analysis }}
+{% endfor %}
+{% endif %}
