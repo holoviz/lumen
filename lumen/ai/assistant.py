@@ -165,12 +165,14 @@ class Assistant(Viewer):
         )
 
     def _add_suggestions_to_footer(
-            self, suggestions: list[str],
+            self,
+            suggestions: list[str],
+            num_objects: int = 1,
             inplace: bool = True,
-            show_demo: bool = True
+            append_demo: bool = True
         ):
         async def hide_suggestions(_=None):
-            if len(self.interface.objects) > 1:
+            if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
 
         async def use_suggestion(event):
@@ -200,7 +202,7 @@ class Assistant(Viewer):
             margin=(5, 5),
         )
 
-        if show_demo and self.demo_inputs:
+        if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
                 name="Show a demo",
                 button_type="primary",
@@ -427,7 +429,8 @@ class Assistant(Viewer):
             print("\n\033[94mAPPLICABLE ANALYSES:\033[0m")
             self._add_suggestions_to_footer(
                 [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
-                show_demo=False,
+                append_demo=False,
+                num_objects=len(self.interface.objects),
             )
 
         print("\033[92mDONE\033[0m", "\n\n")
