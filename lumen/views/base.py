@@ -1134,8 +1134,6 @@ class YdataProfilingView(View):
     A View that renders a ydata_profiling ProfileReport.
     """
 
-    df = param.DataFrame()
-
     view_type = 'ydata_profiling'
 
     _extension = 'ydata_profiling'
