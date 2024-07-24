@@ -841,6 +841,31 @@ class DropNA(Transform):
         return table.dropna(**kwargs)
 
 
+class Corr(Transform):
+    """
+    ``Corr`` computes pairwise correlation of columns, excluding NA/null values.
+    """
+
+    method = param.Selector(default='pearson', objects=[
+        'pearson', 'kendall', 'spearman'], doc="""
+        Method of correlation.""")
+
+    min_periods = param.Integer(default=1, doc="""
+        Minimum number of observations required per pair of columns
+        to have a valid result. Currently only available for Pearson
+        and Spearman correlation.""")
+
+    numeric_only = param.Boolean(default=False, doc="""
+        Include only `float`, `int` or `boolean` data.""")
+
+    transform_type: ClassVar[str] = 'corr'
+
+    def apply(self, table: DataFrame) -> DataFrame:
+        return table.corr(
+            method=self.method, min_periods=self.min_periods, numeric_only=self.numeric_only
+        )
+
+
 class project_lnglat(Transform):
     """
     `project_lnglat` projects the given longitude/latitude columns to Web Mercator.
