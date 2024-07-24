@@ -17,7 +17,7 @@ from pydantic import create_model
 from pydantic.fields import FieldInfo
 
 from .agents import (
-    Agent, ChatAgent, CustomAnalysisAgent, SQLAgent,
+    Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .export import export_notebook
 from .llm import Llama, Llm
@@ -134,7 +134,7 @@ class Assistant(Viewer):
                 agent.llm = llm
             # must use the same interface or else nothing shows
             agent.interface = interface
-            if isinstance(agent, CustomAnalysisAgent):
+            if isinstance(agent, AnalysisAgent):
                 self._analyses.extend(agent.analyses)
             instantiated.append(agent)
 
@@ -165,12 +165,13 @@ class Assistant(Viewer):
         )
 
     def _add_suggestions_to_footer(
-            self,
-            suggestions: list[str],
-            num_objects: int = 1,
-            inplace: bool = True,
-            append_demo: bool = True
-        ):
+        self,
+        suggestions: list[str],
+        num_objects: int = 1,
+        inplace: bool = True,
+        analysis: bool = False,
+        append_demo: bool = True
+    ):
         async def hide_suggestions(_=None):
             if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
@@ -178,7 +179,15 @@ class Assistant(Viewer):
         async def use_suggestion(event):
             contents = event.obj.name
             await hide_suggestions()
-            self.interface.send(contents)
+            if analysis:
+                for agent in self.agents:
+                    if isinstance(agent, AnalysisAgent):
+                        break
+                else:
+                    return
+                await agent.invoke([{'user': 'User', 'contents': contents}])
+            else:
+                self.interface.send(contents)
 
         async def run_demo(event):
             await hide_suggestions()
@@ -314,8 +323,8 @@ class Assistant(Viewer):
         agent_model = self._create_agent_model(agent_names)
 
         for agent in agents:
-            if isinstance(agent, CustomAnalysisAgent):
-                analyses = "\n".join((f"`{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses))
+            if isinstance(agent, AnalysisAgent):
+                analyses = "\n".join(f"- `{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses)
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
 
         system = render_template(
@@ -370,7 +379,7 @@ class Assistant(Viewer):
 
                 if isinstance(subagent, SQLAgent):
                     custom_messages = messages.copy()
-                    custom_agent = next((agent for agent in self.agents if isinstance(agent, CustomAnalysisAgent)), None)
+                    custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
                     if custom_agent:
                         custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
                         custom_message = (
@@ -423,17 +432,18 @@ class Assistant(Viewer):
         self._current_agent.object = "## No agent active"
 
         if "current_pipeline" in agent.provides:
+            pipeline = memory['current_pipeline']
             applicable_analyses = [
-                analysis for analysis in self._analyses if analysis.applies()
+                analysis for analysis in self._analyses if analysis.applies(pipeline)
             ]
             self._add_suggestions_to_footer(
                 [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
                 append_demo=False,
+                analysis=True,
                 num_objects=len(self.interface.objects),
             )
 
         print("\033[92mDONE\033[0m", "\n\n")
-
 
     def controls(self):
         return self._controls

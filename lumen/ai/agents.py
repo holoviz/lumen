@@ -914,20 +914,26 @@ class VegaLiteAgent(BaseViewAgent):
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 500}
 
 
-class CustomAnalysis(param.ParameterizedFunction):
+class Analysis(param.ParameterizedFunction):
+    """
+    The purpose of an Analysis is to perform custom actions tailored
+    to a particular use case and/or domain. It is a ParameterizedFunction
+    which implements an applies method to confirm whether the analysis
+    applies to a particular dataset and a __call__ method which is given
+    a pipeline and must return another valid component.
+    """
 
-    columns = param.List(default=[], doc="The columns required for the analysis.")
+    columns = param.List(default=[], doc="The columns required for the analysis.", readonly=True)
 
     @classmethod
-    def applies(cls) -> bool:
-        pipeline = memory['current_pipeline']
+    def applies(cls, pipeline) -> bool:
         return all(col in pipeline.data.columns for col in cls.columns)
 
     def __call__(self, pipeline) -> Component:
         return pipeline
 
 
-class CustomAnalysisAgent(LumenBaseAgent):
+class AnalysisAgent(LumenBaseAgent):
     """
     Perform custom analyses on the data.
     """
@@ -946,7 +952,7 @@ class CustomAnalysisAgent(LumenBaseAgent):
     )
 
     async def _system_prompt_with_context(
-        self, messages: list | str, analyses: list[CustomAnalysis] = []
+        self, messages: list | str, analyses: list[Analysis] = []
     ) -> str:
         system_prompt = self.system_prompt
         for name, analysis in analyses.items():
@@ -964,18 +970,18 @@ class CustomAnalysisAgent(LumenBaseAgent):
         return system_prompt
 
     async def answer(self, messages: list | str):
-        analyses = {a.name: a for a in self.analyses if a.applies()}
+        pipeline = memory['current_pipeline']
+        analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
         if not analyses:
             print("NONE found...")
             return None
-        pipeline = memory['current_pipeline']
-        type_ = Literal[tuple(analyses)]
-        analysis_model = create_model(
-            "Analysis",
-            correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
-        )
         with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
             if len(analyses) > 1:
+                type_ = Literal[tuple(analyses)]
+                analysis_model = create_model(
+                    "Analysis",
+                    correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
+                )
                 system_prompt = await self._system_prompt_with_context(messages, analyses)
                 analysis = (await self.llm.invoke(
                     messages,
