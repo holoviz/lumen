@@ -1136,8 +1136,6 @@ class YdataProfilingView(View):
 
     view_type = 'ydata_profiling'
 
-    _extension = 'ydata_profiling'
-
     _panel_type = pn.pane.HTML
 
     def _get_params(self) -> Dict[str, Any]:
