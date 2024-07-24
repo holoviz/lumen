@@ -1,6 +1,7 @@
 import panel as pn
 
 from . import agents, embeddings, llm  # noqa
+from .agents import Analysis  # noqa
 from .assistant import Assistant  # noqa
 from .memory import memory  # noqa
 

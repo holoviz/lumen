@@ -917,3 +917,101 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 500}
+
+
+class Analysis(param.ParameterizedFunction):
+    """
+    The purpose of an Analysis is to perform custom actions tailored
+    to a particular use case and/or domain. It is a ParameterizedFunction
+    which implements an applies method to confirm whether the analysis
+    applies to a particular dataset and a __call__ method which is given
+    a pipeline and must return another valid component.
+    """
+
+    columns = param.List(default=[], doc="The columns required for the analysis.", readonly=True)
+
+    @classmethod
+    def applies(cls, pipeline) -> bool:
+        return all(col in pipeline.data.columns for col in cls.columns)
+
+    def __call__(self, pipeline) -> Component:
+        return pipeline
+
+
+class AnalysisAgent(LumenBaseAgent):
+    """
+    Perform custom analyses on the data.
+    """
+
+    analyses = param.List([])
+
+    requires = param.List(default=['current_pipeline'])
+
+    provides = param.List(default=['current_view'])
+
+    system_prompt = param.String(
+        default=(
+            "You are in charge of picking the appropriate analysis to perform on the data "
+            "based on the user query and the available data.\n\nAvailable analyses include:\n\n"
+        )
+    )
+
+    async def _system_prompt_with_context(
+        self, messages: list | str, analyses: list[Analysis] = []
+    ) -> str:
+        system_prompt = self.system_prompt
+        for name, analysis in analyses.items():
+            if analysis.__doc__ is None:
+                doc = analysis.__name__
+            else:
+                doc = analysis.__doc__.replace("\n", " ")
+            system_prompt = f'- {name!r} - {doc}\n'
+        current_data = memory["current_data"]
+        if isinstance(current_data, dict):
+            columns = list(current_data["stats"].keys())
+        else:
+            columns = list(current_data.columns)
+        system_prompt += f"\nHere are the columns of the table: {columns}"
+        return system_prompt
+
+    async def answer(self, messages: list | str):
+        pipeline = memory['current_pipeline']
+        analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
+        if not analyses:
+            print("NONE found...")
+            return None
+        with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
+            if len(analyses) > 1:
+                type_ = Literal[tuple(analyses)]
+                analysis_model = create_model(
+                    "Analysis",
+                    correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
+                )
+                system_prompt = await self._system_prompt_with_context(messages, analyses)
+                analysis = (await self.llm.invoke(
+                    messages,
+                    system=system_prompt,
+                    response_model=analysis_model,
+                    allow_partial=False,
+                )).correct_name
+            else:
+                analysis = list(analyses)[0]
+            step.stream(f"Selected {analysis}")
+            step.success_title = f"Selected {analysis}"
+
+        with self.interface.add_step(title="Creating view...") as step:
+            print(f"Creating view for {analysis}")
+            view = analyses[analysis](pipeline)
+            spec = view.to_spec()
+            step.stream(f"Generated view\n```json\n{spec}\n```")
+            step.success_title = "Generated view"
+        view_type = view.view_type if hasattr(view, "view_type") else  type(view)
+        memory["current_view"] = dict(spec, type=view_type)
+        return view
+
+    async def invoke(self, messages: list | str):
+        view = await self.answer(messages)
+        if view is None:
+            self.interface.stream('Failed to find an analysis that applies to this data')
+        else:
+            self._render_lumen(view)

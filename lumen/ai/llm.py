@@ -181,7 +181,7 @@ class OpenAI(Llm):
     organization = param.String()
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-3.5-turbo"},
+        "default": {"model": "gpt-4o-mini"},
         "reasoning": {"model": "gpt-4-turbo-preview"},
     })
 

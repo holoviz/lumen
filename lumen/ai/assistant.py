@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatMessage
+from panel.chat import ChatInterface
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
@@ -16,7 +16,9 @@ from panel.widgets import Button, FileDownload
 from pydantic import create_model
 from pydantic.fields import FieldInfo
 
-from .agents import Agent, ChatAgent
+from .agents import (
+    Agent, AnalysisAgent, ChatAgent, SQLAgent,
+)
 from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
@@ -123,10 +125,17 @@ class Assistant(Viewer):
 
         llm = llm or self.llm
         instantiated = []
+        self._analyses = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
                 agent = agent(interface=interface, **kwargs)
+            if agent.llm is None:
+                agent.llm = llm
+            # must use the same interface or else nothing shows
+            agent.interface = interface
+            if isinstance(agent, AnalysisAgent):
+                self._analyses.extend(agent.analyses)
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
@@ -155,15 +164,30 @@ class Assistant(Viewer):
             notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
         )
 
-    def _add_suggestions_to_footer(self, suggestions: list[str], inplace: bool = True):
+    def _add_suggestions_to_footer(
+        self,
+        suggestions: list[str],
+        num_objects: int = 1,
+        inplace: bool = True,
+        analysis: bool = False,
+        append_demo: bool = True
+    ):
         async def hide_suggestions(_=None):
-            if len(self.interface.objects) > 1:
+            if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
 
         async def use_suggestion(event):
             contents = event.obj.name
             await hide_suggestions()
-            self.interface.send(contents)
+            if analysis:
+                for agent in self.agents:
+                    if isinstance(agent, AnalysisAgent):
+                        break
+                else:
+                    return
+                await agent.invoke([{'user': 'User', 'contents': contents}])
+            else:
+                self.interface.send(contents)
 
         async def run_demo(event):
             await hide_suggestions()
@@ -187,7 +211,7 @@ class Assistant(Viewer):
             margin=(5, 5),
         )
 
-        if self.demo_inputs:
+        if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
                 name="Show a demo",
                 button_type="primary",
@@ -196,13 +220,8 @@ class Assistant(Viewer):
             ))
 
         message = self.interface.objects[-1]
-        message = ChatMessage(
-            footer_objects=[suggestion_buttons],
-            user=message.user,
-            object=message.object,
-        )
         if inplace:
-            self.interface.objects[-1] = message
+            message.footer_objects = [suggestion_buttons]
 
         self.interface.param.watch(hide_suggestions, "objects")
         return message
@@ -215,7 +234,7 @@ class Assistant(Viewer):
         source = memory.get("current_source")
         spec = get_schema(source, table=table)
         sql = memory.get("current_sql")
-        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql)
+        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             response = self.llm.stream(
                 messages=messages,
@@ -295,6 +314,12 @@ class Assistant(Viewer):
             return agent_names[0]
         self._current_agent.object = "## **Current Agent**: [Lumen.ai](https://lumen.holoviz.org/)"
         agent_model = self._create_agent_model(agent_names)
+
+        for agent in agents:
+            if isinstance(agent, AnalysisAgent):
+                analyses = "\n".join(f"- `{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses)
+                agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
+
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
         )
@@ -351,7 +376,21 @@ class Assistant(Viewer):
             with self.interface.add_step(title="Choosing subagent...") as step:
                 step.stream(f"Assistant decided the {subagent.name[:-5]!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {subagent.name[:-5]}"
-                await subagent.answer(messages)
+
+                if isinstance(subagent, SQLAgent):
+                    custom_messages = messages.copy()
+                    custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
+                    if custom_agent:
+                        custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
+                        custom_message = (
+                            f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
+                            f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
+                        )
+                        custom_messages.append({"role": "user", "content": custom_message})
+                        print(custom_messages)
+                    await subagent.answer(custom_messages)
+                else:
+                    await subagent.answer(messages)
                 step.success_title = f"Selected {subagent.name[:-5]}"
         return selected
 
@@ -389,10 +428,22 @@ class Assistant(Viewer):
             print(f"{message['role']!r}: {message['content']}")
             print("ENTRY" + "-" * 10)
 
-        result = await agent.invoke(messages[-2:])
+        await agent.invoke(messages[-2:])
         self._current_agent.object = "## No agent active"
+
+        if "current_pipeline" in agent.provides:
+            pipeline = memory['current_pipeline']
+            applicable_analyses = [
+                analysis for analysis in self._analyses if analysis.applies(pipeline)
+            ]
+            self._add_suggestions_to_footer(
+                [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
+                append_demo=False,
+                analysis=True,
+                num_objects=len(self.interface.objects),
+            )
+
         print("\033[92mDONE\033[0m", "\n\n")
-        return result
 
     def controls(self):
         return self._controls
