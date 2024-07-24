@@ -526,15 +526,15 @@ class SQLAgent(LumenBaseAgent):
                 }
             ]
 
-        with self.interface.add_step(title="Creating SQL query...", success_title="SQL Query") as step:
-            response = self.llm.stream(messages, system=system, response_model=Sql)
-            sql_query = None
-            async for output in response:
-                step_message = output.chain_of_thought
-                if output.query:
-                    sql_query = output.query.replace("```sql", "").replace("```", "").strip()
-                    step_message += f"\n```sql\n{sql_query}\n```"
-                step.stream(step_message, replace=True)
+        # with self.interface.add_step(title="Creating SQL query...", success_title="SQL Query") as step:
+        response = self.llm.stream(messages, system=system, response_model=Sql)
+        sql_query = None
+        async for output in response:
+            step_message = output.chain_of_thought
+            if output.query:
+                sql_query = output.query.replace("```sql", "").replace("```", "").strip()
+                step_message += f"\n```sql\n{sql_query}\n```"
+                # step.stream(step_message, replace=True)
 
         if not sql_query:
             raise ValueError("No SQL query was generated.")
