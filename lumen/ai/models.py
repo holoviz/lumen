@@ -38,8 +38,7 @@ class JoinRequired(BaseModel):
 
 class TableJoins(BaseModel):
 
-    tables: list[str] | None = Field(
-        default=None,
+    tables: list[str] = Field(
         description="List of tables that need to be joined to answer the user's query.",
     )
 

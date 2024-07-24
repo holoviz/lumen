@@ -236,13 +236,12 @@ class Assistant(Viewer):
         sql = memory.get("current_sql")
         system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
-            response = self.llm.stream(
+            output = await self.llm.invoke(
                 messages=messages,
                 system=system,
                 response_model=Validity,
             )
-            async for output in response:
-                step.stream(output.correct_assessment, replace=True)
+            step.stream(output.correct_assessment, replace=True)
             step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
 
         if output and output.is_invalid:
@@ -299,7 +298,7 @@ class Assistant(Viewer):
             errors = '\n'.join(errors)
             messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
 
-        out = self.llm.stream(
+        out = await self.llm.invoke(
             messages=messages,
             system=system,
             response_model=agent_model
@@ -335,9 +334,8 @@ class Assistant(Viewer):
             agent = agent_types[0]
         else:
             with self.interface.add_step(title="Selecting relevant agent...", user="Assistant") as step:
-                response = await self._choose_agent(messages, self.agents)
-                async for output in response:
-                    step.stream(output.chain_of_thought, replace=True)
+                output = await self._choose_agent(messages, self.agents)
+                step.stream(output.chain_of_thought, replace=True)
                 agent = output.agent
                 step.success_title = f"Selected {agent}"
             messages.append({"role": "assistant", "content": output.chain_of_thought})
@@ -361,12 +359,8 @@ class Assistant(Viewer):
                     for agent in self.agents
                     if any(ur in agent.provides for ur in unmet_dependencies)
                 ]
-                response = await self._choose_agent(messages, subagents)
-                if isinstance(response, str):
-                    subagent_name = response
-                else:
-                    async for output in response:
-                        subagent_name = output.agent
+                output = await self._choose_agent(messages, subagents)
+                subagent_name = output.agent if not isinstance(output, str) else output
                 if subagent_name is None:
                     continue
                 subagent = agents[subagent_name]
