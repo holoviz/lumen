@@ -1129,4 +1129,22 @@ class AltairView(View):
         return pn.pane.Vega(**self._normalize_params(self._get_params()))
 
 
+class YdataProfilingView(View):
+    """
+    A View that renders a ydata_profiling ProfileReport.
+    """
+
+    view_type = 'ydata_profiling'
+
+    _panel_type = pn.pane.HTML
+
+    def _get_params(self) -> Dict[str, Any]:
+        df = self.get_data()
+        return dict(df=df, **self.kwargs)
+
+    def get_panel(self) -> pn.pane.HTML:
+        from ydata_profiling import ProfileReport
+        return self._panel_type(ProfileReport(**self._get_params()).html)
+
+
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
