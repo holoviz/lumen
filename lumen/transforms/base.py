@@ -858,6 +858,8 @@ class Corr(Transform):
     numeric_only = param.Boolean(default=False, doc="""
         Include only `float`, `int` or `boolean` data.""")
 
+    transform_type: ClassVar[str] = 'corr'
+
     def apply(self, table: DataFrame) -> DataFrame:
         return table.corr(
             method=self.method, min_periods=self.min_periods, numeric_only=self.numeric_only
