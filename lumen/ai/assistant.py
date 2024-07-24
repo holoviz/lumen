@@ -185,7 +185,7 @@ class Assistant(Viewer):
                         break
                 else:
                     return
-                await agent.invoke([{'user': 'User', 'contents': contents}])
+                await agent.invoke([{'role': 'User', 'contents': contents}])
             else:
                 self.interface.send(contents)
 
