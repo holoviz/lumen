@@ -57,7 +57,8 @@ class AIHandler(CodeHandler):
         '''
 
         Keywords:
-            filename (str) : the path to the dataset or the dataset tables
+            filename (str) : the path to the dataset or the paths to multiple datasets
+                used as tables under the same source
             no_data (bool) : if True, do not load data
 
         '''
