@@ -38,10 +38,15 @@ class JoinRequired(BaseModel):
 
 class TableJoins(BaseModel):
 
-    tables: list[str] | None = Field(
-        default=None,
-        description="List of tables that need to be joined to answer the user's query.",
+    tables: list[str] = Field(
+        description=(
+            "List of tables that need to be joined to answer the user's query; "
+            "be sure to match the table names exactly as they appear. "
+            "e.g. `read_parquet('table.parquet')` should be read_parquet('table.parquet') "
+            "NOT just 'table'"
+        ),
     )
+
 
 class Sql(BaseModel):
 
