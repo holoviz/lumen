@@ -5,6 +5,8 @@ import ast
 import os
 import sys
 
+from textwrap import dedent
+
 import bokeh.command.util  # type: ignore
 
 from bokeh.application.handlers.code import CodeHandler  # type: ignore
@@ -55,28 +57,35 @@ class AIHandler(CodeHandler):
         '''
 
         Keywords:
-            filename (str) : a path to a dataset
+            filename (str) : the path to the dataset or the dataset tables
             no_data (bool) : if True, do not load data
 
         '''
         table_initializer = ""
         if 'filename' in kwargs:
-            table = os.path.abspath(kwargs['filename'])
-            if table.endswith(".parq") or table.endswith(".parquet"):
-                table = f"read_parquet('{table}')"
-            elif table.endswith(".csv"):
-                table = f"read_csv('{table}')"
-            elif table.endswith(".json"):
-                table = f"read_json_auto('{table}')"
-            else:
-                raise ValueError('Unsupported file format. Please provide a .parq, .parquet, .csv, or .json file.')
+            input_tables = ast.literal_eval(kwargs.get("filename"))
+            if isinstance(input_tables, str):
+                input_tables = [input_tables]
+            tables = []
+            for table in input_tables:
+                if table.endswith(".parq") or table.endswith(".parquet"):
+                    table = f"read_parquet('{table}')"
+                elif table.endswith(".csv"):
+                    table = f"read_csv('{table}')"
+                elif table.endswith(".json"):
+                    table = f"read_json_auto('{table}')"
+                else:
+                    raise ValueError('Unsupported file format. Please provide a .parq, .parquet, .csv, or .json file.')
+                tables.append(table)
 
-            table_initializer = f"""
-lmai.memory["current_source"] = DuckDBSource(
-    tables=["{table}"],
-    uri=":memory:",
-)
-            """
+            table_initializer = dedent(
+                f"""
+                lmai.memory["current_source"] = DuckDBSource(
+                    tables={tables},
+                    uri=":memory:",
+                )
+                """
+            )
 
         if 'no_data' in kwargs:
             kwargs.pop('no_data')
@@ -86,15 +95,14 @@ lmai.memory["current_source"] = DuckDBSource(
         super().__init__(*args, **kwargs)
 
 
-def build_single_handler_application(path: str | None, argv):
-
-    if path is None or not os.path.isfile(path):
+def build_single_handler_application(tables: str | None, argv):
+    if tables is None or (not os.path.isfile(tables) and "[" not in tables):
         handler = AIHandler(no_data=True)
     else:
-        handler = AIHandler(filename=path)
+        handler = AIHandler(filename=tables)
 
     if handler.failed:
-        raise RuntimeError("Error loading %s:\n\n%s\n%s " % (path, handler.error, handler.error_detail))
+        raise RuntimeError("Error loading %s:\n\n%s\n%s " % (tables, handler.error, handler.error_detail))
 
     application = Application(handler)
     return application
@@ -106,19 +114,10 @@ def build_single_handler_applications(paths: list[str], argvs: dict[str, list[st
 
     if 'no_data' in sys.argv:
         application = build_single_handler_application(None, [])
-        applications['/'] = application
     else:
-        for path in paths:
-            application = build_single_handler_application(path, argvs.get(path, []))
-
-            route = application.handlers[0].url_path()
-
-            if not route:
-                if '/' in applications:
-                    raise RuntimeError(f"Don't know the URL path to use for {path}")
-                route = '/'
-            applications[route] = application
-
+        tables = str(paths)
+        application = build_single_handler_application(tables, argvs.get(tables, []))
+    applications['/lumen_ai'] = application
     return applications
 
 bokeh.command.util.build_single_handler_application = build_single_handler_application
@@ -182,6 +181,8 @@ def main(args=None):
     try:
         ret = args.invoke(args)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         die("ERROR: " + str(e))
 
     if ret is False:
