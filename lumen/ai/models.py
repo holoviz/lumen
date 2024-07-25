@@ -29,7 +29,8 @@ class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Explain whether a table join is required to answer the user's query.
+        Explain whether a table join is required to answer the user's query, or
+        if the user is requesting a join or merge.
         """
     )
 
@@ -71,7 +72,8 @@ class Validity(BaseModel):
     correct_assessment: str = Field(
         description="""
         Thoughts on whether the current table meets the requirement
-        to answer the user's query, i.e. table contains all necessary columns
+        to answer the user's query, i.e. table contains all necessary columns,
+        unless user explicitly asks for a refresh.
         """
     )
 
