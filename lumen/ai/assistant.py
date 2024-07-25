@@ -311,6 +311,7 @@ class Assistant(Viewer):
         return out
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent]):
+        agents = [agent for agent in agents if agent.applies()]
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -324,7 +325,6 @@ class Assistant(Viewer):
                 analyses = "\n".join(f"- `{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses)
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
                 break
-
 
         system = render_template(
             "pick_agent.jinja2", agents=agents, current_agent=self._current_agent.object
