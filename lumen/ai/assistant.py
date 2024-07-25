@@ -414,10 +414,8 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        print(messages, "BEFORE")
         await self._invalidate_memory(messages[-2:])
         agent = await self._get_agent(messages[-3:])
-        print(messages, "AFTER")
         if agent is None:
             msg = (
                 "Assistant could not settle on an agent to perform the requested query. "
