@@ -9,4 +9,5 @@ The data for table '{{ table }}' follows the following JSON schema:
 Checklist
 - If it's a date column (excluding individual year/month/day integers), cast as date
 - If no limit is specified, specify 10000 as the limit.
+- Use table names verbatim; e.g. if table is `read_csv('table.csv')` then use `read_csv('table.csv')` and not `table`
 - Use only `{{ dialect }}` syntax
