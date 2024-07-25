@@ -121,6 +121,9 @@ class LumenOutput(Viewer):
     def __repr__(self):
         return self.spec
 
+    def __str__(self):
+        return self.spec
+
 
 class SQLOutput(LumenOutput):
 
