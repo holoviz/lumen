@@ -30,7 +30,6 @@ class LumenOutput(Viewer):
         code_editor = pn.widgets.CodeEditor(
             value=self.spec, language=self.language, sizing_mode="stretch_both",
         )
-        code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = pn.widgets.ButtonIcon(
             icon="copy", active_icon="check", toggle_duration=1000
         )
