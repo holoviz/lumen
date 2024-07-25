@@ -526,15 +526,15 @@ class SQLAgent(LumenBaseAgent):
                 }
             ]
 
-        # with self.interface.add_step(title="Creating SQL query...", success_title="SQL Query") as step:
-        response = self.llm.stream(messages, system=system, response_model=Sql)
-        sql_query = None
-        async for output in response:
-            step_message = output.chain_of_thought
-            if output.query:
-                sql_query = output.query.replace("```sql", "").replace("```", "").strip()
-                step_message += f"\n```sql\n{sql_query}\n```"
-                # step.stream(step_message, replace=True)
+        with self.interface.add_step(title="Creating SQL query...", success_title="SQL Query") as step:
+            response = self.llm.stream(messages, system=system, response_model=Sql)
+            sql_query = None
+            async for output in response:
+                step_message = output.chain_of_thought
+                if output.query:
+                    sql_query = output.query.replace("```sql", "").replace("```", "").strip()
+                    step_message += f"\n```sql\n{sql_query}\n```"
+                step.stream(step_message, replace=True)
 
         if not sql_query:
             raise ValueError("No SQL query was generated.")
@@ -812,23 +812,15 @@ class BaseViewAgent(LumenBaseAgent):
         print(f"{self.name} is being instructed that {view_prompt}.")
 
         # Query
-        response = self.llm.stream(
+        output = await self.llm.invoke(
             messages,
             system=system_prompt + view_prompt,
             response_model=self._get_model(schema),
         )
-
-        json_pane = None
+        spec = self._extract_spec(output)
+        chain_of_thought = spec.pop("chain_of_thought")
         with self.interface.add_step(title="Generating view...") as step:
-            async for output in response:
-                if json_pane is None:
-                    json_pane = pn.pane.JSON()
-                    step.append(json_pane)
-                try:
-                    spec = self._extract_spec(output)
-                    json_pane.object = spec
-                except Exception:
-                    pass
+            step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)
@@ -869,7 +861,9 @@ class hvPlotAgent(BaseViewAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema)
+        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema, extra_fields={
+            "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
+        })
         return model[cls.view_type.__name__]
 
     def _extract_spec(self, model):

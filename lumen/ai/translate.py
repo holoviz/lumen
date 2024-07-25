@@ -145,6 +145,7 @@ def param_to_pydantic(
     created_models: Optional[Dict[str, BaseModel]] = None,
     schema: Optional[Dict[str, Any]] = None,
     excluded: Union[str, List[str]] = "_internal_params",
+    extra_fields: Optional[Dict[str, Tuple[Type, FieldInfo]]] = None,
 ) -> Dict[str, BaseModel]:
     """
     Translate a param Parameterized to a Pydantic BaseModel.
@@ -161,6 +162,8 @@ def param_to_pydantic(
         A list of parameters to exclude. If a string is provided,
         it looks up the parameter on the parameterized class and
         excludes the parameter's value, by default "_internal_params".
+    extra_fields : Optional[Dict[str, Tuple[Type, FieldInfo]]], optional
+        Extra fields to add to the model, by default None
     """
     parameterized_name = parameterized.__name__
     if created_models is None:
@@ -209,6 +212,10 @@ def param_to_pydantic(
         fields[parameter_name] = (type_, field_info)
 
     fields["__parameterized__"] = (Type, parameterized)
+
+    if extra_fields:
+        fields.update(extra_fields)
+
     # ignore RuntimeWarning: fields may not start with an underscore
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
