@@ -179,7 +179,7 @@ class Assistant(Viewer):
 
         async def use_suggestion(event):
             button = event.obj
-            with button.param.update(loading=True):
+            with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
                 contents = button.name
                 if hide_after_use:
                     await hide_suggestions()
@@ -189,7 +189,7 @@ class Assistant(Viewer):
                             break
                     else:
                         return
-                    await asyncio.create_task(agent.invoke([{'role': 'user', 'content': contents}]))
+                    await agent.invoke([{'role': 'user', 'content': contents}])
                 else:
                     self.interface.send(contents)
 
