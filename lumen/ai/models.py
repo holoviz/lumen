@@ -16,7 +16,7 @@ class DataRequired(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Thoughts on whether the user's query requires data loaded;
+        Thoughts on whether the user's query requires data loaded for insights;
         if the user wants to explore a dataset, it's required.
         If only finding a dataset, it's not required.
         """
