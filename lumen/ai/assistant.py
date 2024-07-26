@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface
+from panel.chat import ChatInterface, ChatStep
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
@@ -338,7 +338,6 @@ class Assistant(Viewer):
                 step.stream(output.chain_of_thought, replace=True)
                 agent = output.agent
                 step.success_title = f"Selected {agent}"
-            messages.append({"role": "assistant", "content": output.chain_of_thought})
 
         if agent is None:
             return None
@@ -391,6 +390,9 @@ class Assistant(Viewer):
     def _serialize(self, obj):
         if isinstance(obj, (Tabs, Column)):
             for o in obj:
+                if isinstance(obj, ChatStep) and not obj.title.startswith("Selected"):
+                    # only want the chain of thoughts from the selected agent
+                    continue
                 if hasattr(o, "visible") and o.visible:
                     break
             return self._serialize(o)
@@ -422,7 +424,8 @@ class Assistant(Viewer):
             print(f"{message['role']!r}: {message['content']}")
             print("ENTRY" + "-" * 10)
 
-        await agent.invoke(messages[-2:])
+        print("\n\033[95mAGENT:\033[0m", agent, messages[-3:])
+        await agent.invoke(messages[-3:])
         self._current_agent.object = "## No agent active"
 
         if "current_pipeline" in agent.provides:
