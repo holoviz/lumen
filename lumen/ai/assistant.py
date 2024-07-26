@@ -170,7 +170,8 @@ class Assistant(Viewer):
         num_objects: int = 1,
         inplace: bool = True,
         analysis: bool = False,
-        append_demo: bool = True
+        append_demo: bool = True,
+        hide_after_use: bool = True
     ):
         async def hide_suggestions(_=None):
             if len(self.interface.objects) > num_objects:
@@ -178,7 +179,8 @@ class Assistant(Viewer):
 
         async def use_suggestion(event):
             contents = event.obj.name
-            await hide_suggestions()
+            if hide_after_use:
+                await hide_suggestions()
             if analysis:
                 for agent in self.agents:
                     if isinstance(agent, AnalysisAgent):
@@ -190,7 +192,8 @@ class Assistant(Viewer):
                 self.interface.send(contents)
 
         async def run_demo(event):
-            await hide_suggestions()
+            if hide_after_use:
+                await hide_suggestions()
             with self.interface.active_widget.param.update(loading=True):
                 for demo_message in self.demo_inputs:
                     while self.interface.disabled:
@@ -437,6 +440,7 @@ class Assistant(Viewer):
                 [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
                 append_demo=False,
                 analysis=True,
+                hide_after_use=False,
                 num_objects=len(self.interface.objects),
             )
 
