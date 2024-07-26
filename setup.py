@@ -33,8 +33,8 @@ extras_require = {
         'duckdb',
         'pyarrow',
         'openai',
-        'instructor',
-        'pydantic',
+        'instructor>1',
+        'pydantic>2.8.0',
         'datashader',   # for big datasets
     ],
     'sql': [
