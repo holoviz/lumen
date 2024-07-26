@@ -29,7 +29,8 @@ class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Explain whether a table join is required to answer the user's query.
+        Explain whether a table join is required to answer the user's query, or
+        if the user is requesting a join or merge.
         """
     )
 
@@ -39,8 +40,13 @@ class JoinRequired(BaseModel):
 class TableJoins(BaseModel):
 
     tables: list[str] = Field(
-        description="List of tables that need to be joined to answer the user's query.",
+        description=(
+            "List of tables that need to be joined to answer the user's query. "
+            "Use table names verbatim; e.g. if table is `read_csv('table.csv')` "
+            "then use `read_csv('table.csv')` and not `table`"
+        ),
     )
+
 
 class Sql(BaseModel):
 
@@ -66,7 +72,8 @@ class Validity(BaseModel):
     correct_assessment: str = Field(
         description="""
         Thoughts on whether the current table meets the requirement
-        to answer the user's query, i.e. table contains all necessary columns
+        to answer the user's query, i.e. table contains all necessary columns,
+        unless user explicitly asks for a refresh.
         """
     )
 
