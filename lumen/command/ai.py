@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import glob
 import os
 import sys
 
@@ -47,36 +48,47 @@ assistant.servable("Lumen.ai")
 assistant.controls().servable(area="sidebar")
 """
 
+VALID_EXTENSIONS = ['.parq', '.parquet', '.csv', '.json']
 
 class AIHandler(CodeHandler):
     ''' Modify Bokeh documents by using Lumen AI on a dataset.
 
     '''
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, no_data: bool = False, filename: str | None = None, **kwargs) -> None:
         '''
 
         Keywords:
-            filename (str) : the path to the dataset or the paths to multiple datasets
-                used as tables under the same source
-            no_data (bool) : if True, do not load data
+            filename (str) : the path to the dataset or a stringified list of paths to multiple datasets
+                used as tables under the same source. Wildcards are supported.
+            no_data (bool) : if True, launch app without data
 
         '''
         table_initializer = ""
-        if 'filename' in kwargs:
-            input_tables = ast.literal_eval(kwargs.get("filename"))
+        expanded_files = []
+        if no_data:
+            filename = 'no_data'
+        elif filename:
+            input_tables = ast.literal_eval(filename)
             if isinstance(input_tables, str):
                 input_tables = [input_tables]
+
+            for pattern in input_tables:
+                pattern = pattern.strip()
+                expanded_files.extend([f for f in glob.glob(pattern) if any(f.endswith(ext) for ext in VALID_EXTENSIONS)])
+
+            if not expanded_files:
+                raise ValueError(f"No valid files found matching the pattern(s) provided: {input_tables}")
+
+            expanded_files = list(set(expanded_files))
             tables = []
-            for table in input_tables:
+            for table in expanded_files:
                 if table.endswith(".parq") or table.endswith(".parquet"):
                     table = f"read_parquet('{table}')"
                 elif table.endswith(".csv"):
                     table = f"read_csv('{table}')"
                 elif table.endswith(".json"):
                     table = f"read_json_auto('{table}')"
-                else:
-                    raise ValueError('Unsupported file format. Please provide a .parq, .parquet, .csv, or .json file.')
                 tables.append(table)
 
             table_initializer = dedent(
@@ -88,12 +100,8 @@ class AIHandler(CodeHandler):
                 """
             )
 
-        if 'no_data' in kwargs:
-            kwargs.pop('no_data')
-            kwargs['filename'] = 'no_data'
-
-        kwargs['source'] = SOURCE_CODE.format(table_initializer=table_initializer)
-        super().__init__(*args, **kwargs)
+        source = SOURCE_CODE.format(table_initializer=table_initializer)
+        super().__init__(filename=filename, source=source, **kwargs)
 
 
 def build_single_handler_application(tables: str | None, argv):
