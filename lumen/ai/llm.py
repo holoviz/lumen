@@ -5,6 +5,7 @@ from functools import partial
 import panel as pn
 import param
 
+from instructor import from_openai
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
@@ -23,12 +24,6 @@ class Llm(param.Parameterized):
 
     __abstract = True
 
-    def _create_client(self, create, model: str | None = None):
-        if model:
-            return partial(patch(create=create, mode=self.mode), model=model)
-        else:
-            return patch(create=create, mode=self.mode)
-
     def _get_model_kwargs(self, model_key):
         if model_key in self.model_kwargs:
             model_kwargs = self.model_kwargs.get(model_key)
@@ -45,7 +40,7 @@ class Llm(param.Parameterized):
         messages: list | str,
         system: str = "",
         response_model: BaseModel | None = None,
-        allow_partial: bool = True,
+        allow_partial: bool = False,
         model_key: str = "default",
         **input_kwargs,
     ) -> BaseModel:
@@ -53,6 +48,7 @@ class Llm(param.Parameterized):
             messages = [{"role": "user", "content": messages}]
         if system:
             messages = [{"role": "system", "content": system}] + messages
+        print(messages)
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
@@ -78,7 +74,7 @@ class Llm(param.Parameterized):
         messages: list | str,
         system: str = "",
         response_model: BaseModel | None = None,
-        field: str = "output",
+        field: str | None = None,
         model_key: str = "default",
         **kwargs,
     ):
@@ -88,6 +84,7 @@ class Llm(param.Parameterized):
             system=system,
             response_model=response_model,
             stream=True,
+            allow_partial=True,
             model_key=model_key,
             **kwargs,
         )
@@ -109,7 +106,7 @@ class Llm(param.Parameterized):
                     yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_key, messages, **kwargs):
-        client = self.get_client(model_key)
+        client = self.get_client(model_key, kwargs.get("response_model"))
         return await client(messages=messages, **kwargs)
 
 
@@ -136,9 +133,9 @@ class Llama(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str):
-        if client := pn.state.cache.get(model_key):
-            return client
+    def get_client(self, model_key: str, response_model: BaseModel | None = None):
+        if client_callable := pn.state.cache.get(model_key):
+            return client_callable
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
 
@@ -156,10 +153,15 @@ class Llama(Llm):
             use_mlock=True,
             verbose=False
         )
+
         raw_client = llm.create_chat_completion_openai_v1
-        client = self._create_client(raw_client, model_key)
-        pn.state.cache[model_key] = client
-        return client
+        # patch works with/without response_model
+        client_callable = patch(
+            create=raw_client,
+            mode=Mode.JSON_SCHEMA,  # (2)!
+        )
+        pn.state.cache[model_key] = client_callable
+        return client_callable
 
     async def run_client(self, model_key, messages, **kwargs):
         client = self.get_client(model_key)
@@ -187,7 +189,7 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str):
+    def get_client(self, model_key: str, response_model: BaseModel | None = None):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -199,14 +201,17 @@ class OpenAI(Llm):
         if self.organization:
             model_kwargs["organization"] = self.organization
         llm = openai.AsyncOpenAI(**model_kwargs)
-        raw_client = llm.chat.completions.create
-        client = self._create_client(raw_client, model)
+        if response_model:
+            client = from_openai(llm)
+            client_callable = partial(client.chat.completions.create, model=model)
+        else:
+            client_callable = llm.chat.completions.create
 
         if self.use_logfire:
             import logfire
             logfire.configure()
             logfire.instrument_openai(llm)
-        return client
+        return client_callable
 
 class AzureOpenAI(Llm):
 
@@ -224,7 +229,7 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str):
+    def get_client(self, model_key: str, response_model: BaseModel | None = None):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -236,9 +241,12 @@ class AzureOpenAI(Llm):
         if self.azure_endpoint:
             model_kwargs["azure_endpoint"] = self.azure_endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
-        raw_client = llm.chat.completions.create
-        client = self._create_client(raw_client, model)
-        return client
+        if response_model:
+            client = from_openai(llm)
+            client_callable = partial(client.chat.completions.create, model=model)
+        else:
+            client_callable = llm.chat.completions.create
+        return client_callable
 
 
 class AILauncher(OpenAI):

@@ -172,11 +172,11 @@ class Agent(Viewer):
         system_prompt = await self._system_prompt_with_context(messages)
 
         message = None
-        async for chunk in self.llm.stream(
-            messages, system=system_prompt, response_model=self.response_model
+        async for output in self.llm.stream(
+            messages, system=system_prompt, response_model=self.response_model, field="output"
         ):
             message = self.interface.stream(
-                chunk, replace=True, message=message, user=self.user
+                output, replace=True, message=message, user=self.user
             )
 
 
@@ -285,18 +285,20 @@ class ChatAgent(Agent):
         if 'current_data' in memory:
             return self.requires
 
-        result = await self.llm.invoke(
-            messages,
-            system=(
-                "The user may or may not want to chat about a particular dataset. "
-                "Determine whether the provided user prompt requires access to "
-                "actual data. If they're only searching for one, it's not required."
-            ),
-            response_model=DataRequired,
-            allow_partial=False,
-        )
-        if result.data_required:
-            return self.requires + ['current_table']
+        with self.interface.add_step(title="Checking if data is required") as step:
+            response = self.llm.stream(
+                messages,
+                system=(
+                    "The user may or may not want to chat about a particular dataset. "
+                    "Determine whether the provided user prompt requires access to "
+                    "actual data. If they're only searching for one, it's not required."
+                ),
+                response_model=DataRequired,
+            )
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
+            if output.data_required:
+                return self.requires + ['current_table']
         return self.requires
 
     async def _system_prompt_with_context(
@@ -508,6 +510,7 @@ class SQLAgent(LumenBaseAgent):
         pipeline = memory['current_pipeline']
         out = SQLOutput(component=pipeline, spec=query)
         self.interface.stream(out, user="SQL", replace=True)
+        return out
 
     @retry_llm_output()
     async def _create_valid_sql(self, messages, system, source, tables, errors=None):
@@ -522,33 +525,24 @@ class SQLAgent(LumenBaseAgent):
                         f"expertly revise, and please do not repeat these issues:\n{errors}")
                 }
             ]
-        message = ""
-        with self.interface.add_step(title="Conjuring SQL query...", success_title="SQL Query") as step:
-            async for model in self.llm.stream(
-                messages,
-                system=system,
-                response_model=Sql,
-                field=None
-            ):
-                chunk = model.query
-                if chunk is None:
-                    continue
-                message = chunk
-                step.stream(
-                    f"```sql\n{message}\n```",
-                    replace=True,
-                )
-        if not message:
-            return
-        sql_query = message.replace("```sql", "").replace("```", "").strip()
+
+        with self.interface.add_step(title="Creating SQL query...", success_title="SQL Query") as step:
+            response = self.llm.stream(messages, system=system, response_model=Sql)
+            sql_query = None
+            async for output in response:
+                step_message = output.chain_of_thought
+                if output.query:
+                    sql_query = output.query.replace("```sql", "").replace("```", "").strip()
+                    step_message += f"\n```sql\n{sql_query}\n```"
+                step.stream(step_message, replace=True)
+
         if not sql_query:
             raise ValueError("No SQL query was generated.")
 
         # check whether the SQL query is valid
-        sql_expr_source = source.create_sql_expr_source({model.expr_name: sql_query})
-        pipeline = Pipeline(
-            source=sql_expr_source, table=model.expr_name
-        )
+        expr_name = output.expr_name
+        sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
+        pipeline = Pipeline(source=sql_expr_source, table=expr_name)
         df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
@@ -563,25 +557,26 @@ class SQLAgent(LumenBaseAgent):
             return None
 
         with self.interface.add_step(title="Checking if join is required") as step:
-            join = (await self.llm.invoke(
+            response = self.llm.stream(
                 messages,
                 system="Determine whether a table join is required to answer the user's query.",
                 response_model=JoinRequired,
-                allow_partial=False,
-            ))
-            step.stream(join.chain_of_thought)
-            step.success_title = 'Query requires join' if join.join_required else 'No join required'
+            )
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
+            join_required = output.join_required
+            step.success_title = 'Query requires join' if join_required else 'No join required'
 
-        if join.join_required:
-            available_tables = source.get_tables()
+        if join_required:
+            available_tables = " ".join(str(table) for table in source.get_tables())
             with self.interface.add_step(title="Determining tables required for join") as step:
-                tables = (await self.llm.invoke(
+                output = await self.llm.invoke(
                     messages,
                     system=f"List the tables that need to be joined: {available_tables}.",
                     response_model=TableJoins,
-                    allow_partial=False,
-                )).tables
-                step.stream(f'\nJoin requires following tables: {tables}')
+                )
+                tables = output.tables
+                step.stream(f'\nJoin requires following tables: {tables}', replace=True)
                 step.success_title = 'Found tables required for join'
         else:
             tables = [table]
@@ -604,8 +599,8 @@ class SQLAgent(LumenBaseAgent):
         return sql_query
 
     async def invoke(self, messages: list | str):
-        sql = await self.answer(messages)
-        self._render_sql(sql)
+        sql_query = await self.answer(messages)
+        self._render_sql(sql_query)
 
 
 class PipelineAgent(LumenBaseAgent):
@@ -817,13 +812,15 @@ class BaseViewAgent(LumenBaseAgent):
         print(f"{self.name} is being instructed that {view_prompt}.")
 
         # Query
-        spec_model = await self.llm.invoke(
+        output = await self.llm.invoke(
             messages,
             system=system_prompt + view_prompt,
             response_model=self._get_model(schema),
-            allow_partial=False,
         )
-        spec = self._extract_spec(spec_model)
+        spec = self._extract_spec(output)
+        chain_of_thought = spec.pop("chain_of_thought")
+        with self.interface.add_step(title="Generating view...") as step:
+            step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)
@@ -864,7 +861,9 @@ class hvPlotAgent(BaseViewAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema)
+        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema, extra_fields={
+            "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
+        })
         return model[cls.view_type.__name__]
 
     def _extract_spec(self, model):
