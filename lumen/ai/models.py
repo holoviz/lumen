@@ -9,7 +9,7 @@ class FuzzyTable(BaseModel):
 
     required: bool = Field(description="Whether the user's query requires looking for a new table.")
 
-    keywords: list[str] | None = Field(default=None, description="The most likely keywords related to a table name that the user might be referring to.")
+    keywords: list[str] = Field(description="The most likely keywords related to a table name that the user might be referring to.")
 
 
 class DataRequired(BaseModel):
