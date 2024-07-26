@@ -205,7 +205,7 @@ class OpenAI(Llm):
             client = from_openai(llm)
             client_callable = partial(client.chat.completions.create, model=model)
         else:
-            client_callable = llm.chat.completions.create
+            client_callable = partial(llm.chat.completions.create, model=model)
 
         if self.use_logfire:
             import logfire
@@ -245,7 +245,7 @@ class AzureOpenAI(Llm):
             client = from_openai(llm)
             client_callable = partial(client.chat.completions.create, model=model)
         else:
-            client_callable = llm.chat.completions.create
+            client_callable = partial(llm.chat.completions.create, model=model)
         return client_callable
 
 
