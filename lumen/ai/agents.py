@@ -840,9 +840,11 @@ class hvPlotAgent(BaseViewAgent):
     system_prompt = param.String(
         default="""
         Generate the plot the user requested.
-        Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns.
+        Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
+        no repeated columns are allowed.
         Do not arbitrarily set `groupby` and `by` fields unless explicitly requested.
         If a histogram is requested, use `y` instead of `x`.
+        If x is categorical or strings, prefer barh over bar, and use `y` for the values.
         """
     )
 
