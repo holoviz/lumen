@@ -976,6 +976,7 @@ class AnalysisAgent(LumenBaseAgent):
         if not analyses:
             print("NONE found...")
             return None
+
         with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
             if len(analyses) > 1:
                 type_ = Literal[tuple(analyses)]
@@ -984,20 +985,25 @@ class AnalysisAgent(LumenBaseAgent):
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
                 system_prompt = await self._system_prompt_with_context(messages, analyses)
-                analysis = (await self.llm.invoke(
+                analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
                     response_model=analysis_model,
                     allow_partial=False,
                 )).correct_name
             else:
-                analysis = list(analyses)[0]
-            step.stream(f"Selected {analysis}")
-            step.success_title = f"Selected {analysis}"
+                analysis_name = list(analyses)[0]
+            step.stream(f"Selected {analysis_name}")
+            step.success_title = f"Selected {analysis_name}"
 
         with self.interface.add_step(title="Creating view...") as step:
-            print(f"Creating view for {analysis}")
-            view = analyses[analysis](pipeline)
+            print(f"Creating view for {analysis_name}")
+            await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
+            analysis_callable = analyses[analysis_name]
+            if asyncio.iscoroutinefunction(analysis_callable):
+                view = await analysis_callable(pipeline)
+            else:
+                view = await asyncio.to_thread(analysis_callable, pipeline)
             spec = view.to_spec()
             step.stream(f"Generated view\n```json\n{spec}\n```")
             step.success_title = "Generated view"
