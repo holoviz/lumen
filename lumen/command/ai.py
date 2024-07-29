@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import glob
 import os
 import sys
+
+from textwrap import dedent
 
 import bokeh.command.util  # type: ignore
 
@@ -45,56 +48,70 @@ assistant.servable("Lumen.ai")
 assistant.controls().servable(area="sidebar")
 """
 
+VALID_EXTENSIONS = ['.parq', '.parquet', '.csv', '.json']
 
 class AIHandler(CodeHandler):
     ''' Modify Bokeh documents by using Lumen AI on a dataset.
 
     '''
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, no_data: bool = False, filename: str | None = None, **kwargs) -> None:
         '''
 
         Keywords:
-            filename (str) : a path to a dataset
-            no_data (bool) : if True, do not load data
+            filename (str) : the path to the dataset or a stringified list of paths to multiple datasets
+                used as tables under the same source. Wildcards are supported.
+            no_data (bool) : if True, launch app without data
 
         '''
         table_initializer = ""
-        if 'filename' in kwargs:
-            table = os.path.abspath(kwargs['filename'])
-            if table.endswith(".parq") or table.endswith(".parquet"):
-                table = f"read_parquet('{table}')"
-            elif table.endswith(".csv"):
-                table = f"read_csv('{table}')"
-            elif table.endswith(".json"):
-                table = f"read_json_auto('{table}')"
-            else:
-                raise ValueError('Unsupported file format. Please provide a .parq, .parquet, .csv, or .json file.')
+        expanded_files = []
+        if no_data:
+            filename = 'no_data'
+        elif filename:
+            input_tables = ast.literal_eval(filename)
+            if isinstance(input_tables, str):
+                input_tables = [input_tables]
 
-            table_initializer = f"""
-lmai.memory["current_source"] = DuckDBSource(
-    tables=["{table}"],
-    uri=":memory:",
-)
-            """
+            for pattern in input_tables:
+                pattern = pattern.strip()
+                expanded_files.extend([f for f in glob.glob(pattern) if any(f.endswith(ext) for ext in VALID_EXTENSIONS)])
 
-        if 'no_data' in kwargs:
-            kwargs.pop('no_data')
-            kwargs['filename'] = 'no_data'
+            if not expanded_files:
+                raise ValueError(f"No valid files found matching the pattern(s) provided: {input_tables}")
 
-        kwargs['source'] = SOURCE_CODE.format(table_initializer=table_initializer)
-        super().__init__(*args, **kwargs)
+            expanded_files = list(set(expanded_files))
+            tables = []
+            for table in expanded_files:
+                if table.endswith(".parq") or table.endswith(".parquet"):
+                    table = f"read_parquet('{table}')"
+                elif table.endswith(".csv"):
+                    table = f"read_csv('{table}')"
+                elif table.endswith(".json"):
+                    table = f"read_json_auto('{table}')"
+                tables.append(table)
+
+            table_initializer = dedent(
+                f"""
+                lmai.memory["current_source"] = DuckDBSource(
+                    tables={tables},
+                    uri=":memory:",
+                )
+                """
+            )
+
+        source = SOURCE_CODE.format(table_initializer=table_initializer)
+        super().__init__(filename=filename, source=source, **kwargs)
 
 
-def build_single_handler_application(path: str | None, argv):
-
-    if path is None or not os.path.isfile(path):
+def build_single_handler_application(tables: str | None, argv):
+    if tables is None or (not os.path.isfile(tables) and "[" not in tables):
         handler = AIHandler(no_data=True)
     else:
-        handler = AIHandler(filename=path)
+        handler = AIHandler(filename=tables)
 
     if handler.failed:
-        raise RuntimeError("Error loading %s:\n\n%s\n%s " % (path, handler.error, handler.error_detail))
+        raise RuntimeError("Error loading %s:\n\n%s\n%s " % (tables, handler.error, handler.error_detail))
 
     application = Application(handler)
     return application
@@ -106,19 +123,10 @@ def build_single_handler_applications(paths: list[str], argvs: dict[str, list[st
 
     if 'no_data' in sys.argv:
         application = build_single_handler_application(None, [])
-        applications['/'] = application
     else:
-        for path in paths:
-            application = build_single_handler_application(path, argvs.get(path, []))
-
-            route = application.handlers[0].url_path()
-
-            if not route:
-                if '/' in applications:
-                    raise RuntimeError(f"Don't know the URL path to use for {path}")
-                route = '/'
-            applications[route] = application
-
+        tables = str(paths)
+        application = build_single_handler_application(tables, argvs.get(tables, []))
+    applications['/lumen_ai'] = application
     return applications
 
 bokeh.command.util.build_single_handler_application = build_single_handler_application
@@ -182,6 +190,8 @@ def main(args=None):
     try:
         ret = args.invoke(args)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         die("ERROR: " + str(e))
 
     if ret is False:
