@@ -4,6 +4,7 @@ object.
 """
 from __future__ import annotations
 
+import html
 import sys
 
 from io import BytesIO, StringIO
@@ -1144,7 +1145,13 @@ class YdataProfilingView(View):
 
     def get_panel(self) -> pn.pane.HTML:
         from ydata_profiling import ProfileReport
-        return self._panel_type(ProfileReport(**self._get_params()).html)
+        report_html = ProfileReport(**self._get_params()).html
+        escaped_html = html.escape(report_html)
+        iframe = f"""
+        <iframe srcdoc="{escaped_html}" width="100%" height="100%" frameborder="0" marginheight="0" marginwidth="0">
+        </iframe>
+        """
+        return self._panel_type(iframe, min_height=700, sizing_mode="stretch_both")
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]

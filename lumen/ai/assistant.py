@@ -180,18 +180,20 @@ class Assistant(Viewer):
                 suggestion_buttons.visible = False
 
         async def use_suggestion(event):
-            contents = event.obj.name
-            if hide_after_use:
-                await hide_suggestions()
-            if analysis:
-                for agent in self.agents:
-                    if isinstance(agent, AnalysisAgent):
-                        break
+            button = event.obj
+            with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
+                contents = button.name
+                if hide_after_use:
+                    await hide_suggestions()
+                if analysis:
+                    for agent in self.agents:
+                        if isinstance(agent, AnalysisAgent):
+                            break
+                    else:
+                        return
+                    await agent.invoke([{'role': 'user', 'content': contents}])
                 else:
-                    return
-                await agent.invoke([{'role': 'user', 'content': contents}])
-            else:
-                self.interface.send(contents)
+                    self.interface.send(contents)
 
         async def run_demo(event):
             if hide_after_use:
