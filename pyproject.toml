@@ -16,7 +16,7 @@ select = [
     "FLY",
     # "ICN",
     "NPY",
-    # "PIE",
+    "PIE",
     # "PLC",
     # "PLE",
     # "PLR",

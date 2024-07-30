@@ -639,8 +639,6 @@ class TransformPipelineAgent(LumenBaseAgent):
     If the user asks to do Root Cause Analysis (RCA) or outlier detection, this is your best bet.
     """
 
-    requires = param.List(default=["current_table"], readonly=True)
-
     system_prompt = param.String(
         default=(
             "Choose the appropriate data transformation based on the query. "

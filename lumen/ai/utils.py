@@ -19,7 +19,6 @@ class LlmSetupError(Exception):
     Raised when an error occurs during the setup of the LLM.
     """
 
-    pass
 
 
 UNRECOVERABLE_ERRORS = (
