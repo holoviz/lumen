@@ -569,7 +569,7 @@ class PivotTable(Transform):
     aggfunc = param.String(default="mean", doc="""
         Function, list of functions, dict, default 'mean'""")
 
-    _field_params: ClassVar[List[str]] = ['values', 'index', 'columns']
+    _field_params: ClassVar[list[str]] = ['values', 'index', 'columns']
 
     def apply(self, table: DataFrame) -> DataFrame:
         values = self.values if len(self.values) > 1 else self.values[0]

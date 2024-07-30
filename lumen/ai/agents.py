@@ -979,7 +979,7 @@ class AnalysisAgent(LumenBaseAgent):
                 step.stream(f"Selected {analysis_name}")
                 step.success_title = f"Selected {analysis_name}"
         else:
-            analysis_name = list(analyses)[0]
+            analysis_name = next(iter(analyses))
 
         with self.interface.add_step(title="Creating view...") as step:
             print(f"Creating view for {analysis_name}")
