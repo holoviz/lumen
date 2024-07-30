@@ -3,12 +3,14 @@ import param
 import yaml
 
 from panel.viewable import Viewer
+from param.parameterized import discard_events
 
 from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..views.base import Table
+from .analysis import Analysis
 from .memory import memory
 
 
@@ -62,7 +64,7 @@ class LumenOutput(Viewer):
             ("Code", code_col),
             ("Output", placeholder),
             styles={'min-width': "100%"},
-            height=700,
+            min_height=700,
             active=1
         )
         self._tabs.link(self, bidirectional=True, active='active')
@@ -76,7 +78,7 @@ class LumenOutput(Viewer):
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if self.active != 1:
+        if (self.active != (len(self._tabs)-1)):
             return
 
         # store the spec in the cache instead of memory to save tokens
@@ -123,6 +125,31 @@ class LumenOutput(Viewer):
 
     def __str__(self):
         return self.spec
+
+
+class AnalysisOutput(LumenOutput):
+
+    analysis = param.Parameter()
+
+    pipeline = param.Parameter()
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        config_options = [p for p in self.analysis.param if p not in Analysis.param]
+        if config_options:
+            options = pn.Param(self.analysis.param, parameters=config_options)
+            b = pn.widgets.Button(icon='rocket', name='Run...', on_click=self._rerun, button_type='success', margin=20)
+            self._tabs.insert(0, ('Config', pn.Column(options, b)))
+            with discard_events(self):
+                self._tabs.active = 2
+
+    def _rerun(self, event):
+        with self._tabs.param.update(loading=True):
+            spec = self.analysis(pipeline=self.pipeline).to_spec()
+            self.param.update(
+                spec=yaml.safe_dump(spec),
+                active=2
+            )
 
 
 class SQLOutput(LumenOutput):
