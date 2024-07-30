@@ -94,7 +94,7 @@ def build_single_handler_application(path: str | None, argv):
         handler = AIHandler(filename=path)
 
     if handler.failed:
-        raise RuntimeError("Error loading %s:\n\n%s\n%s " % (path, handler.error, handler.error_detail))
+        raise RuntimeError("Error loading {}:\n\n{}\n{} ".format(path, handler.error, handler.error_detail))
 
     application = Application(handler)
     return application
