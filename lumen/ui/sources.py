@@ -426,7 +426,7 @@ class FileSourceTable(ReactiveHTML):
         <b>－</b>
       </fast-button>
     </form>
-    """
+    """  # noqa: RUF001
 
     _dom_events = {'uri': ['keyup'], 'name': ['keyup']}
 

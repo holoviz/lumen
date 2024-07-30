@@ -523,10 +523,10 @@ class Pivot(Transform):
         If None, uses existing index.""")
 
     columns = param.String(default=None, doc="""
-        Column to use to make new frame’s columns.""")
+        Column to use to make new frame's columns.""")
 
     values = param.ListSelector(default=None, doc="""
-        Column(s) to use for populating new frame’s values.
+        Column(s) to use for populating new frame's values.
         If not specified, all remaining columns will be used
         and the result will have hierarchically indexed columns.""")
 
