@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from io import BytesIO, StringIO
 from typing import (
-    IO, Any, ClassVar, Dict, List, Tuple,
+    IO, Any, ClassVar,
 )
 
 import param  # type: ignore

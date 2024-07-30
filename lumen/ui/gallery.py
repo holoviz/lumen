@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 import param  # type: ignore
 import yaml

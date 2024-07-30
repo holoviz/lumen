@@ -8,7 +8,7 @@ import traceback
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Tuple, Type,
+    TYPE_CHECKING, Any, Callable, ClassVar,
 )
 
 import panel as pn

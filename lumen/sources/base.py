@@ -14,7 +14,7 @@ from itertools import product
 from os.path import basename
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Tuple, Type, Union,
+    TYPE_CHECKING, Any, ClassVar, Literal, Union,
 )
 from urllib.parse import quote, urlparse
 

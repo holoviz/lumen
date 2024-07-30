@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, List
+from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
 import param  # type: ignore

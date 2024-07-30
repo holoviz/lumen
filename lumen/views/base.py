@@ -8,7 +8,7 @@ import sys
 
 from io import BytesIO, StringIO
 from typing import (
-    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Type,
+    IO, TYPE_CHECKING, Any, ClassVar, Literal,
 )
 from weakref import WeakKeyDictionary
 

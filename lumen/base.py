@@ -10,7 +10,7 @@ import warnings
 
 from functools import partial
 from typing import (
-    Any, ClassVar, Dict, List, Tuple, Type,
+    Any, ClassVar,
 )
 
 import pandas as pd

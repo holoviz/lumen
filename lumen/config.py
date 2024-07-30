@@ -7,7 +7,7 @@ import weakref
 
 from types import ModuleType
 from typing import (
-    TYPE_CHECKING, Any, ClassVar, Dict, Type,
+    TYPE_CHECKING, Any, ClassVar,
 )
 
 import panel as pn

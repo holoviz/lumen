@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import (
-    TYPE_CHECKING, Any, Dict, List, Tuple, cast,
+    TYPE_CHECKING, Any, Tuple, cast,
 )
 from weakref import WeakKeyDictionary
 

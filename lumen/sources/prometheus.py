@@ -5,7 +5,7 @@ import urllib.parse as urlparse
 
 from collections import defaultdict
 from concurrent import futures
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 import panel as pn

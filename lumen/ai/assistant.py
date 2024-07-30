@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from io import StringIO
-from typing import Literal, Type
+from typing import Literal
 
 import param
 

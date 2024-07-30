@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 import panel as pn
 import param  # type: ignore

@@ -7,7 +7,7 @@ from functools import partial
 from io import BytesIO, StringIO
 from itertools import product
 from typing import (
-    Any, ClassVar, Dict, List, Tuple,
+    Any, ClassVar,
 )
 
 import panel as pn

@@ -4,7 +4,7 @@ import os
 
 from collections import defaultdict
 from typing import (
-    Any, ClassVar, Dict, List,
+    Any, ClassVar,
 )
 
 import param  # type: ignore
