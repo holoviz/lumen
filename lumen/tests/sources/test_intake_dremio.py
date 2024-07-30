@@ -1,7 +1,7 @@
 import pytest
 
 try:
-    import intake_dremio  # noqa
+    import intake_dremio
 except Exception:
     pytest.skip('intake-dremio not available.', allow_module_level=True)
 

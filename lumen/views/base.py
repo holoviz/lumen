@@ -708,7 +708,7 @@ class hvPlotBaseView(View):
     __abstract = True
 
     def __init__(self, **params):
-        import hvplot.pandas  # type: ignore # noqa
+        import hvplot.pandas  # type: ignore
         if 'dask' in sys.modules:
             try:
                 import hvplot.dask  # type: ignore # noqa

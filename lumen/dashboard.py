@@ -31,13 +31,13 @@ from .panel import IconButton
 from .pipeline import Pipeline
 from .sources.base import RESTSource, Source  # noqa
 from .state import state
-from .transforms.base import Transform  # noqa
+from .transforms.base import Transform
 from .util import catch_and_notify, expand_spec, resolve_module_reference
 from .validation import (
     ValidationError, match_suggestion_message, validate_callback,
 )
 from .variables.base import Variable, Variables
-from .views.base import Download, View  # noqa
+from .views.base import Download, View
 
 if TYPE_CHECKING:
     from bokeh.server.contexts import BokehSessionContext
@@ -360,7 +360,7 @@ class Defaults(Component):
                     try:
                         pobj._validate(default[p])
                     except Exception as e:
-                        msg = f"The default for {obj_type.__name__} {p!r} parameter failed validation: {str(e)}"
+                        msg = f"The default for {obj_type.__name__} {p!r} parameter failed validation: {e!s}"
                         raise ValidationError(msg, default, p)
                 else:
                     msg = (
@@ -384,7 +384,7 @@ class Defaults(Component):
                 try:
                     pobj._validate(download_defaults[p])
                 except Exception as e:
-                    msg = f"The default for Download {p!r} parameter failed validation: {str(e)}"
+                    msg = f"The default for Download {p!r} parameter failed validation: {e!s}"
                     raise ValidationError(msg, download_defaults, p)
                 continue
             msg = (

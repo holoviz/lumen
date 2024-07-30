@@ -290,7 +290,7 @@ class AE5Source(Source):
     @cached
     def get(self, table, **query):
         if table not in self._tables:
-            raise ValueError(f"AE5Source has no '{table}' table, choose from {repr(self._tables)}.")
+            raise ValueError(f"AE5Source has no '{table}' table, choose from {self._tables!r}.")
         return getattr(self, f'_get_{table}')()
 
     @cached_schema

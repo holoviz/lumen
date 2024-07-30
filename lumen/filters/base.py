@@ -112,10 +112,10 @@ class Filter(MultiTypeComponent):
         """
         if isinstance(spec, str):
             if source_filters is None:
-                raise ValueError(f"Filter spec {repr(spec)} could not be resolved "
+                raise ValueError(f"Filter spec {spec!r} could not be resolved "
                                  "because source has not declared filters.")
             elif spec not in source_filters:
-                raise ValueError(f"Filter spec {repr(spec)} could not be resolved, "
+                raise ValueError(f"Filter spec {spec!r} could not be resolved, "
                                  f"available filters on the source include {list(source_filters)}.")
             return source_filters[spec]
         spec = dict(spec)

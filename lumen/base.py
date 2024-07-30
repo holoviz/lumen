@@ -270,7 +270,7 @@ class Component(param.Parameterized):
                 return
             pobj._validate(value)
         except Exception as e:
-            msg = f"{cls.__name__} component {key!r} value failed validation: {str(e)}"
+            msg = f"{cls.__name__} component {key!r} value failed validation: {e!s}"
             raise ValidationError(msg, spec, key)
 
     @classmethod
