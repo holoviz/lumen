@@ -3,9 +3,7 @@ from __future__ import annotations
 import os
 
 from collections import defaultdict
-from typing import (
-    Any, ClassVar,
-)
+from typing import Any, ClassVar
 
 import param  # type: ignore
 import yaml

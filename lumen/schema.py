@@ -191,7 +191,7 @@ class JSONSchema(pn.pane.PaneBase):
         if prop == 'enum':
             wtype, kwargs = self._enum(schema)
         else:
-            wtype, kwargs = getattr(self, '_{}_{}'.format(schema[prop], prop))(schema)
+            wtype, kwargs = getattr(self, f'_{schema[prop]}_{prop}')(schema)
         return wtype, kwargs
 
     @param.depends('object', watch=True)

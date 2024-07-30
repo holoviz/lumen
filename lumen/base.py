@@ -9,9 +9,7 @@ from __future__ import annotations
 import warnings
 
 from functools import partial
-from typing import (
-    Any, ClassVar,
-)
+from typing import Any, ClassVar
 
 import pandas as pd
 import panel as pn

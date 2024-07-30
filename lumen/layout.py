@@ -6,9 +6,7 @@ import warnings
 from functools import partial
 from io import BytesIO, StringIO
 from itertools import product
-from typing import (
-    Any, ClassVar,
-)
+from typing import Any, ClassVar
 
 import panel as pn
 import param  # type: ignore

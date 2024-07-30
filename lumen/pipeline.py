@@ -4,9 +4,7 @@ import sys
 
 from functools import partial
 from itertools import product
-from typing import (
-    Any, ClassVar,
-)
+from typing import Any, ClassVar
 
 import numpy as np
 import panel as pn

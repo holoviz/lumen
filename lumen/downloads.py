@@ -4,9 +4,7 @@ The Download classes makes it possible to download data.
 from __future__ import annotations
 
 from io import BytesIO, StringIO
-from typing import (
-    IO, Any, ClassVar,
-)
+from typing import IO, Any, ClassVar
 
 import param  # type: ignore
 

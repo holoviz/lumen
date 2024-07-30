@@ -6,9 +6,7 @@ import sys
 import weakref
 
 from types import ModuleType
-from typing import (
-    TYPE_CHECKING, Any, ClassVar,
-)
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import panel as pn
 import param  # type: ignore
