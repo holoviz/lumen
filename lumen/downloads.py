@@ -51,14 +51,14 @@ class Download(MultiTypeComponent, Viewer):
     view = param.Parameter(doc="Holds the current view.")
 
     # Specification configuration
-    _internal_params: ClassVar[List[str]] = ['view', 'name']
-    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['format']
+    _internal_params: ClassVar[list[str]] = ['view', 'name']
+    _required_keys: ClassVar[list[str | tuple[str, ...]]] = ['format']
     _validate_params: ClassVar[bool] = True
 
     download_type: ClassVar[str | None] = 'default'
 
     @classmethod
-    def validate(cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None):
+    def validate(cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None):
         if isinstance(spec, str):
             spec = {'format': spec}
         if 'type' not in spec:
@@ -96,12 +96,12 @@ class Download(MultiTypeComponent, Viewer):
         )
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> MultiTypeComponent | None:
+    def from_spec(cls, spec: dict[str, Any] | str) -> MultiTypeComponent | None:
         spec = dict(spec)
         cls_type = spec.pop("type", "default")
         return cls._get_type(cls_type)(**spec)
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context)
         if len(spec) == 1 and "type" in spec:
             return {}

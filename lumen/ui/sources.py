@@ -187,7 +187,7 @@ class SourceGallery(WizardItem, Gallery):
 
     _gallery_item = SourceGalleryItem
 
-    _editor_type: ClassVar[Type[SourceEditor]] = SourceEditor
+    _editor_type: ClassVar[type[SourceEditor]] = SourceEditor
 
     def __init__(self, **params):
         super().__init__(**params)

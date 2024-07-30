@@ -31,7 +31,7 @@ from .util import (
 from .validation import ValidationError, match_suggestion_message
 
 
-def auto_filters(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, str]]:
+def auto_filters(schema: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
     """
     Automatically generates filter specifications from a schema.
 
@@ -144,9 +144,9 @@ class Pipeline(Viewer, Component):
         Whether the pipeline is stale."""
     )
 
-    _internal_params: ClassVar[List[str]] = ['data', 'name', 'schema', '_stale']
-    _required_fields: ClassVar[List[str | Tuple[str, str]]] = [('source', 'pipeline')]
-    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
+    _internal_params: ClassVar[list[str]] = ['data', 'name', 'schema', '_stale']
+    _required_fields: ClassVar[list[str | tuple[str, str]]] = [('source', 'pipeline')]
+    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, *, source, table, schema=None, filters=None, **params):
         if schema is None:
@@ -199,7 +199,7 @@ class Pipeline(Viewer, Component):
     def __panel__(self) -> pn.Row:
         return pn.Row(self.control_panel, pn.widgets.Tabulator(self.param.data, pagination='remote'))
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -236,7 +236,7 @@ class Pipeline(Viewer, Component):
         return spec
 
     @property
-    def refs(self) -> List[str]:
+    def refs(self) -> list[str]:
         refs = self.source.refs.copy()
         for filt in self.filters:
             for ref in filt.refs:
@@ -334,8 +334,8 @@ class Pipeline(Viewer, Component):
 
     @classmethod
     def _validate_source(
-        cls, source_spec: Dict[str, Any] | str, spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any] | str:
+        cls, source_spec: dict[str, Any] | str, spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any] | str:
         if isinstance(source_spec, str):
             if source_spec not in context['sources']:
                 msg = f'Pipeline specified non-existent source {source_spec!r}.'
@@ -346,8 +346,8 @@ class Pipeline(Viewer, Component):
 
     @classmethod
     def _validate_pipeline(
-        cls, pipeline_spec: Dict[str, Any] | str, spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any] | str:
+        cls, pipeline_spec: dict[str, Any] | str, spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any] | str:
         if isinstance(pipeline_spec, str):
             if pipeline_spec not in context['pipelines']:
                 msg = f'Pipeline specified non-existent pipeline {pipeline_spec!r}.'
@@ -359,10 +359,10 @@ class Pipeline(Viewer, Component):
     @classmethod
     def _validate_filters(
         cls,
-        filter_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str] | Literal['auto'],
-        spec: Dict[str, Any],
-        context: Dict[str, Any]
-    ) -> Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str]:
+        filter_specs: dict[str, dict[str, Any] | str] | list[dict[str, Any] | str] | Literal['auto'],
+        spec: dict[str, Any],
+        context: dict[str, Any]
+    ) -> dict[str, dict[str, Any] | str] | list[dict[str, Any] | str]:
         if filter_specs == 'auto':
             return filter_specs
         for filter_spec in (filter_specs if isinstance(filter_specs, list) else filter_specs.values()):
@@ -388,8 +388,8 @@ class Pipeline(Viewer, Component):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any] | str:
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any] | str:
         if isinstance(spec, str):
             if context is not None and spec not in context['pipelines']:
                 msg = f'Referenced non-existent pipeline {spec!r}.'
@@ -400,8 +400,8 @@ class Pipeline(Viewer, Component):
 
     @classmethod
     def from_spec(
-        cls, spec: Dict[str, Any] | str, source: Source | None = None,
-        source_filters: Dict[str, Filter] | None = None
+        cls, spec: dict[str, Any] | str, source: Source | None = None,
+        source_filters: dict[str, Filter] | None = None
     ):
         """
         Creates a Pipeline from a specification.
@@ -504,7 +504,7 @@ class Pipeline(Viewer, Component):
         return obj
 
     def add_filter(
-        self, filt: Filter | Type[Filter] | Widget, field: str | None = None, **kwargs
+        self, filt: Filter | type[Filter] | Widget, field: str | None = None, **kwargs
     ):
         """
         Add a filter to the pipeline.
@@ -560,9 +560,9 @@ class Pipeline(Viewer, Component):
 
     def chain(
         self,
-        filters: List[Filter] | None = None,
-        transforms: List[Transform] | None = None,
-        sql_transforms: List[Transform] | None = None,
+        filters: list[Filter] | None = None,
+        transforms: list[Transform] | None = None,
+        sql_transforms: list[Transform] | None = None,
         **kwargs
     ):
         """
@@ -607,7 +607,7 @@ class Pipeline(Viewer, Component):
             self.param.watch(lambda e: new.param.trigger('update'), 'update')
         return new
 
-    def clone(self, **params) -> 'Pipeline':
+    def clone(self, **params) -> Pipeline:
         """
         Create a new instance of the pipeline with optionally overridden parameter values.
         """
@@ -615,7 +615,7 @@ class Pipeline(Viewer, Component):
                                   if p != 'name'}, **params))
 
     def precache(
-        self, queries: Dict[str, Dict[str, List[Any]]] | List[Dict[str, Dict[str, Any]]]
+        self, queries: dict[str, dict[str, list[Any]]] | list[dict[str, dict[str, Any]]]
     ) -> None:
         """
         Populates the cache of the :class:`lumen.sources.base.Source` with the provided queries.
@@ -672,8 +672,8 @@ class Pipeline(Viewer, Component):
             self._update_data(force=True)
         self.auto_update = old_auto
 
-    def _set_spec(self, spec: Dict[str, Any]):
-        previous: Dict[str, Dict[str, Any]] = {'variables': {}, 'filters': {}}
+    def _set_spec(self, spec: dict[str, Any]):
+        previous: dict[str, dict[str, Any]] = {'variables': {}, 'filters': {}}
         filters = self.traverse('filters')
         for var_name, var_val in spec.get('variables', {}).items():
             variable = state.variables._vars[var_name]
@@ -686,7 +686,7 @@ class Pipeline(Viewer, Component):
                 filt.value = filt_spec[filt.field]
         return previous
 
-    def traverse(self, type) -> List[Transform] | List[Filter]:
+    def traverse(self, type) -> list[Transform] | list[Filter]:
         """
         Returns all Filter or Transform objects in a potentially chained
         pipeline.

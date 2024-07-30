@@ -182,9 +182,9 @@ class Card(Viewer):
 
     @classmethod
     def from_spec(
-        cls, spec: Dict[str, Any] | str, filters: List[Filter] | None = None,
-        pipelines: Dict[str, Pipeline] = {}
-    ) -> 'Card':
+        cls, spec: dict[str, Any] | str, filters: list[Filter] | None = None,
+        pipelines: dict[str, Pipeline] = {}
+    ) -> Card:
         """
         Creates a Card from a specification.
 
@@ -265,7 +265,7 @@ class Facet(Component):
         List of fields to sort by.""")
 
     # Validation attributes
-    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['by']
+    _required_keys: ClassVar[list[str | tuple[str, ...]]] = ['by']
     _valid_keys: ClassVar[Literal['params']] = 'params'
 
     def __init__(self, **params):
@@ -282,7 +282,7 @@ class Facet(Component):
         )
         self._reverse_widget.link(self, value='reverse')
 
-    def get_sort_key(self, views) -> Tuple:
+    def get_sort_key(self, views) -> tuple:
         sort_key = []
         for field in self.sort:
             values = [v.get_value(field) for v in views]
@@ -296,8 +296,8 @@ class Facet(Component):
 
     @classmethod
     def from_spec(  # type: ignore
-        cls, spec: Dict[str, Any] | str, schema: Dict[str, Dict[str, Any]]
-    ) -> 'Facet':
+        cls, spec: dict[str, Any] | str, schema: dict[str, dict[str, Any]]
+    ) -> Facet:
         """
         Resolve a Facet object from spec and a schema.
         """
@@ -347,8 +347,8 @@ class Download(Component, Viewer):
     tables = param.List(default=[], doc="""
         The list of tables to allow downloading.""")
 
-    _internal_params: ClassVar[List[str]] = ['name', 'pipelines']
-    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = []
+    _internal_params: ClassVar[list[str]] = ['name', 'pipelines']
+    _required_keys: ClassVar[list[str | tuple[str, ...]]] = []
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -413,8 +413,8 @@ class Download(Component, Viewer):
 
     @classmethod
     def from_spec(  # type: ignore
-        cls, spec: Dict[str, Any] | str, pipelines: Dict[str, Pipeline]
-    ) -> 'Download':
+        cls, spec: dict[str, Any] | str, pipelines: dict[str, Pipeline]
+    ) -> Download:
         """
         Creates a Download object from a specification.
 
@@ -494,9 +494,9 @@ class Layout(Component, Viewer):
     _header_format: ClassVar[str] = '<div style="font-size: 1.5em; font-weight: bold;">{header}</div>'
 
     # Validation attributes
-    _legacy_params: ClassVar[List[str]] = ['table']
-    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['title', 'views']
-    _valid_keys: ClassVar[List[str]] = [
+    _legacy_params: ClassVar[list[str]] = ['table']
+    _required_keys: ClassVar[list[str | tuple[str, ...]]] = ['title', 'views']
+    _valid_keys: ClassVar[list[str]] = [
         'config', 'facet_layout', 'sort', # Deprecated
         'layout', 'refresh_rate', 'reloadable', 'show_title', 'title', 'tsformat', 'description', # Simple
         'views', 'source', 'filters', 'pipeline', 'facet', 'download' # Objects
@@ -591,7 +591,7 @@ class Layout(Component, Viewer):
     # Create UI
     ##################################################################
 
-    def get_cards(self) -> List[Card]:
+    def get_cards(self) -> list[Card]:
         cards = []
         for card in self._cache.values():
             sort_key = self.facet.get_sort_key(card.views)
@@ -605,7 +605,7 @@ class Layout(Component, Viewer):
 
     def get_filter_panel(self, skip=None, apply_button: bool=True) -> pn.Column:
         skip = list(skip or [])
-        views: List[Any] = []
+        views: list[Any] = []
 
         if self.description:
             views.extend([
@@ -703,7 +703,7 @@ class Layout(Component, Viewer):
         else:
             self._rerender()
 
-    def _rerender_cards(self, cards: List[Card]):
+    def _rerender_cards(self, cards: list[Card]):
         for card in cards:
             if any(view in self._updates for view in card.views):
                 card.rerender()
@@ -727,7 +727,7 @@ class Layout(Component, Viewer):
     ##################################################################
 
     @classmethod
-    def _validate_config(cls, config: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]) -> None:
+    def _validate_config(cls, config: dict[str, Any], spec: dict[str, Any], context: dict[str, Any]) -> None:
         msg = (
             "Passing 'config' to a Layout is deprecated use the 'facet' key "
             "on the layout instead."
@@ -735,7 +735,7 @@ class Layout(Component, Viewer):
         return cls._deprecation(msg, 'facet', spec, config)
 
     @classmethod
-    def _validate_sort(cls, sort: str, spec: Dict[str, Any], context: Dict[str, Any]) -> None:
+    def _validate_sort(cls, sort: str, spec: dict[str, Any], context: dict[str, Any]) -> None:
         msg = (
             "Passing 'sort' to a Layout is deprecated use the 'facet' key "
             "on the layout instead."
@@ -743,7 +743,7 @@ class Layout(Component, Viewer):
         return cls._deprecation(msg, 'facet', spec, {'sort': sort})
 
     @classmethod
-    def _validate_facet_layout(cls, facet_layout: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]):
+    def _validate_facet_layout(cls, facet_layout: dict[str, Any], spec: dict[str, Any], context: dict[str, Any]):
         msg = (
             "Passing 'facet_layout' to a Layout is deprecated use the 'facet' key "
             "on the layout instead."
@@ -755,7 +755,7 @@ class Layout(Component, Viewer):
         return cls._validate_str_or_spec('pipeline', Pipeline, *args, **kwargs)
 
     @classmethod
-    def validate(cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None) -> Dict[str, Any] | str:
+    def validate(cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None) -> dict[str, Any] | str:
         if isinstance(spec, str):
             return spec
         if "source" in spec and "pipeline" in spec:
@@ -763,7 +763,7 @@ class Layout(Component, Viewer):
         return super().validate(spec, context)
 
     @classmethod
-    def _validate_filters(cls, filter_specs: List[Dict[str, Any] | str], spec: Dict[str, Any], context: Dict[str, Any]):
+    def _validate_filters(cls, filter_specs: list[dict[str, Any] | str], spec: dict[str, Any], context: dict[str, Any]):
         filters = cls._validate_list_subtypes('filters', Filter, filter_specs, spec, context)
         for filter_spec in filter_specs:
             if isinstance(filter_spec, str):
@@ -784,7 +784,7 @@ class Layout(Component, Viewer):
         return filters
 
     @classmethod
-    def _validate_source(cls, source_spec: Dict[str, Any] | str, spec: Dict[str, Any], context: Dict[str, Any]) -> str:
+    def _validate_source(cls, source_spec: dict[str, Any] | str, spec: dict[str, Any], context: dict[str, Any]) -> str:
         if isinstance(source_spec, str):
             if source_spec not in context['sources']:
                 msg = f'Layout specified non-existent source {source_spec!r}.'
@@ -807,9 +807,9 @@ class Layout(Component, Viewer):
 
     @classmethod
     def _validate_views(
-        cls, view_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str],
-        spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str]:
+        cls, view_specs: dict[str, dict[str, Any] | str] | list[dict[str, Any] | str],
+        spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, dict[str, Any] | str] | list[dict[str, Any] | str]:
         view_specs = cls._validate_dict_or_list_subtypes('views', View, view_specs, spec, context)
         if 'source' in spec or 'pipeline' in spec:
             return view_specs
@@ -825,7 +825,7 @@ class Layout(Component, Viewer):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str, **kwargs) -> 'Layout':
+    def from_spec(cls, spec: dict[str, Any] | str, **kwargs) -> Layout:
         """
         Creates a Layout object from a specification. If a Layout
         specification references an existing Source or Filter by name.
@@ -935,7 +935,7 @@ class Layout(Component, Viewer):
         return cls(source=source, pipelines=pipelines, **params)
 
     @property
-    def refs(self) -> List[str]:
+    def refs(self) -> list[str]:
         refs = []
         for pipeline in self._pipelines.values():
             for ref in pipeline.refs:
@@ -983,7 +983,7 @@ class Layout(Component, Viewer):
             )
         return layout_type(*content, **kwargs)
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context=context)
         if len(self._pipelines) == 1:
             pipeline = list(self._pipelines.values())[0]

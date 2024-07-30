@@ -13,7 +13,7 @@ select = [
     # "B",
     "E",
     "F",
-    # "FLY",
+    "FLY",
     # "ICN",
     # "NPY",
     # "PIE",
@@ -22,7 +22,7 @@ select = [
     # "PLR",
     # "PLW",
     # "RUF",
-    # "UP",
+    "UP",
     "W",
 ]
 

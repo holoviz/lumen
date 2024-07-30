@@ -26,7 +26,7 @@ class Auth(MultiTypeComponent):
     def _import_module(cls, component_type: str):
         pass
 
-    def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+    def transform(self, spec: dict[str, Any]) -> dict[str, Any]:
         return dict(spec)
 
 
@@ -72,12 +72,12 @@ class YamlAuthMapperPlugin(Auth):
             yaml_file = os.path.join(config.root, yaml_file)
         return yaml_file
 
-    def transform(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+    def transform(self, spec: dict[str, Any]) -> dict[str, Any]:
         spec = dict(spec)
         with open(self.yaml_file) as f:
             text = f.read()
         mapping = yaml.load(text, Loader=yaml.Loader)
-        new: Dict[str, List[str]] = defaultdict(list)
+        new: dict[str, list[str]] = defaultdict(list)
         for origin, replacements in mapping.items():
             values = spec.pop(origin)
             for val in values:

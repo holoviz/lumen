@@ -223,7 +223,7 @@ class PrometheusSource(Source):
 
     def get_schema(
         self, table: str | None = None, limit: int | None = None
-    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         dt_start, dt_end = self._format_timestamps()
         schema = {
             "id": {

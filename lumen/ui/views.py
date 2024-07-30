@@ -226,7 +226,7 @@ class ViewGallery(WizardItem, Gallery):
     </div>
     """
 
-    _editor_type: ClassVar[Type[Editor]] = ViewEditor
+    _editor_type: ClassVar[type[Editor]] = ViewEditor
 
     _gallery_item = ViewGalleryItem
 

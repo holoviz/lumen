@@ -47,17 +47,17 @@ class Component(param.Parameterized):
 
     # Parameters that are computed internally and are not part of the
     # component specification
-    _internal_params: ClassVar[List[str]] = ['name']
+    _internal_params: ClassVar[list[str]] = ['name']
 
     # Deprecated parameters that are still allowed as spec keys
-    _legacy_params: ClassVar[List[str]] = []
+    _legacy_params: ClassVar[list[str]] = []
 
     # Keys that must be declared declared as a list of strings or
     # tuples of strings if one of multiple must be defined.
-    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = []
+    _required_keys: ClassVar[list[str | tuple[str, ...]]] = []
 
     # Keys that are valid to define
-    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = None
+    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = None
 
     # Whether to enforce parameter validation in specification
     _validate_params: ClassVar[bool] = False
@@ -78,7 +78,7 @@ class Component(param.Parameterized):
                 if '.' not in p and p not in params:
                     self._update_ref(p, ref)
 
-    def _extract_refs(self, params: Dict[str, Any], refs: Dict[str, Any]):
+    def _extract_refs(self, params: dict[str, Any], refs: dict[str, Any]):
         from .variables import Variable
         processed = {}
         for pname, pval in params.items():
@@ -135,7 +135,7 @@ class Component(param.Parameterized):
     ##################################################################
 
     @classproperty
-    def _valid_keys_(cls) -> List[str] | None:
+    def _valid_keys_(cls) -> list[str] | None:
         if cls._valid_keys == 'params':
             valid = [p for p in cls.param if p not in cls._internal_params]
         else:
@@ -143,7 +143,7 @@ class Component(param.Parameterized):
         return valid if valid is None else valid + cls._legacy_params
 
     @classmethod
-    def _validate_keys_(cls, spec: Dict[str, Any]):
+    def _validate_keys_(cls, spec: dict[str, Any]):
         valid_keys = cls._valid_keys_
         for key in spec:
             if valid_keys is None or key in valid_keys:
@@ -154,7 +154,7 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_required_(
-        cls, spec: Dict[str, Any], required: List[str | Tuple[str, ...]] | None = None
+        cls, spec: dict[str, Any], required: list[str | tuple[str, ...]] | None = None
     ):
         if required is None:
             required_keys = cls._required_keys
@@ -181,8 +181,8 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_list_subtypes(
-        cls, key: str, subtype: Type[Component], subtype_specs: List[Dict[str, Any] | str],
-        spec: Dict[str, Any], context: Dict[str, Any], subcontext: List[Dict[str, Any] | str] | None = None
+        cls, key: str, subtype: type[Component], subtype_specs: list[dict[str, Any] | str],
+        spec: dict[str, Any], context: dict[str, Any], subcontext: list[dict[str, Any] | str] | None = None
     ):
         if not isinstance(subtype_specs, list):
             raise ValidationError(
@@ -200,8 +200,8 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_dict_subtypes(
-        cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any] | str],
-        spec: Dict[str, Any], context: Dict[str, Any], subcontext: Dict[str, Any] | None = None
+        cls, key: str, subtype: type[Component], subtype_specs: dict[str, dict[str, Any] | str],
+        spec: dict[str, Any], context: dict[str, Any], subcontext: dict[str, Any] | None = None
     ):
         if not isinstance(subtype_specs, dict):
             raise ValidationError(
@@ -217,8 +217,8 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_str_or_spec(
-        cls, key: str, subtype: Type[Component], subtype_spec: Dict[str, Any] | str,
-        spec: Dict[str, Any], context: Dict[str, Any]
+        cls, key: str, subtype: type[Component], subtype_spec: dict[str, Any] | str,
+        spec: dict[str, Any], context: dict[str, Any]
     ):
         if isinstance(subtype_spec, str):
             if subtype_spec not in context[f'{key}s']:
@@ -230,8 +230,8 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_dict_or_list_subtypes(
-        cls, key: str, subtype: Type[Component], subtype_specs: Dict[str, Dict[str, Any] | str] | List[Dict[str, Any] | str],
-        spec: Dict[str, Any], context: Dict[str, Any], subcontext: Dict[str, Any] | List[Dict[str, Any] | str] | None = None
+        cls, key: str, subtype: type[Component], subtype_specs: dict[str, dict[str, Any] | str] | list[dict[str, Any] | str],
+        spec: dict[str, Any], context: dict[str, Any], subcontext: dict[str, Any] | list[dict[str, Any] | str] | None = None
     ):
         if isinstance(subtype_specs, list):
             assert subcontext is None or isinstance(subcontext, list)
@@ -242,7 +242,7 @@ class Component(param.Parameterized):
 
     @classmethod
     def _deprecation(
-        cls, msg: str, key: str, spec: Dict[str, Any], update: Dict[str, Any]
+        cls, msg: str, key: str, spec: dict[str, Any], update: dict[str, Any]
     ):
         warnings.warn(msg, DeprecationWarning)
         if key not in spec:
@@ -251,7 +251,7 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_ref(
-        cls, key: str, value: Any, spec: Dict[str, Any], context: Dict[str, Any]
+        cls, key: str, value: Any, spec: dict[str, Any], context: dict[str, Any]
     ):
         refs = value[1:].split('.')
         if refs[0] == 'variables':
@@ -265,7 +265,7 @@ class Component(param.Parameterized):
             raise ValidationError(msg, spec, refs[1])
 
     @classmethod
-    def _validate_param(cls, key: str, value: Any, spec: Dict[str, Any]):
+    def _validate_param(cls, key: str, value: Any, spec: dict[str, Any]):
         pobj = cls.param[key]
         try:
             if isinstance(pobj, param.Selector) and pobj.names and value in pobj.names:
@@ -318,9 +318,9 @@ class Component(param.Parameterized):
 
     @classmethod
     def _validate_spec_(
-        cls, spec: Dict[str, Any], context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any]:
-        validated: Dict[str, Any] = {}
+        cls, spec: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        validated: dict[str, Any] = {}
         if context is None:
             context = validated
 
@@ -355,11 +355,11 @@ class Component(param.Parameterized):
     ##################################################################
 
     @property
-    def refs(self) -> List[str]:
+    def refs(self) -> list[str]:
         return [v for k, v in self._refs.items() if v.startswith('$variables.')]
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Component':
+    def from_spec(cls, spec: dict[str, Any] | str) -> Component:
         """
         Creates a Component instance from a specification.
 
@@ -380,7 +380,7 @@ class Component(param.Parameterized):
             )
         return cls(**spec)
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -435,8 +435,8 @@ class Component(param.Parameterized):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any] | str:
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any] | str:
         """
         Validates the component specification given the validation context.
 
@@ -478,10 +478,10 @@ class MultiTypeComponent(Component):
 
     __abstract = True
 
-    _required_keys: ClassVar[List[str | Tuple[str, ...]]] = ['type']
+    _required_keys: ClassVar[list[str | tuple[str, ...]]] = ['type']
 
     @classproperty
-    def _valid_keys_(cls) -> List[str | Tuple[str, ...]] | None:
+    def _valid_keys_(cls) -> list[str | tuple[str, ...]] | None:
         if cls._valid_keys is None:
             valid = None
         elif cls._valid_keys == 'params':
@@ -526,8 +526,8 @@ class MultiTypeComponent(Component):
 
     @classmethod
     def _get_type(
-        cls, component_type: str, spec: Dict[str, Any] | None = None
-    ) -> Type['MultiTypeComponent']:
+        cls, component_type: str, spec: dict[str, Any] | None = None
+    ) -> type[MultiTypeComponent]:
         base_type = cls._base_type
         if component_type is None:
             raise ValidationError(
@@ -557,7 +557,7 @@ class MultiTypeComponent(Component):
     ##################################################################
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'MultiTypeComponent':
+    def from_spec(cls, spec: dict[str, Any] | str) -> MultiTypeComponent:
         if isinstance(spec, str):
             raise ValueError(
                 "MultiTypeComponent cannot be materialized by reference. Please pass "
@@ -567,7 +567,7 @@ class MultiTypeComponent(Component):
         component_cls = cls._get_type(spec.pop('type'), spec)
         return component_cls(**spec)
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -581,8 +581,8 @@ class MultiTypeComponent(Component):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any] | str:
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any] | str:
         """
         Validates the component specification given the validation context and the path.
 

@@ -76,7 +76,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
     @cached_schema
     def get_schema(
         self, table: str | None = None, limit: int | None = None
-    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table is None:
             tables = self.get_tables()
         else:

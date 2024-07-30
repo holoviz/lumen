@@ -36,7 +36,7 @@ class IntakeBaseSource(Source):
     @cached_schema
     def get_schema(
         self, table: str | None = None, limit: int | None = None
-    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schemas = {}
         for entry in list(self.cat):
             if table is not None and entry != table:

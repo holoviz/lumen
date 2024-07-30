@@ -71,7 +71,7 @@ class Gallery(ReactiveHTML):
 
     hidden = param.Boolean(default=True)
 
-    _editor_type: ClassVar[Type[Editor] | None] = None
+    _editor_type: ClassVar[type[Editor] | None] = None
 
     _gallery_item = GalleryItem
 
