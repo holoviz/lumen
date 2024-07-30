@@ -940,7 +940,7 @@ class DownloadView(View):
     filename = param.String(default='data', doc="""
       Filename of the downloaded file.""")
 
-    icon = param.String(default='spreadsheet', doc="""
+    icon = param.String(default='file-spreadsheet', doc="""
       Icon to show on the button.""")
 
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
