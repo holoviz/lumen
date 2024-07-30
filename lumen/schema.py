@@ -208,4 +208,4 @@ class JSONSchema(pn.pane.PaneBase):
 
     def _cleanup(self, root):
         self.layout._cleanup(root)
-        super(JSONSchema, self)._cleanup(root)
+        super()._cleanup(root)
