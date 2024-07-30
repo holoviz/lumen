@@ -4,6 +4,7 @@ object.
 """
 from __future__ import annotations
 
+import html
 import sys
 
 from io import BytesIO, StringIO
@@ -504,7 +505,7 @@ class View(MultiTypeComponent, Viewer):
             if len(panel.layout) == 1 and panel._unpack:
                 panel = panel.layout[0]
             else:
-                panel = panel._layout
+                panel = panel.layout
         if self.title:
             title_pane = pn.pane.HTML(
                 f'<h3 align="center", style="margin-top: 0; margin-bottom: 0;">{self.title}</h3>',
@@ -800,6 +801,7 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
@@ -938,6 +940,9 @@ class DownloadView(View):
     filename = param.String(default='data', doc="""
       Filename of the downloaded file.""")
 
+    icon = param.String(default='file-spreadsheet', doc="""
+      Icon to show on the button.""")
+
     format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
       The format to download the data in.""")
 
@@ -978,7 +983,7 @@ class DownloadView(View):
 
     def _get_params(self) -> dict[str, Any]:
         filename = f'{self.filename}.{self.format}'
-        return dict(filename=filename, callback=self._table_data, **self.kwargs)
+        return dict(filename=filename, callback=self._table_data, icon=self.icon, **self.kwargs)
 
 
 class PerspectiveView(View):
@@ -1144,7 +1149,13 @@ class YdataProfilingView(View):
 
     def get_panel(self) -> pn.pane.HTML:
         from ydata_profiling import ProfileReport
-        return self._panel_type(ProfileReport(**self._get_params()).html)
+        report_html = ProfileReport(**self._get_params()).html
+        escaped_html = html.escape(report_html)
+        iframe = f"""
+        <iframe srcdoc="{escaped_html}" width="100%" height="100%" frameborder="0" marginheight="0" marginwidth="0">
+        </iframe>
+        """
+        return self._panel_type(iframe, min_height=700, sizing_mode="stretch_both")
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]

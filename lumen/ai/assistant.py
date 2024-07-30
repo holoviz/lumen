@@ -110,7 +110,7 @@ class Assistant(Viewer):
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke, load_buffer=10,
+                callback=self._chat_invoke, load_buffer=5,
             )
         else:
             interface.callback = self._chat_invoke
@@ -178,18 +178,21 @@ class Assistant(Viewer):
                 suggestion_buttons.visible = False
 
         async def use_suggestion(event):
-            contents = event.obj.name
-            if hide_after_use:
-                await hide_suggestions()
-            if analysis:
-                for agent in self.agents:
-                    if isinstance(agent, AnalysisAgent):
-                        break
+            button = event.obj
+            with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
+                contents = button.name
+                if hide_after_use:
+                    await hide_suggestions()
+                if analysis:
+                    for agent in self.agents:
+                        if isinstance(agent, AnalysisAgent):
+                            break
+                    else:
+                        return
+                    await agent.invoke([{'role': 'user', 'content': contents}])
+                    self._add_analysis_suggestions()
                 else:
-                    return
-                await agent.invoke([{'role': 'user', 'content': contents}])
-            else:
-                self.interface.send(contents)
+                    self.interface.send(contents)
 
         async def run_demo(event):
             if hide_after_use:
@@ -228,6 +231,19 @@ class Assistant(Viewer):
 
         self.interface.param.watch(hide_suggestions, "objects")
         return message
+
+    def _add_analysis_suggestions(self):
+        pipeline = memory['current_pipeline']
+        applicable_analyses = [
+            analysis for analysis in self._analyses if analysis.applies(pipeline)
+        ]
+        self._add_suggestions_to_footer(
+            [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
+            append_demo=False,
+            analysis=True,
+            hide_after_use=False,
+            num_objects=len(self.interface.objects),
+        )
 
     async def _invalidate_memory(self, messages):
         table = memory.get("current_table")
@@ -430,20 +446,8 @@ class Assistant(Viewer):
         print("\n\033[95mAGENT:\033[0m", agent, messages[-3:])
         await agent.invoke(messages[-3:])
         self._current_agent.object = "## No agent active"
-
         if "current_pipeline" in agent.provides:
-            pipeline = memory['current_pipeline']
-            applicable_analyses = [
-                analysis for analysis in self._analyses if analysis.applies(pipeline)
-            ]
-            self._add_suggestions_to_footer(
-                [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
-                append_demo=False,
-                analysis=True,
-                hide_after_use=False,
-                num_objects=len(self.interface.objects),
-            )
-
+            self._add_analysis_suggestions()
         print("\033[92mDONE\033[0m", "\n\n")
 
     def controls(self):

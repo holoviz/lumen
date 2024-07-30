@@ -24,7 +24,8 @@ from ..pipeline import Pipeline
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
-from ..views import VegaLiteView, hvPlotUIView
+from ..views import VegaLiteView, View, hvPlotUIView
+from .analysis import Analysis
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
@@ -36,7 +37,7 @@ from .translate import param_to_pydantic
 from .utils import (
     describe_data, get_schema, render_template, retry_llm_output,
 )
-from .views import LumenOutput, SQLOutput
+from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 FUZZY_TABLE_LENGTH = 10
 
@@ -380,8 +381,10 @@ class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
 
-    def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None):
-        out = LumenOutput(component=component)
+    _output_type = LumenOutput
+
+    def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None, **kwargs):
+        out = self._output_type(component=component, **kwargs)
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True)
 
@@ -838,9 +841,11 @@ class hvPlotAgent(BaseViewAgent):
     system_prompt = param.String(
         default="""
         Generate the plot the user requested.
-        Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns.
+        Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
+        no repeated columns are allowed.
         Do not arbitrarily set `groupby` and `by` fields unless explicitly requested.
         If a histogram is requested, use `y` instead of `x`.
+        If x is categorical or strings, prefer barh over bar, and use `y` for the values.
         """
     )
 
@@ -894,6 +899,7 @@ class VegaLiteAgent(BaseViewAgent):
         Generate the plot the user requested as a vega-lite specification.
         """
     )
+
     view_type = VegaLiteView
 
     @classmethod
@@ -909,25 +915,6 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 500}
-
-
-class Analysis(param.ParameterizedFunction):
-    """
-    The purpose of an Analysis is to perform custom actions tailored
-    to a particular use case and/or domain. It is a ParameterizedFunction
-    which implements an applies method to confirm whether the analysis
-    applies to a particular dataset and a __call__ method which is given
-    a pipeline and must return another valid component.
-    """
-
-    columns = param.List(default=[], doc="The columns required for the analysis.", readonly=True)
-
-    @classmethod
-    def applies(cls, pipeline) -> bool:
-        return all(col in pipeline.data.columns for col in cls.columns)
-
-    def __call__(self, pipeline) -> Component:
-        return pipeline
 
 
 class AnalysisAgent(LumenBaseAgent):
@@ -947,6 +934,8 @@ class AnalysisAgent(LumenBaseAgent):
             "based on the user query and the available data.\n\nAvailable analyses include:\n\n"
         )
     )
+
+    _output_type = AnalysisOutput
 
     async def _system_prompt_with_context(
         self, messages: list | str, analyses: list[Analysis] = []
@@ -972,33 +961,43 @@ class AnalysisAgent(LumenBaseAgent):
         if not analyses:
             print("NONE found...")
             return None
-        with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
-            if len(analyses) > 1:
+
+        if len(analyses) > 1:
+            with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
                 system_prompt = await self._system_prompt_with_context(messages, analyses)
-                analysis = (await self.llm.invoke(
+                analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
                     response_model=analysis_model,
                     allow_partial=False,
                 )).correct_name
-            else:
-                analysis = next(iter(analyses))
-            step.stream(f"Selected {analysis}")
-            step.success_title = f"Selected {analysis}"
+                step.stream(f"Selected {analysis_name}")
+                step.success_title = f"Selected {analysis_name}"
+        else:
+            analysis_name = list(analyses)[0]
 
         with self.interface.add_step(title="Creating view...") as step:
-            print(f"Creating view for {analysis}")
-            view = analyses[analysis](pipeline)
+            print(f"Creating view for {analysis_name}")
+            await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
+            analysis_callable = analyses[analysis_name]
+            if asyncio.iscoroutinefunction(analysis_callable):
+                view = await analysis_callable(pipeline)
+            else:
+                view = await asyncio.to_thread(analysis_callable, pipeline)
             spec = view.to_spec()
             step.stream(f"Generated view\n```json\n{spec}\n```")
             step.success_title = "Generated view"
-        view_type = view.view_type if hasattr(view, "view_type") else  type(view)
-        memory["current_view"] = dict(spec, type=view_type)
+        if isinstance(view, View):
+            view_type = view.view_type
+            memory["current_view"] = dict(spec, type=view_type)
+        elif isinstance(view, Pipeline):
+            memory["current_pipeline"] = view
+        memory["current_analysis"] = analysis_callable
         return view
 
     async def invoke(self, messages: list | str):
@@ -1006,4 +1005,4 @@ class AnalysisAgent(LumenBaseAgent):
         if view is None:
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:
-            self._render_lumen(view)
+            self._render_lumen(view, analysis=memory["current_analysis"], pipeline=memory['current_pipeline'])

@@ -153,7 +153,7 @@ class Card(Viewer):
         super().__init__(**params)
         params = {k: v for k, v in self.kwargs.items() if k in pn.Card.param}
         self._card = pn.Card(
-            title=self.title, name=self.title, collapsible=False, **params
+            title=self.title, name=self.title, collapsible=False, scroll='y-auto', **params
         )
         self._card[:] = [self._construct_layout()]
 
