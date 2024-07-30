@@ -215,7 +215,7 @@ class PipelineEditor(FastComponent):
                 'table': self.table
             }
             if schema:
-                spec['field'] = list(schema)[0]
+                spec['field'] = next(iter(schema))
         filt = Filter.from_spec(spec, {self.table: schema})
         filt.param.watch(self._update_spec, list(filt.param))
         if self._pipeline:

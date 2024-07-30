@@ -491,7 +491,7 @@ class FileSourceEditor(SourceEditor):
         assets = pathlib.Path(__file__).parent / 'assets'
         exts = {table.uri.split('.')[-1] for table in self.table_editors}
         if len(exts) == 1:
-            filename = assets/ f'{list(exts)[0]}.png'
+            filename = assets/ f'{next(iter(exts))}.png'
             if os.path.isfile(filename):
                 return filename
 

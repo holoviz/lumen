@@ -233,7 +233,7 @@ class Card(Viewer):
                 else:
                     pipeline = Pipeline.from_spec(pname)
             elif len(pipelines) == 1:
-                pipeline = list(pipelines.values())[0]
+                pipeline = next(iter(pipelines.values()))
                 if 'pipeline' in view_spec:
                     del view_spec['pipeline']
             if filters:
@@ -525,7 +525,7 @@ class Layout(Component, Viewer):
 
         # Set up watchers
         self.facet.param.watch(self._resort, ['sort', 'reverse'])
-        for view in list(self._cache.values())[0].views:
+        for view in next(iter(self._cache.values())).views:
             view.param.watch(self._schedule_rerender, 'rerender')
 
     @param.depends('rerender')
@@ -984,7 +984,7 @@ class Layout(Component, Viewer):
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context=context)
         if len(self._pipelines) == 1:
-            pipeline = list(self._pipelines.values())[0]
+            pipeline = next(iter(self._pipelines.values()))
             if context:
                 if pipeline.name not in context.get('pipelines', {}):
                     context['pipelines'][pipeline.name] = pipeline.to_spec(context=context)

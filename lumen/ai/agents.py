@@ -989,7 +989,7 @@ class AnalysisAgent(LumenBaseAgent):
                     allow_partial=False,
                 )).correct_name
             else:
-                analysis = list(analyses)[0]
+                analysis = next(iter(analyses))
             step.stream(f"Selected {analysis}")
             step.success_title = f"Selected {analysis}"
 

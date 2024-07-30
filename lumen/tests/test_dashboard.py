@@ -80,7 +80,7 @@ def test_dashboard_with_url_sync_filters(set_root, document):
     dashboard = Dashboard(str(root / 'sync_query_filters.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
-    f1, f2 = list(layout._pipelines.values())[0].filters
+    f1, f2 = next(iter(layout._pipelines.values())).filters
     f1.value = (0.1, 0.7)
     assert pn.state.location.query_params == {'A': [0.1, 0.7], 'C': []}
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
@@ -96,7 +96,7 @@ def test_dashboard_with_url_sync_filters_with_default(set_root, document):
     dashboard = Dashboard(str(root / 'sync_query_filters_default.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
-    f1, f2 = list(layout._pipelines.values())[0].filters
+    f1, f2 = next(iter(layout._pipelines.values())).filters
     f1.value = (0.1, 0.7)
     assert pn.state.location.query_params == {'C': ['foo1'], 'A': [0.1, 0.7]}
     pn.state.location.search = '?A=%5B0.3%2C+0.8%5D'
@@ -116,7 +116,7 @@ def test_dashboard_with_url_sync_filters_with_overwritten_default(set_root, docu
     dashboard = Dashboard(str(root / 'sync_query_filters_default.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
-    f1, f2 = list(layout._pipelines.values())[0].filters
+    f1, f2 = next(iter(layout._pipelines.values())).filters
     f1.value = (0.1, 0.7)
     f2.value = []  # overwriting default with empty list
     assert pn.state.location.query_params == {'C': [], 'A': [0.1, 0.7]}
@@ -215,7 +215,7 @@ def test_dashboard_with_view_and_transform_variable(set_root, document):
 
     assert plot.object.vdims == ['Z']
 
-    list(layout._pipelines.values())[0].param.trigger('update')
+    next(iter(layout._pipelines.values())).param.trigger('update')
 
     assert plot.object.vdims == ['Y']
 
