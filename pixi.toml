@@ -18,7 +18,7 @@ test-312 = ["py312", "test-core", "test"]
 test-core = ["py312", "test-core"]
 docs = ["py311", "example", "doc"]
 build = ["py311", "build"]
-# lint = ["py311", "lint"]
+lint = ["py311", "lint"]
 
 [dependencies]
 bokeh = "*"
@@ -112,9 +112,9 @@ build-pip = 'python -m build .'
 # =============================================
 # =================== LINT ====================
 # =============================================
-# [feature.lint.dependencies]
-# pre-commit = "*"
-#
-# [feature.lint.tasks]
-# lint = 'pre-commit run --all-files'
-# lint-install = 'pre-commit install'
+[feature.lint.dependencies]
+pre-commit = "*"
+
+[feature.lint.tasks]
+lint = 'pre-commit run --all-files'
+lint-install = 'pre-commit install'
