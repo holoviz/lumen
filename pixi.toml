@@ -16,7 +16,7 @@ test-310 = ["py310", "test-core", "test"]
 test-311 = ["py311", "test-core", "test"]
 test-312 = ["py312", "test-core", "test"]
 test-core = ["py312", "test-core"]
-# docs = ["py311", "example", "doc"]
+docs = ["py311", "example", "doc"]
 build = ["py311", "build"]
 # lint = ["py311", "lint"]
 
@@ -88,24 +88,15 @@ sqlalchemy = "*"
 # =============================================
 # =================== DOCS ====================
 # =============================================
-# [feature.doc.dependencies]
-# nbsite = ">=0.8.4,<0.9.0"
+[feature.doc.dependencies]
+nbsite = ">=0.8.4,<0.9.0"
+
+[feature.doc.tasks]
+_docs-refmanual = 'python doc/generate_modules.py'
+_docs-generate = 'nbsite build --what=html --output=builtdocs --org holoviz --project-name lumen'
 #
-# [feature.doc.activation.env]
-# DASK_DATAFRAME__QUERY_PLANNING = "False"
-# MOZ_HEADLESS = "1"
-# MPLBACKEND = "Agg"
-# PANEL_EMBED = "true"
-# PANEL_EMBED_JSON = "true"
-# PANEL_EMBED_JSON_PREFIX = "json"
-#
-# [feature.doc.tasks]
-# _docs-generate-rst = 'nbsite generate-rst --org holoviz --project-name holoviews'
-# _docs-refmanual = 'python ./doc/generate_modules.py holoviews -d ./doc/reference_manual -n holoviews -e tests'
-# _docs-generate = 'nbsite build --what=html --output=builtdocs --org holoviz --project-name holoviews'
-#
-# [feature.doc.tasks.docs-build]
-# depends_on = ['_docs-generate-rst', '_docs-refmanual', '_docs-generate']
+[feature.doc.tasks.docs-build]
+depends_on = ['_docs-refmanual', '_docs-generate']
 
 # =============================================
 # ================== BUILD ====================
