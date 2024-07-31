@@ -1,6 +1,5 @@
 import datetime as dt
 import os
-import shutil
 
 import pandas as pd
 import pytest
@@ -9,26 +8,27 @@ from lumen.transforms.sql import SQLGroupBy
 
 try:
     from lumen.sources.duckdb import DuckDBSource
+    pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
     DuckDBSource = None
+    pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
-pytestmark = pytest.mark.skipif(DuckDBSource is None, reason="Duckdb is not installed")
 
 
 @pytest.fixture
-def duckdb_source(tmp_path):
-    shutil.copy(os.path.join(os.path.dirname(__file__), 'test.db'), tmp_path)
+def duckdb_source():
+    root = os.path.dirname(__file__)
     duckdb_source = DuckDBSource(
         initializers=[
             "INSTALL sqlite;",
             "LOAD sqlite;",
-            f"SET home_directory='{tmp_path}';"
+            f"SET home_directory='{root}';"
         ],
-        root=os.fspath(tmp_path),
-        sql_expr='SELECT A, B, C, D::TIMESTAMP_NS AS D FROM {table}',
+        root=root,
+        sql_expr="SELECT A, B, C, D::TIMESTAMP_NS AS D FROM {table}",
         tables={
-            'test_sql': f"sqlite_scan('{tmp_path / 'test.db'}', 'mixed')",
-            'test_sql_with_none': f"sqlite_scan('{tmp_path / 'test.db'}', 'mixed_none')",
+            'test_sql': f"sqlite_scan('{root + '/test.db'}', 'mixed')",
+            'test_sql_with_none': f"sqlite_scan('{root + '/test.db'}', 'mixed_none')",
         }
     )
     return duckdb_source
