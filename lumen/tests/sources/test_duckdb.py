@@ -10,7 +10,6 @@ try:
     from lumen.sources.duckdb import DuckDBSource
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
-    DuckDBSource = None
     pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
 
