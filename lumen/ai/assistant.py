@@ -8,7 +8,7 @@ from typing import Literal, Type
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatStep
+from panel.chat import ChatInterface, ChatMessage, ChatStep
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
@@ -41,6 +41,8 @@ DEMO_MESSAGES = [
     "Perform a SQL query on one of these.",
     "Show it to me as a scatter plot."
 ]
+
+ChatMessage.max_width = 1000000
 
 
 class Assistant(Viewer):
