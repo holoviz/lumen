@@ -143,3 +143,10 @@ extend-unsafe-fixes = [
 #     "NPY002", # Replace legacy `np.random.rand` call with Generator
 #     "B904", # Within an `except` clause, raise exceptions with from err or None
 # ]
+
+[tool.isort]
+force_grid_wrap = 4
+multi_line_output = 5
+combine_as_imports = true
+lines_between_types = 1
+include_trailing_comma = true
