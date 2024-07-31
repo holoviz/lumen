@@ -12,6 +12,10 @@ from lumen.sources.base import Source
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
+try:
+    import fastparquet
+except ImportError:
+    fastparquet = None
 
 @pytest.fixture
 def source(make_filesource):
@@ -144,6 +148,7 @@ def test_file_source_clear_cache(source, column_value_type, dask):
     assert len(source._cache) == 0
 
 
+@pytest.mark.skipif(fastparquet is None, reason='fastparquet not installed')
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)

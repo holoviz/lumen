@@ -59,6 +59,7 @@ pytest-xdist = "*"
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
 
 [feature.test.dependencies]
+dask-core = "*"
 fastparquet = "*"
 matplotlib-base = ">=3.4"  # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
 msgpack-python = "*"
