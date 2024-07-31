@@ -24,7 +24,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Natural Language :: English",
     "Topic :: Scientific/Engineering",
-    "Topic :: Software Development :: Libraries"
+    "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
     "bokeh",
@@ -71,7 +71,14 @@ examples = "lumen/examples"
 version-file = "lumen/_version.py"
 
 [tool.pytest.ini_options]
-addopts = ["--strict-config", "--strict-markers", "--color=yes", "--pyargs", "--doctest-modules", "--doctest-ignore-import-errors"]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--color=yes",
+    "--pyargs",
+    "--doctest-modules",
+    "--doctest-ignore-import-errors",
+]
 minversion = "7"
 xfail_strict = true
 log_cli_level = "INFO"
@@ -82,7 +89,7 @@ filterwarnings = [
 
 [tool.ruff]
 fix = true
-target-version = "py37"  # TODO: Remove so it is aligned with the project requires-python
+target-version = "py37" # TODO: Remove so it is aligned with the project requires-python
 
 [tool.ruff.lint]
 select = [
