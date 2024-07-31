@@ -93,6 +93,13 @@ class Agent(Viewer):
         else:
             state.config.raise_with_notifications = True
 
+    @classmethod
+    def applies(cls) -> bool:
+        """
+        Additional checks to determine if the agent should be used.
+        """
+        return True
+
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         await self.invoke(contents)
         self._retries_left = 1
@@ -462,6 +469,13 @@ class TableListAgent(LumenBaseAgent):
     )
 
     requires = param.List(default=["current_source"], readonly=True)
+
+    @classmethod
+    def applies(cls) -> bool:
+        source = memory.get("current_source")
+        if not source:
+            return True  # source not loaded yet; always apply
+        return len(source.get_tables()) > 1
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
