@@ -139,7 +139,7 @@ class AnalysisOutput(LumenOutput):
         if config_options:
             options = pn.Param(self.analysis.param, parameters=config_options)
             b = pn.widgets.Button(icon='rocket', name='Run...', on_click=self._rerun, button_type='success', margin=20)
-            self._tabs.insert(0, ('Config', pn.Column(options, b)))
+            self._tabs.insert(1, ('Config', pn.Column(options, b)))
             with discard_events(self):
                 self._tabs.active = 2
 

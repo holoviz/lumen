@@ -5,6 +5,9 @@ from textwrap import dedent
 
 import nbformat
 
+from panel import Column
+from panel.chat import ChatStep
+
 from lumen.ai.views import LumenOutput
 from lumen.pipeline import Pipeline
 from lumen.views import View
@@ -59,6 +62,11 @@ def export_notebook(assistant, preamble: str = ""):
             cells += format_markdown(msg)
         elif isinstance(msg.object, LumenOutput):
             cells += format_output(msg)
+        elif isinstance(msg.object, Column):
+            for obj in msg.object:
+                if isinstance(obj, ChatStep):
+                    continue
+                cells += format_output(obj)
 
     nb = nbformat.v4.new_notebook(cells=cells)
     return nbformat.v4.writes(nb)
