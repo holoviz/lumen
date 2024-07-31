@@ -78,11 +78,16 @@ class LumenOutput(Viewer):
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if (self.active != (len(self._tabs)-1)):
+        if (self.active != (len(self._tabs) - 1)):
             return
 
         # store the spec in the cache instead of memory to save tokens
         memory["current_spec"] = self.spec
+        output = pn.state.cache.get(self.spec)
+        if output:
+            yield output
+            return
+
         try:
             self.component = type(self.component).from_spec(load_yaml(self.spec))
             if isinstance(self.component, Pipeline):
@@ -108,6 +113,7 @@ class LumenOutput(Viewer):
                 output = pn.Column(download_pane, table)
             else:
                 output = self.component.__panel__()
+            pn.state.cache[self.spec] = output
             yield output
         except Exception as e:
             import traceback
