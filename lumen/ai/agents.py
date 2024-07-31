@@ -67,6 +67,8 @@ class Agent(Viewer):
 
     provides = param.List(default=[], readonly=True)
 
+    _max_width = 1200
+
     __abstract = True
 
     def __init__(self, **params):
@@ -184,7 +186,7 @@ class Agent(Viewer):
             messages, system=system_prompt, response_model=self.response_model, field="output"
         ):
             message = self.interface.stream(
-                output, replace=True, message=message, user=self.user
+                output, replace=True, message=message, user=self.user, max_width=self._max_width
             )
 
 
@@ -390,10 +392,12 @@ class LumenBaseAgent(Agent):
 
     _output_type = LumenOutput
 
+    _max_width = None
+
     def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None, **kwargs):
         out = self._output_type(component=component, **kwargs)
         message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(message=message, **message_kwargs, replace=True)
+        self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
 
 class TableAgent(LumenBaseAgent):
