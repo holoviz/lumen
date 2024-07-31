@@ -41,6 +41,8 @@ from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 FUZZY_TABLE_LENGTH = 10
 
+pn.chat.ChatStep.min_width = 350
+
 
 class Agent(Viewer):
     """
