@@ -44,8 +44,12 @@ Homepage = "https://lumen.holoviz.org"
 Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
-# TODO(hoxbro): Add optional dependencies
-# [project.optional-dependencies]
+[project.optional-dependencies]
+tests = ['pytest', 'pytest-rerunfailures']
+sql = ['duckdb', 'intake-sql', 'sqlalchemy']
+ai = ['nbformat', 'duckdb', 'pyarrow', 'openai', 'instructor >=1', 'pydantic >=2.8.0', 'datashader']
+ai-local = ['lumen[ai]', 'huggingface_hub']
+ai-llama = ['lumen[ai-local]', 'llama-cpp-python']
 
 [project.scripts]
 lumen = "lumen.command:main"
