@@ -57,7 +57,7 @@ class FastNumberInput(FastComponent):
 
     _child_config = {'name': 'template'}
 
-    _template= '<fast-number-field id="fast-number" autofocus="${autofocus}" placeholder="${placeholder}" step="${step}" value="${value}" min="${start}" max="${end}" appearance="${appearance}"></fast-number-field>' # noqa
+    _template= '<fast-number-field id="fast-number" autofocus="${autofocus}" placeholder="${placeholder}" step="${step}" value="${value}" min="${start}" max="${end}" appearance="${appearance}"></fast-number-field>'
 
     _dom_events = {'fast-number': ['change']}
 
@@ -288,7 +288,7 @@ class FastAccordion(FastComponent, NamedListLike):
       </fast-accordion-item>
       {% endfor %}
     </fast-accordion>
-    """ # noqa
+    """
 
     def __init__(self, *objects, **params):
         NamedListLike.__init__(self, *objects, **params)

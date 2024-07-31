@@ -134,7 +134,7 @@ def _j_getshell(x):
         x = x._undefined_name
     try:
         return check_output(x, shell=True).decode()
-    except (IOError, OSError):
+    except OSError:
         return ""
 
 def _j_getheaders(x):

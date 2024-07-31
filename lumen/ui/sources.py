@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 import panel as pn
 import param  # type: ignore
@@ -187,7 +187,7 @@ class SourceGallery(WizardItem, Gallery):
 
     _gallery_item = SourceGalleryItem
 
-    _editor_type: ClassVar[Type[SourceEditor]] = SourceEditor
+    _editor_type: ClassVar[type[SourceEditor]] = SourceEditor
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -426,7 +426,7 @@ class FileSourceTable(ReactiveHTML):
         <b>－</b>
       </fast-button>
     </form>
-    """
+    """  # noqa: RUF001
 
     _dom_events = {'uri': ['keyup'], 'name': ['keyup']}
 
@@ -491,7 +491,7 @@ class FileSourceEditor(SourceEditor):
         assets = pathlib.Path(__file__).parent / 'assets'
         exts = {table.uri.split('.')[-1] for table in self.table_editors}
         if len(exts) == 1:
-            filename = assets/ f'{list(exts)[0]}.png'
+            filename = assets/ f'{next(iter(exts))}.png'
             if os.path.isfile(filename):
                 return filename
 

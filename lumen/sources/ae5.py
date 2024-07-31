@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -290,13 +290,13 @@ class AE5Source(Source):
     @cached
     def get(self, table, **query):
         if table not in self._tables:
-            raise ValueError(f"AE5Source has no '{table}' table, choose from {repr(self._tables)}.")
+            raise ValueError(f"AE5Source has no '{table}' table, choose from {self._tables!r}.")
         return getattr(self, f'_get_{table}')()
 
     @cached_schema
     def get_schema(
         self, table: str | None = None, limit: int | None = None
-    ) -> Dict[str, Dict[str, Any]] | Dict[str, Any]:
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schemas = {}
         for t in self._tables:
             if table is None or t == table:

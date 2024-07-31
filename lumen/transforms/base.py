@@ -7,7 +7,7 @@ import datetime as dt
 import hashlib
 
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Tuple, Union,
+    TYPE_CHECKING, Any, Callable, ClassVar, Literal, Union,
 )
 
 import numpy as np
@@ -41,14 +41,14 @@ class Transform(MultiTypeComponent):
 
     transform_type: ClassVar[str | None] = None
 
-    _field_params: ClassVar[List[str]] = []
+    _field_params: ClassVar[list[str]] = []
 
-    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
+    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     __abstract = True
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Transform':
+    def from_spec(cls, spec: dict[str, Any] | str) -> Transform:
         """
         Resolves a Transform specification.
 
@@ -144,7 +144,7 @@ class Transform(MultiTypeComponent):
         Implements hashing to allow a Source to compute a hash key.
         """
         sha = hashlib.sha256()
-        hash_vals: Tuple[Any, ...] = (type(self).__name__.encode('utf-8'),)
+        hash_vals: tuple[Any, ...] = (type(self).__name__.encode('utf-8'),)
         hash_vals += tuple(sorted([
             (k, v) for k, v in self.param.values().items()
             if k not in Transform.param
@@ -175,7 +175,7 @@ class Transform(MultiTypeComponent):
             margin=(-10, 0, 5, 0)
         )
 
-    def _drop_none_values(self, **kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _drop_none_values(self, **kwargs: dict[str, Any]) -> dict[str, Any]:
         return {k: v for k, v in kwargs.items() if v is not None}
 
 
@@ -328,7 +328,7 @@ class Aggregate(Transform):
 
     transform_type: ClassVar[str] = 'aggregate'
 
-    _field_params: ClassVar[List[str]] = ['by', 'columns']
+    _field_params: ClassVar[list[str]] = ['by', 'columns']
 
     def apply(self, table: DataFrame) -> DataFrame:
         grouped = table.groupby(self.by)
@@ -361,7 +361,7 @@ class Sort(Transform):
 
     transform_type: ClassVar[str] = 'sort'
 
-    _field_params: ClassVar[List[str]] = ['by']
+    _field_params: ClassVar[list[str]] = ['by']
 
     def apply(self, table: DataFrame) -> DataFrame:
         return table.sort_values(self.by, ascending=self.ascending)
@@ -395,7 +395,7 @@ class Columns(Transform):
 
     transform_type: ClassVar[str] = 'columns'
 
-    _field_params: ClassVar[List[str]] = ['columns']
+    _field_params: ClassVar[list[str]] = ['columns']
 
     def apply(self, table: DataFrame) -> DataFrame:
         return table[self.columns]
@@ -523,10 +523,10 @@ class Pivot(Transform):
         If None, uses existing index.""")
 
     columns = param.String(default=None, doc="""
-        Column to use to make new frame’s columns.""")
+        Column to use to make new frame's columns.""")
 
     values = param.ListSelector(default=None, doc="""
-        Column(s) to use for populating new frame’s values.
+        Column(s) to use for populating new frame's values.
         If not specified, all remaining columns will be used
         and the result will have hierarchically indexed columns.""")
 
@@ -569,7 +569,7 @@ class PivotTable(Transform):
     aggfunc = param.String(default="mean", doc="""
         Function, list of functions, dict, default 'mean'""")
 
-    _field_params: ClassVar[List[str]] = ['values', 'index', 'columns']
+    _field_params: ClassVar[list[str]] = ['values', 'index', 'columns']
 
     def apply(self, table: DataFrame) -> DataFrame:
         values = self.values if len(self.values) > 1 else self.values[0]
@@ -606,7 +606,7 @@ class Melt(Transform):
 
     transform_type: ClassVar[str] = 'melt'
 
-    _field_params: ClassVar[List[str]] = ['id_vars', 'value_vars']
+    _field_params: ClassVar[list[str]] = ['id_vars', 'value_vars']
 
     def apply(self, table: DataFrame) -> DataFrame:
         melt: Callable
@@ -646,7 +646,7 @@ class SetIndex(Transform):
 
     transform_type: ClassVar[str] = 'set_index'
 
-    _field_params: ClassVar[List[str]] = ['keys']
+    _field_params: ClassVar[list[str]] = ['keys']
 
     def apply(self, table: DataFrame) -> DataFrame:
         return table.set_index(

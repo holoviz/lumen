@@ -8,7 +8,7 @@ import traceback
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Tuple, Type,
+    TYPE_CHECKING, Any, Callable, ClassVar,
 )
 
 import panel as pn
@@ -31,19 +31,19 @@ from .panel import IconButton
 from .pipeline import Pipeline
 from .sources.base import RESTSource, Source  # noqa
 from .state import state
-from .transforms.base import Transform  # noqa
+from .transforms.base import Transform
 from .util import catch_and_notify, expand_spec, resolve_module_reference
 from .validation import (
     ValidationError, match_suggestion_message, validate_callback,
 )
 from .variables.base import Variable, Variables
-from .views.base import Download, View  # noqa
+from .views.base import Download, View
 
 if TYPE_CHECKING:
     from bokeh.server.contexts import BokehSessionContext
 
 
-def load_yaml(yaml_spec: str, **kwargs) -> Dict[str, Any]:
+def load_yaml(yaml_spec: str, **kwargs) -> dict[str, Any]:
     expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
     return yaml.load(expanded, Loader=yaml.Loader)
 
@@ -127,7 +127,7 @@ class Config(Component):
     _validate_params: ClassVar[bool] = True
 
     @classmethod
-    def _extract_template_type(cls, template: str | Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    def _extract_template_type(cls, template: str | dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if isinstance(template, dict):
             template_type = template.get("type", _TEMPLATES["material"])
             template_params = template.copy()
@@ -137,7 +137,7 @@ class Config(Component):
         return template_type, template_params
 
     @classmethod
-    def _serialize_template(cls, template_params: Dict[str, Any]) -> str | Dict[str, Any]:
+    def _serialize_template(cls, template_params: dict[str, Any]) -> str | dict[str, Any]:
         if len(template_params) == 1:
             return template_params["type"]
         else:
@@ -152,8 +152,8 @@ class Config(Component):
 
     @classmethod
     def _validate_template(
-        cls, template: str | Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        cls, template: str | dict[str, Any], spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         template, template_params = cls._extract_template_type(template)
         if template in _TEMPLATES:
             return cls._serialize_template(template_params)
@@ -193,8 +193,8 @@ class Config(Component):
 
     @classmethod
     def _validate_on_error(
-        cls, on_error: Callable[[Type[Exception]], None] | str,
-        spec: Dict[str, Any], context: Dict[str, Any]
+        cls, on_error: Callable[[type[Exception]], None] | str,
+        spec: dict[str, Any], context: dict[str, Any]
     ) -> str:
         cb = cls._validate_callback(on_error)
         validate_callback(cb, ('exception',), what='on_error callback')
@@ -202,8 +202,8 @@ class Config(Component):
 
     @classmethod
     def _validate_on_loaded(
-        cls, on_loaded: Callable[[], None] | str, spec: Dict[str, Any],
-        context: Dict[str, Any]
+        cls, on_loaded: Callable[[], None] | str, spec: dict[str, Any],
+        context: dict[str, Any]
     ) -> str:
         cb = cls._validate_callback(on_loaded)
         validate_callback(cb, (), what='on_loaded callback')
@@ -211,8 +211,8 @@ class Config(Component):
 
     @classmethod
     def _validate_on_update(
-        cls, on_update: Callable[[Pipeline], None] | str, spec: Dict[str, Any],
-        context: Dict[str, Any]
+        cls, on_update: Callable[[Pipeline], None] | str, spec: dict[str, Any],
+        context: dict[str, Any]
     ) -> str:
         cb = cls._validate_callback(on_update)
         validate_callback(cb, ('pipeline',), what='on_update callback')
@@ -220,8 +220,8 @@ class Config(Component):
 
     @classmethod
     def _validate_on_session_created(
-        cls, on_session_created: Callable[[], None] | str, spec: Dict[str, Any],
-        context: Dict[str, Any]
+        cls, on_session_created: Callable[[], None] | str, spec: dict[str, Any],
+        context: dict[str, Any]
     ) -> str:
         cb = cls._validate_callback(on_session_created)
         validate_callback(cb, (), what='on_session_created callback')
@@ -230,7 +230,7 @@ class Config(Component):
     @classmethod
     def _validate_on_session_destroyed(
         cls, on_session_destroyed: Callable[[BokehSessionContext], None] | str,
-        spec: Dict[str, Any], context: Dict[str, Any]
+        spec: dict[str, Any], context: dict[str, Any]
     ) -> str:
         cb = cls._validate_callback(on_session_destroyed)
         validate_callback(cb, ('session_context',), what='on_session_destroyed callback')
@@ -238,7 +238,7 @@ class Config(Component):
 
     @classmethod
     def _validate_theme(
-        cls, theme: str, spec: Dict[str, Any], context: Dict[str, Any]
+        cls, theme: str, spec: dict[str, Any], context: dict[str, Any]
     ) -> str:
         if theme not in _THEMES:
             msg = f'Config theme {theme!r} could not be found. Theme must be one of {list(_THEMES)}.'
@@ -246,7 +246,7 @@ class Config(Component):
         return theme
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'Dashboard':
+    def from_spec(cls, spec: dict[str, Any] | str) -> Dashboard:
         if isinstance(spec, str):
             raise ValueError(
                 "Config cannot be materialized by reference. Please pass "
@@ -271,7 +271,7 @@ class Config(Component):
 
         return cls(**spec)
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context=context)
         if 'layout' in spec:
             spec['layout'] = {v: k for k, v in _LAYOUTS.items()}[spec['layout']]
@@ -337,8 +337,8 @@ class Defaults(Component):
 
     @classmethod
     def _validate_defaults(
-        cls, defaults_type: Type[MultiTypeComponent], defaults: List[Dict[str, Any]], spec: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        cls, defaults_type: type[MultiTypeComponent], defaults: list[dict[str, Any]], spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         highlight = f'{defaults_type.__name__.lower()}s'
         if not isinstance(defaults, list):
             raise ValidationError(
@@ -360,7 +360,7 @@ class Defaults(Component):
                     try:
                         pobj._validate(default[p])
                     except Exception as e:
-                        msg = f"The default for {obj_type.__name__} {p!r} parameter failed validation: {str(e)}"
+                        msg = f"The default for {obj_type.__name__} {p!r} parameter failed validation: {e!s}"
                         raise ValidationError(msg, default, p)
                 else:
                     msg = (
@@ -373,7 +373,7 @@ class Defaults(Component):
 
     @classmethod
     def _validate_download(
-        cls, download_defaults: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, download_defaults: dict[str, Any], spec: dict[str, Any], context: dict[str, Any]
     ):
         if not isinstance(download_defaults, dict):
             msg = f'Defaults for Download component must be declared as a dictionary, not as a {type(download_defaults)}.'
@@ -384,7 +384,7 @@ class Defaults(Component):
                 try:
                     pobj._validate(download_defaults[p])
                 except Exception as e:
-                    msg = f"The default for Download {p!r} parameter failed validation: {str(e)}"
+                    msg = f"The default for Download {p!r} parameter failed validation: {e!s}"
                     raise ValidationError(msg, download_defaults, p)
                 continue
             msg = (
@@ -397,25 +397,25 @@ class Defaults(Component):
 
     @classmethod
     def _validate_filters(
-        cls, filter_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, filter_defaults: list[dict[str, Any]], spec: dict[str, Any], context: dict[str, Any]
     ):
         return cls._validate_defaults(Filter, filter_defaults, spec)
 
     @classmethod
     def _validate_sources(
-        cls, source_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, source_defaults: list[dict[str, Any]], spec: dict[str, Any], context: dict[str, Any]
     ):
         return cls._validate_defaults(Source, source_defaults, spec)
 
     @classmethod
     def _validate_transforms(
-        cls, transform_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, transform_defaults: list[dict[str, Any]], spec: dict[str, Any], context: dict[str, Any]
     ):
         return cls._validate_defaults(Transform, transform_defaults, spec)
 
     @classmethod
     def _validate_views(
-        cls, view_defaults: List[Dict[str, Any]], spec: Dict[str, Any], context: Dict[str, Any]
+        cls, view_defaults: list[dict[str, Any]], spec: dict[str, Any], context: dict[str, Any]
     ):
         return cls._validate_defaults(View, view_defaults, spec)
 
@@ -447,7 +447,7 @@ class AuthSpec(Component):
     _allows_refs: ClassVar[bool] = False
 
     @classmethod
-    def from_spec(cls, spec: Dict[str, Any] | str) -> 'AuthSpec':
+    def from_spec(cls, spec: dict[str, Any] | str) -> AuthSpec:
         if isinstance(spec, str):
             raise ValueError(
                 "AuthSpec cannot be materialized by reference. Please pass "
@@ -487,8 +487,8 @@ class AuthSpec(Component):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any] | str:
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any] | str:
         """
         Validates the component specification given the validation context.
 
@@ -652,7 +652,7 @@ class Dashboard(Component, Viewer):
         state.spec = self.validate(load_yaml(self._yaml, **kwargs))
         state.resolve_views()
 
-    def _load_layout(self, layout_spec: Dict[str, Any]) -> Layout:
+    def _load_layout(self, layout_spec: dict[str, Any]) -> Layout:
         layout_spec = dict(layout_spec)
         if 'reloadable' not in layout_spec:
             layout_spec['reloadable'] = self.config.reloadable
@@ -667,7 +667,7 @@ class Dashboard(Component, Viewer):
         layout.start()
         return layout
 
-    def _background_load(self, i: int, spec: Dict[str, Any]) -> Layout:
+    def _background_load(self, i: int, spec: dict[str, Any]) -> Layout:
         self.layouts[i] = layout = self._load_layout(spec)
         return layout
 
@@ -879,7 +879,7 @@ class Dashboard(Component, Viewer):
     def _open_modal(self, event: param.parameterized.Event):
         self._template.open_modal()
 
-    def _get_global_filters(self) -> Tuple[List[Filter] | None, pn.Column | None]:
+    def _get_global_filters(self) -> tuple[list[Filter] | None, pn.Column | None]:
         views = []
         filters = []
         for layout in self.layouts:
@@ -992,32 +992,32 @@ class Dashboard(Component, Viewer):
 
     @classmethod
     def _validate_pipelines(
-        cls, pipeline_specs: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        cls, pipeline_specs: dict[str, Any], spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         if 'pipelines' not in context:
             context['pipelines'] = {}
         return cls._validate_dict_subtypes('pipelines', Pipeline, pipeline_specs, spec, context, context['pipelines'])
 
     @classmethod
     def _validate_sources(
-        cls, source_specs: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        cls, source_specs: dict[str, Any], spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         if 'sources' not in context:
             context['sources'] = {}
         return cls._validate_dict_subtypes('sources', Source, source_specs, spec, context, context['sources'])
 
     @classmethod
     def _validate_layouts(
-        cls, layout_specs: List[Dict[str, Any] | str], spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        cls, layout_specs: list[dict[str, Any] | str], spec: dict[str, Any], context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         if 'layouts' not in context:
             context['layouts'] = []
         return cls._validate_list_subtypes('layouts', Layout, layout_specs, spec, context, context['layouts'])
 
     @classmethod
     def _validate_variables(
-        cls, variable_specs: Dict[str, Any], spec: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        cls, variable_specs: dict[str, Any], spec: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         if 'variables' not in context:
             context['variables'] = {}
         return cls._validate_dict_subtypes('variables', Variable, variable_specs, spec, context, context['variables'])
@@ -1028,8 +1028,8 @@ class Dashboard(Component, Viewer):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any]:
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Validates the component specification given the validation context.
 
@@ -1086,7 +1086,7 @@ class Dashboard(Component, Viewer):
             sizing_mode='stretch_both'
         )
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -1099,7 +1099,7 @@ class Dashboard(Component, Viewer):
                 'Dashboard.to_spec is already the top-level context '
                 'you may not pass a context argument.'
             )
-        spec: Dict[str, Any] = {}
+        spec: dict[str, Any] = {}
         spec['variables'] = {
             name: variable.to_spec(context=spec)
             for name, variable in state.variables._vars.items()

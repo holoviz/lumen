@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 try:
-    import intake_sql  # noqa
+    import intake_sql
 except Exception:
     intake_sql = None
 

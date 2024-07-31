@@ -19,7 +19,6 @@ class LlmSetupError(Exception):
     Raised when an error occurs during the setup of the LLM.
     """
 
-    pass
 
 
 UNRECOVERABLE_ERRORS = (
@@ -107,7 +106,7 @@ def format_schema(schema):
 
 
 def get_schema(
-    source: Source | Pipeline, table: str = None, include_min_max: bool = True
+    source: Source | Pipeline, table: str | None = None, include_min_max: bool = True
 ):
     if isinstance(source, Pipeline):
         schema = source.get_schema()

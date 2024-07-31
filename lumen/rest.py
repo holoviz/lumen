@@ -198,7 +198,7 @@ def lumen_rest_provider(files, endpoint):
     from panel.io.rest import _exec_files
     _exec_files(files)
     if endpoint:
-        prefix = r'^/%s/' % endpoint
+        prefix = rf'^/{endpoint}/'
     else:
         prefix = r'^/'
     return [

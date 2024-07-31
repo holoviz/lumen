@@ -7,7 +7,7 @@ from __future__ import annotations
 import types
 
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Tuple, Type,
+    TYPE_CHECKING, Any, Callable, ClassVar, Literal,
 )
 
 import bokeh  # type: ignore
@@ -58,9 +58,9 @@ class Filter(MultiTypeComponent):
     __abstract = True
 
     # Specification configuration
-    _internal_params: ClassVar[List[str]] = ['name', 'schema']
+    _internal_params: ClassVar[list[str]] = ['name', 'schema']
     _requires_field: ClassVar[bool] = True
-    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
+    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -75,10 +75,10 @@ class Filter(MultiTypeComponent):
         return bool(state.config and state.config.sync_with_url and self.sync_with_url and pn.state.location)
 
     @classproperty
-    def _required_keys(cls) -> List[str | Tuple[str, ...]]:  # type: ignore
+    def _required_keys(cls) -> list[str | tuple[str, ...]]:  # type: ignore
         return ['field'] if cls._requires_field else []
 
-    def _url_sync_error(self, values: Dict[str, Any]):
+    def _url_sync_error(self, values: dict[str, Any]):
         """
         Called when URL syncing errors.
         """
@@ -89,9 +89,9 @@ class Filter(MultiTypeComponent):
 
     @classmethod
     def from_spec( # type: ignore
-        cls, spec: Dict[str, Any] | str, source_schema: Dict[str, Dict[str, Any]],
-        source_filters: Dict[str, 'Filter'] | None = None
-    ) -> 'Filter':
+        cls, spec: dict[str, Any] | str, source_schema: dict[str, dict[str, Any]],
+        source_filters: dict[str, Filter] | None = None
+    ) -> Filter:
         """
         Resolves a Filter specification given the schema of the Source
         (and optionally the table) it will be filtering on.
@@ -112,10 +112,10 @@ class Filter(MultiTypeComponent):
         """
         if isinstance(spec, str):
             if source_filters is None:
-                raise ValueError(f"Filter spec {repr(spec)} could not be resolved "
+                raise ValueError(f"Filter spec {spec!r} could not be resolved "
                                  "because source has not declared filters.")
             elif spec not in source_filters:
-                raise ValueError(f"Filter spec {repr(spec)} could not be resolved, "
+                raise ValueError(f"Filter spec {spec!r} could not be resolved, "
                                  f"available filters on the source include {list(source_filters)}.")
             return source_filters[spec]
         spec = dict(spec)
@@ -144,7 +144,7 @@ class Filter(MultiTypeComponent):
             )
         return filter_type(schema={field: schema}, **spec)
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context=context)
         if spec.get('label', '').lower() == spec.get('field'):
             del spec['label']
@@ -172,8 +172,8 @@ class Filter(MultiTypeComponent):
 
     @classmethod
     def validate(
-        cls, spec: Dict[str, Any] | str, context: Dict[str, Any] | None = None
-    ) -> Dict[str, Any] | str:
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any] | str:
         if isinstance(spec, str):
             return spec
         return super().validate(spec, context)
@@ -210,7 +210,7 @@ class FacetFilter(Filter):
     filter_type = 'facet'
 
     @property
-    def filters(self) -> List[ConstantFilter]:
+    def filters(self) -> list[ConstantFilter]:
         field_schema = self.schema[self.field]
         if 'enum' in field_schema:
             values = field_schema['enum']
@@ -300,7 +300,7 @@ class WidgetFilter(BaseWidgetFilter):
 
     filter_type: ClassVar[str] = 'widget'
 
-    _internal_params: ClassVar[List[str]] = ['name', 'schema']
+    _internal_params: ClassVar[list[str]] = ['name', 'schema']
 
     def __init__(self, **params):
         wtype = params.pop('widget', None)
@@ -338,7 +338,7 @@ class WidgetFilter(BaseWidgetFilter):
         self._setup_sync()
 
     @classmethod
-    def _validate_widget(cls, widget: str, spec: Dict[str, Any], context: Dict[str, Any]) -> str:
+    def _validate_widget(cls, widget: str, spec: dict[str, Any], context: dict[str, Any]) -> str:
         try:
             resolve_module_reference(widget, pn.widgets.Widget)
         except Exception:
@@ -348,7 +348,7 @@ class WidgetFilter(BaseWidgetFilter):
         else:
             return widget
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context=context)
         if self._inferred_widget:
             del spec['widget']
@@ -443,7 +443,7 @@ class BaseDateFilter(BaseWidgetFilter):
     # Mapping from mode to a Panel widget, or to a function
     # that must return a tuple of a Panel widget and a dictionary
     # of parameter values that will override the current ones.
-    _widget_mode_mapping: Dict[str, Type[Widget] | Callable[[BaseWidgetFilter], Tuple[Type[Widget], Dict]]]  = {}
+    _widget_mode_mapping: dict[str, type[Widget] | Callable[[BaseWidgetFilter], tuple[type[Widget], dict]]]  = {}
 
     __abstract = True
 
@@ -459,7 +459,7 @@ class BaseDateFilter(BaseWidgetFilter):
         self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
         self._setup_sync()
 
-    def _widget_kwargs(self, as_date: bool) -> Dict[str, Any]:
+    def _widget_kwargs(self, as_date: bool) -> dict[str, Any]:
         field_schema = self.schema.get(self.field, {})
         kwargs = {
             'name': self.label,

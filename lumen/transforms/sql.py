@@ -191,7 +191,7 @@ class SQLFilter(SQLTransform):
             elif isinstance(val, dt.datetime):
                 condition = f'{col} = {str(val)!r}'
             elif isinstance(val, dt.date):
-                condition = f"{col} BETWEEN '{str(val)} 00:00:00' AND '{str(val)} 23:59:59'"
+                condition = f"{col} BETWEEN '{val!s} 00:00:00' AND '{val!s} 23:59:59'"
             elif (isinstance(val, list) and all(
                     isinstance(v, tuple) and len(v) == 2 for v in val
             )):

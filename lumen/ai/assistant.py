@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from io import StringIO
-from typing import Literal, Type
+from typing import Literal
 
 import param
 
@@ -68,7 +68,7 @@ class Assistant(Viewer):
         self,
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
-        agents: list[Agent | Type[Agent]] | None = None,
+        agents: list[Agent | type[Agent]] | None = None,
         logs_filename: str = "",
         **params,
     ):

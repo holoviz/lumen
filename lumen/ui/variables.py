@@ -77,7 +77,7 @@ class VariablesEditor(WizardItem):
         {% endfor %}
       </div>
     </div>
-    """ # noqa
+    """
 
     _dom_events = {'variable-name': ['keyup']}
 

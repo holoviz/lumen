@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import (
-    TYPE_CHECKING, Any, ClassVar, Dict,
-)
+from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakKeyDictionary
 
 import panel as pn
@@ -23,9 +21,9 @@ class session_state(param.Parameterized):
 
     _modals: ClassVar[WeakKeyDictionary[Document, pn.Column]] = WeakKeyDictionary()
 
-    _sources: ClassVar[WeakKeyDictionary[Document, Dict[str, Source]]] = WeakKeyDictionary()
+    _sources: ClassVar[WeakKeyDictionary[Document, dict[str, Source]]] = WeakKeyDictionary()
 
-    _specs: ClassVar[WeakKeyDictionary[Document, Dict[str, Any]]] = WeakKeyDictionary()
+    _specs: ClassVar[WeakKeyDictionary[Document, dict[str, Any]]] = WeakKeyDictionary()
 
     _templates: ClassVar[WeakKeyDictionary[Document, FastListTemplate]] = WeakKeyDictionary()
 

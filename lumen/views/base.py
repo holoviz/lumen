@@ -9,7 +9,7 @@ import sys
 
 from io import BytesIO, StringIO
 from typing import (
-    IO, TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Type,
+    IO, TYPE_CHECKING, Any, ClassVar, Literal,
 )
 from weakref import WeakKeyDictionary
 
@@ -95,10 +95,10 @@ class View(MultiTypeComponent, Viewer):
     _extension: ClassVar[str | None] = None
 
     # Parameters which reference fields in the table
-    _field_params: ClassVar[List[str]] = ['field']
+    _field_params: ClassVar[list[str]] = ['field']
 
     # Optionally declares the Panel types used to render this View
-    _panel_type: ClassVar[Type[Viewable] | None] = None
+    _panel_type: ClassVar[type[Viewable] | None] = None
 
     # Whether this View can be rendered without a data source
     _requires_source: ClassVar[bool] = True
@@ -110,9 +110,9 @@ class View(MultiTypeComponent, Viewer):
     _supports_selections: ClassVar[bool] = False
 
     # Validation attributes
-    _internal_params: ClassVar[List[str]] = ['name', 'rerender']
-    _legacy_params: ClassVar[List[str]] = ['sql_transforms', 'source', 'table', 'transforms']
-    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
+    _internal_params: ClassVar[list[str]] = ['name', 'rerender']
+    _legacy_params: ClassVar[list[str]] = ['sql_transforms', 'source', 'table', 'transforms']
+    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     __abstract = True
 
@@ -149,7 +149,7 @@ class View(MultiTypeComponent, Viewer):
         self._initialized = False
 
     @classproperty
-    def _valid_keys_(cls) -> List[str] | None:
+    def _valid_keys_(cls) -> list[str] | None:
         try:
             panel_type = cls._panel_type
         except Exception:
@@ -257,8 +257,8 @@ class View(MultiTypeComponent, Viewer):
 
     @classmethod
     def from_spec(
-        cls, spec: Dict[str, Any] | str, source=None, filters=None, pipeline=None
-    ) -> 'View':
+        cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> View:
         """
         Resolves a View specification given the schema of the Source
         it will be filtering on.
@@ -443,7 +443,7 @@ class View(MultiTypeComponent, Viewer):
         row = data.iloc[-1]
         return row[self.field if field is None else field]
 
-    def to_spec(self, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Exports the full specification to reconstruct this component.
 
@@ -540,7 +540,7 @@ class View(MultiTypeComponent, Viewer):
         """
         return pn.panel(self.get_data())
 
-    def _get_params(self) -> Dict[str, Any] | None:
+    def _get_params(self) -> dict[str, Any] | None:
         """
         Returns a dictionary of parameter values that will update the
         parameters on the existing _panel object inplace.  If not
@@ -632,7 +632,7 @@ class StringView(View):
     def get_panel(self) -> pn.pane.HTML:
         return pn.pane.HTML(**self._normalize_params(self._get_params()))
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         value = self.get_value()
         params = dict(self.kwargs)
         if value is None:
@@ -669,7 +669,7 @@ class IndicatorView(View):
     def get_panel(self):
         return self.indicator(**self._normalize_params(self._get_params()))
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         params = dict(self.kwargs)
         if 'data' in self.indicator.param:
             params['data'] = self.get_data()
@@ -709,7 +709,7 @@ class hvPlotBaseView(View):
     __abstract = True
 
     def __init__(self, **params):
-        import hvplot.pandas  # type: ignore # noqa
+        import hvplot.pandas  # type: ignore
         if 'dask' in sys.modules:
             try:
                 import hvplot.dask  # type: ignore # noqa
@@ -981,7 +981,7 @@ class DownloadView(View):
     def get_panel(self) -> pn.widgets.FileDownload:
         return self._panel_type(**self._normalize_params(self._get_params()))
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         filename = f'{self.filename}.{self.format}'
         return dict(filename=filename, callback=self._table_data, icon=self.icon, **self.kwargs)
 
@@ -1031,7 +1031,7 @@ class PerspectiveView(View):
 
     _panel_type = pn.pane.Perspective
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         param_values = dict(self.param.get_param_values())
         params = set(View.param) ^ set(PerspectiveView.param)
@@ -1053,7 +1053,7 @@ class VegaLiteView(View):
 
     _extension = 'vega'
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         encoded = dict(self.spec, data={'values': df})
         return dict(object=encoded, **self.kwargs)
@@ -1112,7 +1112,7 @@ class AltairView(View):
             value = getattr(alt, encoding.capitalize())(**value)
         return value
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         import altair as alt
         df = self.get_data()
         chart = alt.Chart(df, **self.chart)
@@ -1143,7 +1143,7 @@ class YdataProfilingView(View):
 
     _panel_type = pn.pane.HTML
 
-    def _get_params(self) -> Dict[str, Any]:
+    def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         return dict(df=df, **self.kwargs)
 

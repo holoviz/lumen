@@ -83,7 +83,7 @@ class AIHandler(CodeHandler):
             expanded_files = list(set(expanded_files))
             tables = []
             for table in expanded_files:
-                if table.endswith(".parq") or table.endswith(".parquet"):
+                if table.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{table}')"
                 elif table.endswith(".csv"):
                     table = f"read_csv('{table}')"
@@ -111,7 +111,7 @@ def build_single_handler_application(tables: str | None, argv):
         handler = AIHandler(filename=tables)
 
     if handler.failed:
-        raise RuntimeError("Error loading %s:\n\n%s\n%s " % (tables, handler.error, handler.error_detail))
+        raise RuntimeError(f"Error loading {tables}:\n\n{handler.error}\n{handler.error_detail} ")
 
     application = Application(handler)
     return application

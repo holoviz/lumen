@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 import param  # type: ignore
 import yaml
@@ -71,7 +71,7 @@ class Gallery(ReactiveHTML):
 
     hidden = param.Boolean(default=True)
 
-    _editor_type: ClassVar[Type[Editor] | None] = None
+    _editor_type: ClassVar[type[Editor] | None] = None
 
     _gallery_item = GalleryItem
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import (
-    TYPE_CHECKING, Any, Dict, List, Tuple, cast,
+    TYPE_CHECKING, Any, Tuple, cast,
 )
 from weakref import WeakKeyDictionary
 
@@ -27,27 +27,27 @@ class _session_state:
     across components.
     """
 
-    global_sources: Dict[str, Source] = {}
+    global_sources: dict[str, Source] = {}
 
-    global_filters: Dict[str, Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+    global_filters: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] = {}
 
     _configs: WeakKeyDictionary[Document, Config] = WeakKeyDictionary()
     _config: Config | None = None
 
-    _specs: WeakKeyDictionary[Document, Dict[str, Any]] = WeakKeyDictionary()
-    _spec: Dict[str, Any] = {}
+    _specs: WeakKeyDictionary[Document, dict[str, Any]] = WeakKeyDictionary()
+    _spec: dict[str, Any] = {}
 
-    _loadings: WeakKeyDictionary[Document, Dict[str, pn.pane.HTML]] = WeakKeyDictionary()
+    _loadings: WeakKeyDictionary[Document, dict[str, pn.pane.HTML]] = WeakKeyDictionary()
     _loading: pn.pane.HTML | None = None
 
-    _sources: WeakKeyDictionary[Document, Dict[str, Source]] = WeakKeyDictionary()
-    _source: Dict[str, Source] = {}
+    _sources: WeakKeyDictionary[Document, dict[str, Source]] = WeakKeyDictionary()
+    _source: dict[str, Source] = {}
 
-    _pipelines: WeakKeyDictionary[Document, Dict[str, Pipeline]] = WeakKeyDictionary()
-    _pipeline: Dict[str, Pipeline] = {}
+    _pipelines: WeakKeyDictionary[Document, dict[str, Pipeline]] = WeakKeyDictionary()
+    _pipeline: dict[str, Pipeline] = {}
 
-    _filters: WeakKeyDictionary[Document, Dict[str, Dict[str, Filter]]] = WeakKeyDictionary()
-    _filter: Dict[str, Dict[str, Filter]] = {}
+    _filters: WeakKeyDictionary[Document, dict[str, dict[str, Filter]]] = WeakKeyDictionary()
+    _filter: dict[str, dict[str, Filter]] = {}
 
     _variables: WeakKeyDictionary[Document, Variables] = WeakKeyDictionary()
     _variable: Variables | None = None
@@ -66,7 +66,7 @@ class _session_state:
             self._configs[pn.state.curdoc] = config
 
     @property
-    def filters(self) -> Dict[str, Dict[str, Filter]]:
+    def filters(self) -> dict[str, dict[str, Filter]]:
         if pn.state.curdoc is None:
             if self._filter is None:
                 self._filter = self._global_filters
@@ -89,7 +89,7 @@ class _session_state:
             self._loadings[pn.state.curdoc] = loading_msg
 
     @property
-    def pipelines(self) -> Dict[str, Pipeline]:
+    def pipelines(self) -> dict[str, Pipeline]:
         if pn.state.curdoc is None:
             return self._pipeline
         elif pn.state.curdoc not in self._pipelines:
@@ -97,7 +97,7 @@ class _session_state:
         return self._pipelines[pn.state.curdoc]
 
     @property
-    def sources(self) -> Dict[str, Source]:
+    def sources(self) -> dict[str, Source]:
         if pn.state.curdoc is None:
             return self._source
         elif pn.state.curdoc not in self._sources:
@@ -107,13 +107,13 @@ class _session_state:
         return self._sources[pn.state.curdoc]
 
     @property
-    def spec(self) -> Dict[str, Any]:
+    def spec(self) -> dict[str, Any]:
         if pn.state.curdoc is None:
             return self._spec
         return self._specs.get(pn.state.curdoc, self._spec)
 
     @spec.setter
-    def spec(self, spec: Dict[str, Any]):
+    def spec(self, spec: dict[str, Any]):
         if pn.state.curdoc is None:
             self._spec = spec
         else:
@@ -221,7 +221,7 @@ class _session_state:
             yaml.dump(context, f, sort_keys=False)
 
     @property
-    def global_refs(self) -> List[str]:
+    def global_refs(self) -> list[str]:
         layout_refs = []
         source_specs = self.spec.get('sources', {})
         for layout in self.spec.get('layouts', []):
@@ -247,7 +247,7 @@ class _session_state:
             if not source_spec.get('shared'):
                 continue
             source_spec = dict(source_spec)
-            filter_specs: Dict[str, Any] = source_spec.pop('filters', {})
+            filter_specs: dict[str, Any] = source_spec.pop('filters', {})
             source = self.global_sources.get(name)
             source_type = Source._get_type(source_spec['type'])
             reinitialize = False
@@ -290,7 +290,7 @@ class _session_state:
             )
         return pipelines
 
-    def load_source(self, name: str, source_spec: Dict[str, Any]):
+    def load_source(self, name: str, source_spec: dict[str, Any]):
         from .filters.base import Filter
         from .sources.base import Source
         source_spec = dict(source_spec)
@@ -305,7 +305,7 @@ class _session_state:
         self.sources[name] = source
         if not filter_specs:
             return source
-        filters: Dict[str, Filter] = dict(self.filters.get(name, {}))
+        filters: dict[str, Filter] = dict(self.filters.get(name, {}))
         self.filters[name] = filters
         tables = set(filter_spec.get('table') for filter_spec in filter_specs.values())
         if None in tables:
@@ -331,7 +331,7 @@ class _session_state:
         for ext in exts:
             __import__(pn.extension._imports[ext])
 
-    def _resolve_source_ref(self, refs: Tuple[str] | Tuple[str, str] | Tuple[str, str, str]):
+    def _resolve_source_ref(self, refs: tuple[str] | tuple[str, str] | tuple[str, str, str]):
         if len(refs) == 3:
             refs = cast(Tuple[str, str, str], refs)
             sourceref, table, field = refs

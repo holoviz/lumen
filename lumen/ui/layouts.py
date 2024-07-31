@@ -226,8 +226,6 @@ class LayoutsEditor(WizardItem):
 
     layouts = param.List([], precedence=-1)
 
-    title = param.String(default='')
-
     _template = """
     <span style="font-size: 2em">Layout editor</span>
     <p>{{ __doc__ }}</p>

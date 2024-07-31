@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import ClassVar, Type
+from typing import ClassVar
 
 import panel as pn
 import param  # type: ignore
@@ -226,7 +226,7 @@ class ViewGallery(WizardItem, Gallery):
     </div>
     """
 
-    _editor_type: ClassVar[Type[Editor]] = ViewEditor
+    _editor_type: ClassVar[type[Editor]] = ViewEditor
 
     _gallery_item = ViewGalleryItem
 

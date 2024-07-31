@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, List
+from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
 import param  # type: ignore
@@ -67,7 +67,7 @@ class Variables(param.Parameterized):
             variables.add_variable(var)
         return variables
 
-    def _convert_to_variable(self, var: param.Parameter | _PnWidget) -> 'Variable':
+    def _convert_to_variable(self, var: param.Parameter | _PnWidget) -> Variable:
         throttled = False
         if isinstance(var, param.Parameter):
             if isinstance(var.owner, pn.widgets.Widget) and var.name in ('value', 'value_throttled'):
@@ -112,7 +112,7 @@ class Variables(param.Parameterized):
             return old_var
         return var_type(name=var_name, **var_kwargs)
 
-    def add_variable(self, var: 'Variable' | _PnWidget | param.Parameter) -> 'Variable':
+    def add_variable(self, var: Variable | _PnWidget | param.Parameter) -> Variable:
         """
         Adds a new variable to the Variables instance and sets up
         a parameter that can be watched.
@@ -154,13 +154,13 @@ class Variables(param.Parameterized):
     def _update_value(self, name: str, event: param.parameterized.Event):
         self.param.update({name: event.new})
 
-    def __getitem__(self, key: str) -> 'Variable':
+    def __getitem__(self, key: str) -> Variable:
         if key in self.param:
             return getattr(self, key)
         else:
             raise KeyError(f'No variable named {key!r} has been defined.')
 
-    def panel(self, variables: List[str] | None = None) -> pn.Column | None:
+    def panel(self, variables: list[str] | None = None) -> pn.Column | None:
         if variables == []:
             return None
         column = pn.Column(name='Variables', sizing_mode='stretch_width')
@@ -207,7 +207,7 @@ class Variable(MultiTypeComponent):
 
     __abstract = True
 
-    _valid_keys: ClassVar[List[str] | Literal['params'] | None] = 'params'
+    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
     _validate_params: ClassVar[bool] = True
 
     def __init__(self, **params):
@@ -241,7 +241,7 @@ class Variable(MultiTypeComponent):
             resolved_spec[k] = val
         return var_type(refs=refs, **resolved_spec)
 
-    def as_materialized(self) -> 'Constant':
+    def as_materialized(self) -> Constant:
         """
         If the variable is to be materialized by the builder this
         implements the conversion from a variable that references
