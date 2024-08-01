@@ -669,7 +669,7 @@ class TransformPipelineAgent(LumenBaseAgent):
     provides = param.List(default=["current_pipeline"], readonly=True)
 
     @property
-    def _available_transforms(self) -> dict[str, Type[Transform]]:
+    def _available_transforms(self) -> dict[str, type[Transform]]:
         transforms = param.concrete_descendents(Transform)
         return {
             name: transform
@@ -711,7 +711,7 @@ class TransformPipelineAgent(LumenBaseAgent):
 
     async def _find_transform(
         self, messages: list | str, system_prompt: str
-    ) -> Type[Transform] | None:
+    ) -> type[Transform] | None:
         picker_prompt = render_template(
             "pick_transform.jinja2", transforms=self._available_transforms.values()
         )
@@ -745,7 +745,7 @@ class TransformPipelineAgent(LumenBaseAgent):
             return [transforms[transform_name.strip("'")] for transform_name in transform_names]
 
     async def _construct_transform(
-        self, messages: list | str, transform: Type[Transform], system_prompt: str
+        self, messages: list | str, transform: type[Transform], system_prompt: str
     ) -> Transform:
         excluded = transform._internal_params + ["controls", "type"]
         schema = get_schema(memory["current_pipeline"])

@@ -333,13 +333,13 @@ class _session_state:
 
     def _resolve_source_ref(self, refs: tuple[str] | tuple[str, str] | tuple[str, str, str]):
         if len(refs) == 3:
-            refs = cast(Tuple[str, str, str], refs)
+            refs = cast(tuple[str, str, str], refs)
             sourceref, table, field = refs
         elif len(refs) == 2:
-            refs = cast(Tuple[str, str], refs)
+            refs = cast(tuple[str, str], refs)
             sourceref, table = refs
         elif len(refs) == 1:
-            refs = cast(Tuple[str], refs)
+            refs = cast(tuple[str], refs)
             (sourceref,) = refs
 
         from .sources.base import Source

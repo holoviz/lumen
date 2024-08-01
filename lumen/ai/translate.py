@@ -13,16 +13,16 @@ from pydantic.color import Color
 from pydantic.fields import FieldInfo, PydanticUndefined
 
 DATE_TYPE = Union[datetime.datetime, datetime.date]
-PARAM_TYPE_MAPPING: Dict[param.Parameter, Type] = {
+PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.String: str,
     param.Integer: int,
     param.Number: float,
     param.Boolean: bool,
     param.Event: bool,
     param.Date: DATE_TYPE,
-    param.DateRange: Tuple[DATE_TYPE],
+    param.DateRange: tuple[DATE_TYPE],
     param.CalendarDate: DATE_TYPE,
-    param.CalendarDateRange: Tuple[DATE_TYPE],
+    param.CalendarDateRange: tuple[DATE_TYPE],
     param.Parameter: object,
     param.Color: Color,
     param.Callable: Callable,
@@ -39,7 +39,7 @@ class ArbitraryTypesModel(BaseModel):
         arbitrary_types_allowed = True
 
 
-def _create_literal(obj: List[Union[str, Type]]) -> Type:
+def _create_literal(obj: list[Union[str, type]]) -> type:
     """
     Create a literal type from a list of objects.
     """
@@ -57,7 +57,7 @@ def _create_literal(obj: List[Union[str, Type]]) -> Type:
         return str
 
 
-def _get_model(type_, created_models: Dict[str, BaseModel]) -> Any:
+def _get_model(type_, created_models: dict[str, BaseModel]) -> Any:
     try:
         if issubclass(type_, param.Parameterized):
             type_ = created_models.get(type_.__name__, type_.__name__)
@@ -67,9 +67,9 @@ def _get_model(type_, created_models: Dict[str, BaseModel]) -> Any:
 
 
 def parameter_to_field(
-    parameter: param.Parameter, created_models: Dict[str, BaseModel],
+    parameter: param.Parameter, created_models: dict[str, BaseModel],
     literals: list[str] | None
-) -> (Type, FieldInfo):
+) -> (type, FieldInfo):
     """
     Translate a parameter to a pydantic field.
     """
@@ -92,15 +92,15 @@ def parameter_to_field(
                 default_factory = type(default_factory)
             field_info.default_factory = default_factory
     elif param_type in [param.List, param.ListSelector]:
-        type_ = List
+        type_ = list
         if parameter.default is not None:
             field_info.default_factory = parameter.default
         if param_type is param.List and parameter.item_type:
-            type_ = List[_get_model(parameter.item_type, created_models)]
+            type_ = list[_get_model(parameter.item_type, created_models)]
         elif param_type is param.ListSelector:
-            type_ = List[_create_literal(literals)]
+            type_ = list[_create_literal(literals)]
     elif param_type is param.Dict:
-        type_ = Dict
+        type_ = dict
         if parameter.default == {}:
             field_info.default_factory = dict
         elif parameter.default is not None:
@@ -120,7 +120,7 @@ def parameter_to_field(
     elif parameter.name == "aspect_ratio":
         type_ = Union[Literal["auto"], float]
     elif parameter.name == "margin":
-        type_ = Union[float, Tuple[float, float], Tuple[float, float, float, float]]
+        type_ = Union[float, tuple[float, float], tuple[float, float, float, float]]
     else:
         raise NotImplementedError(
             f"Parameter {parameter.name!r} of {param_type.__name__!r} not supported"
@@ -140,13 +140,13 @@ def parameter_to_field(
 
 
 def param_to_pydantic(
-    parameterized: Type[param.Parameterized],
-    base_model: Type[BaseModel] = ArbitraryTypesModel,
-    created_models: Optional[Dict[str, BaseModel]] = None,
-    schema: Optional[Dict[str, Any]] = None,
-    excluded: Union[str, List[str]] = "_internal_params",
-    extra_fields: Optional[Dict[str, Tuple[Type, FieldInfo]]] = None,
-) -> Dict[str, BaseModel]:
+    parameterized: type[param.Parameterized],
+    base_model: type[BaseModel] = ArbitraryTypesModel,
+    created_models: Optional[dict[str, BaseModel]] = None,
+    schema: Optional[dict[str, Any]] = None,
+    excluded: Union[str, list[str]] = "_internal_params",
+    extra_fields: Optional[dict[str, tuple[type, FieldInfo]]] = None,
+) -> dict[str, BaseModel]:
     """
     Translate a param Parameterized to a Pydantic BaseModel.
 
@@ -211,7 +211,7 @@ def param_to_pydantic(
             field_info.default = None
         fields[parameter_name] = (type_, field_info)
 
-    fields["__parameterized__"] = (Type, parameterized)
+    fields["__parameterized__"] = (type, parameterized)
 
     if extra_fields:
         fields.update(extra_fields)
