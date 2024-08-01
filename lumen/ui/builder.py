@@ -98,12 +98,11 @@ class Builder(param.Parameterized):
         for key, item in self.welcome.spec.items():
             if isinstance(item, list):
                 self.spec[key][:] = item
+            elif key in self.spec:
+                self.spec[key].clear()
+                self.spec[key].update(item)
             else:
-                if key in self.spec:
-                    self.spec[key].clear()
-                    self.spec[key].update(item)
-                else:
-                    self.spec[key] = item
+                self.spec[key] = item
 
         for name, source in self.sources.sources.items():
             config.root = str(pathlib.Path(__file__).parent)
