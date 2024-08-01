@@ -4,7 +4,7 @@ import io
 import json
 import textwrap
 
-from typing import Literal, Optional, Type
+from typing import Literal, Optional
 
 import pandas as pd
 import panel as pn

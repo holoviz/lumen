@@ -3,7 +3,7 @@ import inspect
 import warnings
 
 from typing import (
-    Any, Callable, Dict, List, Literal, Optional, Tuple, Type, TypeVar, Union,
+    Any, Callable, Literal, Optional, TypeVar, Union,
 )
 
 import param

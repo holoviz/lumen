@@ -6,8 +6,9 @@ import textwrap
 from difflib import get_close_matches
 from inspect import signature
 from typing import (
-    TYPE_CHECKING, Any, Callable, Sequence,
+    TYPE_CHECKING, Any, Callable,
 )
+from collections.abc import Sequence
 
 import yaml
 
