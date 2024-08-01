@@ -27,7 +27,7 @@ PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.Color: Color,
     param.Callable: Callable,
 }
-PandasDataFrame = TypeVar("pandas.core.frame.DataFrame")
+PandasDataFrame = TypeVar("PandasDataFrame")
 
 
 class ArbitraryTypesModel(BaseModel):

@@ -185,12 +185,12 @@ class View(MultiTypeComponent, Viewer):
             refs = []
             current = self.pipeline
             while current is not None:
-                for ref in current.refs:
-                    for subref in VARIABLE_RE.findall(ref):
+                for cref in current.refs:
+                    for subref in VARIABLE_RE.findall(cref):
                         if subref not in refs:
                             refs.append(subref)
                 current = current.pipeline
-            if any(ref == event.name for e in events for ref in refs):
+            if any(ref == event.name for event in events for ref in refs):
                 return
         super()._update_ref(pname, ref, *events)
 
