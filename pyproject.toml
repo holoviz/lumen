@@ -97,7 +97,7 @@ select = [
     "E",
     "F",
     "FLY",
-    # "ICN",
+    "ICN",
     "NPY",
     "PIE",
     # "PLC",
