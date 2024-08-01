@@ -90,7 +90,6 @@ filterwarnings = [
 
 [tool.ruff]
 fix = true
-target-version = "py37" # TODO: Remove so it is aligned with the project requires-python
 
 [tool.ruff.lint]
 select = [
@@ -98,7 +97,7 @@ select = [
     "E",
     "F",
     "FLY",
-    # "ICN",
+    "ICN",
     "NPY",
     "PIE",
     # "PLC",

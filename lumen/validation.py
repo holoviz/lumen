@@ -3,11 +3,10 @@ from __future__ import annotations
 import re
 import textwrap
 
+from collections.abc import Sequence
 from difflib import get_close_matches
 from inspect import signature
-from typing import (
-    TYPE_CHECKING, Any, Callable, Sequence,
-)
+from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
 
