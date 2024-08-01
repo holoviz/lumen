@@ -55,7 +55,7 @@ pytest-github-actions-annotate-failures = "*"
 pytest-rerunfailures = "*"
 pytest-xdist = "*"
 
-[feature.test-core.tasks] # So it is not showing up in the test-ui environment
+[feature.test-core.tasks]
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
 
 [feature.test.dependencies]
