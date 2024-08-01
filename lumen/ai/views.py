@@ -63,8 +63,7 @@ class LumenOutput(Viewer):
         self._tabs = pn.Tabs(
             ("Code", code_col),
             ("Output", placeholder),
-            styles={'min-width': "100%"},
-            min_height=700,
+            styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
             active=1
         )
         self._tabs.link(self, bidirectional=True, active='active')
