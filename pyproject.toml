@@ -66,10 +66,7 @@ raw-options = { version_scheme = "no-guess-dev" }
 include = ["lumen"]
 
 [tool.hatch.build.targets.sdist]
-include = ["lumen", "scripts"]
-
-[tool.hatch.build.targets.sdist.force-include]
-examples = "lumen/examples"
+include = ["lumen", "scripts", "examples"]
 
 [tool.hatch.build.hooks.vcs]
 version-file = "lumen/_version.py"
