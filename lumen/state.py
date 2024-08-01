@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import (
-    TYPE_CHECKING, Any, cast,
-)
+from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 import panel as pn
