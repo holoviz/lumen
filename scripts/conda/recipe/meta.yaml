@@ -39,6 +39,6 @@ test:
     - pip
 
 about:
-  home: https://lumen.holoviz.org
-  summary: Illuminate your data.
-  license: BSD 3-Clause
+  home: {{ project['urls']['Homepage'] }}
+  summary: {{ project['description'] }}
+  license: {{ project['license']['text'] }}
