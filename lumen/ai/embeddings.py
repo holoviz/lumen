@@ -1,6 +1,6 @@
 from pathlib import Path
 
-DEFAULT_PATH = Path("embeddings")
+from .config import DEFAULT_EMBEDDINGS_PATH
 
 
 class Embeddings:
@@ -14,7 +14,7 @@ class Embeddings:
 
 class ChromaDb(Embeddings):
 
-    def __init__(self, collection: str, persist_dir: str = DEFAULT_PATH):
+    def __init__(self, collection: str, persist_dir: str = DEFAULT_EMBEDDINGS_PATH):
         import chromadb
         self.client = chromadb.PersistentClient(path=str(persist_dir / collection))
         self.collection = self.client.get_or_create_collection(collection)

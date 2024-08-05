@@ -11,21 +11,7 @@ import pandas as pd
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 
-THIS_DIR = Path(__file__).parent
-
-
-class LlmSetupError(Exception):
-    """
-    Raised when an error occurs during the setup of the LLM.
-    """
-
-
-
-UNRECOVERABLE_ERRORS = (
-    ImportError,
-    LlmSetupError,
-    RecursionError,
-)
+from .config import THIS_DIR, UNRECOVERABLE_ERRORS
 
 
 def render_template(template, **context):

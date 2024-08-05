@@ -26,6 +26,7 @@ from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
+from .config import FUZZY_TABLE_LENGTH
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
@@ -38,10 +39,6 @@ from .utils import (
     describe_data, get_schema, render_template, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
-
-FUZZY_TABLE_LENGTH = 10
-
-pn.chat.ChatStep.min_width = 350
 
 
 class Agent(Viewer):

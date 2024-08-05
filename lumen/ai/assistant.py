@@ -19,28 +19,13 @@ from pydantic.fields import FieldInfo
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
+from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity
 from .utils import get_schema, render_template, retry_llm_output
-
-GETTING_STARTED_SUGGESTIONS = [
-    "What datasets do you have?",
-    "Tell me about the dataset.",
-    "Create a plot of the dataset.",
-    "Find the min and max of the values.",
-]
-
-DEMO_MESSAGES = [
-    "What data is available?",
-    "Can I see the first one?",
-    "Tell me about the dataset.",
-    "What could be interesting to analyze?",
-    "Perform a SQL query on one of these.",
-    "Show it to me as a scatter plot."
-]
 
 
 class Assistant(Viewer):
