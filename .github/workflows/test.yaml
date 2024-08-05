@@ -27,6 +27,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash -el {0}
+
+env:
+  DISPLAY: ":99.0"
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  COV: "--cov=./lumen --cov-report=xml"
+
 jobs:
   pre_commit:
     name: Run pre-commit
@@ -57,7 +66,7 @@ jobs:
         run: |
           MATRIX=$(jq -nsc '{
               "os": ["ubuntu-latest", "macos-latest", "windows-latest"],
-              "python-version": ["3.9", "3.12"]
+              "environment": ["test-39", "test-312"]
           }')
           echo "MATRIX=$MATRIX" >> $GITHUB_ENV
       - name: Set test matrix with 'full' option
@@ -65,7 +74,7 @@ jobs:
         run: |
           MATRIX=$(jq -nsc '{
               "os": ["ubuntu-latest", "macos-latest", "windows-latest"],
-              "python-version": ["3.9", "3.10", "3.11", "3.12"]
+              "environment": ["test-39", "test-310", "test-311", "test-312"]
           }')
           echo "MATRIX=$MATRIX" >> $GITHUB_ENV
       - name: Set test matrix with 'downstream' option
@@ -73,70 +82,51 @@ jobs:
         run: |
           MATRIX=$(jq -nsc '{
               "os": ["ubuntu-latest"],
-              "python-version": ["3.11"]
+              "environment": ["test-311"]
           }')
           echo "MATRIX=$MATRIX" >> $GITHUB_ENV
 
+  pixi_lock:
+    name: Pixi lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: holoviz-dev/holoviz_tasks/pixi_lock@pixi
+        with:
+          cache: ${{ github.event.inputs.cache == 'true' || github.event.inputs.cache == '' }}
+
   unit_test_suite:
-    name: Unit tests on Python ${{ matrix.python-version }}, ${{ matrix.os }}
-    needs: [pre_commit, setup]
+    name: unit:${{ matrix.environment }}:${{ matrix.os }}
+    needs: [pre_commit, setup, pixi_lock]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash -l {0}
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 120
     steps:
-      - uses: holoviz-dev/holoviz_tasks/install@v0
+      - uses: holoviz-dev/holoviz_tasks/pixi_install@pixi
         with:
-          name: unit_test_suite
-          python-version: ${{ matrix.python-version }}
-          channel-priority: flexible
-          channels: pyviz/label/dev,bokeh,conda-forge,nodefaults
-          envs: -o tests -o sql -o tests_ci
-          cache: ${{ github.event.inputs.cache || github.event.inputs.cache == '' }}
-        id: install
-      - name: doit test_unit
+          environments: ${{ matrix.environment }}
+      - name: Test Unit
         run: |
-          conda activate test-environment
-          doit test_unit
-      - name: codecov
-        run: |
-          conda activate test-environment
-          codecov
+          pixi run -e ${{ matrix.environment }} test-unit $COV
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   core_test_suite:
-    name: Core tests on Python ${{ matrix.python-version }}, ${{ matrix.os }}
-    needs: [pre_commit]
+    name: core:${{ matrix.environment }}:${{ matrix.os }}
+    needs: [pre_commit, setup, pixi_lock]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest"]
-        python-version: ["3.12"]
+        environment: ["test-core"]
     timeout-minutes: 120
-    defaults:
-      run:
-        shell: bash -el {0}
-    env:
-      DESC: "Python ${{ matrix.python-version }}, ${{ matrix.os }} core tests"
-      PYTHON_VERSION: ${{ matrix.python-version }}
     steps:
-      - uses: holoviz-dev/holoviz_tasks/install@v0
+      - uses: holoviz-dev/holoviz_tasks/pixi_install@pixi
         with:
-          name: core_test_suite
-          python-version: ${{ matrix.python-version }}
-          # channel-priority: strict
-          channels: pyviz/label/dev,conda-forge,nodefaults
-          envs: "-o tests -o tests_ci"
-          cache: ${{ github.event.inputs.cache || github.event.inputs.cache == '' }}
-          conda-update: true
-        id: install
-      - name: doit test_unit
+          environments: ${{ matrix.environment }}
+      - name: Test Unit
         run: |
-          conda activate test-environment
-          pytest lumen
+          pixi run -e ${{ matrix.environment }} test-unit

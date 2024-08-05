@@ -354,7 +354,7 @@ class Widget(Variable):
         for pname, pobj in self._widget.param.objects().items():
             pval = pvals[pname]
             if (
-                pval is pobj.default or pname in spec or
+                pval is pobj.default or pname in spec or  # noqa: PLR1714
                 (pname == 'name' and not pval) or pname == 'value_throttled'
                 or pname == 'design'  # Design is Panel 1.0 only
             ):

@@ -8,10 +8,10 @@ from lumen.transforms.sql import SQLGroupBy
 
 try:
     from lumen.sources.duckdb import DuckDBSource
+    pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
-    DuckDBSource = None
+    pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
-pytestmark = pytest.mark.skipif(DuckDBSource is None, reason="Duckdb is not installed")
 
 
 @pytest.fixture

@@ -129,3 +129,8 @@ node_modules/
 
 # Examples temp data
 examples/*/cache
+
+# Pixi + hatch
+pixi.lock
+.pixi
+_version.py

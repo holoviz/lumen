@@ -1,8 +1,91 @@
 [build-system]
-requires = [
-    "param >=1.7.0",
-    "pyct >=0.4.4",
-    "setuptools >=30.3.0"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lumen"
+dynamic = ["version"]
+description = "A monitoring solution built on Panel."
+readme = "README.md"
+license = { text = "BSD" }
+requires-python = ">=3.9"
+authors = [{ name = "HoloViz developers", email = "developers@holoviz.org" }]
+maintainers = [{ name = "HoloViz developers", email = "developers@holoviz.org" }]
+classifiers = [
+    "License :: OSI Approved :: BSD License",
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "bokeh",
+    "holoviews >=1.17.0",
+    "hvplot",
+    "intake <2",
+    "jinja2 >3.0",
+    "numpy",
+    "packaging",
+    "pandas",
+    "panel >=1.3.0",
+    "param >=1.9.0",
+]
+
+[project.urls]
+Homepage = "https://lumen.holoviz.org"
+Source = "https://github.com/holoviz/lumen"
+HoloViz = "https://holoviz.org/"
+
+[project.optional-dependencies]
+tests = ['pytest', 'pytest-rerunfailures']
+sql = ['duckdb', 'intake-sql', 'sqlalchemy']
+ai = ['nbformat', 'duckdb', 'pyarrow', 'openai', 'instructor >=1', 'pydantic >=2.8.0', 'datashader']
+ai-local = ['lumen[ai]', 'huggingface_hub']
+ai-llama = ['lumen[ai-local]', 'llama-cpp-python']
+
+[project.scripts]
+lumen = "lumen.command:main"
+lumen-ai = "lumen.command.ai:main"
+
+[project.entry-points.'panel.io.rest']
+lumen = "lumen.rest:lumen_rest_provider"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { version_scheme = "no-guess-dev" }
+
+[tool.hatch.build.targets.wheel]
+include = ["lumen"]
+
+[tool.hatch.build.targets.sdist]
+include = ["lumen", "scripts", "examples"]
+
+[tool.hatch.build.hooks.vcs]
+version-file = "lumen/_version.py"
+
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--color=yes",
+    "--pyargs",
+    "--doctest-modules",
+    "--doctest-ignore-import-errors",
+]
+minversion = "7"
+xfail_strict = true
+log_cli_level = "INFO"
+filterwarnings = [
+    "error",
+    "ignore:datetime.datetime.utcfromtimestamp():DeprecationWarning:dateutil.tz.tz", # https://github.com/dateutil/dateutil/pull/1285
 ]
 
 [tool.ruff]
@@ -14,13 +97,13 @@ select = [
     "E",
     "F",
     "FLY",
-    # "ICN",
+    "ICN",
     "NPY",
     "PIE",
-    # "PLC",
-    # "PLE",
-    # "PLR",
-    # "PLW",
+    "PLC",
+    "PLE",
+    "PLR",
+    "PLW",
     "RUF",
     "UP",
     "W",
@@ -56,3 +139,10 @@ extend-unsafe-fixes = [
 #     "NPY002", # Replace legacy `np.random.rand` call with Generator
 #     "B904", # Within an `except` clause, raise exceptions with from err or None
 # ]
+
+[tool.isort]
+force_grid_wrap = 4
+multi_line_output = 5
+combine_as_imports = true
+lines_between_types = 1
+include_trailing_comma = true
