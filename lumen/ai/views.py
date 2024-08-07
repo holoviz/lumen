@@ -103,7 +103,7 @@ class LumenOutput(Viewer):
                 )
                 download_pane = download.__panel__()
                 download_pane.sizing_mode = 'fixed'
-                download_pane.styles = {'position': 'absolute', 'right': '-50px'}
+                download_pane.styles = {'position': 'absolute', 'right': '40px', 'top': '-35px'}
                 output = pn.Column(download_pane, table)
             else:
                 output = self.component.__panel__()
