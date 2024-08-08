@@ -10,6 +10,8 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
+from .interceptor import OpenAIInterceptor
+
 
 class Llm(param.Parameterized):
 
@@ -18,6 +20,8 @@ class Llm(param.Parameterized):
     )
 
     use_logfire = param.Boolean(default=False)
+
+    use_interceptor = param.Boolean(default=False)
 
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
@@ -201,6 +205,11 @@ class OpenAI(Llm):
         if self.organization:
             model_kwargs["organization"] = self.organization
         llm = openai.AsyncOpenAI(**model_kwargs)
+
+        if self.use_interceptor:
+            interceptor = OpenAIInterceptor()
+            interceptor.patch_create(llm)
+
         if response_model:
             client = from_openai(llm)
             client_callable = partial(client.chat.completions.create, model=model)
