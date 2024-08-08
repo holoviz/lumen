@@ -5,10 +5,11 @@ from functools import partial
 import panel as pn
 import param
 
-from instructor import from_openai
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
+
+from .interceptor import OpenAIInterceptor
 
 
 class Llm(param.Parameterized):
@@ -19,10 +20,16 @@ class Llm(param.Parameterized):
 
     use_logfire = param.Boolean(default=False)
 
+    use_interceptor = param.Boolean(default=False)
+
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
 
     __abstract = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._interceptor = None
 
     def _get_model_kwargs(self, model_key):
         if model_key in self.model_kwargs:
@@ -48,7 +55,6 @@ class Llm(param.Parameterized):
             messages = [{"role": "user", "content": messages}]
         if system:
             messages = [{"role": "system", "content": system}] + messages
-        print(messages)
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
@@ -201,11 +207,20 @@ class OpenAI(Llm):
         if self.organization:
             model_kwargs["organization"] = self.organization
         llm = openai.AsyncOpenAI(**model_kwargs)
+
+        if self.use_interceptor:
+            if self._interceptor is None:
+                self._interceptor = OpenAIInterceptor()
+            self._interceptor.patch_client(llm, include_response=False)
+
         if response_model:
-            client = from_openai(llm)
-            client_callable = partial(client.chat.completions.create, model=model)
-        else:
-            client_callable = partial(llm.chat.completions.create, model=model)
+            llm = patch(llm)
+
+        if self.use_interceptor:
+            # must be called after instructor
+            self._interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
 
         if self.use_logfire:
             import logfire
@@ -241,11 +256,20 @@ class AzureOpenAI(Llm):
         if self.azure_endpoint:
             model_kwargs["azure_endpoint"] = self.azure_endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
+
+        if self.use_interceptor:
+            if self._interceptor is None:
+                self._interceptor = OpenAIInterceptor()
+            self._interceptor.patch_client(llm, include_response=False)
+
         if response_model:
-            client = from_openai(llm)
-            client_callable = partial(client.chat.completions.create, model=model)
-        else:
-            client_callable = partial(llm.chat.completions.create, model=model)
+            llm = patch(llm)
+
+        if self.use_interceptor:
+            # must be called after instructor
+            self._interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
         return client_callable
 
 
