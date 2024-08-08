@@ -270,12 +270,15 @@ class Interceptor(param.Parameterized):
 
 class OpenAIInterceptor(Interceptor):
 
-    def patch_client(self, client) -> None:
+    def patch_client(self, client, include_response: bool = True) -> None:
         """
         Patch the OpenAI client's create method to store messages and arguments in the database.
 
         Args:
             client: The OpenAI client instance to patch.
+            include_response: Whether to include the response in the database.
+                If False, users will need to call patch_client_response separately;
+                useful if instructor is used.
         """
         self._client = client
         self._original_create = client.chat.completions.create
@@ -299,6 +302,8 @@ class OpenAIInterceptor(Interceptor):
                 return await non_stream_response(*args, **kwargs)
 
         self._client.chat.completions.create = patched_async_create
+        if include_response:
+            self.patch_client_response(client)
 
     def patch_client_response(self, client) -> None:
         """

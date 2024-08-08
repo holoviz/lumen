@@ -211,7 +211,7 @@ class OpenAI(Llm):
         if self.use_interceptor:
             if self._interceptor is None:
                 self._interceptor = OpenAIInterceptor()
-            self._interceptor.patch_client(llm)
+            self._interceptor.patch_client(llm, include_response=False)
 
         if response_model:
             llm = patch(llm)
@@ -260,7 +260,7 @@ class AzureOpenAI(Llm):
         if self.use_interceptor:
             if self._interceptor is None:
                 self._interceptor = OpenAIInterceptor()
-            self._interceptor.patch_client(llm)
+            self._interceptor.patch_client(llm, include_response=False)
 
         if response_model:
             llm = patch(llm)
