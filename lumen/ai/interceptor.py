@@ -5,7 +5,7 @@ import sqlite3
 from abc import abstractmethod
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import param
 
@@ -112,6 +112,27 @@ class Interceptor(param.Parameterized):
         )
         self.conn.commit()
 
+    def reset_db(self) -> None:
+        """Reset the database by deleting all tables."""
+        cursor = self.conn.cursor()
+        cursor.execute("DROP TABLE IF EXISTS message_batches")
+        cursor.execute("DROP TABLE IF EXISTS messages")
+        cursor.execute("DROP TABLE IF EXISTS message_kwargs")
+        cursor.execute("DROP TABLE IF EXISTS responses")
+        self.conn.commit()
+        self.init_db()
+
+    def delete_session(self, session_id: str | None = None) -> None:
+        """Delete the last session from the database."""
+        cursor = self.conn.cursor()
+        if session_id is None:
+            session_id = self.get_session_ids()[-1]
+        cursor.execute("DELETE FROM message_batches WHERE id = ?", (session_id,))
+        cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM message_kwargs WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM responses WHERE session_id = ?", (session_id,))
+        self.conn.commit()
+
     def store_messages(
         self, messages: list[dict[str, str]], **kwargs: dict[str, Any]
     ) -> None:
@@ -141,12 +162,16 @@ class Interceptor(param.Parameterized):
         for key, value in kwargs.items():
             if key == "messages":
                 continue
-            cursor.execute(
-                """
-                INSERT INTO message_kwargs (session_id, batch_id, key, value) VALUES (?, ?, ?, ?)
-                """,
-                (self.session_id, batch_id, key, json.dumps(value)),
-            )
+
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO message_kwargs (session_id, batch_id, key, value) VALUES (?, ?, ?, ?)
+                    """,
+                    (self.session_id, batch_id, key, json.dumps(value)),
+                )
+            except TypeError as exc:
+                raise RuntimeError("The method patch_client must be called before instructor.patch") from exc
 
         self.conn.commit()
 
@@ -181,7 +206,10 @@ class Interceptor(param.Parameterized):
             cursor.execute(
                 "SELECT id FROM message_batches ORDER BY timestamp DESC LIMIT 1"
             )
-            session_id = cursor.fetchone()[0]
+            try:
+                session_id = cursor.fetchone()[0]
+            except TypeError:
+                return []
 
         cursor.execute(
             "SELECT DISTINCT batch_id FROM messages WHERE session_id = ? ORDER BY batch_id",
@@ -270,15 +298,15 @@ class Interceptor(param.Parameterized):
 
 class OpenAIInterceptor(Interceptor):
 
-    def patch_client(self, client, include_response: bool = True) -> None:
+    def patch_client(self, client, mode: Literal["store_all", "store_inputs"] = "store_all") -> None:
         """
         Patch the OpenAI client's create method to store messages and arguments in the database.
 
         Args:
             client: The OpenAI client instance to patch.
-            include_response: Whether to include the response in the database.
-                If False, users will need to call patch_client_response separately;
-                useful if instructor is used.
+            mode: The mode to patch the client in.
+                If "store_all", responses are generated, and everything is stored.
+                If "store_inputs", responses are generated, but only input arguments are stored.
         """
         self._client = client
         self._original_create = client.chat.completions.create
@@ -302,7 +330,7 @@ class OpenAIInterceptor(Interceptor):
                 return await non_stream_response(*args, **kwargs)
 
         self._client.chat.completions.create = patched_async_create
-        if include_response:
+        if mode == "store_all":
             self.patch_client_response(client)
 
     def patch_client_response(self, client) -> None:
@@ -340,7 +368,6 @@ class OpenAIInterceptor(Interceptor):
             if hasattr(response, "choices"):
                 content = response.choices[0].message.content
 
-            print(content, "CONTENT")
             if not content and isinstance(response, BaseModel):
                 content = self._dump_response_model(response)
 

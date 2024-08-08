@@ -20,7 +20,7 @@ class Llm(param.Parameterized):
 
     use_logfire = param.Boolean(default=False)
 
-    use_interceptor = param.Boolean(default=False)
+    interceptor_path = param.String(default=None)
 
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
@@ -208,15 +208,15 @@ class OpenAI(Llm):
             model_kwargs["organization"] = self.organization
         llm = openai.AsyncOpenAI(**model_kwargs)
 
-        if self.use_interceptor:
+        if self.interceptor_path:
             if self._interceptor is None:
-                self._interceptor = OpenAIInterceptor()
+                self._interceptor = OpenAIInterceptor(db_path=self.interceptor_path)
             self._interceptor.patch_client(llm, include_response=False)
 
         if response_model:
             llm = patch(llm)
 
-        if self.use_interceptor:
+        if self.interceptor_path:
             # must be called after instructor
             self._interceptor.patch_client_response(llm)
 
