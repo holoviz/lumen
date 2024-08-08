@@ -320,7 +320,6 @@ class OpenAIInterceptor(Interceptor):
                     if delta.content is not None:
                         content += delta.content
 
-            print(content, "CONTENT")
             # last chunk contains all the content
             if not content and isinstance(chunk, BaseModel):
                 content = self._dump_response_model(chunk)
