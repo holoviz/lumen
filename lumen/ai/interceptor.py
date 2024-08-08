@@ -109,6 +109,8 @@ class Interceptor(param.Parameterized):
             message_id = cursor.lastrowid
 
             for key, value in kwargs.items():
+                if key == "messages":
+                    continue
                 cursor.execute(
                     """
                     INSERT INTO message_kwargs (message_id, key, value) VALUES (?, ?, ?)
@@ -233,7 +235,6 @@ class OpenAIInterceptor(Interceptor):
             if content and role:
                 messages.append({"role": role, "content": content})
 
-            kwargs.pop("messages")
             self.store_messages(messages, kwargs)
 
         async def non_stream_response(*args: Any, **kwargs: Any):
@@ -244,8 +245,8 @@ class OpenAIInterceptor(Interceptor):
                 role = response.choices[0].message.role
                 messages.append({"role": role, "content": content})
 
-            kwargs.pop("messages")
             self.store_messages(messages, kwargs)
+            return response
 
         async def patched_async_create(*args: Any, **kwargs: Any) -> Any:
             stream = kwargs.get("stream", False)
