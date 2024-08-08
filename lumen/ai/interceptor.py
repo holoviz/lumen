@@ -155,7 +155,6 @@ class Interceptor(param.Parameterized):
     def store_response(self, content: str) -> None:
         cursor = self.conn.cursor()
 
-        print(f"Storing response for batch {self._last_batch_id} {content}")
         # Store the response based on the last batch_id
         cursor.execute(
             """
