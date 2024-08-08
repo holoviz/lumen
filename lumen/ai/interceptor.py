@@ -30,7 +30,7 @@ class Interceptor(param.Parameterized):
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
-        first_message_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        first_message_time = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
         return f"conv_{int(first_message_time)}"
 
     @abstractmethod
@@ -187,24 +187,27 @@ class Interceptor(param.Parameterized):
             A dictionary containing session_id as keys and the corresponding
                 list of message groups for each session.
         """
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT DISTINCT session_id FROM messages")
-        session_ids = cursor.fetchall()
-
         all_groups = {}
-        for (session_id,) in session_ids:
+        for session_id in self.get_session_ids():
             all_groups[session_id] = self.get_session(session_id)
 
         return all_groups
 
+    def get_session_ids(self) -> list[str]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id FROM message_groups")
+        return [row[0] for row in cursor.fetchall()]
+
     def __del__(self) -> None:
         """Close the database connection and reverts the client create when the object is deleted."""
-        self._client.chat.completions.create = self._original_create
+        if self._client is not None:
+            self._client.chat.completions.create = self._original_create
         self.conn.close()
 
     def close(self) -> None:
         """Close the database connection and reverts the client create."""
-        self._client.chat.completions.create = self._original_create
+        if self._client is not None:
+            self._client.chat.completions.create = self._original_create
         self.conn.close()
 
 
