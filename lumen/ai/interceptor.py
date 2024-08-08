@@ -1,18 +1,15 @@
 import datetime
+import json
 import sqlite3
 
+from abc import abstractmethod
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING, Any, Dict, List,
-)
+from typing import Any
 
 import param
 
-if TYPE_CHECKING:
-    import openai
 
-
-class OpenAIInterceptor(param.Parameterized):
+class Interceptor(param.Parameterized):
 
     db_path = param.String(
         default="messages.db", doc="Path to the SQLite database file"
@@ -21,11 +18,11 @@ class OpenAIInterceptor(param.Parameterized):
     def __init__(self, **params):
         super().__init__(**params)
         needs_init = not Path(self.db_path).exists()
-        self.conn: sqlite3.Connection = self._create_connection()
+        self.conn = self._create_connection()
         if needs_init:
             self.init_db()
         self._client = self._original_create = None
-        self.session_id: str = self._generate_session_id()
+        self.session_id = self._generate_session_id()
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create and return a database connection."""
@@ -36,10 +33,17 @@ class OpenAIInterceptor(param.Parameterized):
         first_message_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         return f"conv_{int(first_message_time)}"
 
+    @abstractmethod
+    def patch_create(self, client) -> None:
+        """
+        Patch the LLM client's create method to store messages and arguments in the database.
+
+        Args:
+            client: The LLM client instance to patch.
+        """
+
     def init_db(self) -> None:
-        """
-        Initialize the database by creating necessary tables if they don't exist.
-        """
+        """Initialize the database by creating necessary tables if they don't exist."""
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -62,14 +66,25 @@ class OpenAIInterceptor(param.Parameterized):
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_kwargs (
+                message_id INTEGER,
+                key TEXT,
+                value TEXT,
+                FOREIGN KEY (message_id) REFERENCES messages(id)
+            )
+            """
+        )
         self.conn.commit()
 
-    def store_messages(self, messages: List[Dict[str, str]]) -> None:
+    def store_messages(self, messages: list[dict[str, str]], kwargs: dict) -> None:
         """
-        Store messages in the database for the current session.
+        Store messages and keyword arguments in the database for the current session.
 
         Args:
-            messages (List[Dict[str, str]]): List of message dictionaries to store.
+            messages: List of message dictionaries to store.
+            kwargs: The keyword arguments passed to the create method.
         """
         cursor = self.conn.cursor()
         cursor.execute(
@@ -91,62 +106,27 @@ class OpenAIInterceptor(param.Parameterized):
                 """,
                 (self.session_id, message["role"], message["content"], group_id),
             )
+            message_id = cursor.lastrowid
+
+            for key, value in kwargs.items():
+                cursor.execute(
+                    """
+                    INSERT INTO message_kwargs (message_id, key, value) VALUES (?, ?, ?)
+                    """,
+                    (message_id, key, json.dumps(value)),
+                )
+
         self.conn.commit()
 
-    def patch_create(self, client: "openai.Client") -> None:
+    def get_session(self, session_id: str | None = None) -> list[dict[str, Any]]:
         """
-        Patch the OpenAI client's create method to store messages in the database.
+        Retrieve the session groups of inputs from the last session, or a specific session if provided.
 
         Args:
-            client (openai.Client): The OpenAI client instance to patch.
-        """
-        self._client = client
-        self._original_create = client.chat.completions.create
-
-        async def stream_response(*args: Any, **kwargs: Any):
-            content = ""
-            role = ""
-            messages = kwargs.get("messages", [])
-            async for chunk in await self._original_create(*args, **kwargs):
-                yield chunk
-                if hasattr(chunk, "choices"):
-                    delta = chunk.choices[0].delta
-                    if delta.content is not None:
-                        content += delta.content
-                    if delta.role:
-                        role = delta.role
-            if content and role:
-                messages.append({"role": role, "content": content})
-            self.store_messages(messages)
-
-        async def non_stream_response(*args: Any, **kwargs: Any):
-            response = await self._original_create(*args, **kwargs)
-            messages = kwargs.get("messages", [])
-            if hasattr(response, "choices"):
-                content = response.choices[0].message.content
-                role = response.choices[0].message.role
-                messages.append({"role": role, "content": content})
-            self.store_messages(messages)
-
-        async def patched_async_create(*args: Any, **kwargs: Any) -> Any:
-            stream = kwargs.get("stream", False)
-            if stream:
-                return stream_response(*args, **kwargs)
-            else:
-                return await non_stream_response(*args, **kwargs)
-
-            return response
-
-        self._client.chat.completions.create = patched_async_create
-
-    def get_session_message_groups(
-        self, session_id: str | None = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Retrieve the groups of messages from the last session, or a specific session if provided.
+            session_id: The session ID to retrieve groups from. If not provided, the last session is used.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing group_id and messages for each group.
+            A list of dictionaries containing group_id, messages, and kwargs for each group.
         """
         cursor = self.conn.cursor()
 
@@ -172,16 +152,38 @@ class OpenAIInterceptor(param.Parameterized):
             group_messages = [
                 {"role": role, "content": content} for role, content in messages
             ]
-            groups.append({"group_id": group_id, "messages": group_messages})
+
+            cursor.execute(
+                """
+                SELECT key, value
+                FROM message_kwargs
+                WHERE message_id IN (
+                    SELECT id FROM messages
+                    WHERE session_id = ? AND group_id = ?
+                )
+                """,
+                (session_id, group_id),
+            )
+            kwargs_data = cursor.fetchall()
+            kwargs_dict = {key: json.loads(value) for key, value in kwargs_data}
+
+            groups.append(
+                {
+                    "group_id": group_id,
+                    "messages": group_messages,
+                    "kwargs": kwargs_dict,
+                }
+            )
 
         return groups
 
-    def get_all_session_message_groups(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_sessions(self) -> dict[str, dict[str, Any]]:
         """
         Retrieve the groups of messages from all sessions.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing group_id and messages for each group.
+            A dictionary containing session_id as keys and the corresponding
+                list of message groups for each session.
         """
         cursor = self.conn.cursor()
         cursor.execute("SELECT DISTINCT session_id FROM messages")
@@ -189,7 +191,7 @@ class OpenAIInterceptor(param.Parameterized):
 
         all_groups = {}
         for (session_id,) in session_ids:
-            all_groups[session_id] = self.get_session_message_groups(session_id)
+            all_groups[session_id] = self.get_session(session_id)
 
         return all_groups
 
@@ -202,3 +204,54 @@ class OpenAIInterceptor(param.Parameterized):
         """Close the database connection and reverts the client create."""
         self._client.chat.completions.create = self._original_create
         self.conn.close()
+
+
+class OpenAIInterceptor(Interceptor):
+
+    def patch_create(self, client) -> None:
+        """
+        Patch the OpenAI client's create method to store messages and arguments in the database.
+
+        Args:
+            client: The OpenAI client instance to patch.
+        """
+        self._client = client
+        self._original_create = client.chat.completions.create
+
+        async def stream_response(*args: Any, **kwargs: Any):
+            content = ""
+            role = ""
+            messages = kwargs.get("messages", [])
+            async for chunk in await self._original_create(*args, **kwargs):
+                yield chunk
+                if hasattr(chunk, "choices"):
+                    delta = chunk.choices[0].delta
+                    if delta.content is not None:
+                        content += delta.content
+                    if delta.role:
+                        role = delta.role
+            if content and role:
+                messages.append({"role": role, "content": content})
+
+            kwargs.pop("messages")
+            self.store_messages(messages, kwargs)
+
+        async def non_stream_response(*args: Any, **kwargs: Any):
+            response = await self._original_create(*args, **kwargs)
+            messages = kwargs.get("messages", [])
+            if hasattr(response, "choices"):
+                content = response.choices[0].message.content
+                role = response.choices[0].message.role
+                messages.append({"role": role, "content": content})
+
+            kwargs.pop("messages")
+            self.store_messages(messages, kwargs)
+
+        async def patched_async_create(*args: Any, **kwargs: Any) -> Any:
+            stream = kwargs.get("stream", False)
+            if stream:
+                return stream_response(*args, **kwargs)
+            else:
+                return await non_stream_response(*args, **kwargs)
+
+        self._client.chat.completions.create = patched_async_create
