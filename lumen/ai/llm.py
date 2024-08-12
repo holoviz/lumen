@@ -211,7 +211,7 @@ class OpenAI(Llm):
         if self.interceptor_path:
             if self._interceptor is None:
                 self._interceptor = OpenAIInterceptor(db_path=self.interceptor_path)
-            self._interceptor.patch_client(llm, include_response=False)
+            self._interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
             llm = patch(llm)
@@ -260,7 +260,7 @@ class AzureOpenAI(Llm):
         if self.use_interceptor:
             if self._interceptor is None:
                 self._interceptor = OpenAIInterceptor()
-            self._interceptor.patch_client(llm, include_response=False)
+            self._interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
             llm = patch(llm)
