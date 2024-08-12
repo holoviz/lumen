@@ -12,6 +12,23 @@ import param
 from pydantic import BaseModel
 
 
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+class Batch(BaseModel):
+    batch_id: int
+    messages: list[Message]
+    kwargs: dict[str, Any]
+    response: str | None
+
+
+class Session(BaseModel):
+    session_id: str
+    batches: list[Batch]
+
+
 class Interceptor(param.Parameterized):
 
     db_path = param.String(
@@ -190,7 +207,7 @@ class Interceptor(param.Parameterized):
         )
         self.conn.commit()
 
-    def get_session(self, session_id: str | None = None) -> list[dict[str, Any]]:
+    def get_session(self, session_id: str | None = None) -> Session:
         """
         Retrieve the session batches of inputs from the last session, or a specific session if provided.
 
@@ -262,9 +279,12 @@ class Interceptor(param.Parameterized):
                 }
             )
 
-        return batches
+        return Session(
+            session_id=session_id,
+            batches=[Batch(**batch) for batch in batches]
+        )
 
-    def get_all_sessions(self) -> dict[str, dict[str, Any]]:
+    def get_all_sessions(self) -> dict[str, Session]:
         """
         Retrieve the batches of messages from all sessions.
 
