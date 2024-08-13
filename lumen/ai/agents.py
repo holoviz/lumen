@@ -390,6 +390,7 @@ class TableAgent(LumenBaseAgent):
                     table = tables[0]
                 step.stream(f"Selected table: {table}")
         memory["current_table"] = table
+        print(table)
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
         )

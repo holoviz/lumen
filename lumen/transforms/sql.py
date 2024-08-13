@@ -54,7 +54,10 @@ class SQLTransform(Transform):
         string
             New SQL query derived from the above query.
         """
-        sql_in = sql_in.strip('"')
+        if sql_in.startswith('"') and sql_in.endswith('"'):
+            sql_in = sql_in[1:-1]
+        elif sql_in.startswith("'") and sql_in.endswith("'"):
+            sql_in = sql_in[1:-1]
         return sql_in
 
     @classmethod
