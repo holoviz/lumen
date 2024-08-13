@@ -209,7 +209,7 @@ class SourceGallery(WizardItem, Gallery):
         self.param.trigger('sources')
         self.param.trigger('items')
 
-    def _add_source_controls(self, event):
+    def _add_source(self, event):
         state.modal[:] = self._modal_content
         state.template.open_modal()
 
@@ -560,7 +560,7 @@ class SourcesEditor(WizardItem):
             </fast-select>
             <fast-tooltip anchor="type-${id}">{{ param.source_type.doc }}</fast-tooltip>
           </div>
-          <fast-button id="submit" appearance="accent" style="margin-top: auto; margin-left: 1em; width: 20px;" onclick="${_add_source_controls}" disabled="${disabled}">
+          <fast-button id="submit" appearance="accent" style="margin-top: auto; margin-left: 1em; width: 20px;" onclick="${_add_source}" disabled="${disabled}">
             <b style="font-size: 2em;">+</b>
           </fast-button>
         </div>
@@ -595,7 +595,7 @@ class SourcesEditor(WizardItem):
         self.disabled = not bool(self.source_name)
 
     @catch_and_notify
-    def _add_source_controls(self, event):
+    def _add_source(self, event):
         self.spec[self.source_name] = spec = {'type': self.source_type}
         editor = SourceEditor(
             type=self.source_type, name=self.source_name, spec=spec,
