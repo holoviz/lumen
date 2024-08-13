@@ -23,6 +23,7 @@ def add_source_controls(replace_controls: bool = True):
                 duckdb_source._connection.from_df(df).to_table(name.value)
                 duckdb_source.tables[name.value] = f"SELECT * FROM {name.value}"
                 memory["current_source"] = duckdb_source
+                memory["current_table"] = name.value
                 memory["available_sources"].add(duckdb_source)
             if replace_controls:
                 name.value = ""

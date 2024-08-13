@@ -42,7 +42,7 @@ class DuckDBSource(BaseSQLSource):
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression to execute.""")
 
-    tables = param.ClassSelector(default={}, class_=(list, dict), doc="""
+    tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
     initializers = param.List(default=[], doc="""
@@ -121,8 +121,7 @@ class DuckDBSource(BaseSQLSource):
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
-            sql_expr = sql_limit.apply(sql_expr)
-            data = self._connection.execute(sql_expr).fetch_df()
+            data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 continue
