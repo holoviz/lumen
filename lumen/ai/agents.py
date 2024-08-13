@@ -6,6 +6,7 @@ import textwrap
 
 from typing import Literal, Optional
 
+import duckdb
 import pandas as pd
 import panel as pn
 import param
@@ -205,23 +206,29 @@ class SourceAgent(Agent):
 
     async def answer(self, messages: list | str):
         def add_table(event):
-            if input_tabs.active == 0 and upload.value:
-                if upload.filename.endswith("csv"):
-                    df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
-                elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value))
-                duckdb_source._connection.from_df(df).to_table(name.value)
-                duckdb_source.tables = [name.value]
-                memory["current_source"] = duckdb_source
-            # TODO: add URL + xlsx support
-            name.value = ""
-            upload.value = None
-            upload.filename = ""
-            src = memory["current_source"]
-            tables[:] = [
-                (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
-            ]
-            input_column.visible = False
+            with menu.param.update(loading=True):
+                if input_tabs.active == 0 and upload.value:
+                    if upload.filename.endswith("csv"):
+                        df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
+                    elif upload.filename.endswith((".parq", ".parquet")):
+                        df = pd.read_parquet(io.BytesIO(upload.value))
+                    elif upload.filename.endswith(".json"):
+                        df = pd.read_json(io.BytesIO(upload.value))
+                    elif upload.filename.endswith(".xlsx"):
+                        df = pd.read_excel(io.BytesIO(upload.value))
+                    # TODO: add url support
+                    duckdb_source._connection.from_df(df).to_table(name.value)
+                    duckdb_source.tables = [name.value]
+                    memory["current_source"] = duckdb_source
+                    memory["available_sources"].add(duckdb_source)
+                name.value = ""
+                upload.value = None
+                upload.filename = ""
+                src = memory["current_source"]
+                tables[:] = [
+                    (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
+                ]
+                input_column.visible = False
 
         def add_name(event):
             if "/" in event.new:
@@ -234,7 +241,7 @@ class SourceAgent(Agent):
             add.visible = not bool(name.value)
 
         name = pn.widgets.TextInput(name="Name your table", visible=False)
-        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq")
+        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq,.json,.xlsx")
         add = pn.widgets.Button(
             name="Add table",
             icon="table-plus",
@@ -528,12 +535,12 @@ class SQLAgent(LumenBaseAgent):
 
     def _render_sql(self, query):
         pipeline = memory['current_pipeline']
-        out = SQLOutput(component=pipeline, spec=query)
+        out = SQLOutput(component=pipeline, spec=query.rstrip(';'))
         self.interface.stream(out, user="SQL", replace=True)
         return out
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, source, tables, errors=None):
+    async def _create_valid_sql(self, messages, system, source, errors=None):
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -588,33 +595,55 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
 
         if join_required:
-            available_tables = " ".join(str(table) for table in source.get_tables())
+            available_tables = ", ".join(f"{a_source}.{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
             with self.interface.add_step(title="Determining tables required for join") as step:
                 output = await self.llm.invoke(
                     messages,
-                    system=f"List the tables that need to be joined: {available_tables}.",
+                    system=f"List the tables that need to be joined: {available_tables}",
                     response_model=TableJoins,
                 )
-                tables = output.tables
-                step.stream(f'\nJoin requires following tables: {tables}', replace=True)
+                source_tables = output.tables
+                step.stream(f'\nJoin requires following tables: {source_tables}', replace=True)
                 step.success_title = 'Found tables required for join'
         else:
-            tables = [table]
+            source_tables = [table]
 
-        tables_sql_schemas = {
-            table: {
-                "schema": get_schema(source, table, include_min_max=False),
-                "sql": source.get_sql_expr(table)
-            } for table in tables
-        }
-        dialect = source.dialect
+        sources = {}
+        tables_sql_schemas = {}
+        for source_table in source_tables:
+            a_source_name, a_table = source_table.split(".", maxsplit=1)
+            a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
+            a_schema = get_schema(a_source, a_table, include_min_max=False)
+            tables_sql_schemas[a_table] = {
+                "schema": a_schema,
+                "sql": a_source.get_sql_expr(a_table)
+            }
+            sources[a_source_name] = (a_source, a_table)
+
+
+        if len(sources) > 1:
+            central_source = DuckDBSource(uri=":memory:")
+            for a_source, a_table in sources.values():
+                df = a_source.get(a_table)
+                relation = central_source._connection.from_df(df)
+                try:
+                    relation.to_table(a_table.rsplit(".", maxsplit=1)[0])
+                except duckdb.CatalogException as e:
+                    print(e)
+            memory["available_sources"].add(central_source)
+            memory["current_source"] = central_source
+            dialect = source.dialect
+        else:
+            dialect = source.dialect
+
         sql_prompt = render_template(
             "sql_query.jinja2",
             tables_sql_schemas=tables_sql_schemas,
             dialect=dialect,
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
-        sql_query = await self._create_valid_sql(messages, system, source, tables)
+        print(system)
+        sql_query = await self._create_valid_sql(messages, system, source)
         memory["current_sql"] = sql_query
         return sql_query
 
@@ -1002,7 +1031,7 @@ class AnalysisAgent(LumenBaseAgent):
             print(f"Creating view for {analysis_name}")
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name]
-            if asyncio.iscoroutinefunction(analysis_callable):
+            if asyncio.iscoroutinefunction(analysis_callable.__call__):
                 view = await analysis_callable(pipeline)
             else:
                 view = await asyncio.to_thread(analysis_callable, pipeline)
