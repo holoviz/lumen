@@ -88,9 +88,10 @@ class LumenOutput(Viewer):
 
             if hasattr(self.component, "source") and hasattr(self.component.source, "create_sql_expr_source"):
                 pipeline = self.component
-                tables = yaml_spec["source"]["tables"]
                 old_source = memory["current_source"]
-                old_source.tables = tables
+                if "tables" in yaml_spec["source"]:
+                    tables = yaml_spec["source"]["tables"]
+                    old_source.tables = tables
                 pipeline.param.update(
                     source=old_source,
                     table=yaml_spec["table"]

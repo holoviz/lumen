@@ -5,6 +5,7 @@ import textwrap
 
 from typing import Literal, Optional
 
+import duckdb
 import panel as pn
 import param
 
@@ -17,6 +18,7 @@ from pydantic.fields import FieldInfo
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
+from ..sources.duckdb import DuckDBSource
 from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
@@ -535,11 +537,11 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
 
         if join_required:
-            available_tables = ", ".join(f"{a_source}.{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
+            available_tables = ", ".join(f"{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
             with self.interface.add_step(title="Determining tables required for join") as step:
                 output = await self.llm.invoke(
                     messages,
-                    system=f"List the tables that need to be joined: {available_tables}",
+                    system=f"List the tables that need to be joined; be sure to include //: {available_tables}",
                     response_model=TableJoins,
                 )
                 source_tables = output.tables
@@ -549,16 +551,24 @@ class SQLAgent(LumenBaseAgent):
             source_tables = [table]
 
         sources = {}
-        tables_sql_schemas = {}
-        for source_table in source_tables:
-            a_source_name, a_table = source_table.split(".", maxsplit=1)
-            a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
-            a_schema = get_schema(a_source, a_table, include_min_max=False)
-            tables_sql_schemas[a_table] = {
-                "schema": a_schema,
-                "sql": a_source.get_sql_expr(a_table)
+        if join_required:
+            tables_sql_schemas = {}
+            for source_table in source_tables:
+                a_source_name, a_table = source_table.split("//", maxsplit=1)
+                a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
+                a_schema = get_schema(a_source, a_table, include_min_max=False)
+                sources[a_source_name] = (a_source, a_table)
+                tables_sql_schemas[a_table] = {
+                    "schema": a_schema,
+                    "sql": a_source.get_sql_expr(a_table)
+                }
+        else:
+            tables_sql_schemas = {
+                table: {
+                    "schema": get_schema(source, table, include_min_max=False),
+                    "sql": source.get_sql_expr(table)
+                } for table in source_tables
             }
-            sources[a_source_name] = (a_source, a_table)
         dialect = source.dialect
 
         sql_prompt = render_template(
@@ -567,12 +577,29 @@ class SQLAgent(LumenBaseAgent):
             dialect=dialect,
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
+        if join_required:
+            # TEMP FIX; can't get it to ignore //
+            messages = [{"role": "user", "content": "Join the tables"}]
         pipeline, sql_query = await self._create_valid_sql(messages, system, source)
+
+        if join_required:
+            central_source = DuckDBSource(uri=":memory:")
+            for a_source, a_table in sources.values():
+                df = a_source.get(a_table)
+                relation = central_source._connection.from_df(df)
+                try:
+                    relation.to_table(a_table.rsplit(".", maxsplit=1)[0])
+                except duckdb.CatalogException as e:
+                    print(e)
+            memory["available_sources"].add(central_source)
+            memory["current_source"] = central_source
+            breakpoint()
+        else:
+            memory["available_sources"].add(source)
+            memory["current_source"] = source
 
         memory["current_pipeline"] = pipeline
         memory["current_sql"] = sql_query
-        memory["current_source"] = source
-        memory["available_sources"].add(source)
         return sql_query
 
     async def invoke(self, messages: list | str):
