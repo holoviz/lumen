@@ -150,7 +150,7 @@ class Assistant(Viewer):
         elif "current_source" not in memory and "available_sources" in memory:
             memory["current_source"] = memory["available_sources"][0]
         elif "available_sources" not in memory:
-            memory["available_sources"] = {}
+            memory["available_sources"] = set([])
 
         self._controls = Column(
             notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
