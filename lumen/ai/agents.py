@@ -972,7 +972,7 @@ class AnalysisAgent(LumenBaseAgent):
         system_prompt += f"\nHere are the columns of the table: {columns}"
         return system_prompt
 
-    async def answer(self, messages: list | str):
+    async def answer(self, messages: list | str, agents=None):
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
         if not analyses:
@@ -1001,8 +1001,8 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.add_step(title="Creating view...") as step:
             print(f"Creating view for {analysis_name}")
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-            analysis_callable = analyses[analysis_name]
-            if asyncio.iscoroutinefunction(analysis_callable):
+            analysis_callable = analyses[analysis_name].instance(agents=agents)
+            if asyncio.iscoroutinefunction(analysis_callable.__call__):
                 view = await analysis_callable(pipeline)
             else:
                 view = await asyncio.to_thread(analysis_callable, pipeline)
@@ -1017,8 +1017,8 @@ class AnalysisAgent(LumenBaseAgent):
         memory["current_analysis"] = analysis_callable
         return view
 
-    async def invoke(self, messages: list | str):
-        view = await self.answer(messages)
+    async def invoke(self, messages: list | str, agents=None):
+        view = await self.answer(messages, agents=agents)
         if view is None:
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:

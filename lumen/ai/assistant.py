@@ -174,7 +174,7 @@ class Assistant(Viewer):
                             break
                     else:
                         return
-                    await agent.invoke([{'role': 'user', 'content': contents}])
+                    await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
                     self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
@@ -321,7 +321,10 @@ class Assistant(Viewer):
 
         for agent in agents:
             if isinstance(agent, AnalysisAgent):
-                analyses = "\n".join(f"- `{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses)
+                analyses = "\n".join(
+                    f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
+                    for analysis in agent.analyses
+                )
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
                 break
 

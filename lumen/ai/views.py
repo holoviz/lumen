@@ -10,7 +10,6 @@ from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..views.base import Table
-from .analysis import Analysis
 from .memory import memory
 
 
@@ -134,13 +133,15 @@ class AnalysisOutput(LumenOutput):
 
     def __init__(self, **params):
         super().__init__(**params)
-        config_options = [p for p in self.analysis.param if p not in Analysis.param]
-        if config_options:
-            options = pn.Param(self.analysis.param, parameters=config_options)
-            b = pn.widgets.Button(icon='rocket', name='Run...', on_click=self._rerun, button_type='success', margin=20)
-            self._tabs.insert(1, ('Config', pn.Column(options, b)))
+        controls = self.analysis.controls()
+        if controls is not None:
+            run_button = pn.widgets.Button(
+                icon='rocket', name='Run...', on_click=self._rerun,
+                button_type='success', margin=20
+            )
+            self._tabs.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
-                self._tabs.active = 2
+                self._tabs.active = 2 if self.analysis.autorun else 1
 
     def _rerun(self, event):
         with self._tabs.param.update(loading=True):
