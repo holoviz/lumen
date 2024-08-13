@@ -39,7 +39,7 @@ def add_source_controls(replace_controls: bool = True):
                 input_column.visible = False
 
     def add_name(event):
-        if event is None:
+        if event.new is None:
             return
         if "/" in event.new:
             name.value = event.new.split("/")[-1].split(".")[0].replace("-", "_")
