@@ -145,6 +145,11 @@ class Assistant(Viewer):
             sizing_mode="stretch_width",
         )
 
+        if "current_source" in memory and "available_sources" not in memory:
+            memory["available_sources"] = {memory["current_source"]}
+        elif "current_source" not in memory and "available_sources" in memory:
+            memory["current_source"] = memory["available_sources"][0]
+
         self._controls = Column(
             notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
         )

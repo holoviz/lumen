@@ -43,7 +43,8 @@ class TableJoins(BaseModel):
         description=(
             "List of tables that need to be joined to answer the user's query. "
             "Use table names verbatim; e.g. if table is `read_csv('table.csv')` "
-            "then use `read_csv('table.csv')` and not `table`"
+            "then use `read_csv('table.csv')` and not `table`, but if the table has "
+            "no extension, i.e. `table`, then use only `table`."
         ),
     )
 
