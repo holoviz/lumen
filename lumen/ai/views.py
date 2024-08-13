@@ -189,10 +189,7 @@ class SQLOutput(LumenOutput):
             return
 
         pipeline = self.component
-        kwargs = dict(tables={pipeline.table: self.spec})
-        if "_connection" in pipeline.source:
-            kwargs["_connection"] = pipeline.source._connection
-        pipeline.source = pipeline.source.create_sql_expr_source(**kwargs)
+        pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
         try:
             table = Table(
                 pipeline=pipeline, pagination='remote',

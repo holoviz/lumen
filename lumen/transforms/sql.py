@@ -54,7 +54,7 @@ class SQLTransform(Transform):
         string
             New SQL query derived from the above query.
         """
-        sql_in = sql_in.strip('"').strip("'")
+        sql_in = sql_in.strip('"')
         return sql_in
 
     @classmethod
