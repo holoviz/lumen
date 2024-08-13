@@ -1,13 +1,10 @@
 import asyncio
 import difflib
-import io
 import json
 import textwrap
 
 from typing import Literal, Optional
 
-import duckdb
-import pandas as pd
 import panel as pn
 import param
 
@@ -16,8 +13,6 @@ from panel.pane import HTML
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
-
-from lumen.sources.duckdb import DuckDBSource
 
 from ..base import Component
 from ..dashboard import Config
@@ -28,6 +23,7 @@ from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
+from .controls import add_source_controls
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
@@ -205,67 +201,8 @@ class SourceAgent(Agent):
     on_init = param.Boolean(default=True)
 
     async def answer(self, messages: list | str):
-        def add_table(event):
-            with menu.param.update(loading=True):
-                if input_tabs.active == 0 and upload.value:
-                    if upload.filename.endswith("csv"):
-                        df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
-                    elif upload.filename.endswith((".parq", ".parquet")):
-                        df = pd.read_parquet(io.BytesIO(upload.value))
-                    elif upload.filename.endswith(".json"):
-                        df = pd.read_json(io.BytesIO(upload.value))
-                    elif upload.filename.endswith(".xlsx"):
-                        df = pd.read_excel(io.BytesIO(upload.value))
-                    # TODO: add url support
-                    duckdb_source._connection.from_df(df).to_table(name.value)
-                    duckdb_source.tables = [name.value]
-                    memory["current_source"] = duckdb_source
-                    memory["available_sources"].add(duckdb_source)
-                name.value = ""
-                upload.value = None
-                upload.filename = ""
-                src = memory["current_source"]
-                tables[:] = [
-                    (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
-                ]
-                input_column.visible = False
-
-        def add_name(event):
-            if "/" in event.new:
-                name.value = event.new.split("/")[-1].split(".")[0].replace("-", "_")
-            elif not name.value and event.new:
-                name.value = event.new.split(".")[0].replace("-", "_")
-                name.visible = True
-
-        def enable_add(event):
-            add.visible = not bool(name.value)
-
-        name = pn.widgets.TextInput(name="Name your table", visible=False)
-        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq,.json,.xlsx")
-        add = pn.widgets.Button(
-            name="Add table",
-            icon="table-plus",
-            visible=False,
-            button_type="success",
-        )
-        input_tabs = pn.Tabs(("Upload", upload), sizing_mode="stretch_width")
-        tables = pn.Tabs(sizing_mode="stretch_width")
-        duckdb_source = DuckDBSource(uri=":memory:")
-        input_column = pn.Column(
-            input_tabs,
-            name,
-            add,
-            sizing_mode="stretch_width",
-        )
-        menu = pn.Column(
-            input_column,
-            tables,
-            sizing_mode="stretch_width",
-        )
-        upload.param.watch(add_name, "filename")
-        upload.param.watch(enable_add, "value")
-        add.on_click(add_table)
-
+        menu = add_source_controls()
+        add = menu[0][-1]
         self.interface.send(menu, respond=False, user="SourceAgent")
         while not add.clicks:
             await asyncio.sleep(0.05)
@@ -549,7 +486,10 @@ class SQLAgent(LumenBaseAgent):
                     "role": "user",
                     "content": (
                         f"Your last query `{last_query}` did not work as intended, "
-                        f"expertly revise, and please do not repeat these issues:\n{errors}")
+                        f"expertly revise, and please do not repeat these issues:\n{errors}\n\n"
+                        f"If the error is `syntax error at or near \")\"`, double check you used "
+                        "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
+                    )
                 }
             ]
 
@@ -573,8 +513,7 @@ class SQLAgent(LumenBaseAgent):
         df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
-        memory["current_pipeline"] = pipeline
-        return sql_query
+        return pipeline, sql_query
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
@@ -619,22 +558,7 @@ class SQLAgent(LumenBaseAgent):
                 "sql": a_source.get_sql_expr(a_table)
             }
             sources[a_source_name] = (a_source, a_table)
-
-
-        if len(sources) > 1:
-            central_source = DuckDBSource(uri=":memory:")
-            for a_source, a_table in sources.values():
-                df = a_source.get(a_table)
-                relation = central_source._connection.from_df(df)
-                try:
-                    relation.to_table(a_table.rsplit(".", maxsplit=1)[0])
-                except duckdb.CatalogException as e:
-                    print(e)
-            memory["available_sources"].add(central_source)
-            memory["current_source"] = central_source
-            dialect = source.dialect
-        else:
-            dialect = source.dialect
+        dialect = source.dialect
 
         sql_prompt = render_template(
             "sql_query.jinja2",
@@ -642,9 +566,12 @@ class SQLAgent(LumenBaseAgent):
             dialect=dialect,
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
-        print(system)
-        sql_query = await self._create_valid_sql(messages, system, source)
+        pipeline, sql_query = await self._create_valid_sql(messages, system, source)
+
+        memory["current_pipeline"] = pipeline
         memory["current_sql"] = sql_query
+        memory["current_source"] = source
+        memory["available_sources"].add(source)
         return sql_query
 
     async def invoke(self, messages: list | str):
@@ -1028,22 +955,22 @@ class AnalysisAgent(LumenBaseAgent):
             analysis_name = next(iter(analyses))
 
         with self.interface.add_step(title="Creating view...") as step:
-            print(f"Creating view for {analysis_name}")
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
+            memory["current_analysis"] = analysis_callable
+
             if asyncio.iscoroutinefunction(analysis_callable.__call__):
                 view = await analysis_callable(pipeline)
             else:
                 view = await asyncio.to_thread(analysis_callable, pipeline)
             spec = view.to_spec()
+            if isinstance(view, View):
+                view_type = view.view_type
+                memory["current_view"] = dict(spec, type=view_type)
+            elif isinstance(view, Pipeline):
+                memory["current_pipeline"] = view
             step.stream(f"Generated view\n```json\n{spec}\n```")
             step.success_title = "Generated view"
-        if isinstance(view, View):
-            view_type = view.view_type
-            memory["current_view"] = dict(spec, type=view_type)
-        elif isinstance(view, Pipeline):
-            memory["current_pipeline"] = view
-        memory["current_analysis"] = analysis_callable
         return view
 
     async def invoke(self, messages: list | str, agents=None):

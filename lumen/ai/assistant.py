@@ -394,7 +394,6 @@ class Assistant(Viewer):
                             f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                         )
                         custom_messages.append({"role": "user", "content": custom_message})
-                        print(custom_messages)
                     await subagent.answer(custom_messages)
                 else:
                     await subagent.answer(messages)

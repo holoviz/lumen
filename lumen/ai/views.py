@@ -1,3 +1,5 @@
+import asyncio
+
 import panel as pn
 import param
 import yaml
@@ -82,7 +84,20 @@ class LumenOutput(Viewer):
         # store the spec in the cache instead of memory to save tokens
         memory["current_spec"] = self.spec
         try:
-            self.component = type(self.component).from_spec(load_yaml(self.spec))
+            yaml_spec = load_yaml(self.spec)
+
+            if hasattr(self.component, "source") and hasattr(self.component.source, "create_sql_expr_source"):
+                pipeline = self.component
+                tables = yaml_spec["source"]["tables"]
+                old_source = memory["current_source"]
+                old_source.tables = tables
+                pipeline.param.update(
+                    source=old_source,
+                    table=yaml_spec["table"]
+                )
+                self.component = pipeline
+            else:
+                self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
                 table = Table(
                     pipeline=self.component, pagination='remote', page_size=21,
@@ -135,17 +150,26 @@ class AnalysisOutput(LumenOutput):
         super().__init__(**params)
         controls = self.analysis.controls()
         if controls is not None:
-            run_button = pn.widgets.Button(
-                icon='rocket', name='Run...', on_click=self._rerun,
-                button_type='success', margin=20
-            )
-            self._tabs.insert(1, ('Config', pn.Column(controls, run_button)))
+            if self.analysis._run_button:
+                run_button = self.analysis._run_button
+                run_button.param.watch(self._rerun, 'clicks')
+                self._tabs.insert(1, ('Config', controls))
+            else:
+                run_button = pn.widgets.Button(
+                    icon='player-play', name='Run', on_click=self._rerun,
+                    button_type='success', margin=(10, 0, 0 , 10)
+                )
+                self._tabs.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
                 self._tabs.active = 2 if self.analysis.autorun else 1
 
-    def _rerun(self, event):
+    async def _rerun(self, event):
         with self._tabs.param.update(loading=True):
-            spec = self.analysis(pipeline=self.pipeline).to_spec()
+            if asyncio.iscoroutinefunction(self.analysis.__call__):
+                view = await self.analysis(self.pipeline)
+            else:
+                view = await asyncio.to_thread(self.analysis, self.pipeline)
+            spec = view.to_spec()
             self.param.update(
                 spec=yaml.safe_dump(spec),
                 active=2
@@ -165,7 +189,10 @@ class SQLOutput(LumenOutput):
             return
 
         pipeline = self.component
-        pipeline.source = pipeline.source.create_sql_expr_source({pipeline.table: self.spec})
+        kwargs = dict(tables={pipeline.table: self.spec})
+        if "_connection" in pipeline.source:
+            kwargs["_connection"] = pipeline.source._connection
+        pipeline.source = pipeline.source.create_sql_expr_source(**kwargs)
         try:
             table = Table(
                 pipeline=pipeline, pagination='remote',

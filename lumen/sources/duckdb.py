@@ -42,7 +42,7 @@ class DuckDBSource(BaseSQLSource):
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression to execute.""")
 
-    tables = param.ClassSelector(class_=(list, dict), doc="""
+    tables = param.ClassSelector(default={}, class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
     initializers = param.List(default=[], doc="""
@@ -82,7 +82,7 @@ class DuckDBSource(BaseSQLSource):
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             table = self.tables[table]
-        if '(' not in table and ')' not in table:
+        if '(' not in table and ')' not in table and 'select ' not in table.lower():
             table = f'"{table}"'
         if 'select ' in table.lower():
             sql_expr = table
@@ -121,7 +121,8 @@ class DuckDBSource(BaseSQLSource):
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
-            data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
+            sql_expr = sql_limit.apply(sql_expr)
+            data = self._connection.execute(sql_expr).fetch_df()
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 continue

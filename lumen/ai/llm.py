@@ -48,7 +48,6 @@ class Llm(param.Parameterized):
             messages = [{"role": "user", "content": messages}]
         if system:
             messages = [{"role": "system", "content": system}] + messages
-        print(messages)
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)

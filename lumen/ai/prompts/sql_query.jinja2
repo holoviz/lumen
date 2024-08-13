@@ -1,6 +1,5 @@
 {% for table, details in tables_sql_schemas.items() %}
-
-The data for table '{{ table }}' follows the following JSON schema:
+The data for table `{{ table }}` follows the following JSON schema:
 ```json
 {{ details.schema }}
 ```
@@ -9,5 +8,5 @@ The data for table '{{ table }}' follows the following JSON schema:
 Checklist
 - If it's a date column (excluding individual year/month/day integers), cast as date
 - If no limit is specified, specify 10000 as the limit.
-- Use table names verbatim; e.g. if table is `read_csv('table.csv')` then use `read_csv('table.csv')` and not `table`, but if the table has no extension, i.e. `table`, then use only `table`
+- Use table names verbatim with an alias (!important); e.g. if table name is `read_csv('table.csv')` then use something like `read_csv('table.csv') as table` and not `table.csv` nor `table`, but if the table has no file extension, i.e. `table`, then please only use `table`; it's very important to be consistent with this.
 - Use only `{{ dialect }}` syntax
