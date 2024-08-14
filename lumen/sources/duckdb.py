@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from io import StringIO
 from typing import Any
 
 import duckdb
+import pandas as pd
 import param
 
 from ..transforms import Filter
@@ -10,7 +12,9 @@ from ..transforms.sql import (
     SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
 from ..util import get_dataframe_schema
-from .base import BaseSQLSource, cached, cached_schema
+from .base import (
+    BaseSQLSource, Source, cached, cached_schema,
+)
 
 
 class DuckDBSource(BaseSQLSource):
@@ -35,18 +39,26 @@ class DuckDBSource(BaseSQLSource):
     filter_in_sql = param.Boolean(default=True, doc="""
         Whether to apply filters in SQL or in-memory.""")
 
-    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
+    initializers = param.List(default=[], doc="""
+        SQL statements to run to initialize the connection.""")
 
-    uri = param.String(doc="The URI of the DuckDB database")
+    mirrors = param.Dict(default={}, doc="""
+        Mapping from other sources to a list of tables to mirror into
+        the DuckDB database.""")
+
+    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression to execute.""")
 
+    synthetic = param.Boolean(default=False, doc="""
+        Whether the data is synthetic, i.e. manually inserted into the
+        DuckDB table or derived from real data.""")
+
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
-    initializers = param.List(default=[], doc="""
-        SQL statements to run to initialize the connection.""")
+    uri = param.String(doc="The URI of the DuckDB database")
 
     source_type = 'duckdb'
 
@@ -61,6 +73,59 @@ class DuckDBSource(BaseSQLSource):
             self._connection = duckdb.connect(self.uri)
             for init in self.initializers:
                 self._connection.execute(init)
+        for table, (source, src_table) in self.mirrors.items():
+            df = source.get(src_table)
+            try:
+                self._connection.from_df(df).to_table(table)
+            except (duckdb.CatalogException, duckdb.ParserException):
+                continue
+
+    @classmethod
+    def _recursive_resolve(
+        cls, spec: dict[str, Any], source_type: type[Source]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        mirrors = spec.pop('mirrors', {})
+        spec, refs = super()._recursive_resolve(spec, source_type)
+        resolved_mirrors = {}
+        for table, (src_spec, src_table) in mirrors.items():
+            if src_spec.get('synthetic'):
+                tables = src_spec.pop('tables')
+                source = cls.from_spec(src_spec)
+                new_tables = {}
+                for t, table_json in tables.items():
+                    jsonio = StringIO(table_json)
+                    df = pd.read_json(jsonio)
+                    try:
+                        source._connection.from_df(df).to_table(t)
+                    except duckdb.ParserException:
+                        pass
+                    new_tables[t] = source.sql_expr.format(table=t)
+                source.tables = new_tables
+            else:
+                source = cls.from_spec(src_spec)
+            resolved_mirrors[table] = (source, src_table)
+        spec['mirrors'] = resolved_mirrors
+        return spec, refs
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        if 'mirrors' not in spec:
+            return spec
+        mirrors = {}
+        for table, (source, src_table) in spec['mirrors'].items():
+            src_spec = source.to_spec(context=context)
+            if source.synthetic:
+                tables = {}
+                for t in source.get_tables():
+                    tdf = source.get(t)
+                    jsonio = StringIO()
+                    tdf.to_json(jsonio)
+                    jsonio.seek(0)
+                    tables[t] = jsonio.read()
+                src_spec['tables'] = tables
+            mirrors[table] = (src_spec, src_table)
+        spec['mirrors'] = mirrors
+        return spec
 
     def create_sql_expr_source(
         self, tables: dict[str, str], materialize: bool = True, **kwargs

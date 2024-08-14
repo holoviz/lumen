@@ -254,7 +254,7 @@ class Source(MultiTypeComponent):
 
         spec = spec.copy()
         source_type = Source._get_type(spec.pop('type', None))
-        resolved_spec, refs = cls._recursive_resolve(spec, source_type)
+        resolved_spec, refs = source_type._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
