@@ -120,7 +120,7 @@ class DuckDBSource(BaseSQLSource):
         mirrors = {}
         for table, (source, src_table) in spec['mirrors'].items():
             src_spec = source.to_spec(context=context)
-            if source.synthetic:
+            if hasattr(source, "synthetic") and source.synthetic:
                 tables = {}
                 for t in source.get_tables():
                     tdf = source.get(t)
