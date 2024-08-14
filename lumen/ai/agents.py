@@ -518,9 +518,12 @@ class SQLAgent(LumenBaseAgent):
                 relation = source._connection.from_df(df)
                 try:
                     # DREMIO.SOMETHING turns into DREMIO_SOMETHING
-                    renamed_table = a_table.replace(".", "_")
-                    sql_query = sql_query.replace(a_table, renamed_table)
-                    relation.to_table(renamed_table)
+                    if not ("(" in a_table and ")" in a_table):
+                        renamed_table = a_table.replace(".", "_")
+                        sql_query = sql_query.replace(a_table, renamed_table)
+                        relation.to_table(renamed_table)
+                    else:
+                        relation.to_table(a_table)
                 except duckdb.CatalogException as e:
                     print(f"Could not add to catalog {e}")
         else:
