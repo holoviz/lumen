@@ -4,6 +4,7 @@ import param
 from ..base import Component
 from .controls import add_source_controls
 from .memory import memory
+from .utils import get_schema
 
 
 class Analysis(param.ParameterizedFunction):
@@ -46,14 +47,26 @@ class JoinAnalysis(Analysis):
 
     context = param.String(doc="Additional context to provide to the LLM.")
 
+    _previous_table = param.Parameter()
+
+    _previous_source = param.Parameter()
+
     def controls(self):
         source_controls = add_source_controls(replace_controls=False)
         self._run_button = source_controls[0][-1]
         name_input = source_controls[0][1]
         name_input.link(self, value='table_name')
+
+        source = memory.get("current_source")
+        table = memory.get("current_table")
+        self._previous_source = source
+        self._previous_table = table
+        columns = list(get_schema(source, table=table).keys())
+        print(columns)
         index_col = pn.widgets.AutocompleteInput.from_param(
-            self.param.index_col, options=memory["current_data"].columns.tolist(), name="Join on",
-            placeholder="Start typing column name"
+            self.param.index_col, options=columns, name="Join on",
+            placeholder="Start typing column name", search_strategy="includes",
+            case_sensitive=False, restrict=False
         )
         context = pn.widgets.TextInput.from_param(self.param.context, name="Context")
         source_controls[0].insert(0, index_col)
@@ -63,7 +76,7 @@ class JoinAnalysis(Analysis):
     async def __call__(self, pipeline) -> Component:
         if self.table_name:
             agent = next((agent for agent in self.agents if type(agent).__name__ == "SQLAgent"), None)
-            content = "Join the tables"
+            content = f"Join these tables: `{self._previous_source}//{self._previous_table}` and `{memory['current_source']}//{self.table_name}`"
             if self.index_col:
                 content += f" on {self.index_col}"
             if self.context:
