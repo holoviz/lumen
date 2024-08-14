@@ -529,7 +529,6 @@ class SQLAgent(LumenBaseAgent):
         expr_name = output.expr_name
         sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
         print(sql_query)
-        breakpoint()
         try:
             pipeline = Pipeline(source=sql_expr_source, table=expr_name)
         except Exception as e:
