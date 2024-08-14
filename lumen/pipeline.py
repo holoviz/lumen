@@ -583,12 +583,20 @@ class Pipeline(Viewer, Component):
         Pipeline
         """
         if sql_transforms:
-            params = {
-                'filters': self.filters + (filters or []),
-                'transforms': self.transforms + (transforms or []),
-                'sql_transforms': self.sql_transforms + (sql_transforms or []),
-                'data': None
-            }
+            try:
+                from .sources.duckdb import DuckDBSource
+            except Exception:
+                raise RuntimeError(
+                    'Cannot chain SQL transforms on a Pipeline without '
+                    'DuckDB. Ensure DuckDB is installed.'
+                )
+            sql_src = DuckDBSource(uri=':memory', mirrors={self.name: self})
+            return Pipeline(
+                source=sql_src,
+                table=self.name,
+                sql_transforms=sql_transforms,
+                transforms=transforms
+            )
         else:
             params = {
                 'filters': filters or [],

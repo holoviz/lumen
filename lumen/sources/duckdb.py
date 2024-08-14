@@ -43,8 +43,10 @@ class DuckDBSource(BaseSQLSource):
         SQL statements to run to initialize the connection.""")
 
     mirrors = param.Dict(default={}, doc="""
-        Mapping from other sources to a list of tables to mirror into
-        the DuckDB database.""")
+        Mirrors the tables into the DuckDB database. The mirrors
+        should define a mapping from the table names to the source of
+        the mirror which may be defined as a Pipeline or a tuple of
+        the source and the table.""")
 
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
@@ -73,8 +75,12 @@ class DuckDBSource(BaseSQLSource):
             self._connection = duckdb.connect(self.uri)
             for init in self.initializers:
                 self._connection.execute(init)
-        for table, (source, src_table) in self.mirrors.items():
-            df = source.get(src_table)
+        for table, mirror in self.mirrors.items():
+            if isinstance(mirror, tuple):
+                source, src_table = mirror
+                df = source.get(src_table)
+            else:
+                df = mirror.data
             try:
                 self._connection.from_df(df).to_table(table)
             except (duckdb.CatalogException, duckdb.ParserException):
