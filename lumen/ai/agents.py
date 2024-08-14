@@ -612,6 +612,7 @@ class SQLAgent(LumenBaseAgent):
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
         if join_required:
+            # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
             print(messages)
         sql_query = await self._create_valid_sql(messages, system, sources)
