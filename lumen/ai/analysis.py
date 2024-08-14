@@ -62,7 +62,6 @@ class JoinAnalysis(Analysis):
         self._previous_source = source
         self._previous_table = table
         columns = list(get_schema(source, table=table).keys())
-        print(columns)
         index_col = pn.widgets.AutocompleteInput.from_param(
             self.param.index_col, options=columns, name="Join on",
             placeholder="Start typing column name", search_strategy="includes",
