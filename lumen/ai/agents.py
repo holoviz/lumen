@@ -516,15 +516,20 @@ class SQLAgent(LumenBaseAgent):
                 df = a_source.get(a_table)
                 relation = source._connection.from_df(df)
                 try:
-                    relation.to_table(a_table.rsplit(".", maxsplit=1)[0])
+                    # DREMIO.SOMETHING turns into DREMIO_SOMETHING
+                    renamed_table = a_table.replace(".", "_")
+                    sql_query = sql_query.replace(a_table, renamed_table)
+                    relation.to_table(renamed_table)
                 except duckdb.CatalogException as e:
-                    print(e)
+                    print(f"Could not add to catalog {e}")
         else:
             source = next(iter(sources.values()))[0]
 
         # check whether the SQL query is valid
         expr_name = output.expr_name
         sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
+        print(sql_query)
+        breakpoint()
         try:
             pipeline = Pipeline(source=sql_expr_source, table=expr_name)
         except Exception as e:
@@ -566,7 +571,7 @@ class SQLAgent(LumenBaseAgent):
             with self.interface.add_step(title="Determining tables required for join") as step:
                 output = await self.llm.invoke(
                     messages,
-                    system=f"List the tables that need to be joined; be sure to include //: {available_tables}",
+                    system=f"List the tables that need to be joined; be sure to include both `//`: {available_tables}",
                     response_model=TableJoins,
                 )
                 source_tables = output.tables
@@ -580,9 +585,10 @@ class SQLAgent(LumenBaseAgent):
             tables_sql_schemas = {}
             for source_table in source_tables:
                 # //DuckDBSource02007//data2
-                _, a_source_name, a_table = source_table.split("//", maxsplit=2)
-                print(a_source_name, a_table)
-                print(memory["available_sources"], "AVAILABLE")
+                try:
+                    _, a_source_name, a_table = source_table.split("//", maxsplit=2)
+                except ValueError:
+                    a_source_name, a_table = source_table.split("//", maxsplit=1)
                 a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
                 a_schema = get_schema(a_source, a_table, include_min_max=False)
                 sources[a_source_name] = (a_source, a_table)
