@@ -75,7 +75,7 @@ class Join(Analysis):
     async def __call__(self, pipeline) -> Component:
         if self.table_name:
             agent = next((agent for agent in self.agents if type(agent).__name__ == "SQLAgent"), None)
-            content = f"Join these tables: `//{self._previous_source}//{self._previous_table}` and `//{memory['current_source']}//{self.table_name}`"
+            content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['current_source']}//{self.table_name}'"
             if self.index_col:
                 content += f" on {self.index_col}"
             if self.context:
