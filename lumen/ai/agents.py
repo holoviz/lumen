@@ -523,7 +523,7 @@ class SQLAgent(LumenBaseAgent):
                 except duckdb.CatalogException as e:
                     print(f"Could not add to catalog {e}")
         else:
-            source = next(iter(sources.values()))[0]
+            source = next(iter(sources.values()))
 
         # check whether the SQL query is valid
         expr_name = output.expr_name
