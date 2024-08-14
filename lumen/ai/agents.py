@@ -1,6 +1,7 @@
 import asyncio
 import difflib
 import json
+import re
 import textwrap
 
 from typing import Literal, Optional
@@ -480,7 +481,7 @@ class SQLAgent(LumenBaseAgent):
         return out
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, source, errors=None):
+    async def _create_valid_sql(self, messages, system, sources, errors=None):
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -502,21 +503,45 @@ class SQLAgent(LumenBaseAgent):
             async for output in response:
                 step_message = output.chain_of_thought
                 if output.query:
-                    sql_query = output.query.replace("```sql", "").replace("```", "").strip()
+                    sql_query = output.query.replace("```sql", "").replace("```", "").strip().rstrip(";")
                     step_message += f"\n```sql\n{sql_query}\n```"
                 step.stream(step_message, replace=True)
 
         if not sql_query:
             raise ValueError("No SQL query was generated.")
 
+        if len(sources) > 1:
+            source = DuckDBSource(uri=":memory:")
+            for a_source, a_table in sources.values():
+                df = a_source.get(a_table)
+                relation = source._connection.from_df(df)
+                try:
+                    relation.to_table(a_table.rsplit(".", maxsplit=1)[0])
+                except duckdb.CatalogException as e:
+                    print(e)
+        else:
+            source = next(iter(sources.values()))[0]
+
         # check whether the SQL query is valid
         expr_name = output.expr_name
         sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
-        pipeline = Pipeline(source=sql_expr_source, table=expr_name)
+        try:
+            pipeline = Pipeline(source=sql_expr_source, table=expr_name)
+        except Exception as e:
+            step.status = "failed"
+            step.failed_title = str(e)
+            raise e
+
         df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
-        return pipeline, sql_query
+
+        memory["available_sources"].add(sql_expr_source)
+        memory["current_source"] = sql_expr_source
+
+        memory["current_pipeline"] = pipeline
+        memory["current_sql"] = sql_query
+        return sql_query
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
@@ -537,7 +562,7 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
 
         if join_required:
-            available_tables = ", ".join(f"{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
+            available_tables = ", ".join(f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
             with self.interface.add_step(title="Determining tables required for join") as step:
                 output = await self.llm.invoke(
                     messages,
@@ -554,7 +579,10 @@ class SQLAgent(LumenBaseAgent):
         if join_required:
             tables_sql_schemas = {}
             for source_table in source_tables:
-                a_source_name, a_table = source_table.split("//", maxsplit=1)
+                # //DuckDBSource02007//data2
+                _, a_source_name, a_table = source_table.split("//", maxsplit=2)
+                print(a_source_name, a_table)
+                print(memory["available_sources"], "AVAILABLE")
                 a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
                 a_schema = get_schema(a_source, a_table, include_min_max=False)
                 sources[a_source_name] = (a_source, a_table)
@@ -569,6 +597,7 @@ class SQLAgent(LumenBaseAgent):
                     "sql": source.get_sql_expr(table)
                 } for table in source_tables
             }
+            sources[source.name] = (source, table)
         dialect = source.dialect
 
         sql_prompt = render_template(
@@ -578,28 +607,9 @@ class SQLAgent(LumenBaseAgent):
         )
         system = await self._system_prompt_with_context(messages) + sql_prompt
         if join_required:
-            # TEMP FIX; can't get it to ignore //
-            messages = [{"role": "user", "content": "Join the tables"}]
-        pipeline, sql_query = await self._create_valid_sql(messages, system, source)
-
-        if join_required:
-            central_source = DuckDBSource(uri=":memory:")
-            for a_source, a_table in sources.values():
-                df = a_source.get(a_table)
-                relation = central_source._connection.from_df(df)
-                try:
-                    relation.to_table(a_table.rsplit(".", maxsplit=1)[0])
-                except duckdb.CatalogException as e:
-                    print(e)
-            memory["available_sources"].add(central_source)
-            memory["current_source"] = central_source
-            breakpoint()
-        else:
-            memory["available_sources"].add(source)
-            memory["current_source"] = source
-
-        memory["current_pipeline"] = pipeline
-        memory["current_sql"] = sql_query
+            messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
+            print(messages)
+        sql_query = await self._create_valid_sql(messages, system, sources)
         return sql_query
 
     async def invoke(self, messages: list | str):

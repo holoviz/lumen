@@ -99,7 +99,7 @@ class Assistant(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "raise"
+        interface.callback_exception = "verbose"
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
@@ -440,7 +440,11 @@ class Assistant(Viewer):
             print("ENTRY" + "-" * 10)
 
         print("\n\033[95mAGENT:\033[0m", agent, messages[-3:])
-        await agent.invoke(messages[-3:])
+
+        kwargs = {}
+        if isinstance(agent, AnalysisAgent):
+            kwargs["agents"] = self.agents
+        await agent.invoke(messages[-3:], **kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             self._add_analysis_suggestions()
