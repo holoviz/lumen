@@ -972,7 +972,7 @@ class AnalysisAgent(LumenBaseAgent):
         system_prompt += f"\nHere are the columns of the table: {columns}"
         return system_prompt
 
-    async def answer(self, messages: list | str, agents=None):
+    async def answer(self, messages: list | str, agents: list[Agent] = None):
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
         if not analyses:
