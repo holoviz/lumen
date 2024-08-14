@@ -99,7 +99,7 @@ class Assistant(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "raise"
+        interface.callback_exception = "verbose"
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
@@ -145,6 +145,13 @@ class Assistant(Viewer):
             sizing_mode="stretch_width",
         )
 
+        if "current_source" in memory and "available_sources" not in memory:
+            memory["available_sources"] = {memory["current_source"]}
+        elif "current_source" not in memory and "available_sources" in memory:
+            memory["current_source"] = memory["available_sources"][0]
+        elif "available_sources" not in memory:
+            memory["available_sources"] = set([])
+
         self._controls = Column(
             notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
         )
@@ -174,7 +181,7 @@ class Assistant(Viewer):
                             break
                     else:
                         return
-                    await agent.invoke([{'role': 'user', 'content': contents}])
+                    await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
                     self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
@@ -236,6 +243,13 @@ class Assistant(Viewer):
             return
 
         source = memory.get("current_source")
+        if table not in source.get_tables():
+            sources = [src for src in memory.get('available_sources', []) if table in src.get_tables()]
+            if sources:
+                memory['current_source'] = source = sources[0]
+            else:
+                raise KeyError(f'Table {table} could not be found in available sources.')
+
         spec = get_schema(source, table=table)
         sql = memory.get("current_sql")
         system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
@@ -321,7 +335,10 @@ class Assistant(Viewer):
 
         for agent in agents:
             if isinstance(agent, AnalysisAgent):
-                analyses = "\n".join(f"- `{analysis.__name__}`: {analysis.__doc__.strip()}" for analysis in agent.analyses)
+                analyses = "\n".join(
+                    f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
+                    for analysis in agent.analyses
+                )
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
                 break
 
@@ -386,7 +403,6 @@ class Assistant(Viewer):
                             f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                         )
                         custom_messages.append({"role": "user", "content": custom_message})
-                        print(custom_messages)
                     await subagent.answer(custom_messages)
                 else:
                     await subagent.answer(messages)
@@ -431,7 +447,11 @@ class Assistant(Viewer):
             print("ENTRY" + "-" * 10)
 
         print("\n\033[95mAGENT:\033[0m", agent, messages[-3:])
-        await agent.invoke(messages[-3:])
+
+        kwargs = {}
+        if isinstance(agent, AnalysisAgent):
+            kwargs["agents"] = self.agents
+        await agent.invoke(messages[-3:], **kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             self._add_analysis_suggestions()

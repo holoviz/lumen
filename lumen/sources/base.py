@@ -468,6 +468,8 @@ class Source(MultiTypeComponent):
             A DataFrame containing the queried table.
         """
 
+    def __str__(self) -> str:
+        return self.name
 
 class RESTSource(Source):
     """

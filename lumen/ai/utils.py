@@ -41,7 +41,6 @@ def retry_llm_output(retries=3, sleep=1):
                 errors = []
                 for i in range(retries):
                     if errors:
-                        print(errors)
                         kwargs["errors"] = errors
 
                     try:
@@ -87,6 +86,13 @@ def format_schema(schema):
     for field, spec in schema.items():
         if "enum" in spec and len(spec["enum"]) > 5:
             spec["enum"] = spec["enum"][:5] + ["..."]
+        if "type" in spec:
+            if spec["type"] == "string":
+                spec["type"] = "str"
+            elif spec["type"] == "integer":
+                spec["type"] = "int"
+            elif spec["type"] == "boolean":
+                spec["type"] = "bool"
         formatted[field] = spec
     return formatted
 

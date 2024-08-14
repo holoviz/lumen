@@ -26,7 +26,6 @@ def test_dashboard_with_local_view_legacy(set_root):
     dashboard = Dashboard(str(root / 'dashboard_legacy.yaml'))
     dashboard._render_dashboard()
     layout = dashboard.layouts[0]
-    print(layout.get_cards())
     view = layout._cards[0].views[0]
     assert isinstance(view, config._modules[str(root / 'views.py')].TestView)
 

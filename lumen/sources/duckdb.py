@@ -62,17 +62,41 @@ class DuckDBSource(BaseSQLSource):
             for init in self.initializers:
                 self._connection.execute(init)
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+    def create_sql_expr_source(
+        self, tables: dict[str, str], materialize: bool = True, **kwargs
+    ):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        materialize: bool
+            Whether to materialize new tables
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: DuckDBSource
         """
         params = dict(self.param.values(), **kwargs)
         params['tables'] = tables
         # Reuse connection unless it has changed
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             params['_connection'] = self._connection
-        return type(self)(**params)
+        source = type(self)(**params)
+        if not materialize:
+            return source
+        existing = self.get_tables()
+        for table, sql_expr in tables.items():
+            if table in existing or sql_expr == self.sql_expr.format(table=f'"{table}"'):
+                continue
+            table_expr = f'CREATE TEMP TABLE "{table}" AS ({sql_expr})'
+            self._connection.execute(table_expr)
+        return source
 
     def get_tables(self):
         if isinstance(self.tables, (dict, list)):
