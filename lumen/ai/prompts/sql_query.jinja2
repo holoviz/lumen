@@ -8,12 +8,15 @@ The data for table '{{ table }}' follows the following JSON schema:
 
 {% if not join_required %}
 It was already determined that no join is required, so only use the existing
-table `{{ table }}` to calculate the result.
+table '{{ table }}' to calculate the result.
 {% endif %}
 
 Checklist
 - Do not write a join if the table already contains all the columns that are needed
 - If it's a date column (excluding individual year/month/day integers), cast as date
 - If no limit is specified, specify 10000 as the limit.
-- Use table names verbatim; e.g. if table is `read_csv('table.csv')` then use `read_csv('table.csv')` and not `table`
+- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'
 - Use only `{{ dialect }}` syntax
+{% if dialect == 'duckdb' %}
+- String literals are delimited using single quotes (', apostrophe) and result in STRING_LITERAL values. Note that double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted identifiers.
+{% endif %}
