@@ -1,13 +1,19 @@
 {% for table, details in tables_sql_schemas.items() %}
-The data for table `{{ table }}` follows the following JSON schema:
+
+The data for table '{{ table }}' follows the following JSON schema:
 ```json
 {{ details.schema }}
 ```
 {% endfor %}
 
+{% if not join_required %}
+It was already determined that no join is required, so only use the existing
+table `{{ table }}` to calculate the result.
+{% endif %}
+
 Checklist
+- Do not write a join if the table already contains all the columns that are needed
 - If it's a date column (excluding individual year/month/day integers), cast as date
 - If no limit is specified, specify 10000 as the limit.
-- Use table names verbatim; e.g. if table name is `read_csv('table.csv')` then use something like `read_csv('table.csv') as table` with an alias (!important) and not `table.csv` nor `table`, but if the table has no file extension, i.e. `table`, then please only use `table`; it's very important to be consistent with this.
+- Use table names verbatim; e.g. if table is `read_csv('table.csv')` then use `read_csv('table.csv')` and not `table`
 - Use only `{{ dialect }}` syntax
-- Do not end with a semi-colon

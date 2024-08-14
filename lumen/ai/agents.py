@@ -9,6 +9,7 @@ from typing import Literal, Optional
 import duckdb
 import panel as pn
 import param
+import yaml
 
 from panel.chat import ChatInterface
 from panel.pane import HTML
@@ -523,12 +524,11 @@ class SQLAgent(LumenBaseAgent):
                 except duckdb.CatalogException as e:
                     print(f"Could not add to catalog {e}")
         else:
-            source = next(iter(sources.values()))
+            source = next(iter(sources.values()))[0]
 
         # check whether the SQL query is valid
         expr_name = output.expr_name
         sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
-        print(sql_query)
         try:
             pipeline = Pipeline(source=sql_expr_source, table=expr_name)
         except Exception as e:
@@ -542,10 +542,44 @@ class SQLAgent(LumenBaseAgent):
 
         memory["available_sources"].add(sql_expr_source)
         memory["current_source"] = sql_expr_source
-
         memory["current_pipeline"] = pipeline
+        memory["current_table"] = pipeline.table
         memory["current_sql"] = sql_query
         return sql_query
+
+    async def find_join_tables(self, messages: list | str, join_tables: list[str] | None = None):
+        if join_tables:
+            multi_source = any('//' in jt for jt in join_tables)
+        else:
+            multi_source = len(memory['available_sources']) > 1
+            if multi_source:
+                available_tables = ", ".join(f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
+            else:
+                available_tables = memory['current_source'].get_tables()
+
+            with self.interface.add_step(title="Determining tables required for join") as step:
+                output = await self.llm.invoke(
+                    messages,
+                    system=f"List the tables that need to be joined; be sure to include both `//`: {available_tables}",
+                    response_model=TableJoins,
+                )
+                join_tables = output.tables
+                step.stream(f'\nJoin requires following tables: {join_tables}', replace=True)
+                step.success_title = 'Found tables required for join'
+
+        sources = {}
+        for source_table in join_tables:
+            if multi_source:
+                try:
+                    _, a_source_name, a_table = source_table.split("//", maxsplit=2)
+                except ValueError:
+                    a_source_name, a_table = source_table.split("//", maxsplit=1)
+                a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
+            else:
+                a_source = memory['current_source']
+                a_table = source_table
+            sources[a_source_name] = (a_source, a_table)
+        return sources
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
@@ -555,9 +589,15 @@ class SQLAgent(LumenBaseAgent):
             return None
 
         with self.interface.add_step(title="Checking if join is required") as step:
+            schema = get_schema(source, table, include_min_max=False)
+            join_prompt = render_template(
+                "join_required.jinja2",
+                schema=schema,
+                table=table
+            )
             response = self.llm.stream(
-                messages,
-                system="Determine whether a table join is required to answer the user's query.",
+                messages[-1:],
+                system=join_prompt,
                 response_model=JoinRequired,
             )
             async for output in response:
@@ -566,55 +606,33 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
 
         if join_required:
-            available_tables = ", ".join(f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
-            with self.interface.add_step(title="Determining tables required for join") as step:
-                output = await self.llm.invoke(
-                    messages,
-                    system=f"List the tables that need to be joined; be sure to include both `//`: {available_tables}",
-                    response_model=TableJoins,
-                )
-                source_tables = output.tables
-                step.stream(f'\nJoin requires following tables: {source_tables}', replace=True)
-                step.success_title = 'Found tables required for join'
+            sources = await self.find_join_tables(messages)
         else:
-            source_tables = [table]
+            sources = {source.name: (source, table)}
 
-        sources = {}
-        if join_required:
-            tables_sql_schemas = {}
-            for source_table in source_tables:
-                # //DuckDBSource02007//data2
-                try:
-                    _, a_source_name, a_table = source_table.split("//", maxsplit=2)
-                except ValueError:
-                    a_source_name, a_table = source_table.split("//", maxsplit=1)
-                a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
-                a_schema = get_schema(a_source, a_table, include_min_max=False)
-                sources[a_source_name] = (a_source, a_table)
-                tables_sql_schemas[a_table] = {
-                    "schema": a_schema,
-                    "sql": a_source.get_sql_expr(a_table)
-                }
-        else:
-            tables_sql_schemas = {
-                table: {
-                    "schema": get_schema(source, table, include_min_max=False),
-                    "sql": source.get_sql_expr(table)
-                } for table in source_tables
+        table_schemas = {}
+        for source, source_table in sources.values():
+            if source_table == table:
+                table_schema = schema
+            else:
+                table_schema = get_schema(source, source_table, include_min_max=False)
+            table_schemas[source_table] = {
+                "schema": table_schema,
+                "sql": source.get_sql_expr(source_table)
             }
-            sources[source.name] = (source, table)
-        dialect = source.dialect
 
+        dialect = source.dialect
         sql_prompt = render_template(
             "sql_query.jinja2",
-            tables_sql_schemas=tables_sql_schemas,
+            tables_sql_schemas=table_schemas,
             dialect=dialect,
+            join_required=join_required,
+            table=table
         )
-        system = await self._system_prompt_with_context(messages) + sql_prompt
+        system = await self._system_prompt_with_context(messages[-1:]) + sql_prompt
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
-            print(messages)
         sql_query = await self._create_valid_sql(messages, system, sources)
         return sql_query
 
@@ -972,12 +990,18 @@ class AnalysisAgent(LumenBaseAgent):
         system_prompt += f"\nHere are the columns of the table: {columns}"
         return system_prompt
 
-    async def answer(self, messages: list | str, agents: list[Agent] = None):
+    async def answer(self, messages: list | str, agents: list[Agent] | None = None):
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
         if not analyses:
             print("NONE found...")
             return None
+
+        # Short cut analysis selection if there's an exact match
+        if isinstance(messages, list) and messages:
+            analysis = messages[0].get('content').replace('Apply ', '')
+            if analysis in analyses:
+                analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
             with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
@@ -1013,7 +1037,8 @@ class AnalysisAgent(LumenBaseAgent):
                 memory["current_view"] = dict(spec, type=view_type)
             elif isinstance(view, Pipeline):
                 memory["current_pipeline"] = view
-            step.stream(f"Generated view\n```json\n{spec}\n```")
+            yaml_spec = yaml.safe_dump(spec)
+            step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
             step.success_title = "Generated view"
         return view
 

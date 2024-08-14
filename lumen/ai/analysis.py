@@ -37,7 +37,7 @@ class Analysis(param.ParameterizedFunction):
         return pipeline
 
 
-class JoinAnalysis(Analysis):
+class Join(Analysis):
 
     autorun = param.Boolean(default=False, doc="Whether to automatically run the analysis.")
 
