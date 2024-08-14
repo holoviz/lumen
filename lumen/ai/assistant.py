@@ -243,6 +243,13 @@ class Assistant(Viewer):
             return
 
         source = memory.get("current_source")
+        if table not in source.get_tables():
+            sources = [src for src in memory.get('available_sources', []) if table in src.get_tables()]
+            if sources:
+                memory['current_source'] = source = sources[0]
+            else:
+                raise KeyError(f'Table {table} could not be found in available sources.')
+
         spec = get_schema(source, table=table)
         sql = memory.get("current_sql")
         system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
