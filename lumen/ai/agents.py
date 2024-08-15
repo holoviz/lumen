@@ -26,7 +26,7 @@ from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
-from .controls import add_source_controls
+from .controls import SourceControls
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
@@ -204,10 +204,9 @@ class SourceAgent(Agent):
     on_init = param.Boolean(default=True)
 
     async def answer(self, messages: list | str):
-        menu = add_source_controls()
-        add = menu[0][-1]
-        self.interface.send(menu, respond=False, user="SourceAgent")
-        while not add.clicks:
+        source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
+        self.interface.send(source_controls, respond=False, user="SourceAgent")
+        while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
 
     async def invoke(self, messages: list[str] | str):
@@ -1002,7 +1001,7 @@ class AnalysisAgent(LumenBaseAgent):
                 analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
+            with self.interface.add_step(title="Choosing the most relevant analysis...", user="Assistant") as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -1020,7 +1019,7 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title="Creating view...") as step:
+        with self.interface.add_step(title="Creating view...", user="Assistant") as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
             memory["current_analysis"] = analysis_callable

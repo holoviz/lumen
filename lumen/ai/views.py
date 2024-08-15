@@ -64,7 +64,8 @@ class LumenOutput(Viewer):
             ("Code", code_col),
             ("Output", placeholder),
             styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-            active=1
+            active=1,
+            dynamic=True
         )
         self._tabs.link(self, bidirectional=True, active='active')
         placeholder.objects = [
@@ -91,7 +92,7 @@ class LumenOutput(Viewer):
             if isinstance(self.component, Pipeline):
                 table = Table(
                     pipeline=self.component, pagination='remote', page_size=21,
-                    min_height=650, sizing_mode="stretch_both", stylesheets=[
+                    min_height=300, sizing_mode="stretch_both", stylesheets=[
                         """
                         .tabulator-footer {
                             display: flex;
