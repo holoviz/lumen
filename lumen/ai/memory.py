@@ -13,14 +13,9 @@ from ..base import Component
 if TYPE_CHECKING:
     from bokeh.document import Document
 
-
-class _Memory(Viewer):
+class SessionCache:
 
     _session_contexts: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
-
-    _views: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
-
-    _global_view = None
 
     _global_context = {}
 
@@ -43,8 +38,6 @@ class _Memory(Viewer):
 
     def __setitem__(self, key, value):
         self._curcontext[key] = value
-        if state.curdoc in self._views or (state.curdoc is None and self._global_view is not None):
-            self._update_view(key, value)
 
     def get(self, key, default=None):
         obj = dict(self._global_context, **self._curcontext).get(key, default)
@@ -52,11 +45,23 @@ class _Memory(Viewer):
             obj = obj.copy()
         return obj
 
+    def keys(self):
+        return dict(self._global_context, **self._curcontext).keys()
+
     def pop(self, key, default=None):
         return self._curcontext.pop(key, default)
 
-    def keys(self):
-        return dict(self._global_context, **self._curcontext).keys()
+
+class _Memory(SessionCache, Viewer):
+
+    _views: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
+
+    _global_view = None
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if state.curdoc in self._views or (state.curdoc is None and self._global_view is not None):
+            self._update_view(key, value)
 
     def _render_item(self, key, item):
         if isinstance(item, Component):
