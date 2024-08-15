@@ -4,6 +4,7 @@ from io import StringIO
 from typing import Any
 
 import duckdb
+import numpy as np
 import pandas as pd
 import param
 
@@ -103,10 +104,16 @@ class DuckDBSource(BaseSQLSource):
         tables = {}
         for t in self.get_tables():
             tdf = self.get(t)
-            jsonio = StringIO()
-            tdf.to_json(jsonio)
-            jsonio.seek(0)
-            tables[t] = jsonio.read()
+            csv = StringIO()
+            tdf.to_csv(csv)
+            csv.seek(0)
+            tables[t] = {
+                'data': csv.read(),
+                'type': 'csv',
+                'index': tdf.index.names,
+                'date_cols': list(tdf.select_dtypes(np.datetime64).columns),
+                'dtypes': {col: str(tdf[col].dtype) for col in tdf.columns}
+            }
         return tables
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -134,8 +141,17 @@ class DuckDBSource(BaseSQLSource):
             return source
         new_tables = {}
         for t, table_json in synthetic_tables.items():
-            jsonio = StringIO(table_json)
-            df = pd.read_json(jsonio)
+            data = StringIO(table_json['data'])
+            if table_json['type'] == 'csv':
+                index_cols = [col or 'Unnamed: 0' for col in table_json['index']]
+                df = pd.read_csv(
+                    data, parse_dates=table_json['date_cols'], index_col=index_cols
+                ).astype(table_json['dtypes'])
+            else:
+                raise ValueError(
+                    "Table data type {table_json['type']!r} unknown. "
+                    "Cannot be deserialized."
+                )
             try:
                 source._connection.from_df(df).to_table(t)
             except duckdb.ParserException:

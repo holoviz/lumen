@@ -33,6 +33,13 @@ def duckdb_source():
     return duckdb_source
 
 
+@pytest.fixture
+def duckdb_memory_source(mixed_df):
+    source = DuckDBSource(uri=':memory:', synthetic=True)
+    source._connection.from_df(mixed_df).to_table('mixed')
+    return source
+
+
 def test_duckdb_resolve_module_type():
     assert DuckDBSource._get_type('lumen.sources.duckdb.DuckDBSource') is DuckDBSource
     assert DuckDBSource.source_type == 'duckdb'
@@ -146,3 +153,15 @@ def test_duckdb_clear_cache(duckdb_source):
     duckdb_source.clear_cache()
     assert len(duckdb_source._cache) == 0
     assert len(duckdb_source._schema_cache) == 0
+
+
+def test_duckdb_source_synthetic_roundtrips(duckdb_memory_source, mixed_df):
+    source = DuckDBSource.from_spec(duckdb_memory_source.to_spec())
+    df = source.get('mixed')
+    for col in df.columns:
+        assert (df[col]==mixed_df[col]).all()
+
+
+def test_duckdb_source_mirrors_source(duckdb_source):
+    mirrored = DuckDBSource(uri=':memory:', mirrors={'mixed': (duckdb_source, 'test_sql')})
+    pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'))
