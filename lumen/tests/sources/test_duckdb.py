@@ -36,7 +36,7 @@ def duckdb_source():
 @pytest.fixture
 def duckdb_memory_source(mixed_df):
     source = DuckDBSource(uri=':memory:', synthetic=True)
-    source._connection.from_df(mixed_df).to_table('mixed')
+    source._connection.from_df(mixed_df).to_view('mixed')
     return source
 
 

@@ -82,10 +82,18 @@ class DuckDBSource(BaseSQLSource):
                 df = source.get(src_table)
             else:
                 df = mirror.data
+                def update(e, table=table):
+                    self._connection.from_df(e.new).to_view(table)
+                    self._set_cache(e.new, table)
+                mirror.param.watch(update, 'data')
             try:
-                self._connection.from_df(df).to_table(table)
+                self._connection.from_df(df).to_view(table)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
+
+    @property
+    def connection(self):
+        return self._connection
 
     @classmethod
     def _recursive_resolve(
@@ -153,7 +161,7 @@ class DuckDBSource(BaseSQLSource):
                     "Cannot be deserialized."
                 )
             try:
-                source._connection.from_df(df).to_table(t)
+                source._connection.from_df(df).to_view(t)
             except duckdb.ParserException:
                 continue
             new_tables[t] = source.sql_expr.format(table=t)

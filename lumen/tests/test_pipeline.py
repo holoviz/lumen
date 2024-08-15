@@ -8,6 +8,13 @@ try:
 except Exception:
     intake_sql = None
 
+try:
+    import duckdb
+
+    from lumen.sources.duckdb import DuckDBSource
+except Exception:
+    duckdb = None
+
 from panel.widgets import Select
 
 from lumen.filters.base import ConstantFilter
@@ -17,7 +24,7 @@ from lumen.state import state
 from lumen.transforms.base import Columns
 from lumen.transforms.sql import SQLColumns, SQLGroupBy
 
-sql_available = pytest.mark.skipif(intake_sql is None, reason="intake-sql is not installed")
+sql_available = pytest.mark.skipif(intake_sql is None or duckdb is None, reason="intake-sql is not installed")
 
 
 def test_pipeline_source_only(make_filesource, mixed_df):
@@ -198,7 +205,7 @@ def test_pipeline_chained_with_transform(make_filesource, mixed_df):
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
 @sql_available
-def test_pipeline_collapsed_with_sql_transform(mixed_df_object_type):
+def test_pipeline_chained_with_sql_transform(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
@@ -209,12 +216,16 @@ def test_pipeline_collapsed_with_sql_transform(mixed_df_object_type):
     transform = SQLColumns(columns=['A', 'B'])
     pipeline2 = pipeline1.chain(sql_transforms=[transform])
 
+    assert pipeline2.pipeline is None
+    assert isinstance(pipeline2.source, DuckDBSource)
+
     expected = mixed_df_object_type.iloc[1:3][['A', 'B']].reset_index(drop=True)
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
     # Update
     cfilter.value = (2, 3)
     expected = mixed_df_object_type.iloc[2:4][['A', 'B']].reset_index(drop=True)
+
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
     transform.columns = ['B', 'C']
@@ -222,7 +233,7 @@ def test_pipeline_collapsed_with_sql_transform(mixed_df_object_type):
     pd.testing.assert_frame_equal(pipeline2.data, expected)
 
 @sql_available
-def test_pipeline_chained_with_sql_transform(mixed_df_object_type):
+def test_pipeline_chained_sql_transform_with_regular_transforms(mixed_df_object_type):
     root = pathlib.Path(__file__).parent / 'sources'
     source = IntakeSQLSource(
         uri=str(root / 'catalog.yml'), root=str(root)
