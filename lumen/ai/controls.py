@@ -8,17 +8,22 @@ from lumen.sources.duckdb import DuckDBSource
 
 
 def add_source_controls(replace_controls: bool = True):
+    def wrap_upload():
+        return io.BytesIO(upload.value)
+
     def add_table(event):
         with menu.param.update(loading=True):
             if input_tabs.active == 0 and upload.value:
+                uploaded_bytes = wrap_upload()
                 if upload.filename.endswith("csv"):
-                    df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
+                    df = pd.read_csv(uploaded_bytes, parse_dates=True)
                 elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value))
+                    df = pd.read_parquet(uploaded_bytes)
                 elif upload.filename.endswith(".json"):
-                    df = pd.read_json(io.BytesIO(upload.value))
+                    df = pd.read_json(uploaded_bytes)
                 elif upload.filename.endswith(".xlsx"):
-                    df = pd.read_excel(io.BytesIO(upload.value))
+                    sheet_name = input_sheet.value or input_sheet.options[0]
+                    df = pd.read_excel(uploaded_bytes, sheet_name=sheet_name)
                 # TODO: add url support
                 duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True)
                 duckdb_source._connection.from_df(df).to_view(name.value)
@@ -49,6 +54,14 @@ def add_source_controls(replace_controls: bool = True):
             name.visible = True
         add.visible = True
 
+    def select_sheet(event):
+        if not upload.filename.endswith(".xlsx"):
+            return
+        sheets = pd.read_excel(wrap_upload(), sheet_name=None)
+        sheet_names = list(sheets.keys())
+        input_sheet.options = sheet_names
+        input_sheet.visible = True
+
     name = pn.widgets.TextInput(name="Name your table", visible=False)
     upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq,.json,.xlsx")
     add = pn.widgets.Button(
@@ -59,8 +72,10 @@ def add_source_controls(replace_controls: bool = True):
     )
     input_tabs = pn.Tabs(("Upload", upload), sizing_mode="stretch_width")
     tables = pn.Tabs(sizing_mode="stretch_width")
+    input_sheet = pn.widgets.Select(name="Sheet", visible=False)
     input_column = pn.Column(
         input_tabs,
+        input_sheet,
         name,
         add,
         sizing_mode="stretch_width",
@@ -70,6 +85,7 @@ def add_source_controls(replace_controls: bool = True):
         tables,
         sizing_mode="stretch_width",
     )
+    upload.param.watch(select_sheet, "filename")
     upload.param.watch(add_name, "filename")
     add.on_click(add_table)
     return menu
