@@ -54,8 +54,8 @@ class DuckDBSource(BaseSQLSource):
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression to execute.""")
 
-    synthetic = param.Boolean(default=False, doc="""
-        Whether the data is synthetic, i.e. manually inserted into the
+    ephemeral = param.Boolean(default=False, doc="""
+        Whether the data is ephemeral, i.e. manually inserted into the
         DuckDB table or derived from real data.""")
 
     tables = param.ClassSelector(class_=(list, dict), doc="""
@@ -126,7 +126,7 @@ class DuckDBSource(BaseSQLSource):
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context)
-        if self.synthetic:
+        if self.ephemeral:
             spec['tables'] = self._serialize_tables()
         if 'mirrors' not in spec:
             return spec
@@ -139,16 +139,16 @@ class DuckDBSource(BaseSQLSource):
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any] | str) -> Source:
-        if spec.get('synthetic') and 'tables' in spec:
-            synthetic_tables = spec['tables']
+        if spec.get('ephemeral') and 'tables' in spec:
+            ephemeral_tables = spec['tables']
             spec['tables'] = {}
         else:
-            synthetic_tables = {}
+            ephemeral_tables = {}
         source = super().from_spec(spec)
-        if not synthetic_tables:
+        if not ephemeral_tables:
             return source
         new_tables = {}
-        for t, table_json in synthetic_tables.items():
+        for t, table_json in ephemeral_tables.items():
             data = StringIO(table_json['data'])
             if table_json['type'] == 'csv':
                 index_cols = [col or 'Unnamed: 0' for col in table_json['index']]

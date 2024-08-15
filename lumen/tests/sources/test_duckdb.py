@@ -35,7 +35,7 @@ def duckdb_source():
 
 @pytest.fixture
 def duckdb_memory_source(mixed_df):
-    source = DuckDBSource(uri=':memory:', synthetic=True)
+    source = DuckDBSource(uri=':memory:', ephemeral=True)
     source._connection.from_df(mixed_df).to_view('mixed')
     return source
 
@@ -155,7 +155,7 @@ def test_duckdb_clear_cache(duckdb_source):
     assert len(duckdb_source._schema_cache) == 0
 
 
-def test_duckdb_source_synthetic_roundtrips(duckdb_memory_source, mixed_df):
+def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
     source = DuckDBSource.from_spec(duckdb_memory_source.to_spec())
     df = source.get('mixed')
     for col in df.columns:
