@@ -58,7 +58,7 @@ class TableControls(pn.viewable.Viewer):
 
 class SourceControls(pn.viewable.Viewer):
 
-    add = param.Event(doc="Add table")
+    add = param.Event(doc="Add tables")
     multiple = param.Boolean(default=False, doc="Allow multiple files")
     replace_controls = param.Boolean(default=False, doc="Replace controls")
     select_existing = param.Boolean(default=True, doc="Select existing table")
@@ -96,7 +96,7 @@ class SourceControls(pn.viewable.Viewer):
 
         self._add_button = pn.widgets.Button.from_param(
             self.param.add,
-            name="Add table",
+            name="Use tables",
             icon="table-plus",
             visible=False,
             button_type="success",
@@ -115,7 +115,10 @@ class SourceControls(pn.viewable.Viewer):
         self._upload_tabs.clear()
         self._table_controls.clear()
         for filename, file in self._file_input.value.items():
-            table_controls = TableControls(io.BytesIO(file), filename=filename)
+            table_controls = TableControls(
+                io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file),
+                filename=filename,
+            )
             self._upload_tabs.append((filename, table_controls))
             self._table_controls.append(table_controls)
 
@@ -127,7 +130,7 @@ class SourceControls(pn.viewable.Viewer):
     def _add_table(
         self,
         duckdb_source: DuckDBSource,
-        file: io.BytesIO,
+        file: io.BytesIO | io.StringIO,
         table_controls: TableControls,
     ):
         extension = table_controls.extension
