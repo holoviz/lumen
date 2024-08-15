@@ -52,11 +52,6 @@ class CSVSerializer(Serializer):
         index_cols = data['index']
         if index_cols:
             df = df.set_index(index_cols)
-        else:
-            raise ValueError(
-                "Table data type {table_json['type']!r} unknown. "
-                "Cannot be deserialized."
-            )
         return df
 
 
