@@ -70,7 +70,7 @@ class Join(Analysis):
             case_sensitive=False, restrict=False
         )
         context = pn.widgets.TextInput.from_param(self.param.context, name="Context")
-        controls = pn.Column(
+        controls = pn.FlexBox(
             index_col,
             context,
             self._source_controls,

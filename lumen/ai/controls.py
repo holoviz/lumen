@@ -34,7 +34,7 @@ class TableControls(pn.viewable.Viewer):
         self._sheet_select = pn.widgets.Select.from_param(
             self.param.sheet, name="Sheet", visible=False
         )
-        self.box = pn.WidgetBox(
+        self.box = pn.FlexBox(
             self._name_input,
             self._sheet_select,
         )

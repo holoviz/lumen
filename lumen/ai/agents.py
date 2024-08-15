@@ -585,7 +585,7 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        with self.interface.add_step(title="Checking if join is required") as step:
+        with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
             schema = get_schema(source, table, include_min_max=False)
             join_prompt = render_template(
                 "join_required.jinja2",
