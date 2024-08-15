@@ -156,7 +156,7 @@ class Pipeline(Viewer, Component):
             ]
         elif filters is None:
             filters = []
-        if any(isinstance(t, SQLTransform) for t in params.get('transforms', [])):
+        if any(isinstance(t, SQLTransform) for t in params.get('transforms') or []):
             raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
         self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
@@ -590,7 +590,7 @@ class Pipeline(Viewer, Component):
                     'Cannot chain SQL transforms on a Pipeline without '
                     'DuckDB. Ensure DuckDB is installed.'
                 )
-            sql_src = DuckDBSource(uri=':memory', mirrors={self.name: self})
+            sql_src = DuckDBSource(uri=':memory:', mirrors={self.name: self})
             return Pipeline(
                 source=sql_src,
                 table=self.name,
