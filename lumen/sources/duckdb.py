@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from io import StringIO
 from typing import Any
 
 import duckdb
+import numpy as np
+import pandas as pd
 import param
 
 from ..transforms import Filter
@@ -10,7 +13,9 @@ from ..transforms.sql import (
     SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
 from ..util import get_dataframe_schema
-from .base import BaseSQLSource, cached, cached_schema
+from .base import (
+    BaseSQLSource, Source, cached, cached_schema,
+)
 
 
 class DuckDBSource(BaseSQLSource):
@@ -35,18 +40,28 @@ class DuckDBSource(BaseSQLSource):
     filter_in_sql = param.Boolean(default=True, doc="""
         Whether to apply filters in SQL or in-memory.""")
 
-    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
+    initializers = param.List(default=[], doc="""
+        SQL statements to run to initialize the connection.""")
 
-    uri = param.String(doc="The URI of the DuckDB database")
+    mirrors = param.Dict(default={}, doc="""
+        Mirrors the tables into the DuckDB database. The mirrors
+        should define a mapping from the table names to the source of
+        the mirror which may be defined as a Pipeline or a tuple of
+        the source and the table.""")
+
+    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression to execute.""")
 
+    ephemeral = param.Boolean(default=False, doc="""
+        Whether the data is ephemeral, i.e. manually inserted into the
+        DuckDB table or derived from real data.""")
+
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
-    initializers = param.List(default=[], doc="""
-        SQL statements to run to initialize the connection.""")
+    uri = param.String(doc="The URI of the DuckDB database")
 
     source_type = 'duckdb'
 
@@ -61,6 +76,97 @@ class DuckDBSource(BaseSQLSource):
             self._connection = duckdb.connect(self.uri)
             for init in self.initializers:
                 self._connection.execute(init)
+        for table, mirror in self.mirrors.items():
+            if isinstance(mirror, tuple):
+                source, src_table = mirror
+                df = source.get(src_table)
+            else:
+                df = mirror.data
+                def update(e, table=table):
+                    self._connection.from_df(e.new).to_view(table)
+                    self._set_cache(e.new, table)
+                mirror.param.watch(update, 'data')
+            try:
+                self._connection.from_df(df).to_view(table)
+            except (duckdb.CatalogException, duckdb.ParserException):
+                continue
+
+    @property
+    def connection(self):
+        return self._connection
+
+    @classmethod
+    def _recursive_resolve(
+        cls, spec: dict[str, Any], source_type: type[Source]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        mirrors = spec.pop('mirrors', {})
+        spec, refs = super()._recursive_resolve(spec, source_type)
+        resolved_mirrors = {}
+        for table, (src_spec, src_table) in mirrors.items():
+            source = cls.from_spec(src_spec)
+            resolved_mirrors[table] = (source, src_table)
+        spec['mirrors'] = resolved_mirrors
+        return spec, refs
+
+    def _serialize_tables(self):
+        tables = {}
+        for t in self.get_tables():
+            tdf = self.get(t)
+            csv = StringIO()
+            tdf.to_csv(csv)
+            csv.seek(0)
+            tables[t] = {
+                'data': csv.read(),
+                'type': 'csv',
+                'index': tdf.index.names,
+                'date_cols': list(tdf.select_dtypes(np.datetime64).columns),
+                'dtypes': {col: str(tdf[col].dtype) for col in tdf.columns}
+            }
+        return tables
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        if self.ephemeral:
+            spec['tables'] = self._serialize_tables()
+        if 'mirrors' not in spec:
+            return spec
+        mirrors = {}
+        for table, (source, src_table) in spec['mirrors'].items():
+            src_spec = source.to_spec(context=context)
+            mirrors[table] = (src_spec, src_table)
+        spec['mirrors'] = mirrors
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any] | str) -> Source:
+        if spec.get('ephemeral') and 'tables' in spec:
+            ephemeral_tables = spec['tables']
+            spec['tables'] = {}
+        else:
+            ephemeral_tables = {}
+        source = super().from_spec(spec)
+        if not ephemeral_tables:
+            return source
+        new_tables = {}
+        for t, table_json in ephemeral_tables.items():
+            data = StringIO(table_json['data'])
+            if table_json['type'] == 'csv':
+                index_cols = [col or 'Unnamed: 0' for col in table_json['index']]
+                df = pd.read_csv(
+                    data, parse_dates=table_json['date_cols'], index_col=index_cols
+                ).astype(table_json['dtypes'])
+            else:
+                raise ValueError(
+                    "Table data type {table_json['type']!r} unknown. "
+                    "Cannot be deserialized."
+                )
+            try:
+                source._connection.from_df(df).to_view(t)
+            except duckdb.ParserException:
+                continue
+            new_tables[t] = source.sql_expr.format(table=t)
+        source.tables = new_tables
+        return source
 
     def create_sql_expr_source(
         self, tables: dict[str, str], materialize: bool = True, **kwargs

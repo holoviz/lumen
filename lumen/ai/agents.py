@@ -6,7 +6,6 @@ import textwrap
 
 from typing import Literal, Optional
 
-import duckdb
 import panel as pn
 import param
 import yaml
@@ -512,20 +511,16 @@ class SQLAgent(LumenBaseAgent):
             raise ValueError("No SQL query was generated.")
 
         if len(sources) > 1:
-            source = DuckDBSource(uri=":memory:")
+            mirrors = {}
             for a_source, a_table in sources.values():
-                df = a_source.get(a_table)
-                relation = source._connection.from_df(df)
-                try:
-                    # DREMIO.SOMETHING turns into DREMIO_SOMETHING
-                    if not ("(" in a_table and ")" in a_table):
-                        renamed_table = a_table.replace(".", "_")
-                        sql_query = sql_query.replace(a_table, renamed_table)
-                        relation.to_table(renamed_table)
-                    else:
-                        relation.to_table(a_table)
-                except duckdb.CatalogException as e:
-                    print(f"Could not add to catalog {e}")
+                if not ("(" in a_table and ")" in a_table):
+                    renamed_table = a_table.replace(".", "_")
+                    sql_query = sql_query.replace(a_table, renamed_table)
+                else:
+                    renamed_table = a_table
+                sql_query = sql_query.replace(a_table, renamed_table)
+                mirrors[renamed_table] = (a_source, a_table)
+            source = DuckDBSource(uri=":memory:", mirrors=mirrors)
         else:
             source = next(iter(sources.values()))[0]
 

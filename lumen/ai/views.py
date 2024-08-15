@@ -12,7 +12,6 @@ from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..views.base import Table
-from .memory import memory
 
 
 class LumenOutput(Viewer):
@@ -71,6 +70,7 @@ class LumenOutput(Viewer):
         placeholder.objects = [
             pn.pane.ParamMethod(self._render_component, inplace=True)
         ]
+        self._last_output = {}
 
     @param.depends('spec', 'active')
     async def _render_component(self):
@@ -81,24 +81,13 @@ class LumenOutput(Viewer):
         if (self.active != (len(self._tabs)-1)):
             return
 
-        # store the spec in the cache instead of memory to save tokens
-        memory["current_spec"] = self.spec
+        if self.spec in self._last_output:
+            yield self._last_output[self.spec]
+            return
+
         try:
             yaml_spec = load_yaml(self.spec)
-
-            if hasattr(self.component, "source") and hasattr(self.component.source, "create_sql_expr_source"):
-                pipeline = self.component
-                old_source = memory["current_source"]
-                if "tables" in yaml_spec["source"]:
-                    tables = yaml_spec["source"]["tables"]
-                    old_source.tables = tables
-                pipeline.param.update(
-                    source=old_source,
-                    table=yaml_spec["table"]
-                )
-                self.component = pipeline
-            else:
-                self.component = type(self.component).from_spec(yaml_spec)
+            self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
                 table = Table(
                     pipeline=self.component, pagination='remote', page_size=21,
@@ -122,6 +111,8 @@ class LumenOutput(Viewer):
                 output = pn.Column(download_pane, table)
             else:
                 output = self.component.__panel__()
+            self._last_output.clear()
+            self._last_output[self.spec] = output
             yield output
         except Exception as e:
             import traceback

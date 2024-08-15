@@ -20,8 +20,8 @@ def add_source_controls(replace_controls: bool = True):
                 elif upload.filename.endswith(".xlsx"):
                     df = pd.read_excel(io.BytesIO(upload.value))
                 # TODO: add url support
-                duckdb_source = DuckDBSource(uri=":memory:")
-                duckdb_source._connection.from_df(df).to_table(name.value)
+                duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True)
+                duckdb_source._connection.from_df(df).to_view(name.value)
                 if duckdb_source.tables is None:
                     duckdb_source.tables = {}
                 duckdb_source.tables[name.value] = f"SELECT * FROM {name.value}"

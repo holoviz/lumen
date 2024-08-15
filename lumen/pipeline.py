@@ -156,7 +156,7 @@ class Pipeline(Viewer, Component):
             ]
         elif filters is None:
             filters = []
-        if any(isinstance(t, SQLTransform) for t in params.get('transforms', [])):
+        if any(isinstance(t, SQLTransform) for t in params.get('transforms') or []):
             raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
         self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
@@ -566,8 +566,8 @@ class Pipeline(Viewer, Component):
         """
         Chains additional filtering, transform and sql_transform operations
         on an existing pipeline. Note that if one or more sql_transforms
-        are provided the pipeline is cloned rather than applying the
-        operations on top of the existing pipeline.
+        are provided the existing table will be mirrored into a DuckDB
+        database.
 
         Arguments
         ---------
@@ -582,13 +582,24 @@ class Pipeline(Viewer, Component):
         -------
         Pipeline
         """
+        chain_update = kwargs.pop('_chain_update', False)
         if sql_transforms:
-            params = {
-                'filters': self.filters + (filters or []),
-                'transforms': self.transforms + (transforms or []),
-                'sql_transforms': self.sql_transforms + (sql_transforms or []),
-                'data': None
-            }
+            try:
+                from .sources.duckdb import DuckDBSource
+            except Exception:
+                raise RuntimeError(
+                    'Cannot chain SQL transforms on a Pipeline without '
+                    'DuckDB. Ensure DuckDB is installed.'
+                )
+            sql_src = DuckDBSource(uri=':memory:', mirrors={self.name: self})
+            new = Pipeline(
+                source=sql_src,
+                filters=filters or [],
+                table=self.name,
+                sql_transforms=sql_transforms,
+                transforms=transforms or []
+            )
+            self.param.watch(lambda e: setattr(new, '_stale', True), 'data')
         else:
             params = {
                 'filters': filters or [],
@@ -598,11 +609,10 @@ class Pipeline(Viewer, Component):
                 'schema': get_dataframe_schema(self.data)['items']['properties'],
                 'data': None
             }
-        chain_update = kwargs.pop('_chain_update', False)
-        params.update(kwargs)
-        new = self.clone(**params)
-        if chain_update and not new.auto_update:
-            self.param.watch(lambda e: new.param.trigger('update'), 'update')
+            params.update(kwargs)
+            new = self.clone(**params)
+            if chain_update and not new.auto_update:
+                self.param.watch(lambda e: new.param.trigger('update'), 'update')
         return new
 
     def clone(self, **params) -> Pipeline:
