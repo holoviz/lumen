@@ -253,7 +253,11 @@ class Source(MultiTypeComponent):
             return source
 
         spec = spec.copy()
-        source_type = Source._get_type(spec.pop('type', None))
+        src_type_name = spec.pop('type', None)
+        source_type = Source._get_type(src_type_name)
+        if cls is Source:
+            spec['type'] = src_type_name
+            return source_type.from_spec(spec)
         resolved_spec, refs = source_type._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
 

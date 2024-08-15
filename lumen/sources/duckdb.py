@@ -94,44 +94,55 @@ class DuckDBSource(BaseSQLSource):
         spec, refs = super()._recursive_resolve(spec, source_type)
         resolved_mirrors = {}
         for table, (src_spec, src_table) in mirrors.items():
-            if src_spec.get('synthetic'):
-                tables = src_spec.pop('tables')
-                source = cls.from_spec(src_spec)
-                new_tables = {}
-                for t, table_json in tables.items():
-                    jsonio = StringIO(table_json)
-                    df = pd.read_json(jsonio)
-                    try:
-                        source._connection.from_df(df).to_table(t)
-                    except duckdb.ParserException:
-                        pass
-                    new_tables[t] = source.sql_expr.format(table=t)
-                source.tables = new_tables
-            else:
-                source = cls.from_spec(src_spec)
+            source = cls.from_spec(src_spec)
             resolved_mirrors[table] = (source, src_table)
         spec['mirrors'] = resolved_mirrors
         return spec, refs
 
+    def _serialize_tables(self):
+        tables = {}
+        for t in self.get_tables():
+            tdf = self.get(t)
+            jsonio = StringIO()
+            tdf.to_json(jsonio)
+            jsonio.seek(0)
+            tables[t] = jsonio.read()
+        return tables
+
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context)
+        if self.synthetic:
+            spec['tables'] = self._serialize_tables()
         if 'mirrors' not in spec:
             return spec
         mirrors = {}
         for table, (source, src_table) in spec['mirrors'].items():
             src_spec = source.to_spec(context=context)
-            if hasattr(source, "synthetic") and source.synthetic:
-                tables = {}
-                for t in source.get_tables():
-                    tdf = source.get(t)
-                    jsonio = StringIO()
-                    tdf.to_json(jsonio)
-                    jsonio.seek(0)
-                    tables[t] = jsonio.read()
-                src_spec['tables'] = tables
             mirrors[table] = (src_spec, src_table)
         spec['mirrors'] = mirrors
         return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any] | str) -> Source:
+        if spec.get('synthetic') and 'tables' in spec:
+            synthetic_tables = spec['tables']
+            spec['tables'] = {}
+        else:
+            synthetic_tables = {}
+        source = super().from_spec(spec)
+        if not synthetic_tables:
+            return source
+        new_tables = {}
+        for t, table_json in synthetic_tables.items():
+            jsonio = StringIO(table_json)
+            df = pd.read_json(jsonio)
+            try:
+                source._connection.from_df(df).to_table(t)
+            except duckdb.ParserException:
+                continue
+            new_tables[t] = source.sql_expr.format(table=t)
+        source.tables = new_tables
+        return source
 
     def create_sql_expr_source(
         self, tables: dict[str, str], materialize: bool = True, **kwargs
