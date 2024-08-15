@@ -114,7 +114,7 @@ class DuckDBSource(BaseSQLSource):
             tdf = self.get(t)
             csv = StringIO()
             index = list(tdf.index.names)
-            if index[0] is None:
+            if len(index) == 1 and index[0] is None:
                 index = False
             tdf.to_csv(csv, index=bool(index))
             csv.seek(0)
