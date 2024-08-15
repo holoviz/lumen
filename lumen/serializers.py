@@ -65,7 +65,7 @@ class SessionSerializer(Serializer):
         data_id = uuid.uuid4().hex
         self._session_cache[data_id] = data
         return {
-            'type': 'session',
+            'type': self.serializer_type,
             'id': data_id,
             'serializer': self.to_spec()
         }
