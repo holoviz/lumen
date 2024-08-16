@@ -17,6 +17,7 @@ Checklist
 - If no limit is specified, specify 10000 as the limit.
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
+- If the table name originally did not have `read_*` prefix, use the original table name
 - Use only `{{ dialect }}` syntax
 {% if dialect == 'duckdb' %}
 - String literals are delimited using single quotes (', apostrophe) and result in STRING_LITERAL values. Note that double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted identifiers.

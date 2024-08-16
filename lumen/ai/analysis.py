@@ -82,7 +82,9 @@ class Join(Analysis):
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
             content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['current_source']}//{self.table_name}'"
             if self.index_col:
-                content += f" on {self.index_col}"
+                content += f" left join on {self.index_col}"
+            else:
+                content += " based on the closest matching columns"
             if self.context:
                 content += f"\nadditional context:\n{self.context!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])

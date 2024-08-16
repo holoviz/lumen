@@ -29,8 +29,8 @@ class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Explain whether a table join is required to answer the user's query, or
-        if the user is requesting a join or merge.
+        Concisely explain whether a table join is required to answer the user's query, or
+        if the user is requesting a join or merge using a couple sentences.
         """
     )
 
@@ -59,9 +59,9 @@ class Sql(BaseModel):
         """
     )
 
-    expr_name: str = Field(
+    expr_slug: str = Field(
         description="""
-        Give the SQL expression a descriptive name that includes whatever transforms were applied to it.
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it.
         """
     )
 
