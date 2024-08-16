@@ -525,10 +525,10 @@ class SQLAgent(LumenBaseAgent):
             source = next(iter(sources.values()))[0]
 
         # check whether the SQL query is valid
-        expr_name = output.expr_name
-        sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
+        expr_slug = output.expr_slug
+        sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
         try:
-            pipeline = Pipeline(source=sql_expr_source, table=expr_name)
+            pipeline = Pipeline(source=sql_expr_source, table=expr_slug)
         except Exception as e:
             step.status = "failed"
             step.failed_title = str(e)
