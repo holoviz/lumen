@@ -15,7 +15,7 @@ Checklist
 - Do not write a join if the table already contains all the columns that are needed
 - If it's a date column (excluding individual year/month/day integers), cast as date
 - If no limit is specified, specify 10000 as the limit.
-- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'
+- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table', but if there are no prefixes, then don't use any prefixes.
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
 - Use only `{{ dialect }}` syntax
 {% if dialect == 'duckdb' %}
