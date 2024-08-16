@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from io import StringIO
 from typing import Any
 
 import duckdb
-import numpy as np
-import pandas as pd
 import param
 
+from ..config import config
+from ..serializers import Serializer
 from ..transforms import Filter
 from ..transforms.sql import (
     SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
@@ -112,19 +111,8 @@ class DuckDBSource(BaseSQLSource):
         tables = {}
         for t in self.get_tables():
             tdf = self.get(t)
-            csv = StringIO()
-            index = list(tdf.index.names)
-            if len(index) == 1 and index[0] is None:
-                index = False
-            tdf.to_csv(csv, index=bool(index))
-            csv.seek(0)
-            tables[t] = {
-                'data': csv.read(),
-                'type': 'csv',
-                'index': index,
-                'date_cols': list(tdf.select_dtypes(np.datetime64).columns),
-                'dtypes': {col: str(tdf[col].dtype) for col in tdf.columns}
-            }
+            serializer = Serializer._get_type(config.serializer)()
+            tables[t] = serializer.serialize(tdf)
         return tables
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -151,20 +139,8 @@ class DuckDBSource(BaseSQLSource):
         if not ephemeral_tables:
             return source
         new_tables = {}
-        for t, table_json in ephemeral_tables.items():
-            data = StringIO(table_json['data'])
-            if table_json['type'] == 'csv':
-                df = pd.read_csv(
-                    data, parse_dates=table_json['date_cols']
-                ).astype(table_json['dtypes'])
-                index_cols = table_json['index']
-                if index_cols:
-                    df = df.set_index(index_cols)
-            else:
-                raise ValueError(
-                    "Table data type {table_json['type']!r} unknown. "
-                    "Cannot be deserialized."
-                )
+        for t, data in ephemeral_tables.items():
+            df = Serializer.deserialize(data)
             try:
                 source._connection.from_df(df).to_view(t)
             except duckdb.ParserException:

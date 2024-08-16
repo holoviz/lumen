@@ -9,6 +9,7 @@ from panel import Column
 from panel.chat import ChatStep
 
 from lumen.ai.views import LumenOutput
+from lumen.config import config
 from lumen.pipeline import Pipeline
 from lumen.views import View
 
@@ -40,7 +41,8 @@ def format_markdown(msg):
 def format_output(msg):
     output = msg.object
     code = []
-    spec = json.dumps(output.component.to_spec(), indent=2).replace('true', 'True').replace('false', 'False')
+    with config.param.update(serializer='csv'):
+        spec = json.dumps(output.component.to_spec(), indent=2).replace('true', 'True').replace('false', 'False')
     if isinstance(output.component, Pipeline):
         code.extend([
             f'pipeline = lm.Pipeline.from_spec({spec})',

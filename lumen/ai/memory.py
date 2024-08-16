@@ -9,47 +9,10 @@ from panel import state
 from panel.viewable import Viewer
 
 from ..base import Component
+from ..config import SessionCache
 
 if TYPE_CHECKING:
     from bokeh.document import Document
-
-class SessionCache:
-
-    _session_contexts: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
-
-    _global_context = {}
-
-    @property
-    def _curcontext(self):
-        if state.curdoc:
-            if state.curdoc in self._session_contexts:
-                context = self._session_contexts[state.curdoc]
-            else:
-                self._session_contexts[state.curdoc] = context = {}
-            return context
-        else:
-            return self._global_context
-
-    def __contains__(self, key):
-        return key in self._curcontext or key in self._global_context
-
-    def __getitem__(self, key):
-        return self._curcontext[key]
-
-    def __setitem__(self, key, value):
-        self._curcontext[key] = value
-
-    def get(self, key, default=None):
-        obj = dict(self._global_context, **self._curcontext).get(key, default)
-        if hasattr(obj, "copy"):
-            obj = obj.copy()
-        return obj
-
-    def keys(self):
-        return dict(self._global_context, **self._curcontext).keys()
-
-    def pop(self, key, default=None):
-        return self._curcontext.pop(key, default)
 
 
 class _Memory(SessionCache, Viewer):
