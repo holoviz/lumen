@@ -2,7 +2,7 @@ import panel as pn
 import param
 
 from ..base import Component
-from .controls import add_source_controls
+from .controls import SourceControls
 from .memory import memory
 from .utils import get_schema
 
@@ -51,11 +51,13 @@ class Join(Analysis):
 
     _previous_source = param.Parameter()
 
+    def _update_table_name(self, event):
+        self.table_name = event.new
+
     def controls(self):
-        source_controls = add_source_controls(replace_controls=False)
-        self._run_button = source_controls[0][-1]
-        name_input = source_controls[0][1]
-        name_input.link(self, value='table_name')
+        self._source_controls = SourceControls()
+        self._run_button = self._source_controls._add_button
+        self._source_controls.param.watch(self._update_table_name, "_last_table")
 
         source = memory.get("current_source")
         table = memory.get("current_table")
@@ -68,13 +70,16 @@ class Join(Analysis):
             case_sensitive=False, restrict=False
         )
         context = pn.widgets.TextInput.from_param(self.param.context, name="Context")
-        source_controls[0].insert(0, index_col)
-        source_controls[0].insert(1, context)
-        return source_controls
+        controls = pn.FlexBox(
+            index_col,
+            context,
+            self._source_controls,
+        )
+        return controls
 
     async def __call__(self, pipeline) -> Component:
         if self.table_name:
-            agent = next((agent for agent in self.agents if type(agent).__name__ == "SQLAgent"), None)
+            agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
             content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['current_source']}//{self.table_name}'"
             if self.index_col:
                 content += f" on {self.index_col}"
