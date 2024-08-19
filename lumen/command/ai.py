@@ -26,7 +26,7 @@ import panel as pn
 
 from lumen.sources.duckdb import DuckDBSource
 
-pn.extension("tabulator", "codeeditor", inline=False, template="fast")
+pn.extension("tabulator", "codeeditor", "filedropper", inline=False, template="fast")
 
 llm = lmai.llm.OpenAI()
 
@@ -42,6 +42,7 @@ assistant = lmai.Assistant(
         lmai.agents.PipelineAgent,
         lmai.agents.hvPlotAgent,
         lmai.agents.ChatAgent,
+        lmai.agents.AnalysisAgent(analyses=[lmai.analysis.Join])
     ],
 )
 assistant.servable("Lumen.ai")
