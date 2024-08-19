@@ -193,7 +193,6 @@ class SourceControls(pn.viewable.Viewer):
                     self.menu[0].visible = False
                     self._add_button.visible = False
             elif self.select_existing and self._input_tabs.active == 1:
-                print(self._select_table.value)
                 table = self._select_table.value["table"]
                 duckdb_source.tables[table] = f"SELECT * FROM {table}"
                 memory["current_source"] = duckdb_source
