@@ -71,15 +71,14 @@ class SourceControls(pn.viewable.Viewer):
         self.tables_tabs = pn.Tabs(sizing_mode="stretch_width")
         self._file_input = pn.widgets.FileDropper(
             multiple=self.param.multiple,
-            sizing_mode="stretch_width",
-            max_width=500,
-            height=200,
+            sizing_mode="stretch_both",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
         self._upload_tabs = pn.Tabs(sizing_mode="stretch_width")
 
         self._input_tabs = pn.Tabs(
-            ("Upload", pn.Column(self._file_input, self._upload_tabs))
+            ("Upload", pn.Column(self._file_input, self._upload_tabs)),
+            sizing_mode="stretch_both",
         )
 
         if self.select_existing:
