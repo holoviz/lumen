@@ -24,7 +24,7 @@ class TableControls(pn.viewable.Viewer):
         elif not self.filename and filename:
             filename, extension = filename.rsplit(".", maxsplit=1)
         params["filename"] = filename
-        params["table"] = filename.replace("-", "_")
+        params["table"] = filename.replace("-", "_").replace(" ", "_")
         params["extension"] = extension
         super().__init__(**params)
         self.file = file
@@ -51,6 +51,12 @@ class TableControls(pn.viewable.Viewer):
             self.param.sheet.objects = wb.sheetnames
             self.sheet = wb.sheetnames[0]
             self._sheet_select.visible = True
+
+    @param.depends("table", watch=True)
+    async def _replace_with_underscore(self):
+        self.table = "".join(
+            c if c.isalnum() else "_" for c in self.table
+        ).strip("_")
 
     def __panel__(self):
         return self.box
