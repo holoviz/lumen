@@ -230,7 +230,7 @@ class Assistant(Viewer):
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
         applicable_analyses = []
         for analysis in self._analyses:
-            if analysis.applies(pipeline) and (allow_consecutive or analysis is not current_analysis):
+            if analysis.applies(pipeline) and (allow_consecutive or analysis is not type(current_analysis)):
                 applicable_analyses.append(analysis)
         self._add_suggestions_to_footer(
             [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
