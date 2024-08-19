@@ -56,7 +56,7 @@ class TableControls(pn.viewable.Viewer):
     @param.depends("table", watch=True)
     async def _replace_with_underscore(self):
         self.table = "".join(
-            c if c.isalnum() else "_" for c in self.table
+            c if c.isalnum() or c == "." else "_" for c in self.table
         ).strip("_").lower()
 
     def __panel__(self):
@@ -83,6 +83,7 @@ class SourceControls(pn.viewable.Viewer):
             height=200,
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
+        self._file_input.param.watch(self._generate_table_controls, "value")
         self._upload_tabs = pn.Tabs(sizing_mode="stretch_width")
 
         self._input_tabs = pn.Tabs(
@@ -92,14 +93,18 @@ class SourceControls(pn.viewable.Viewer):
 
         if self.select_existing:
             nested_sources_tables = {
-                source: source.get_tables() for source in memory["available_sources"]
+                source.name: source.get_tables() for source in memory["available_sources"]
             }
+            first_table = {k: nested_sources_tables[k][0] for k in list(nested_sources_tables)[:1]}
             self._select_table = pn.widgets.NestedSelect(
                 name="Table",
+                value=first_table,
                 options=nested_sources_tables,
+                levels=["source", "table"],
                 sizing_mode="stretch_width",
             )
             self._input_tabs.append(("Select", self._select_table))
+            self._select_table.param.watch(self._generate_table_controls, "value")
 
         self._add_button = pn.widgets.Button.from_param(
             self.param.add,
@@ -115,24 +120,26 @@ class SourceControls(pn.viewable.Viewer):
             sizing_mode="stretch_width",
         )
 
-        self._file_input.param.watch(self._generate_table_controls, "value")
         self._table_controls = []
 
     def _generate_table_controls(self, event):
-        self._upload_tabs.clear()
-        self._table_controls.clear()
-        for filename, file in self._file_input.value.items():
-            table_controls = TableControls(
-                io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file),
-                filename=filename,
-            )
-            self._upload_tabs.append((filename, table_controls))
-            self._table_controls.append(table_controls)
+        if self._input_tabs.active == 0:
+            self._upload_tabs.clear()
+            self._table_controls.clear()
+            for filename, file in self._file_input.value.items():
+                table_controls = TableControls(
+                    io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file),
+                    filename=filename,
+                )
+                self._upload_tabs.append((filename, table_controls))
+                self._table_controls.append(table_controls)
 
-        if len(self._upload_tabs) > 0:
+            if len(self._upload_tabs) > 0:
+                self._add_button.visible = True
+            else:
+                self._add_button.visible = False
+        elif self._input_tabs.active == 1:
             self._add_button.visible = True
-        else:
-            self._add_button.visible = False
 
     def _add_table(
         self,
@@ -155,8 +162,6 @@ class SourceControls(pn.viewable.Viewer):
             raise ValueError(f"Unsupported file extension: {extension}")
 
         duckdb_source._connection.from_df(df).to_view(table)
-        if duckdb_source.tables is None:
-            duckdb_source.tables = {}
         duckdb_source.tables[table] = f"SELECT * FROM {table}"
         memory["current_source"] = duckdb_source
         memory["current_table"] = table
@@ -166,8 +171,10 @@ class SourceControls(pn.viewable.Viewer):
     @param.depends("add", watch=True)
     def add_tables(self):
         with self.menu.param.update(loading=True):
+            duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True)
+            if duckdb_source.tables is None:
+                duckdb_source.tables = {}
             if self._input_tabs.active == 0:
-                duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True)
                 for i in range(len(self._upload_tabs)):
                     table_controls = self._table_controls[i]
                     self._add_table(duckdb_source, table_controls.file, table_controls)
@@ -185,6 +192,14 @@ class SourceControls(pn.viewable.Viewer):
                     ]
                     self.menu[0].visible = False
                     self._add_button.visible = False
+            elif self.select_existing and self._input_tabs.active == 1:
+                print(self._select_table.value)
+                table = self._select_table.value["table"]
+                duckdb_source.tables[table] = f"SELECT * FROM {table}"
+                memory["current_source"] = duckdb_source
+                memory["current_table"] = table
+                memory["available_sources"].add(duckdb_source)
+                self._last_table = table
 
     def __panel__(self):
         return self.menu

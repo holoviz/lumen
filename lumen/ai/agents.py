@@ -512,7 +512,8 @@ class SQLAgent(LumenBaseAgent):
         if len(sources) > 1:
             mirrors = {}
             for a_source, a_table in sources.values():
-                if not any(a_table.endswith(ext) for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
+                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
+                           for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
                     renamed_table = a_table.replace(".", "_")
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
