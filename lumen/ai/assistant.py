@@ -181,6 +181,7 @@ class Assistant(Viewer):
                             break
                     else:
                         return
+                    print(contents)
                     await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
                     self._add_analysis_suggestions()
                 else:
