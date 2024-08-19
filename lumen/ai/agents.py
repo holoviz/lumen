@@ -6,12 +6,12 @@ import textwrap
 
 from typing import Literal, Optional
 
+import pandas as pd
 import panel as pn
 import param
 import yaml
 
 from panel.chat import ChatInterface
-from panel.pane import HTML
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -20,7 +20,6 @@ from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
-from ..sources.intake_sql import IntakeBaseSQLSource
 from ..state import state
 from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import VegaLiteView, View, hvPlotUIView
@@ -392,7 +391,6 @@ class TableAgent(LumenBaseAgent):
                     table = tables[0]
                 step.stream(f"Selected table: {table}")
         memory["current_table"] = table
-        print(table)
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
         )
@@ -427,29 +425,24 @@ class TableListAgent(LumenBaseAgent):
             return True  # source not loaded yet; always apply
         return len(source.get_tables()) > 1
 
+    def _use_table(self, event):
+        if event.column != "show":
+            return
+        table = self._df.iloc[event.row, 0]
+        self.interface.send(f"Show the table: {table!r}")
+
     async def answer(self, messages: list | str):
         source = memory["current_source"]
-        tables = memory["current_source"].get_tables()
+        tables = source.get_tables()
         if not tables:
             return
-        if isinstance(source, IntakeBaseSQLSource) and hasattr(
-            source.cat, "_repr_html_"
-        ):
-            table_listing = HTML(
-                textwrap.dedent(source.cat._repr_html_()),
-                margin=10,
-                styles={
-                    "overflow": "auto",
-                    "background-color": "white",
-                    "padding": "10px",
-                },
-                tags=['catalog']
-            )
-        else:
-            tables = tuple(table.replace('"', "") for table in tables)
-            table_bullets = "\n".join(f"- {table}" for table in tables)
-            table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.add_step(table_listing, success_title="Table List", status="success")
+
+        self._df = pd.DataFrame({"Table": tables})
+        table_list = pn.widgets.Tabulator(self._df, buttons={
+            'show': '<i class="fa fa-eye"></i>'
+        }, show_index=False, min_width=350, widths={'Table': '90%'}, disabled=True)
+        table_list.on_click(self._use_table)
+        self.interface.stream(table_list, user="Lumen")
         return tables
 
     async def invoke(self, messages: list | str):
