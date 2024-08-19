@@ -24,7 +24,7 @@ class TableControls(pn.viewable.Viewer):
         elif not self.filename and filename:
             filename, extension = filename.rsplit(".", maxsplit=1)
         params["filename"] = filename
-        params["table"] = filename.replace("-", "_").replace(" ", "_")
+        params["table"] = filename.replace("-", "_")
         params["extension"] = extension
         super().__init__(**params)
         self.file = file

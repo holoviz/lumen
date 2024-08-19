@@ -26,7 +26,7 @@ from ..transforms.sql import SQLOverride, SQLTransform, Transform
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
-from .controls import add_source_controls
+from .controls import SourceControls
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
@@ -204,10 +204,9 @@ class SourceAgent(Agent):
     on_init = param.Boolean(default=True)
 
     async def answer(self, messages: list | str):
-        menu = add_source_controls()
-        add = menu[0][-1]
-        self.interface.send(menu, respond=False, user="SourceAgent")
-        while not add.clicks:
+        source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
+        self.interface.send(source_controls, respond=False, user="SourceAgent")
+        while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
 
     async def invoke(self, messages: list[str] | str):
@@ -513,7 +512,7 @@ class SQLAgent(LumenBaseAgent):
         if len(sources) > 1:
             mirrors = {}
             for a_source, a_table in sources.values():
-                if not ("(" in a_table and ")" in a_table):
+                if not any(a_table.endswith(ext) for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
                     renamed_table = a_table.replace(".", "_")
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
@@ -525,10 +524,10 @@ class SQLAgent(LumenBaseAgent):
             source = next(iter(sources.values()))[0]
 
         # check whether the SQL query is valid
-        expr_name = output.expr_name
-        sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
+        expr_slug = output.expr_slug
+        sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
         try:
-            pipeline = Pipeline(source=sql_expr_source, table=expr_name)
+            pipeline = Pipeline(source=sql_expr_source, table=expr_slug)
         except Exception as e:
             step.status = "failed"
             step.failed_title = str(e)
@@ -586,7 +585,7 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        with self.interface.add_step(title="Checking if join is required") as step:
+        with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
             schema = get_schema(source, table, include_min_max=False)
             join_prompt = render_template(
                 "join_required.jinja2",
@@ -1002,7 +1001,7 @@ class AnalysisAgent(LumenBaseAgent):
                 analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
+            with self.interface.add_step(title="Choosing the most relevant analysis...", user="Assistant") as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -1020,7 +1019,7 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title="Creating view...") as step:
+        with self.interface.add_step(title="Creating view...", user="Assistant") as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
             memory["current_analysis"] = analysis_callable
