@@ -230,8 +230,9 @@ class Assistant(Viewer):
         applicable_analyses = []
         for analysis in self._analyses:
             if analysis.applies(pipeline):
-                if current_analysis and analysis.__name__ == current_analysis.__name__:
-                    continue
+                if current_analysis and not current_analysis._consecutive_calls:
+                    if analysis.__name__ == current_analysis.__name__:
+                        continue
                 applicable_analyses.append(analysis)
         self._add_suggestions_to_footer(
             [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
