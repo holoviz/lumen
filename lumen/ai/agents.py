@@ -575,6 +575,7 @@ class SQLAgent(LumenBaseAgent):
                 a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
             else:
                 a_source = memory['current_source']
+                a_source_name = a_source.name
                 a_table = source_table
             sources[a_source_name] = (a_source, a_table)
         return sources

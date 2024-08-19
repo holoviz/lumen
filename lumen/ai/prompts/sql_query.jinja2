@@ -10,7 +10,7 @@ The data for table '{{ table }}' follows the following JSON schema:
 It was already determined that no join is required, so only use the existing
 table '{{ table }}' to calculate the result.
 {% else %}
-If the join's values do not align 50% of the time, then perform a join based on the
+If the join's values do not align based on the min/max lowest common denominator, then perform a join based on the
 closest match, or resample and aggregate the data to align the values.
 {% endif %}
 
