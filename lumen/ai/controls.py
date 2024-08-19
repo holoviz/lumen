@@ -38,6 +38,7 @@ class TableControls(pn.viewable.Viewer):
             self._name_input,
             self._sheet_select,
         )
+        self.param.trigger("table")  # fix name
         self.param.trigger("_load")  # to prevent blocking
 
     @param.depends("_load", watch=True)
@@ -56,7 +57,7 @@ class TableControls(pn.viewable.Viewer):
     async def _replace_with_underscore(self):
         self.table = "".join(
             c if c.isalnum() else "_" for c in self.table
-        ).strip("_")
+        ).strip("_").lower()
 
     def __panel__(self):
         return self.box
