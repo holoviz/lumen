@@ -79,8 +79,7 @@ class SourceControls(pn.viewable.Viewer):
         self._upload_tabs = pn.Tabs(sizing_mode="stretch_width")
 
         self._input_tabs = pn.Tabs(
-            ("Upload", pn.Column(self._file_input, self._upload_tabs)),
-            sizing_mode="stretch_both",
+            ("Upload", pn.Column(self._file_input, self._upload_tabs))
         )
 
         if self.select_existing:
@@ -171,7 +170,7 @@ class SourceControls(pn.viewable.Viewer):
                         (
                             t,
                             pn.widgets.Tabulator(
-                                src.get(t), sizing_mode="stretch_width"
+                                src.get(t), sizing_mode="stretch_both"
                             ),
                         )
                         for t in src.get_tables()
