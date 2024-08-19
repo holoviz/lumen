@@ -24,7 +24,7 @@ class Analysis(param.ParameterizedFunction):
 
     _run_button = param.Parameter(default=None)
 
-    _consecutive_calls = False
+    _consecutive_calls = False  # whether to allow the analysis to be called multiple times in a row
 
     @classmethod
     def applies(cls, pipeline) -> bool:
