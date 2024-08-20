@@ -174,7 +174,9 @@ class Assistant(Viewer):
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
                 contents = button.name
                 if hide_after_use:
-                    await hide_suggestions()
+                    suggestion_buttons.visible = False
+                    if event.new > 1:  # prevent double clicks
+                        return
                 if analysis:
                     for agent in self.agents:
                         if isinstance(agent, AnalysisAgent):
@@ -188,7 +190,9 @@ class Assistant(Viewer):
 
         async def run_demo(event):
             if hide_after_use:
-                await hide_suggestions()
+                suggestion_buttons.visible = False
+                if event.new > 1:  # prevent double clicks
+                    return
             with self.interface.active_widget.param.update(loading=True):
                 for demo_message in self.demo_inputs:
                     while self.interface.disabled:
