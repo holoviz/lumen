@@ -1019,26 +1019,33 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.add_step(title="Creating view...", user="Assistant") as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
+            for field in analysis_callable._field_params:
+                analysis_callable.param[field].objects = list(pipeline.data.columns)
             memory["current_analysis"] = analysis_callable
 
-            if asyncio.iscoroutinefunction(analysis_callable.__call__):
-                view = await analysis_callable(pipeline)
+            if analysis_callable.autorun:
+                if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                    view = await analysis_callable(pipeline)
+                else:
+                    view = await asyncio.to_thread(analysis_callable, pipeline)
+                spec = view.to_spec()
+                if isinstance(view, View):
+                    view_type = view.view_type
+                    memory["current_view"] = dict(spec, type=view_type)
+                elif isinstance(view, Pipeline):
+                    memory["current_pipeline"] = view
+                yaml_spec = yaml.safe_dump(spec)
+                step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
+                step.success_title = "Generated view"
             else:
-                view = await asyncio.to_thread(analysis_callable, pipeline)
-            spec = view.to_spec()
-            if isinstance(view, View):
-                view_type = view.view_type
-                memory["current_view"] = dict(spec, type=view_type)
-            elif isinstance(view, Pipeline):
-                memory["current_pipeline"] = view
-            yaml_spec = yaml.safe_dump(spec)
-            step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
-            step.success_title = "Generated view"
+                step.success_title = "Configure the analysis"
+                view = None
         return view
 
     async def invoke(self, messages: list | str, agents=None):
         view = await self.answer(messages, agents=agents)
-        if view is None:
+        analysis = memory["current_analysis"]
+        if view is None and analysis.autorun:
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:
-            self._render_lumen(view, analysis=memory["current_analysis"], pipeline=memory['current_pipeline'])
+            self._render_lumen(view, analysis=analysis, pipeline=memory['current_pipeline'])

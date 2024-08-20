@@ -29,6 +29,8 @@ class Analysis(param.ParameterizedFunction):
      # Whether to allow the analysis to be called multiple times in a row
     _consecutive_calls = False
 
+    _field_params = []
+
     @classmethod
     def applies(cls, pipeline) -> bool:
         applies = True
