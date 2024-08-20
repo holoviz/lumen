@@ -98,12 +98,18 @@ def format_schema(schema):
 
 
 def get_schema(
-    source: Source | Pipeline, table: str | None = None, include_min_max: bool = True
+    source: Source | Pipeline,
+    table: str | None = None,
+    include_min_max: bool = True,
+    include_enum: bool = True,
+    **get_kwargs
 ):
     if isinstance(source, Pipeline):
         schema = source.get_schema()
     else:
-        schema = source.get_schema(table, limit=100)
+        if "limit" not in get_kwargs:
+            get_kwargs["limit"] = 100
+        schema = source.get_schema(table, **get_kwargs)
     schema = dict(schema)
 
     if include_min_max:
@@ -118,6 +124,16 @@ def get_schema(
                 spec.pop("inclusiveMinimum")
             if "inclusiveMaximum" in spec:
                 spec.pop("inclusiveMaximum")
+            if "min" in spec:
+                spec.pop("min")
+            if "max" in spec:
+                spec.pop("max")
+
+    if not include_enum:
+        for field, spec in schema.items():
+            if "enum" in spec:
+                spec.pop("enum")
+
     schema = format_schema(schema)
     return schema
 
