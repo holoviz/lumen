@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 import param
@@ -17,6 +17,9 @@ from ..util import get_dataframe_schema
 from .base import (
     BaseSQLSource, Source, cached, cached_schema,
 )
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class DuckDBSource(BaseSQLSource):
@@ -129,6 +132,31 @@ class DuckDBSource(BaseSQLSource):
             mirrors[table] = (src_spec, src_table)
         spec['mirrors'] = mirrors
         return spec
+
+    @classmethod
+    def from_df(cls, tables: dict[str, pd.DataFrame], **kwargs):
+        """
+        Creates an ephemeral, in-memory DuckDBSource containing the
+        supplied dataframe.
+
+        Arguments
+        ---------
+        tables: dict[str, pandas.DataFrame]
+            A dictionary mapping from table names to DataFrames
+        kwargs: any
+            Additional keyword arguments for the source
+
+        Returns
+        -------
+        source: DuckDBSource
+        """
+        source = DuckDBSource(uri=':memory:', ephemeral=True, **kwargs)
+        table_defs = {}
+        for name, df in tables.items():
+            source._connection.from_df(df).to_view(name)
+            table_defs[name] = source.sql_expr.format(table=name)
+        source.tables = table_defs
+        return source
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any] | str) -> Source:
