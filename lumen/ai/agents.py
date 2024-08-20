@@ -533,13 +533,20 @@ class SQLAgent(LumenBaseAgent):
             sql_query = sql_expr_source.tables[expr_slug]
             pipeline = Pipeline(source=sql_expr_source, table=expr_slug)
         except InstructorRetryException as e:
-            step.failed_title = str(e)
+            error_msg = str(e)
+            step.stream(f'\n```python\n{error_msg}\n```')
+            if len(error_msg) > 50:
+                error_msg = error_msg[:50] + "..."
+            step.failed_title = error_msg
             step.status = "failed"
             if e.n_attempts > 1:
                 # Show the last error message
                 step.stream(f'\n```python\n{e.messages[-1]["content"]}\n```')
         except Exception as e:
-            step.failed_title = str(e)
+            error_msg = str(e)
+            step.stream(f'\n```python\n{error_msg}\n```')
+            if len(error_msg) > 50:
+                error_msg = error_msg[:50] + "..."
             step.status = "failed"
             raise e
 
