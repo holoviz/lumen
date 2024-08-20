@@ -20,17 +20,17 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
-    spec = param.String()
+    spec = param.String(allow_None=True)
 
     language = "yaml"
 
     def __init__(self, **params):
-        if 'spec' not in params and 'component' in params:
+        if 'spec' not in params and 'component' in params and params['component'] is not None:
             component_spec = params['component'].to_spec()
             params['spec'] = yaml.safe_dump(component_spec)
         super().__init__(**params)
         code_editor = pn.widgets.CodeEditor(
-            value=self.spec, language=self.language, sizing_mode="stretch_both",
+            value=self.param.spec, language=self.language, sizing_mode="stretch_both",
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = pn.widgets.ButtonIcon(
@@ -80,7 +80,7 @@ class LumenOutput(Viewer):
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if (self.active != (len(self._tabs)-1)):
+        if (self.active != (len(self._tabs)-1)) or self.spec is None:
             return
 
         if self.spec in self._last_output:
@@ -94,8 +94,8 @@ class LumenOutput(Viewer):
             self._rendered = True
             if isinstance(self.component, Pipeline):
                 table = Table(
-                    pipeline=self.component, pagination='remote', page_size=21,
-                    min_height=300, sizing_mode="stretch_both", stylesheets=[
+                    pipeline=self.component, pagination='remote',
+                    min_height=500, sizing_mode="stretch_both", stylesheets=[
                         """
                         .tabulator-footer {
                             display: flex;
@@ -160,6 +160,7 @@ class AnalysisOutput(LumenOutput):
                 self._tabs.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
                 self._tabs.active = 2 if self.analysis.autorun else 1
+        self._rendered = True
 
     async def _rerun(self, event):
         with self._tabs.param.update(loading=True):
@@ -167,6 +168,8 @@ class AnalysisOutput(LumenOutput):
                 view = await self.analysis(self.pipeline)
             else:
                 view = await asyncio.to_thread(self.analysis, self.pipeline)
+            self.component = view
+            self._rendered = False
             spec = view.to_spec()
             self.param.update(
                 spec=yaml.safe_dump(spec),
@@ -189,10 +192,7 @@ class SQLOutput(LumenOutput):
         pipeline = self.component
         pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
         try:
-            table = Table(
-                pipeline=pipeline, pagination='remote',
-                height=458, page_size=12
-            )
+            table = Table(pipeline=pipeline, pagination='remote')
             download = Download(
                 view=table, hide=False, filename=f'{self.component.table}',
                 format='csv'
