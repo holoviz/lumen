@@ -542,11 +542,14 @@ class SQLAgent(LumenBaseAgent):
             if e.n_attempts > 1:
                 # Show the last error message
                 step.stream(f'\n```python\n{e.messages[-1]["content"]}\n```')
+            elif e.n_attempts > 2:
+                raise e
         except Exception as e:
             error_msg = str(e)
             step.stream(f'\n```python\n{error_msg}\n```')
             if len(error_msg) > 50:
                 error_msg = error_msg[:50] + "..."
+            step.failed_title = error_msg
             step.status = "failed"
             raise e
 
