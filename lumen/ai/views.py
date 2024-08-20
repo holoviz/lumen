@@ -86,11 +86,14 @@ class LumenOutput(Viewer):
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
             return
+        elif self.component is None:
+            yield pn.pane.Alert(
+                "No component to render. Please complete the Config tab.",
+                alert_type="warning",
+            )
+            return
 
         try:
-            if self.component is None or self.spec is None:
-                raise ValueError("No spec provided; please first fill out the Config tab.")
-
             if self._rendered:
                 yaml_spec = load_yaml(self.spec)
                 self.component = type(self.component).from_spec(yaml_spec)
