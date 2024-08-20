@@ -64,10 +64,11 @@ class LumenOutput(Viewer):
             ("Code", code_col),
             ("Output", placeholder),
             styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-            active=1,
+            active=self.active,
             dynamic=True
         )
         self._tabs.link(self, bidirectional=True, active='active')
+        self._rendered = False
         placeholder.objects = [
             pn.pane.ParamMethod(self._render_component, inplace=True)
         ]
@@ -87,8 +88,10 @@ class LumenOutput(Viewer):
             return
 
         try:
-            yaml_spec = load_yaml(self.spec)
-            self.component = type(self.component).from_spec(yaml_spec)
+            if self._rendered:
+                yaml_spec = load_yaml(self.spec)
+                self.component = type(self.component).from_spec(yaml_spec)
+            self._rendered = True
             if isinstance(self.component, Pipeline):
                 table = Table(
                     pipeline=self.component, pagination='remote', page_size=21,
@@ -140,6 +143,8 @@ class AnalysisOutput(LumenOutput):
     pipeline = param.Parameter()
 
     def __init__(self, **params):
+        if not params['analysis'].autorun:
+            params['active'] = 0
         super().__init__(**params)
         controls = self.analysis.controls()
         if controls is not None:
