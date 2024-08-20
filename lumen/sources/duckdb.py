@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 import duckdb
@@ -178,11 +180,27 @@ class DuckDBSource(BaseSQLSource):
         if not materialize:
             return source
         existing = self.get_tables()
-        for table, sql_expr in tables.items():
+        for table, sql_expr in tables.copy().items():
             if table in existing or sql_expr == self.sql_expr.format(table=f'"{table}"'):
                 continue
             table_expr = f'CREATE TEMP TABLE "{table}" AS ({sql_expr})'
-            self._connection.execute(table_expr)
+            try:
+                self._connection.execute(table_expr)
+            except duckdb.CatalogException as e:
+                pattern = r"Table with name\s(\w+)"
+                match = re.search(pattern, str(e))
+                if match and isinstance(self.tables, dict):
+                    name = match.group(1)
+                    real = self.tables[name]
+                    if 'select' not in real.lower() and not real.startswith('"'):
+                        real = f'"{real}"'
+                    else:
+                        real = f'({real})'
+                    table_expr = table_expr.replace(f'FROM {name}', f'FROM {real}')
+                    source.tables[table] = sql_expr.replace(f'FROM {name}', f'FROM {real}')
+                    self._connection.execute(table_expr)
+                else:
+                    raise e
         return source
 
     def get_tables(self):
