@@ -71,6 +71,7 @@ class SourceControls(pn.viewable.Viewer):
         self.tables_tabs = pn.Tabs(sizing_mode="stretch_width")
         self._file_input = pn.widgets.FileDropper(
             multiple=self.param.multiple,
+            margin=0,
             sizing_mode="stretch_both",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
