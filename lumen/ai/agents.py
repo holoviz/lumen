@@ -11,6 +11,7 @@ import panel as pn
 import param
 import yaml
 
+from instructor.retry import InstructorRetryException
 from panel.chat import ChatInterface
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
@@ -531,9 +532,15 @@ class SQLAgent(LumenBaseAgent):
             # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
             pipeline = Pipeline(source=sql_expr_source, table=expr_slug)
-        except Exception as e:
-            step.status = "failed"
+        except InstructorRetryException as e:
             step.failed_title = str(e)
+            step.status = "failed"
+            if e.n_attempts > 1:
+                # Show the last error message
+                step.stream(f'\n```python\n{e.messages[-1]["content"]}\n```')
+        except Exception as e:
+            step.failed_title = str(e)
+            step.status = "failed"
             raise e
 
         df = pipeline.data
