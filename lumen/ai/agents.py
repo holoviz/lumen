@@ -438,9 +438,16 @@ class TableListAgent(LumenBaseAgent):
             return
 
         self._df = pd.DataFrame({"Table": tables})
-        table_list = pn.widgets.Tabulator(self._df, buttons={
-            'show': '<i class="fa fa-eye"></i>'
-        }, show_index=False, min_width=350, widths={'Table': '90%'}, disabled=True)
+        table_list = pn.widgets.Tabulator(
+            self._df,
+            buttons={'show': '<i class="fa fa-eye"></i>'},
+            show_index=False,
+            min_height=150,
+            min_width=350,
+            widths={'Table': '90%'},
+            disabled=True,
+            page_size=10
+        )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
         return tables
