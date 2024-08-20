@@ -88,6 +88,9 @@ class LumenOutput(Viewer):
             return
 
         try:
+            if self.component is None or self.spec is None:
+                raise ValueError("No spec provided; please first fill out the Config tab.")
+
             if self._rendered:
                 yaml_spec = load_yaml(self.spec)
                 self.component = type(self.component).from_spec(yaml_spec)
