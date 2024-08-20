@@ -24,6 +24,9 @@ class Analysis(param.ParameterizedFunction):
 
     _run_button = param.Parameter(default=None)
 
+     # Whether to allow the analysis to be called multiple times in a row
+    _consecutive_calls = False
+
     @classmethod
     def applies(cls, pipeline) -> bool:
         return all(col in pipeline.data.columns for col in cls.columns)
