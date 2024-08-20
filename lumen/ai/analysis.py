@@ -20,7 +20,9 @@ class Analysis(param.ParameterizedFunction):
 
     autorun = param.Boolean(default=True, doc="Whether to automatically run the analysis.")
 
-    columns = param.List(default=[], doc="The columns required for the analysis.", readonly=True)
+    columns = param.List(default=[], constant=True, doc="""
+       The columns required for the analysis. May use tuples to declare that one of
+       the columns must be present.""")
 
     _run_button = param.Parameter(default=None)
 
@@ -29,7 +31,13 @@ class Analysis(param.ParameterizedFunction):
 
     @classmethod
     def applies(cls, pipeline) -> bool:
-        return all(col in pipeline.data.columns for col in cls.columns)
+        applies = True
+        for col in cls.columns:
+            if isinstance(col, tuple):
+                applies &= any(c in pipeline.data.columns for c in col)
+            else:
+                applies &= col in pipeline.data.columns
+        return applies
 
     def controls(self):
         config_options = [p for p in self.param if p not in Analysis.param]
