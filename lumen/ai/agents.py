@@ -505,7 +505,8 @@ class SQLAgent(LumenBaseAgent):
         if len(sources) > 1:
             mirrors = {}
             for a_source, a_table in sources.values():
-                if not any(a_table.endswith(ext) for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
+                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
+                           for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
                     renamed_table = a_table.replace(".", "_")
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
@@ -567,6 +568,7 @@ class SQLAgent(LumenBaseAgent):
                 a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
             else:
                 a_source = memory['current_source']
+                a_source_name = a_source.name
                 a_table = source_table
             sources[a_source_name] = (a_source, a_table)
         return sources
