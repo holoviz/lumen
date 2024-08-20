@@ -364,17 +364,20 @@ class TableAgent(LumenBaseAgent):
         return table_model
 
     async def answer(self, messages: list | str):
-        available_sources = memory["available_sources"]
 
-        tables_to_source = {}
-        tables_schema_str = "\nHere are the table schemas\n"
-        for source in available_sources:
-            for table in source.get_tables():
-                tables_to_source[table] = source
-                schema = get_schema(source, table, include_min_max=False, include_enum=False, limit=1)
-                tables_schema_str += f"### {table}\n```yaml\n{yaml.safe_dump(schema)}```\n"
-
-        print(tables_schema_str)
+        if len(memory["available_sources"]) >= 1:
+            available_sources = memory["available_sources"]
+            tables_to_source = {}
+            tables_schema_str = "\nHere are the table schemas\n"
+            for source in available_sources:
+                for table in source.get_tables():
+                    tables_to_source[table] = source
+                    schema = get_schema(source, table, include_min_max=False, include_enum=False, limit=1)
+                    tables_schema_str += f"### {table}\n```yaml\n{yaml.safe_dump(schema)}```\n"
+        else:
+            source = memory["current_source"]
+            tables_to_source = {table: source for table in source.get_tables()}
+            tables_schema_str = ""
 
         tables = tuple(tables_to_source)
         if len(tables) == 1:
