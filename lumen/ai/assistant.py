@@ -344,7 +344,7 @@ class Assistant(Viewer):
             if isinstance(agent, AnalysisAgent):
                 analyses = "\n".join(
                     f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
-                    for analysis in agent.analyses
+                    for analysis in agent.analyses if analysis._callable_by_llm
                 )
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
                 break
