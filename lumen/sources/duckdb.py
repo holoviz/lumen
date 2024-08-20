@@ -187,7 +187,7 @@ class DuckDBSource(BaseSQLSource):
             try:
                 self._connection.execute(table_expr)
             except duckdb.CatalogException as e:
-                pattern = r"Table with name\s(\w+)"
+                pattern = r"Table with name\s(\S+)"
                 match = re.search(pattern, str(e))
                 if match and isinstance(self.tables, dict):
                     name = match.group(1)

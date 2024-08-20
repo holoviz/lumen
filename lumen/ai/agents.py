@@ -35,7 +35,7 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    describe_data, get_schema, render_template, retry_llm_output,
+    clean_sql, describe_data, get_schema, render_template, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -495,7 +495,7 @@ class SQLAgent(LumenBaseAgent):
             async for output in response:
                 step_message = output.chain_of_thought
                 if output.query:
-                    sql_query = output.query.replace("```sql", "").replace("```", "").strip().rstrip(";")
+                    sql_query = clean_sql(output.query)
                     step_message += f"\n```sql\n{sql_query}\n```"
                 step.stream(step_message, replace=True)
 
