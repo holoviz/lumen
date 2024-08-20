@@ -71,9 +71,8 @@ class SourceControls(pn.viewable.Viewer):
         self.tables_tabs = pn.Tabs(sizing_mode="stretch_width")
         self._file_input = pn.widgets.FileDropper(
             multiple=self.param.multiple,
-            sizing_mode="stretch_width",
-            max_width=500,
-            height=200,
+            margin=0,
+            sizing_mode="stretch_both",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
         self._upload_tabs = pn.Tabs(sizing_mode="stretch_width")
@@ -171,7 +170,7 @@ class SourceControls(pn.viewable.Viewer):
                         (
                             t,
                             pn.widgets.Tabulator(
-                                src.get(t), sizing_mode="stretch_width"
+                                src.get(t), sizing_mode="stretch_both"
                             ),
                         )
                         for t in src.get_tables()
