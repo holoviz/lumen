@@ -314,3 +314,91 @@ class DuckDBSource(BaseSQLSource):
                 schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
                 schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
         return schemas if table is None else schemas[table]
+
+
+class DremioDuckDBSource(DuckDBSource):
+    """
+    DremioDuckDBSource provides a simple wrapper around the DuckDB SQL
+    connector, extended to connect to a Dremio server via Apache Arrow Flight.
+    """
+
+    cert = param.String(default="Path to certificate file", doc="Path to the certificate file.")
+    uri = param.String(doc="URI of the Dremio server.")
+    tls = param.Boolean(default=False, doc="Enable encryption (TLS).")
+    username = param.String(default=None, doc="Dremio username.")
+    password = param.String(default=None, doc="Dremio password or token.")
+    dialect = 'dremio'
+
+    def __init__(self, **params):
+        from dremio import (
+            DremioClientAuthMiddlewareFactory, HttpDremioClientAuthHandler,
+        )
+        from pyarrow import flight
+        from pyarrow.dataset import dataset as arrow_dataset
+
+        super().__init__(**params)
+        self._client = self._initialize_client()
+        protocol, hostname, user, password = self._process_uri()
+        client_auth_middleware = DremioClientAuthMiddlewareFactory()
+        connection_args = {'middleware': [client_auth_middleware]}
+
+        if self.tls:
+            with open(self.cert) as f:
+                certs = f.read()
+            connection_args["tls_root_certs"] = certs
+
+        client = flight.FlightClient(f"{protocol}://{hostname}", **connection_args)
+
+        try:
+            self._bearer_token = client.authenticate_basic_token(user, password)
+            self._headers = [self._bearer_token]
+        except Exception as e:
+            if self.tls:
+                raise e
+            handler = HttpDremioClientAuthHandler(user, password)
+            client.authenticate(handler)
+            self._headers = []
+
+        flight_desc = flight.FlightDescriptor.for_command(self.sql_expr)
+        options = flight.FlightCallOptions(headers=self._headers)
+        self._flight_info = self._client.get_flight_info(flight_desc, options)
+        reader = self._client.do_get(self._flight_info.endpoints[0].ticket)
+        data_table = reader.read_all()
+        arrow_ds = arrow_dataset(source=[data_table])
+        duckdb.arrow(arrow_ds, connection=self._connection)
+
+    def _process_uri(uri, tls=False, user=None, password=None):
+        """
+        Extracts hostname, protocol, user and passworrd from URI
+
+        Parameters
+        ----------
+        uri: str or None
+            Connection string in the form username:password@hostname:port
+        tls: boolean
+            Whether TLS is enabled
+        username: str or None
+            Username if not supplied as part of the URI
+        password: str or None
+            Password if not supplied as part of the URI
+        """
+        if "://" in uri:
+            protocol, uri = uri.split("://")
+        else:
+            protocol = "grpc+tls" if tls else "grpc+tcp"
+        if "@" in uri:
+            if user or password:
+                raise ValueError(
+                    "Dremio URI must not include username and password "
+                    "if they were supplied explicitly."
+                )
+            userinfo, hostname = uri.split("@")
+            user, password = userinfo.split(":")
+        elif not (user and password):
+            raise ValueError(
+                "Dremio URI must include username and password "
+                "or they must be provided explicitly."
+            )
+        else:
+            hostname = uri
+        return protocol, hostname, user, password
