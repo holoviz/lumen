@@ -29,6 +29,8 @@ class Analysis(param.ParameterizedFunction):
      # Whether to allow the analysis to be called multiple times in a row
     _consecutive_calls = False
 
+    _callable_by_llm = True
+
     _field_params = []
 
     @classmethod
@@ -59,6 +61,8 @@ class Join(Analysis):
     index_col = param.String(doc="The column to join on in the left table.")
 
     context = param.String(doc="Additional context to provide to the LLM.")
+
+    _callable_by_llm = False
 
     _previous_table = param.Parameter()
 
