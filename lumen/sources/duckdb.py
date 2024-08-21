@@ -250,6 +250,11 @@ class DuckDBSource(BaseSQLSource):
     @cached
     def get(self, table, **query):
         query.pop('__dask', None)
+
+        # duckdb does not support "Ahierachy"."Btable"
+        if '."' in table:
+            table = table.replace('"', '')
+
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
         conditions = list(query.items())
