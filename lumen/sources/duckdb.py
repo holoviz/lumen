@@ -239,8 +239,8 @@ class DuckDBSource(BaseSQLSource):
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             table = self.tables[table]
-        if '(' not in table and ')' not in table:
-            table = f'"{table}"'
+        if '(' not in table and ')' not in table and '"' not in table:
+            table = f"'{table}'"
         if 'select ' in table.lower():
             sql_expr = table
         else:
@@ -324,28 +324,29 @@ class DremioDuckDBSource(DuckDBSource):
 
     cert = param.String(default="Path to certificate file", doc="Path to the certificate file.")
 
-    uri = param.String(doc="URI of the Dremio server.")
+    dremio_uri = param.String(doc="URI of the Dremio server.")
 
-    tls = param.Boolean(default=False, doc="Enable encryption (TLS).")
+    tls = param.Boolean(default=True, doc="Enable encryption (TLS).")
 
     username = param.String(default=None, doc="Dremio username.")
 
     password = param.String(default=None, doc="Dremio password or token.")
 
-    table = param.String(doc="Table to query.")
-
     dialect = 'dremio'
 
     def __init__(self, **params):
-        from dremio import (
-            DremioClientAuthMiddlewareFactory, HttpDremioClientAuthHandler,
-        )
         from pyarrow import flight
         from pyarrow.dataset import dataset as arrow_dataset
 
+        from lumen.sources.dremio_utils import (
+            DremioClientAuthMiddlewareFactory, HttpDremioClientAuthHandler,
+        )
+
         super().__init__(**params)
-        self._client = self._initialize_client()
-        protocol, hostname, user, password = self._process_uri()
+
+        protocol, hostname, username, password = self._process_uri(
+            tls=self.tls, username=self.username, password=self.password)
+
         client_auth_middleware = DremioClientAuthMiddlewareFactory()
         connection_args = {'middleware': [client_auth_middleware]}
 
@@ -354,30 +355,35 @@ class DremioDuckDBSource(DuckDBSource):
                 certs = f.read()
             connection_args["tls_root_certs"] = certs
 
-        client = flight.FlightClient(f"{protocol}://{hostname}", **connection_args)
-
+        client_auth_middleware = DremioClientAuthMiddlewareFactory()
+        connection_args = {'middleware': [client_auth_middleware]}
+        if self.tls:
+            connection_args["tls_root_certs"] = certs
+        client = flight.FlightClient(f'{protocol}://{hostname}', **connection_args)
+        auth_options = flight.FlightCallOptions()
         try:
-            self._bearer_token = client.authenticate_basic_token(user, password)
-            self._headers = [self._bearer_token]
+            bearer_token = client.authenticate_basic_token(username, password)
+            headers = [bearer_token]
         except Exception as e:
             if self.tls:
                 raise e
-            handler = HttpDremioClientAuthHandler(user, password)
-            client.authenticate(handler)
-            self._headers = []
+            handler = HttpDremioClientAuthHandler(username, password)
+            client.authenticate(handler, options=auth_options)
+            headers = []
 
-        sql_expr = self.get_sql_expr(self.table)
-        flight_desc = flight.FlightDescriptor.for_command(sql_expr)
-        options = flight.FlightCallOptions(headers=self._headers)
-        self._flight_info = self._client.get_flight_info(flight_desc, options)
-        reader = self._client.do_get(self._flight_info.endpoints[0].ticket)
-        data_table = reader.read_all()
-        arrow_ds = arrow_dataset(source=[data_table])
-        self._connection.from_arrow(arrow_ds).to_view(self.table)
+        for table in self.tables:
+            sql_expr = self.get_sql_expr(table)
+            flight_desc = flight.FlightDescriptor.for_command(sql_expr)
+            options = flight.FlightCallOptions(headers=headers)
+            flight_info = client.get_flight_info(flight_desc, options)
+            reader = client.do_get(flight_info.endpoints[0].ticket, options)
+            data_table = reader.read_all()
+            arrow_ds = arrow_dataset(source=[data_table])
+            self._connection.from_arrow(arrow_ds).to_view(table.replace('"', ''))
 
-    def _process_uri(uri, tls=False, user=None, password=None):
+    def _process_uri(self, tls=False, username=None, password=None):
         """
-        Extracts hostname, protocol, user and passworrd from URI
+        Extracts hostname, protocol, username and password from URI
 
         Parameters
         ----------
@@ -390,23 +396,24 @@ class DremioDuckDBSource(DuckDBSource):
         password: str or None
             Password if not supplied as part of the URI
         """
+        uri = self.dremio_uri
         if "://" in uri:
             protocol, uri = uri.split("://")
         else:
             protocol = "grpc+tls" if tls else "grpc+tcp"
         if "@" in uri:
-            if user or password:
+            if username or password:
                 raise ValueError(
                     "Dremio URI must not include username and password "
                     "if they were supplied explicitly."
                 )
             userinfo, hostname = uri.split("@")
-            user, password = userinfo.split(":")
-        elif not (user and password):
+            username, password = userinfo.split(":")
+        elif not (username and password):
             raise ValueError(
                 "Dremio URI must include username and password "
                 "or they must be provided explicitly."
             )
         else:
             hostname = uri
-        return protocol, hostname, user, password
+        return protocol, hostname, username, password
