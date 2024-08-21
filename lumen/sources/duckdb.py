@@ -323,10 +323,17 @@ class DremioDuckDBSource(DuckDBSource):
     """
 
     cert = param.String(default="Path to certificate file", doc="Path to the certificate file.")
+
     uri = param.String(doc="URI of the Dremio server.")
+
     tls = param.Boolean(default=False, doc="Enable encryption (TLS).")
+
     username = param.String(default=None, doc="Dremio username.")
+
     password = param.String(default=None, doc="Dremio password or token.")
+
+    table = param.String(doc="Table to query.")
+
     dialect = 'dremio'
 
     def __init__(self, **params):
@@ -359,13 +366,14 @@ class DremioDuckDBSource(DuckDBSource):
             client.authenticate(handler)
             self._headers = []
 
-        flight_desc = flight.FlightDescriptor.for_command(self.sql_expr)
+        sql_expr = self.get_sql_expr(self.table)
+        flight_desc = flight.FlightDescriptor.for_command(sql_expr)
         options = flight.FlightCallOptions(headers=self._headers)
         self._flight_info = self._client.get_flight_info(flight_desc, options)
         reader = self._client.do_get(self._flight_info.endpoints[0].ticket)
         data_table = reader.read_all()
         arrow_ds = arrow_dataset(source=[data_table])
-        duckdb.arrow(arrow_ds, connection=self._connection)
+        self._connection.from_arrow(arrow_ds).to_view(self.table)
 
     def _process_uri(uri, tls=False, user=None, password=None):
         """
