@@ -254,7 +254,6 @@ class DuckDBSource(BaseSQLSource):
         # duckdb does not support "Ahierachy"."Btable"
         if '."' in table:
             table = table.replace('"', '')
-
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
         conditions = list(query.items())
@@ -279,6 +278,11 @@ class DuckDBSource(BaseSQLSource):
         schemas = {}
         sql_limit = SQLLimit(limit=limit or 1)
         for entry in tables:
+
+            # duckdb does not support "Ahierachy"."Btable"
+            if '."' in entry:
+                entry = entry.replace('"', '')
+
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
@@ -341,7 +345,6 @@ class DremioDuckDBSource(DuckDBSource):
 
     def __init__(self, **params):
         from pyarrow import flight
-        from pyarrow.dataset import dataset as arrow_dataset
 
         from lumen.sources.dremio_utils import (
             DremioClientAuthMiddlewareFactory, HttpDremioClientAuthHandler,
@@ -352,43 +355,34 @@ class DremioDuckDBSource(DuckDBSource):
         protocol, hostname, username, password = self._process_uri(
             tls=self.tls, username=self.username, password=self.password)
 
-        client_auth_middleware = DremioClientAuthMiddlewareFactory()
-        connection_args = {'middleware': [client_auth_middleware]}
+        dremio_client_auth_middleware = DremioClientAuthMiddlewareFactory()
+        connection_args = {'middleware': [dremio_client_auth_middleware]}
 
         if self.tls:
             with open(self.cert) as f:
                 certs = f.read()
             connection_args["tls_root_certs"] = certs
 
-        client_auth_middleware = DremioClientAuthMiddlewareFactory()
-        connection_args = {'middleware': [client_auth_middleware]}
+        dremio_client_auth_middleware = DremioClientAuthMiddlewareFactory()
+        connection_args = {'middleware': [dremio_client_auth_middleware]}
         if self.tls:
             connection_args["tls_root_certs"] = certs
-        client = flight.FlightClient(f'{protocol}://{hostname}', **connection_args)
+        self._dremio_client = flight.FlightClient(f'{protocol}://{hostname}', **connection_args)
         auth_options = flight.FlightCallOptions()
         try:
-            bearer_token = client.authenticate_basic_token(username, password)
-            headers = [bearer_token]
+            bearer_token = self._dremio_client.authenticate_basic_token(username, password)
+            self._headers = [bearer_token]
         except Exception as e:
             if self.tls:
                 raise e
             handler = HttpDremioClientAuthHandler(username, password)
-            client.authenticate(handler, options=auth_options)
-            headers = []
+            self._dremio_client.authenticate(handler, options=auth_options)
+            self._headers = []
 
-        for table in self.tables:
-            sql_expr = self.get_sql_expr(table)
-            flight_desc = flight.FlightDescriptor.for_command(sql_expr)
-            options = flight.FlightCallOptions(headers=headers)
-            flight_info = client.get_flight_info(flight_desc, options)
-            reader = client.do_get(flight_info.endpoints[0].ticket, options)
-            data_table = reader.read_all()
-            arrow_ds = arrow_dataset(source=[data_table])
-            self._connection.from_arrow(arrow_ds).to_view(table.replace('"', ''))
 
     def _process_uri(self, tls=False, username=None, password=None):
         """
-        Extracts hostname, protocol, username and password from URI
+        Extracts hostname, protocol, username and passworrd from URI
 
         Parameters
         ----------
@@ -422,3 +416,53 @@ class DremioDuckDBSource(DuckDBSource):
         else:
             hostname = uri
         return protocol, hostname, username, password
+
+    def _execute_dremio_sql(self, sql_expr, as_pandas=False):
+        """
+        Executes a SQL expression on Dremio via Apache Arrow Flight.
+        """
+        from pyarrow import flight
+
+        flight_desc = flight.FlightDescriptor.for_command(sql_expr)
+        options = flight.FlightCallOptions(headers=self._headers)
+        flight_info = self._dremio_client.get_flight_info(flight_desc, options)
+        reader = self._dremio_client.do_get(flight_info.endpoints[0].ticket, options)
+        data_table = reader.read_all() if not as_pandas else reader.read_pandas()
+        return data_table
+
+    def _ingest_table(self, table):
+        """
+        Ingests a table from Dremio to DuckDB.
+        """
+        from pyarrow.dataset import dataset as arrow_dataset
+
+        sql_expr = self.get_sql_expr(table)
+        data_table = self._execute_dremio_sql(sql_expr)
+        arrow_ds = arrow_dataset(source=[data_table])
+        self._connection.from_arrow(arrow_ds).to_view(table.replace('"', ''))
+
+    def get_tables(self):
+        if isinstance(self.tables, (dict, list)):
+            return list(self.tables)
+
+        databases = self._execute_dremio_sql("SHOW DATABASES", as_pandas=True)["SCHEMA_NAME"]
+
+        all_tables = []
+        for database in databases:
+            if not database[0].isalpha():
+                continue
+            try:
+                sql_expr = f"SHOW TABLES IN {database}"
+                reader = self._execute_dremio_sql(sql_expr, as_pandas=True)
+            except Exception:
+                pass
+            tables = reader.read_pandas()["TABLE_NAME"]
+            for table in tables:
+                all_tables.append(f'"{database}"."{table}"')
+        return all_tables
+
+    def get(self, table, **query):
+        ingested_tables = self._connection.execute("SHOW TABLES").fetchdf()["name"]
+        if table.replace('"', "") not in ingested_tables:
+            self._ingest_table(table)
+        return super().get(table, **query)
