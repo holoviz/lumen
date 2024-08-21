@@ -20,9 +20,12 @@ from pydantic.fields import FieldInfo
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
+from ..sources.base import BaseSQLSource
 from ..sources.duckdb import DuckDBSource
 from ..state import state
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import (
+    SQLLimit, SQLOverride, SQLTransform, Transform,
+)
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
@@ -344,6 +347,7 @@ class LumenBaseAgent(Agent):
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
+
 class TableAgent(LumenBaseAgent):
     """
     Displays a single table / dataset. Does not discuss.
@@ -412,12 +416,15 @@ class TableAgent(LumenBaseAgent):
             sources = [src for src in available_sources if table in src]
             source = sources[0] if sources else memory["current_source"]
 
+        get_kwargs = {}
+        if isinstance(source, BaseSQLSource):
+            get_kwargs['sql_transforms'] = [SQLLimit(limit=1_000_000)]
         memory["current_source"] = source
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
-            source=source, table=table
+            source=source, table=table, **get_kwargs
         )
-        df = pipeline.__panel__()[-1].value
+        df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
         if self.debug:
