@@ -86,6 +86,12 @@ class LumenOutput(Viewer):
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
             return
+        elif self.component is None:
+            yield pn.pane.Alert(
+                "No component to render. Please complete the Config tab.",
+                alert_type="warning",
+            )
+            return
 
         try:
             if self._rendered:
