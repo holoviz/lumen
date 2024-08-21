@@ -20,7 +20,7 @@ def test_sql_group_by_multi_columns():
 def test_sql_limit():
     assert (
         SQLLimit.apply_to('SELECT * FROM TABLE', limit=10) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nLIMIT 10"""
+        """SELECT * FROM TABLE LIMIT 10"""
     )
 
 def test_sql_columns():

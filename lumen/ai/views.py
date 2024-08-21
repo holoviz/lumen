@@ -11,6 +11,7 @@ from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
+from ..transforms.sql import SQLLimit
 from ..views.base import Table
 
 
@@ -117,8 +118,26 @@ class LumenOutput(Viewer):
                 )
                 download_pane = download.__panel__()
                 download_pane.sizing_mode = 'fixed'
-                download_pane.styles = {'position': 'absolute', 'right': '40px', 'top': '-35px'}
-                output = pn.Column(download_pane, table)
+                controls = pn.Row(
+                    download_pane,
+                    styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
+                )
+                for sql_limit in self.component.sql_transforms:
+                    if isinstance(sql_limit, SQLLimit):
+                        break
+                else:
+                    sql_limit = None
+                if sql_limit:
+                    limited = len(self.component.data) == sql_limit.limit
+                    if limited:
+                        def unlimit(e):
+                            sql_limit.limit = None if e.new else 1_000_000
+                        full_data = pn.widgets.Checkbox(
+                            name='Full data', width=100, visible=limited
+                        )
+                        full_data.param.watch(unlimit, 'value')
+                        controls.insert(0, full_data)
+                output = pn.Column(controls, table)
             else:
                 output = self.component.__panel__()
             self._last_output.clear()

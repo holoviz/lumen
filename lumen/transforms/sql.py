@@ -101,18 +101,15 @@ class SQLLimit(SQLTransform):
     Performs a LIMIT SQL operation on the query
     """
 
-    limit = param.Integer(default=1000, doc="Limit on the number of rows to return")
+    limit = param.Integer(default=1000, allow_None=True, doc="Limit on the number of rows to return")
 
     transform_type: ClassVar[str] = 'sql_limit'
 
     def apply(self, sql_in):
+        if self.limit is None:
+            return sql_in
         sql_in = super().apply(sql_in)
-        template = """
-            SELECT
-                *
-            FROM ( {{sql_in}} )
-            LIMIT {{limit}}
-        """
+        template = "{{sql_in}} LIMIT {{limit}}"
         return self._render_template(template, sql_in=sql_in, limit=self.limit)
 
 
