@@ -424,6 +424,8 @@ class Assistant(Viewer):
                     continue
                 if hasattr(o, "visible") and o.visible:
                     break
+            else:
+                return ""
             return self._serialize(o)
 
         if isinstance(obj, HTML) and 'catalog' in obj.tags:
