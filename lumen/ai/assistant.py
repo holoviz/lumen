@@ -250,8 +250,8 @@ class Assistant(Viewer):
             return
 
         source = memory.get("current_source")
-        if table not in source.get_tables():
-            sources = [src for src in memory.get('available_sources', []) if table in src.get_tables()]
+        if table not in source:
+            sources = [src for src in memory.get('available_sources', []) if table in src]
             if sources:
                 memory['current_source'] = source = sources[0]
             else:

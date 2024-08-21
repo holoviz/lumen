@@ -34,6 +34,13 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
             table = tables[normalized_tables.index(normalized_table)]
         return super()._get_source(table)
 
+    def __contains__(self, table):
+        try:
+            self._get_source(table)
+            return True
+        except KeyError:
+            return False
+
     def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
         """
         Creates a new SQL Source given a set of table names and

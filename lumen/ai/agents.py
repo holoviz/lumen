@@ -376,6 +376,7 @@ class TableAgent(LumenBaseAgent):
                     tables_schema_str += f"### {table}\n```yaml\n{yaml.safe_dump(schema)}```\n"
         else:
             source = memory["current_source"]
+            available_sources = [source]
             tables_to_source = {table: source for table in source.get_tables()}
             tables_schema_str = ""
 
@@ -405,7 +406,13 @@ class TableAgent(LumenBaseAgent):
                     table = tables[0]
                 step.stream(f"Selected table: {table}")
 
-        memory["current_source"] = source = tables_to_source.get(table, memory['current_source'])
+        if table in tables_to_source:
+            source = tables_to_source[table]
+        else:
+            sources = [src for src in available_sources if table in src]
+            source = sources[0] if sources else memory["current_source"]
+
+        memory["current_source"] = source
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=source, table=table
