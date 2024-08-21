@@ -391,6 +391,9 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
+    def __contains__(self, table):
+        return table in self.get_tables()
+
     def clear_cache(self, *events: param.parameterized.Event):
         """
         Clears any cached data.
