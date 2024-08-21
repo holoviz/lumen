@@ -344,7 +344,6 @@ class LumenBaseAgent(Agent):
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
-
 class TableAgent(LumenBaseAgent):
     """
     Displays a single table / dataset. Does not discuss.
@@ -366,7 +365,22 @@ class TableAgent(LumenBaseAgent):
         return table_model
 
     async def answer(self, messages: list | str):
-        tables = tuple(memory["current_source"].get_tables())
+
+        if len(memory["available_sources"]) >= 1:
+            available_sources = memory["available_sources"]
+            tables_to_source = {}
+            tables_schema_str = "\nHere are the table schemas\n"
+            for source in available_sources:
+                for table in source.get_tables():
+                    tables_to_source[table] = source
+                    schema = get_schema(source, table, include_min_max=False, include_enum=False, limit=1)
+                    tables_schema_str += f"### {table}\n```yaml\n{yaml.safe_dump(schema)}```\n"
+        else:
+            source = memory["current_source"]
+            tables_to_source = {table: source for table in source.get_tables()}
+            tables_schema_str = ""
+
+        tables = tuple(tables_to_source)
         if len(tables) == 1:
             table = tables[0]
         else:
@@ -376,7 +390,7 @@ class TableAgent(LumenBaseAgent):
                     tables = closest_tables
                 elif len(tables) > FUZZY_TABLE_LENGTH:
                     tables = await self._get_closest_tables(messages, tables)
-                system_prompt = await self._system_prompt_with_context(messages)
+                system_prompt = await self._system_prompt_with_context(messages) + tables_schema_str
                 if self.debug:
                     print(f"{self.name} is being instructed that it should {system_prompt}")
                 if len(tables) > 1:
@@ -391,6 +405,8 @@ class TableAgent(LumenBaseAgent):
                 else:
                     table = tables[0]
                 step.stream(f"Selected table: {table}")
+
+        memory["current_source"] = tables_to_source[table]
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
             source=memory["current_source"], table=table
