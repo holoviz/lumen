@@ -365,7 +365,6 @@ class TableAgent(LumenBaseAgent):
         return table_model
 
     async def answer(self, messages: list | str):
-
         if len(memory["available_sources"]) >= 1:
             available_sources = memory["available_sources"]
             tables_to_source = {}
@@ -406,10 +405,10 @@ class TableAgent(LumenBaseAgent):
                     table = tables[0]
                 step.stream(f"Selected table: {table}")
 
-        memory["current_source"] = tables_to_source[table]
+        memory["current_source"] = source = tables_to_source.get(table, memory['current_source'])
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
-            source=memory["current_source"], table=table
+            source=source, table=table
         )
         df = pipeline.__panel__()[-1].value
         if len(df) > 0:
