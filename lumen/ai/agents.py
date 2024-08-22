@@ -385,7 +385,10 @@ class TableAgent(LumenBaseAgent):
             tables_schema_str = ""
 
         tables = tuple(tables_to_source)
-        if len(tables) == 1:
+        if messages and messages[-1]["content"].startswith("Show the table: '"):
+            # Handle the case where the TableListAgent explicitly requested a table
+            table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
+        elif len(tables) == 1:
             table = tables[0]
         else:
             with self.interface.add_step(title="Choosing the most relevant table...") as step:
