@@ -1087,6 +1087,11 @@ class AnalysisAgent(LumenBaseAgent):
                     memory["current_view"] = dict(spec, type=view_type)
                 elif isinstance(view, Pipeline):
                     memory["current_pipeline"] = view
+                # Ensure current_data reflects processed pipeline
+                if pipeline is not memory['current_pipeline']:
+                    pipeline = memory['current_pipeline']
+                    if len(pipeline.data) > 0:
+                        memory["current_data"] = describe_data(pipeline.data)
                 yaml_spec = yaml.safe_dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
