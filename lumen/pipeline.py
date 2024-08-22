@@ -148,7 +148,6 @@ class Pipeline(Viewer, Component):
     _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, *, source, table, schema=None, filters=None, **params):
-        self._new_data = None
         if schema is None:
             schema = source.get_schema(table)
         if filters == 'auto':
@@ -174,6 +173,8 @@ class Pipeline(Viewer, Component):
         self._update_widget.button_type = 'warning' if self._stale else 'success'
 
     def _init_callbacks(self):
+        self._update_button = pn.widgets.Button(button_type='success')
+        pn.bind(self._update_data_response, self._update_button, watch=True)
         self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
         self.param.watch(self._sync_source, 'source')
         self._source_watcher = self.source.param.watch(self._update_data, self.source._reload_params)
@@ -295,8 +296,7 @@ class Pipeline(Viewer, Component):
                 data = await asyncio.to_thread(transform.apply, data)
             else:
                 data = transform.apply(data)
-
-        self._new_data = data
+        return data
 
     def get_schema(self):
         """
@@ -313,6 +313,13 @@ class Pipeline(Viewer, Component):
 
     @catch_and_notify
     def _update_data(self, *events: param.parameterized.Event, force: bool = False):
+        print("Updating data...")
+        if self._update_widget is None or self._update_widget.loading:
+            return
+        param.parameterized.async_executor(self._update_data_response)
+
+    async def _update_data_response(self, *events: param.parameterized.Event, force: bool = False):
+        print("Updating data response...")
         if self._update_widget is None or self._update_widget.loading:
             return
         if not force and not self.auto_update and not self.update:
@@ -325,24 +332,17 @@ class Pipeline(Viewer, Component):
         for f in self.filters+self.transforms+self.sql_transforms:
             f._sync_refs()
 
-        param.parameterized.async_executor(self._watch_data)
-
-    async def _watch_data(self):
-        await self._compute_data()
-
-        while self._new_data is None:
-            await asyncio.sleep(0.1)
+        new_data = self._compute_data()
 
         if pn_state._unblocked(pn_state.curdoc):
             with unlocked():
-                self.data = self._new_data
+                self.data = new_data
         else:
-            self.data = self._new_data
+            self.data = new_data
         if state.config and state.config.on_update:
             pn.state.execute(partial(state.config.on_update, self))
         self._stale = False
         self._update_widget.loading = False
-        self._new_data = None
 
     @classmethod
     def _validate_source(
