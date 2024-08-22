@@ -460,6 +460,16 @@ class DremioDuckDBSource(DuckDBSource):
                 all_tables.append(f'"{database}"."{table}"')
         return all_tables
 
+    @cached_schema
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
+        ingested_tables = self._connection.execute("SHOW TABLES").fetchdf()["name"]
+        if table.replace('"', "") not in ingested_tables:
+            self._ingest_table(table)
+        return super().get_schema(table, limit)
+
+    @cached
     def get(self, table, **query):
         ingested_tables = self._connection.execute("SHOW TABLES").fetchdf()["name"]
         if table.replace('"', "") not in ingested_tables:
