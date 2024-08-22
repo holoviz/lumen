@@ -17,7 +17,6 @@ closest match, or resample and aggregate the data to align the values.
 Checklist
 - Quote column names to ensure they do not clash with valid identifiers.
 - If it's a date column (excluding individual year/month/day integers) date, cast to date using appropriate syntax, e.g. CAST or TO_DATE
-- If no LIMIT or FETCH FIRST/NEXT is specified, specify 10000 as the limit.
 - Use only `{{ dialect }}` syntax
 {% if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name

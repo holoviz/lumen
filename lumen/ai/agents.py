@@ -506,7 +506,7 @@ class SQLAgent(LumenBaseAgent):
     def _render_sql(self, query):
         pipeline = memory['current_pipeline']
         out = SQLOutput(component=pipeline, spec=query.rstrip(';'))
-        self.interface.stream(out, user="SQL", replace=True)
+        self.interface.stream(out, user="SQL", replace=True, max_width=self._max_width)
         return out
 
     @retry_llm_output()
@@ -560,7 +560,10 @@ class SQLAgent(LumenBaseAgent):
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
             # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
-            pipeline = Pipeline(source=sql_expr_source, table=expr_slug)
+            sql_transforms = [SQLLimit(limit=1_000_000)]
+            pipeline = Pipeline(
+                source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
+            )
         except InstructorRetryException as e:
             error_msg = str(e)
             step.stream(f'\n```python\n{error_msg}\n```')
