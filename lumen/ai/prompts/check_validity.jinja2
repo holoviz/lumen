@@ -10,10 +10,14 @@ Based on the latest user's query, decide whether the current table and data cont
 {{ sql }}
 ```
 
+{% if spec %}
 ### Current Data `{column: stat}`:
 ```
 {{ spec }}
 ```
+{% else %}
+Schema for current table could not be determined.
+{% endif %}
 
 {% if analyses %}
 If the user requests one of the current analyses, the data is assumed to be valid.
