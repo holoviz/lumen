@@ -220,6 +220,9 @@ class Assistant(Viewer):
                 on_click=run_demo,
                 margin=5,
             ))
+        disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
+        for b in suggestion_buttons:
+            b.js_on_click(code=disable_js)
 
         message = self.interface.objects[-1]
         if inplace:
