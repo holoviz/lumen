@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 
 from functools import partial
@@ -147,6 +148,7 @@ class Pipeline(Viewer, Component):
     _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, *, source, table, schema=None, filters=None, **params):
+        self._new_data = None
         if schema is None:
             schema = source.get_schema(table)
         if filters == 'auto':
@@ -246,7 +248,7 @@ class Pipeline(Viewer, Component):
                     refs.append(ref)
         return refs
 
-    def _compute_data(self):
+    async def _compute_data(self):
         query = {}
 
         # Compute Filter query
@@ -289,8 +291,12 @@ class Pipeline(Viewer, Component):
 
         # Apply transforms
         for transform in self.transforms:
-            data = transform.apply(data)
-        return data
+            if asyncio.iscoroutinefunction(transform.apply):
+                data = await asyncio.to_thread(transform.apply, data)
+            else:
+                data = transform.apply(data)
+
+        self._new_data = data
 
     def get_schema(self):
         """
@@ -319,16 +325,24 @@ class Pipeline(Viewer, Component):
         for f in self.filters+self.transforms+self.sql_transforms:
             f._sync_refs()
 
-        new_data = self._compute_data()
+        param.parameterized.async_executor(self._watch_data)
+
+    async def _watch_data(self):
+        await self._compute_data()
+
+        while self._new_data is None:
+            await asyncio.sleep(0.1)
+
         if pn_state._unblocked(pn_state.curdoc):
             with unlocked():
-                self.data = new_data
+                self.data = self._new_data
         else:
-            self.data = new_data
+            self.data = self._new_data
         if state.config and state.config.on_update:
             pn.state.execute(partial(state.config.on_update, self))
         self._stale = False
         self._update_widget.loading = False
+        self._new_data = None
 
     @classmethod
     def _validate_source(
