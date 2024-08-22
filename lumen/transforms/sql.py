@@ -108,8 +108,13 @@ class SQLLimit(SQLTransform):
     def apply(self, sql_in):
         if self.limit is None:
             return sql_in
+        normalized = sql_in.rstrip(';').lower()
+        limited = 'limit' in normalized or 'fetch' in normalized
         sql_in = super().apply(sql_in)
-        template = "{{sql_in}} LIMIT {{limit}}"
+        if limited:
+            template = "SELECT * FROM ({{sql_in}}) LIMIT {{limit}}"
+        else:
+            template = "{{sql_in}} LIMIT {{limit}}"
         return self._render_template(template, sql_in=sql_in, limit=self.limit)
 
 
