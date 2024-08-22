@@ -6,8 +6,9 @@ import param  # type: ignore
 
 from ..transforms.base import Filter
 from ..transforms.sql import (
-    SQLCast, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
+    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
+from ..util import get_dataframe_schema
 from ..validation import ValidationError
 from .base import BaseSQLSource, cached, cached_schema
 from .intake import IntakeBaseSource, IntakeSource
@@ -92,8 +93,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
                 schemas[entry] = super().get_schema(table)
                 continue
             data = self._read(self._apply_transforms(source, [sql_limit]))
-            schema, casts = self._compute_subset_schema(data)
-            schemas[entry] = schema
+            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 continue
 
@@ -116,11 +116,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
                 continue
 
             # Calculate numeric schemas
-            if casts:
-                transforms = [SQLCast(columns=casts, force=True)]
-            else:
-                transforms = []
-            transforms.append(SQLMinMax(columns=min_maxes))
+            transforms = [SQLMinMax(columns=min_maxes)]
             minmax_data = self._read(
                 self._apply_transforms(source, transforms)
             )
