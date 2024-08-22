@@ -293,8 +293,10 @@ class Pipeline(Viewer, Component):
         # Apply transforms
         for transform in self.transforms:
             if asyncio.iscoroutinefunction(transform.apply):
+                print(transform, "ASYNC")
                 data = await asyncio.to_thread(transform.apply, data)
             else:
+                print(transform, "SYNC")
                 data = transform.apply(data)
         return data
 
@@ -314,8 +316,6 @@ class Pipeline(Viewer, Component):
     @catch_and_notify
     def _update_data(self, *events: param.parameterized.Event, force: bool = False):
         print("Updating data...")
-        if self._update_widget is None or self._update_widget.loading:
-            return
         param.parameterized.async_executor(self._update_data_response)
 
     async def _update_data_response(self, *events: param.parameterized.Event, force: bool = False):
@@ -332,7 +332,7 @@ class Pipeline(Viewer, Component):
         for f in self.filters+self.transforms+self.sql_transforms:
             f._sync_refs()
 
-        new_data = self._compute_data()
+        new_data = await self._compute_data()
 
         if pn_state._unblocked(pn_state.curdoc):
             with unlocked():
