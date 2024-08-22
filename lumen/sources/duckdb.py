@@ -250,10 +250,6 @@ class DuckDBSource(BaseSQLSource):
     @cached
     def get(self, table, **query):
         query.pop('__dask', None)
-
-        # duckdb does not support "Ahierachy"."Btable"
-        if '."' in table:
-            table = table.replace('"', '')
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
         conditions = list(query.items())
@@ -436,10 +432,40 @@ class DremioDuckDBSource(DuckDBSource):
         """
         from pyarrow.dataset import dataset as arrow_dataset
 
-        sql_expr = self.get_sql_expr(table)
+        sql_expr = self.get_sql_expr(table, quoted=True)
         data_table = self._execute_dremio_sql(sql_expr)
         arrow_ds = arrow_dataset(source=[data_table])
-        self._connection.from_arrow(arrow_ds).to_view(table.replace('"', ''))
+        self._connection.from_arrow(arrow_ds).to_view(self._unquote(table))
+
+    def _quote(self, table):
+        """
+        Convert ABC.DEF to "ABC"."DEF" for Dremio.
+        """
+        return re.sub(r'(\w+)\.(\w+)', r'"\1"."\2"', table)
+
+    def _unquote(self, table):
+        """
+        Convert "ABC"."DEF" to ABC.DEF for DuckDB.
+        """
+        return re.sub(r'"(\w+)"\."(\w+)"', r'\1.\2', table)
+
+    def get_sql_expr(self, table: str, quoted: bool = False):
+        """
+        Returns the SQL expression for a given table.
+
+        Parameters
+        ----------
+        table: str
+            The name of the table.
+        quoted: bool
+            Whether to quote the table name.
+        """
+        if quoted:
+            table = self._quote(table)
+        else:
+            table = self._unquote(table)
+        sql_expr = super().get_sql_expr(table)
+        return sql_expr
 
     def get_tables(self):
         if isinstance(self.tables, (dict, list)):
@@ -465,13 +491,15 @@ class DremioDuckDBSource(DuckDBSource):
         self, table: str | None = None, limit: int | None = None
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         ingested_tables = self._connection.execute("SHOW TABLES").fetchdf()["name"]
-        if table.replace('"', "") not in ingested_tables:
+        table = self._unquote(table)
+        if table not in ingested_tables:
             self._ingest_table(table)
         return super().get_schema(table, limit)
 
     @cached
     def get(self, table, **query):
         ingested_tables = self._connection.execute("SHOW TABLES").fetchdf()["name"]
-        if table.replace('"', "") not in ingested_tables:
+        table = self._unquote(table)
+        if table not in ingested_tables:
             self._ingest_table(table)
         return super().get(table, **query)
