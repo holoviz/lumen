@@ -75,6 +75,46 @@ class LumenOutput(Viewer):
         ]
         self._last_output = {}
 
+    def _render_pipeline(self, pipeline):
+        table = Table(
+            pipeline=pipeline, pagination='remote',
+            min_height=500, sizing_mode="stretch_both", stylesheets=[
+                """
+                .tabulator-footer {
+                display: flex;
+                text-align: left;
+                padding: 0px;
+                }
+                """
+            ]
+        )
+        download = Download(
+            view=table, hide=False, filename=f'{pipeline.table}',
+            format='csv'
+        )
+        download_pane = download.__panel__()
+        download_pane.sizing_mode = 'fixed'
+        controls = pn.Row(
+            download_pane,
+            styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
+        )
+        for sql_limit in pipeline.sql_transforms:
+            if isinstance(sql_limit, SQLLimit):
+                break
+        else:
+            sql_limit = None
+        if sql_limit:
+            limited = len(pipeline.data) == sql_limit.limit
+            if limited:
+                def unlimit(e):
+                    sql_limit.limit = None if e.new else 1_000_000
+                full_data = pn.widgets.Checkbox(
+                    name='Full data', width=100, visible=limited
+                )
+                full_data.param.watch(unlimit, 'value')
+                controls.insert(0, full_data)
+        return pn.Column(controls, table)
+
     @param.depends('spec', 'active')
     async def _render_component(self):
         yield pn.indicators.LoadingSpinner(
@@ -98,48 +138,11 @@ class LumenOutput(Viewer):
             if self._rendered:
                 yaml_spec = load_yaml(self.spec)
                 self.component = type(self.component).from_spec(yaml_spec)
-            self._rendered = True
             if isinstance(self.component, Pipeline):
-                table = Table(
-                    pipeline=self.component, pagination='remote',
-                    min_height=500, sizing_mode="stretch_both", stylesheets=[
-                        """
-                        .tabulator-footer {
-                            display: flex;
-                            text-align: left;
-                            padding: 0px;
-                        }
-                        """
-                    ]
-                )
-                download = Download(
-                    view=table, hide=False, filename=f'{self.component.table}',
-                    format='csv'
-                )
-                download_pane = download.__panel__()
-                download_pane.sizing_mode = 'fixed'
-                controls = pn.Row(
-                    download_pane,
-                    styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
-                )
-                for sql_limit in self.component.sql_transforms:
-                    if isinstance(sql_limit, SQLLimit):
-                        break
-                else:
-                    sql_limit = None
-                if sql_limit:
-                    limited = len(self.component.data) == sql_limit.limit
-                    if limited:
-                        def unlimit(e):
-                            sql_limit.limit = None if e.new else 1_000_000
-                        full_data = pn.widgets.Checkbox(
-                            name='Full data', width=100, visible=limited
-                        )
-                        full_data.param.watch(unlimit, 'value')
-                        controls.insert(0, full_data)
-                output = pn.Column(controls, table)
+                output = self._render_pipeline(self.component)
             else:
                 output = self.component.__panel__()
+            self._rendered = True
             self._last_output.clear()
             self._last_output[self.spec] = output
             yield output
@@ -215,17 +218,17 @@ class SQLOutput(LumenOutput):
             return
 
         pipeline = self.component
-        pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
+        if self.spec in self._last_output:
+            yield self._last_output[self.spec]
+            return
+
         try:
-            table = Table(pipeline=pipeline, pagination='remote')
-            download = Download(
-                view=table, hide=False, filename=f'{self.component.table}',
-                format='csv'
-            )
-            download_pane = download.__panel__()
-            download_pane.sizing_mode = 'fixed'
-            download_pane.styles = {'position': 'absolute', 'right': '-50px'}
-            output = pn.Column(download_pane, table)
+            if self._rendered:
+                pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
+            output = self._render_pipeline(pipeline)
+            self._rendered = True
+            self._last_output.clear()
+            self._last_output[self.spec] = output
             yield output
         except Exception as e:
             import traceback
