@@ -453,10 +453,9 @@ class DremioDuckDBSource(DuckDBSource):
                 continue
             try:
                 sql_expr = f"SHOW TABLES IN {database}"
-                reader = self._execute_dremio_sql(sql_expr, as_pandas=True)
+                tables = self._execute_dremio_sql(sql_expr, as_pandas=True)["TABLE_NAME"]
             except Exception:
                 pass
-            tables = reader.read_pandas()["TABLE_NAME"]
             for table in tables:
                 all_tables.append(f'"{database}"."{table}"')
         return all_tables
