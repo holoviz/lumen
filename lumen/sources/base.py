@@ -716,6 +716,22 @@ class BaseSQLSource(Source):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
+    def _compute_subset_schema(self, data):
+        casts = {}
+        for col in data.columns:
+            if not hasattr(data[col], 'str'):
+                continue
+            if data[col].str.isdigit().all():
+                data[col] = data[col].astype(int)
+                casts[col] = 'INT'
+                continue
+            try:
+                data[col] = data[col].astype(float)
+                casts[col] = 'FLOAT'
+            except ValueError:
+                continue
+        return get_dataframe_schema(data)['items']['properties'], casts
+
     def get_sql_expr(self, table: str):
         """
         Returns the SQL expression corresponding to a particular table.

@@ -168,6 +168,27 @@ class SQLColumns(SQLTransform):
         return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
 
 
+class SQLCast(SQLTransform):
+
+    columns = param.Dict(default={})
+
+    force = param.Boolean(default=False, doc="Whether to cast to null if it can't be converted.")
+
+    transform_type: ClassVar[str] = 'sql_cast'
+
+    def apply(self, sql_in):
+        if not self.columns:
+            return sql_in
+        sql_in = super().apply(sql_in)
+        cast_statement = 'TRY_CAST' if self.force else 'CAST'
+        casts = ",".join(
+            f'{cast_statement}({col} as {cast_type}) as {col}'
+            for col, cast_type in self.columns.items()
+        )
+        template = "SELECT *, {{casts}} FROM ({{sql_in}})"
+        return self._render_template(template, sql_in=sql_in, casts=casts)
+
+
 class SQLFilter(SQLTransform):
     """
     Translates Lumen Filter query into a SQL WHERE statement.

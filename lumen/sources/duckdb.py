@@ -11,9 +11,8 @@ from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
 from ..transforms.sql import (
-    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
+    SQLCast, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
-from ..util import get_dataframe_schema
 from .base import (
     BaseSQLSource, Source, cached, cached_schema,
 )
@@ -272,23 +271,24 @@ class DuckDBSource(BaseSQLSource):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
+        sql_limit = SQLLimit(limit=limit or 3)
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
             data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
-            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+            schema, casts = self._compute_subset_schema(data)
+            schemas[entry] = schema
             if limit:
                 continue
 
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
-                if 'enum' in col_schema:
-                    enums.append(name)
-                elif 'inclusiveMinimum' in col_schema:
+                if 'inclusiveMinimum' in col_schema or name in casts:
                     min_maxes.append(name)
+                elif 'enum' in col_schema:
+                    enums.append(name)
             for col in enums:
                 distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
                 distinct_expr = ' '.join(distinct_expr.splitlines())
@@ -298,6 +298,8 @@ class DuckDBSource(BaseSQLSource):
             if not min_maxes:
                 continue
 
+            if casts:
+                sql_expr = SQLCast(columns=casts, force=True).apply(sql_expr)
             minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
             minmax_expr = ' '.join(minmax_expr.splitlines())
             minmax_data = self._connection.execute(minmax_expr).fetch_df()
