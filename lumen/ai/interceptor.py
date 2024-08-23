@@ -368,7 +368,7 @@ class OpenAIInterceptor(Interceptor):
             response = await self._original_create_response(*args, **kwargs)
             async for chunk in response:
                 yield chunk
-                if hasattr(chunk, "choices"):
+                if hasattr(chunk, "choices") and chunk.choices:
                     delta = chunk.choices[0].delta
                     if delta.content is not None:
                         content += delta.content
