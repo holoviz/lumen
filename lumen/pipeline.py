@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import sys
 
+from asyncio import iscoroutinefunction
 from functools import partial
+from inspect import isawaitable
 from itertools import product
 from typing import Any, ClassVar
 
@@ -292,13 +293,23 @@ class Pipeline(Viewer, Component):
 
         # Apply transforms
         for transform in self.transforms:
-            if asyncio.iscoroutinefunction(transform.apply):
-                print(transform, "ASYNC")
-                data = await asyncio.to_thread(transform.apply, data)
+            if iscoroutinefunction(transform.apply):
+                data = await transform.apply(data)
             else:
-                print(transform, "SYNC")
                 data = transform.apply(data)
-        return data
+            if isawaitable(data):
+                data = await data
+
+        if pn_state._unblocked(pn_state.curdoc):
+            with unlocked():
+                self.data = data
+        else:
+            self.data = data
+
+        if state.config and state.config.on_update:
+            pn.state.execute(partial(state.config.on_update, self))
+        self._stale = False
+        self._update_widget.loading = False
 
     def get_schema(self):
         """
@@ -343,6 +354,7 @@ class Pipeline(Viewer, Component):
             pn.state.execute(partial(state.config.on_update, self))
         self._stale = False
         self._update_widget.loading = False
+        param.parameterized.async_executor(self._compute_data)
 
     @classmethod
     def _validate_source(
