@@ -721,9 +721,13 @@ class BaseSQLSource(Source):
         for col in data.columns:
             if not hasattr(data[col], 'str'):
                 continue
-            if data[col].str.isdigit().all():
-                data[col] = data[col].astype(int)
-                casts[col] = 'INT'
+
+            try:
+                if data[col].str.isdigit().all():
+                    data[col] = data[col].astype(int)
+                    casts[col] = 'INT'
+                    continue
+            except Exception:
                 continue
             try:
                 data[col] = data[col].astype(float)
