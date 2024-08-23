@@ -1,0 +1,12 @@
+Determine whether a table join is required to answer the user's query.
+
+The current table '{{ table }}' follows this JSON schema:
+
+```json
+{{ schema }}
+```
+
+Notes:
+- Carefully consider the columns described in the schema
+- If the schema references all the columns needed, no join is required
+- Consider if missing data can be calculated without a join

@@ -253,8 +253,12 @@ class Source(MultiTypeComponent):
             return source
 
         spec = spec.copy()
-        source_type = Source._get_type(spec.pop('type', None))
-        resolved_spec, refs = cls._recursive_resolve(spec, source_type)
+        src_type_name = spec.pop('type', None)
+        source_type = Source._get_type(src_type_name)
+        if cls is Source:
+            spec['type'] = src_type_name
+            return source_type.from_spec(spec)
+        resolved_spec, refs = source_type._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
@@ -387,6 +391,9 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
+    def __contains__(self, table):
+        return table in self.get_tables()
+
     def clear_cache(self, *events: param.parameterized.Event):
         """
         Clears any cached data.
@@ -468,6 +475,8 @@ class Source(MultiTypeComponent):
             A DataFrame containing the queried table.
         """
 
+    def __str__(self) -> str:
+        return self.name
 
 class RESTSource(Source):
     """
@@ -706,6 +715,22 @@ class BaseSQLSource(Source):
 
     # Declare this source supports SQL transforms
     _supports_sql = True
+
+    def _compute_subset_schema(self, data):
+        casts = {}
+        for col in data.columns:
+            if not hasattr(data[col], 'str'):
+                continue
+            if data[col].str.isdigit().all():
+                data[col] = data[col].astype(int)
+                casts[col] = 'INT'
+                continue
+            try:
+                data[col] = data[col].astype(float)
+                casts[col] = 'FLOAT'
+            except ValueError:
+                continue
+        return get_dataframe_schema(data)['items']['properties'], casts
 
     def get_sql_expr(self, table: str):
         """

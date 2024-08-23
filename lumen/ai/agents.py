@@ -1,7 +1,7 @@
 import asyncio
 import difflib
-import io
 import json
+import re
 import textwrap
 
 from typing import Literal, Optional
@@ -9,24 +9,27 @@ from typing import Literal, Optional
 import pandas as pd
 import panel as pn
 import param
+import yaml
 
+from instructor.retry import InstructorRetryException
 from panel.chat import ChatInterface
-from panel.pane import HTML
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
-from lumen.sources.duckdb import DuckDBSource
-
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
-from ..sources.intake_sql import IntakeBaseSQLSource
+from ..sources.base import BaseSQLSource
+from ..sources.duckdb import DuckDBSource
 from ..state import state
-from ..transforms.sql import SQLOverride, SQLTransform, Transform
+from ..transforms.sql import (
+    SQLLimit, SQLOverride, SQLTransform, Transform,
+)
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
+from .controls import SourceControls
 from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
@@ -36,7 +39,7 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    describe_data, get_schema, render_template, retry_llm_output,
+    clean_sql, describe_data, get_schema, render_template, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -204,63 +207,9 @@ class SourceAgent(Agent):
     on_init = param.Boolean(default=True)
 
     async def answer(self, messages: list | str):
-        def add_table(event):
-            if input_tabs.active == 0 and upload.value:
-                if upload.filename.endswith("csv"):
-                    df = pd.read_csv(io.BytesIO(upload.value), parse_dates=True)
-                elif upload.filename.endswith((".parq", ".parquet")):
-                    df = pd.read_parquet(io.BytesIO(upload.value))
-                duckdb_source._connection.from_df(df).to_table(name.value)
-                duckdb_source.tables = [name.value]
-                memory["current_source"] = duckdb_source
-            # TODO: add URL + xlsx support
-            name.value = ""
-            upload.value = None
-            upload.filename = ""
-            src = memory["current_source"]
-            tables[:] = [
-                (t, pn.widgets.Tabulator(src.get(t), sizing_mode="stretch_width")) for t in src.get_tables()
-            ]
-            input_column.visible = False
-
-        def add_name(event):
-            if "/" in event.new:
-                name.value = event.new.split("/")[-1].split(".")[0].replace("-", "_")
-            elif not name.value and event.new:
-                name.value = event.new.split(".")[0].replace("-", "_")
-                name.visible = True
-
-        def enable_add(event):
-            add.visible = not bool(name.value)
-
-        name = pn.widgets.TextInput(name="Name your table", visible=False)
-        upload = pn.widgets.FileInput(align="end", accept=".csv,.parquet,.parq")
-        add = pn.widgets.Button(
-            name="Add table",
-            icon="table-plus",
-            visible=False,
-            button_type="success",
-        )
-        input_tabs = pn.Tabs(("Upload", upload), sizing_mode="stretch_width")
-        tables = pn.Tabs(sizing_mode="stretch_width")
-        duckdb_source = DuckDBSource(uri=":memory:")
-        input_column = pn.Column(
-            input_tabs,
-            name,
-            add,
-            sizing_mode="stretch_width",
-        )
-        menu = pn.Column(
-            input_column,
-            tables,
-            sizing_mode="stretch_width",
-        )
-        upload.param.watch(add_name, "filename")
-        upload.param.watch(enable_add, "value")
-        add.on_click(add_table)
-
-        self.interface.send(menu, respond=False, user="SourceAgent")
-        while not add.clicks:
+        source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
+        self.interface.send(source_controls, respond=False, user="SourceAgent")
+        while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
 
     async def invoke(self, messages: list[str] | str):
@@ -420,8 +369,26 @@ class TableAgent(LumenBaseAgent):
         return table_model
 
     async def answer(self, messages: list | str):
-        tables = tuple(memory["current_source"].get_tables())
-        if len(tables) == 1:
+        if len(memory["available_sources"]) >= 1:
+            available_sources = memory["available_sources"]
+            tables_to_source = {}
+            tables_schema_str = "\nHere are the table schemas\n"
+            for source in available_sources:
+                for table in source.get_tables():
+                    tables_to_source[table] = source
+                    schema = get_schema(source, table, include_min_max=False, include_enum=False, limit=1)
+                    tables_schema_str += f"### {table}\n```yaml\n{yaml.safe_dump(schema)}```\n"
+        else:
+            source = memory["current_source"]
+            available_sources = [source]
+            tables_to_source = {table: source for table in source.get_tables()}
+            tables_schema_str = ""
+
+        tables = tuple(tables_to_source)
+        if messages and messages[-1]["content"].startswith("Show the table: '"):
+            # Handle the case where the TableListAgent explicitly requested a table
+            table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
+        elif len(tables) == 1:
             table = tables[0]
         else:
             with self.interface.add_step(title="Choosing the most relevant table...") as step:
@@ -430,7 +397,7 @@ class TableAgent(LumenBaseAgent):
                     tables = closest_tables
                 elif len(tables) > FUZZY_TABLE_LENGTH:
                     tables = await self._get_closest_tables(messages, tables)
-                system_prompt = await self._system_prompt_with_context(messages)
+                system_prompt = await self._system_prompt_with_context(messages) + tables_schema_str
                 if self.debug:
                     print(f"{self.name} is being instructed that it should {system_prompt}")
                 if len(tables) > 1:
@@ -445,11 +412,22 @@ class TableAgent(LumenBaseAgent):
                 else:
                     table = tables[0]
                 step.stream(f"Selected table: {table}")
+
+        if table in tables_to_source:
+            source = tables_to_source[table]
+        else:
+            sources = [src for src in available_sources if table in src]
+            source = sources[0] if sources else memory["current_source"]
+
+        get_kwargs = {}
+        if isinstance(source, BaseSQLSource):
+            get_kwargs['sql_transforms'] = [SQLLimit(limit=1_000_000)]
+        memory["current_source"] = source
         memory["current_table"] = table
         memory["current_pipeline"] = pipeline = Pipeline(
-            source=memory["current_source"], table=table
+            source=source, table=table, **get_kwargs
         )
-        df = pipeline.__panel__()[-1].value
+        df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
         if self.debug:
@@ -480,29 +458,31 @@ class TableListAgent(LumenBaseAgent):
             return True  # source not loaded yet; always apply
         return len(source.get_tables()) > 1
 
+    def _use_table(self, event):
+        if event.column != "show":
+            return
+        table = self._df.iloc[event.row, 0]
+        self.interface.send(f"Show the table: {table!r}")
+
     async def answer(self, messages: list | str):
         source = memory["current_source"]
-        tables = memory["current_source"].get_tables()
+        tables = source.get_tables()
         if not tables:
             return
-        if isinstance(source, IntakeBaseSQLSource) and hasattr(
-            source.cat, "_repr_html_"
-        ):
-            table_listing = HTML(
-                textwrap.dedent(source.cat._repr_html_()),
-                margin=10,
-                styles={
-                    "overflow": "auto",
-                    "background-color": "white",
-                    "padding": "10px",
-                },
-                tags=['catalog']
-            )
-        else:
-            tables = tuple(table.replace('"', "") for table in tables)
-            table_bullets = "\n".join(f"- {table}" for table in tables)
-            table_listing = f"Available tables:\n{table_bullets}"
-        self.interface.add_step(table_listing, success_title="Table List", status="success")
+
+        self._df = pd.DataFrame({"Table": tables})
+        table_list = pn.widgets.Tabulator(
+            self._df,
+            buttons={'show': '<i class="fa fa-eye"></i>'},
+            show_index=False,
+            min_height=150,
+            min_width=350,
+            widths={'Table': '90%'},
+            disabled=True,
+            page_size=10
+        )
+        table_list.on_click(self._use_table)
+        self.interface.stream(table_list, user="Lumen")
         return tables
 
     async def invoke(self, messages: list | str):
@@ -528,12 +508,12 @@ class SQLAgent(LumenBaseAgent):
 
     def _render_sql(self, query):
         pipeline = memory['current_pipeline']
-        out = SQLOutput(component=pipeline, spec=query)
-        self.interface.stream(out, user="SQL", replace=True)
+        out = SQLOutput(component=pipeline, spec=query.rstrip(';'))
+        self.interface.stream(out, user="SQL", replace=True, max_width=self._max_width)
         return out
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, source, tables, errors=None):
+    async def _create_valid_sql(self, messages, system, sources, errors=None):
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -542,7 +522,10 @@ class SQLAgent(LumenBaseAgent):
                     "role": "user",
                     "content": (
                         f"Your last query `{last_query}` did not work as intended, "
-                        f"expertly revise, and please do not repeat these issues:\n{errors}")
+                        f"expertly revise, and please do not repeat these issues:\n{errors}\n\n"
+                        f"If the error is `syntax error at or near \")\"`, double check you used "
+                        "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
+                    )
                 }
             ]
 
@@ -552,22 +535,104 @@ class SQLAgent(LumenBaseAgent):
             async for output in response:
                 step_message = output.chain_of_thought
                 if output.query:
-                    sql_query = output.query.replace("```sql", "").replace("```", "").strip()
+                    sql_query = clean_sql(output.query)
                     step_message += f"\n```sql\n{sql_query}\n```"
                 step.stream(step_message, replace=True)
 
         if not sql_query:
             raise ValueError("No SQL query was generated.")
 
+        if len(sources) > 1:
+            mirrors = {}
+            for a_source, a_table in sources.values():
+                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
+                           for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
+                    renamed_table = a_table.replace(".", "_")
+                    sql_query = sql_query.replace(a_table, renamed_table)
+                else:
+                    renamed_table = a_table
+                sql_query = sql_query.replace(a_table, renamed_table)
+                mirrors[renamed_table] = (a_source, a_table)
+            source = DuckDBSource(uri=":memory:", mirrors=mirrors)
+        else:
+            source = next(iter(sources.values()))[0]
+
         # check whether the SQL query is valid
-        expr_name = output.expr_name
-        sql_expr_source = source.create_sql_expr_source({expr_name: sql_query})
-        pipeline = Pipeline(source=sql_expr_source, table=expr_name)
+        expr_slug = output.expr_slug
+        try:
+            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+            # Get validated query
+            sql_query = sql_expr_source.tables[expr_slug]
+            sql_transforms = [SQLLimit(limit=1_000_000)]
+            pipeline = Pipeline(
+                source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
+            )
+        except InstructorRetryException as e:
+            error_msg = str(e)
+            step.stream(f'\n```python\n{error_msg}\n```')
+            if len(error_msg) > 50:
+                error_msg = error_msg[:50] + "..."
+            step.failed_title = error_msg
+            step.status = "failed"
+            if e.n_attempts > 1:
+                # Show the last error message
+                step.stream(f'\n```python\n{e.messages[-1]["content"]}\n```')
+            elif e.n_attempts > 2:
+                raise e
+        except Exception as e:
+            error_msg = str(e)
+            step.stream(f'\n```python\n{error_msg}\n```')
+            if len(error_msg) > 50:
+                error_msg = error_msg[:50] + "..."
+            step.failed_title = error_msg
+            step.status = "failed"
+            raise e
+
         df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
+
+        memory["available_sources"].add(sql_expr_source)
+        memory["current_source"] = sql_expr_source
         memory["current_pipeline"] = pipeline
+        memory["current_table"] = pipeline.table
+        memory["current_sql"] = sql_query
         return sql_query
+
+    async def find_join_tables(self, messages: list | str, join_tables: list[str] | None = None):
+        if join_tables:
+            multi_source = any('//' in jt for jt in join_tables)
+        else:
+            multi_source = len(memory['available_sources']) > 1
+            if multi_source:
+                available_tables = ", ".join(f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
+            else:
+                available_tables = memory['current_source'].get_tables()
+
+            with self.interface.add_step(title="Determining tables required for join") as step:
+                output = await self.llm.invoke(
+                    messages,
+                    system=f"List the tables that need to be joined; be sure to include both `//`: {available_tables}",
+                    response_model=TableJoins,
+                )
+                join_tables = output.tables
+                step.stream(f'\nJoin requires following tables: {join_tables}', replace=True)
+                step.success_title = 'Found tables required for join'
+
+        sources = {}
+        for source_table in join_tables:
+            if multi_source:
+                try:
+                    _, a_source_name, a_table = source_table.split("//", maxsplit=2)
+                except ValueError:
+                    a_source_name, a_table = source_table.split("//", maxsplit=1)
+                a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
+            else:
+                a_source = memory['current_source']
+                a_source_name = a_source.name
+                a_table = source_table
+            sources[a_source_name] = (a_source, a_table)
+        return sources
 
     async def answer(self, messages: list | str):
         source = memory["current_source"]
@@ -576,10 +641,16 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        with self.interface.add_step(title="Checking if join is required") as step:
+        with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
+            schema = get_schema(source, table, include_min_max=False)
+            join_prompt = render_template(
+                "join_required.jinja2",
+                schema=schema,
+                table=table
+            )
             response = self.llm.stream(
-                messages,
-                system="Determine whether a table join is required to answer the user's query.",
+                messages[-1:],
+                system=join_prompt,
                 response_model=JoinRequired,
             )
             async for output in response:
@@ -588,34 +659,34 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
 
         if join_required:
-            available_tables = " ".join(str(table) for table in source.get_tables())
-            with self.interface.add_step(title="Determining tables required for join") as step:
-                output = await self.llm.invoke(
-                    messages,
-                    system=f"List the tables that need to be joined: {available_tables}.",
-                    response_model=TableJoins,
-                )
-                tables = output.tables
-                step.stream(f'\nJoin requires following tables: {tables}', replace=True)
-                step.success_title = 'Found tables required for join'
+            sources = await self.find_join_tables(messages)
         else:
-            tables = [table]
+            sources = {source.name: (source, table)}
 
-        tables_sql_schemas = {
-            table: {
-                "schema": get_schema(source, table, include_min_max=False),
-                "sql": source.get_sql_expr(table)
-            } for table in tables
-        }
+        table_schemas = {}
+        for source, source_table in sources.values():
+            if source_table == table:
+                table_schema = schema
+            else:
+                table_schema = get_schema(source, source_table, include_min_max=False)
+            table_schemas[source_table] = {
+                "schema": table_schema,
+                "sql": source.get_sql_expr(source_table)
+            }
+
         dialect = source.dialect
         sql_prompt = render_template(
             "sql_query.jinja2",
-            tables_sql_schemas=tables_sql_schemas,
+            tables_sql_schemas=table_schemas,
             dialect=dialect,
+            join_required=join_required,
+            table=table
         )
-        system = await self._system_prompt_with_context(messages) + sql_prompt
-        sql_query = await self._create_valid_sql(messages, system, source, tables)
-        memory["current_sql"] = sql_query
+        system = await self._system_prompt_with_context(messages[-1:]) + sql_prompt
+        if join_required:
+            # Remove source prefixes message, e.g. //<source>//<table>
+            messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
+        sql_query = await self._create_valid_sql(messages, system, sources)
         return sql_query
 
     async def invoke(self, messages: list | str):
@@ -972,15 +1043,21 @@ class AnalysisAgent(LumenBaseAgent):
         system_prompt += f"\nHere are the columns of the table: {columns}"
         return system_prompt
 
-    async def answer(self, messages: list | str):
+    async def answer(self, messages: list | str, agents: list[Agent] | None = None):
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
         if not analyses:
             print("NONE found...")
             return None
 
+        # Short cut analysis selection if there's an exact match
+        if isinstance(messages, list) and messages:
+            analysis = messages[0].get('content').replace('Apply ', '')
+            if analysis in analyses:
+                analyses = {analysis: analyses[analysis]}
+
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...") as step:
+            with self.interface.add_step(title="Choosing the most relevant analysis...", user="Assistant") as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -998,28 +1075,41 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title="Creating view...") as step:
-            print(f"Creating view for {analysis_name}")
+        with self.interface.add_step(title="Creating view...", user="Assistant") as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-            analysis_callable = analyses[analysis_name]
-            if asyncio.iscoroutinefunction(analysis_callable):
-                view = await analysis_callable(pipeline)
+            analysis_callable = analyses[analysis_name].instance(agents=agents)
+            for field in analysis_callable._field_params:
+                analysis_callable.param[field].objects = list(pipeline.data.columns)
+            memory["current_analysis"] = analysis_callable
+
+            if analysis_callable.autorun:
+                if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                    view = await analysis_callable(pipeline)
+                else:
+                    view = await asyncio.to_thread(analysis_callable, pipeline)
+                spec = view.to_spec()
+                if isinstance(view, View):
+                    view_type = view.view_type
+                    memory["current_view"] = dict(spec, type=view_type)
+                elif isinstance(view, Pipeline):
+                    memory["current_pipeline"] = view
+                # Ensure current_data reflects processed pipeline
+                if pipeline is not memory['current_pipeline']:
+                    pipeline = memory['current_pipeline']
+                    if len(pipeline.data) > 0:
+                        memory["current_data"] = describe_data(pipeline.data)
+                yaml_spec = yaml.safe_dump(spec)
+                step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
+                step.success_title = "Generated view"
             else:
-                view = await asyncio.to_thread(analysis_callable, pipeline)
-            spec = view.to_spec()
-            step.stream(f"Generated view\n```json\n{spec}\n```")
-            step.success_title = "Generated view"
-        if isinstance(view, View):
-            view_type = view.view_type
-            memory["current_view"] = dict(spec, type=view_type)
-        elif isinstance(view, Pipeline):
-            memory["current_pipeline"] = view
-        memory["current_analysis"] = analysis_callable
+                step.success_title = "Configure the analysis"
+                view = None
         return view
 
-    async def invoke(self, messages: list | str):
-        view = await self.answer(messages)
-        if view is None:
+    async def invoke(self, messages: list | str, agents=None):
+        view = await self.answer(messages, agents=agents)
+        analysis = memory["current_analysis"]
+        if view is None and analysis.autorun:
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:
-            self._render_lumen(view, analysis=memory["current_analysis"], pipeline=memory['current_pipeline'])
+            self._render_lumen(view, analysis=analysis, pipeline=memory['current_pipeline'])

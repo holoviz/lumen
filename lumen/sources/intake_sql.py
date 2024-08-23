@@ -83,7 +83,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
+        sql_limit = SQLLimit(limit=limit or 3)
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -116,8 +116,9 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
                 continue
 
             # Calculate numeric schemas
+            transforms = [SQLMinMax(columns=min_maxes)]
             minmax_data = self._read(
-                self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
+                self._apply_transforms(source, transforms)
             )
             for col in min_maxes:
                 kind = data[col].dtype.kind

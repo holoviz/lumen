@@ -1,3 +1,5 @@
+import asyncio
+
 import panel as pn
 import param
 import yaml
@@ -9,9 +11,8 @@ from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
+from ..transforms.sql import SQLLimit
 from ..views.base import Table
-from .analysis import Analysis
-from .memory import memory
 
 
 class LumenOutput(Viewer):
@@ -20,17 +21,17 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
-    spec = param.String()
+    spec = param.String(allow_None=True)
 
     language = "yaml"
 
     def __init__(self, **params):
-        if 'spec' not in params and 'component' in params:
+        if 'spec' not in params and 'component' in params and params['component'] is not None:
             component_spec = params['component'].to_spec()
             params['spec'] = yaml.safe_dump(component_spec)
         super().__init__(**params)
         code_editor = pn.widgets.CodeEditor(
-            value=self.spec, language=self.language, sizing_mode="stretch_both",
+            value=self.param.spec, language=self.language, sizing_mode="stretch_both",
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = pn.widgets.ButtonIcon(
@@ -64,12 +65,55 @@ class LumenOutput(Viewer):
             ("Code", code_col),
             ("Output", placeholder),
             styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-            active=1
+            active=self.active,
+            dynamic=True
         )
         self._tabs.link(self, bidirectional=True, active='active')
+        self._rendered = False
         placeholder.objects = [
             pn.pane.ParamMethod(self._render_component, inplace=True)
         ]
+        self._last_output = {}
+
+    def _render_pipeline(self, pipeline):
+        table = Table(
+            pipeline=pipeline, pagination='remote',
+            min_height=500, sizing_mode="stretch_both", stylesheets=[
+                """
+                .tabulator-footer {
+                display: flex;
+                text-align: left;
+                padding: 0px;
+                }
+                """
+            ]
+        )
+        download = Download(
+            view=table, hide=False, filename=f'{pipeline.table}',
+            format='csv'
+        )
+        download_pane = download.__panel__()
+        download_pane.sizing_mode = 'fixed'
+        controls = pn.Row(
+            download_pane,
+            styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
+        )
+        for sql_limit in pipeline.sql_transforms:
+            if isinstance(sql_limit, SQLLimit):
+                break
+        else:
+            sql_limit = None
+        if sql_limit:
+            limited = len(pipeline.data) == sql_limit.limit
+            if limited:
+                def unlimit(e):
+                    sql_limit.limit = None if e.new else 1_000_000
+                full_data = pn.widgets.Checkbox(
+                    name='Full data', width=100, visible=limited
+                )
+                full_data.param.watch(unlimit, 'value')
+                controls.insert(0, full_data)
+        return pn.Column(controls, table)
 
     @param.depends('spec', 'active')
     async def _render_component(self):
@@ -77,36 +121,30 @@ class LumenOutput(Viewer):
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if (self.active != (len(self._tabs)-1)):
+        if (self.active != (len(self._tabs)-1)) or self.spec is None:
             return
 
-        # store the spec in the cache instead of memory to save tokens
-        memory["current_spec"] = self.spec
+        if self.spec in self._last_output:
+            yield self._last_output[self.spec]
+            return
+        elif self.component is None:
+            yield pn.pane.Alert(
+                "No component to render. Please complete the Config tab.",
+                alert_type="warning",
+            )
+            return
+
         try:
-            self.component = type(self.component).from_spec(load_yaml(self.spec))
+            if self._rendered:
+                yaml_spec = load_yaml(self.spec)
+                self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
-                table = Table(
-                    pipeline=self.component, pagination='remote', page_size=21,
-                    min_height=650, sizing_mode="stretch_both", stylesheets=[
-                        """
-                        .tabulator-footer {
-                            display: flex;
-                            text-align: left;
-                            padding: 0px;
-                        }
-                        """
-                    ]
-                )
-                download = Download(
-                    view=table, hide=False, filename=f'{self.component.table}',
-                    format='csv'
-                )
-                download_pane = download.__panel__()
-                download_pane.sizing_mode = 'fixed'
-                download_pane.styles = {'position': 'absolute', 'right': '-50px'}
-                output = pn.Column(download_pane, table)
+                output = self._render_pipeline(self.component)
             else:
                 output = self.component.__panel__()
+            self._rendered = True
+            self._last_output.clear()
+            self._last_output[self.spec] = output
             yield output
         except Exception as e:
             import traceback
@@ -133,18 +171,34 @@ class AnalysisOutput(LumenOutput):
     pipeline = param.Parameter()
 
     def __init__(self, **params):
+        if not params['analysis'].autorun:
+            params['active'] = 0
         super().__init__(**params)
-        config_options = [p for p in self.analysis.param if p not in Analysis.param]
-        if config_options:
-            options = pn.Param(self.analysis.param, parameters=config_options)
-            b = pn.widgets.Button(icon='rocket', name='Run...', on_click=self._rerun, button_type='success', margin=20)
-            self._tabs.insert(1, ('Config', pn.Column(options, b)))
+        controls = self.analysis.controls()
+        if controls is not None:
+            if self.analysis._run_button:
+                run_button = self.analysis._run_button
+                run_button.param.watch(self._rerun, 'clicks')
+                self._tabs.insert(1, ('Config', controls))
+            else:
+                run_button = pn.widgets.Button(
+                    icon='player-play', name='Run', on_click=self._rerun,
+                    button_type='success', margin=(10, 0, 0 , 10)
+                )
+                self._tabs.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
-                self._tabs.active = 2
+                self._tabs.active = 2 if self.analysis.autorun else 1
+        self._rendered = True
 
-    def _rerun(self, event):
+    async def _rerun(self, event):
         with self._tabs.param.update(loading=True):
-            spec = self.analysis(pipeline=self.pipeline).to_spec()
+            if asyncio.iscoroutinefunction(self.analysis.__call__):
+                view = await self.analysis(self.pipeline)
+            else:
+                view = await asyncio.to_thread(self.analysis, self.pipeline)
+            self.component = view
+            self._rendered = False
+            spec = view.to_spec()
             self.param.update(
                 spec=yaml.safe_dump(spec),
                 active=2
@@ -164,20 +218,17 @@ class SQLOutput(LumenOutput):
             return
 
         pipeline = self.component
-        pipeline.source = pipeline.source.create_sql_expr_source({pipeline.table: self.spec})
+        if self.spec in self._last_output:
+            yield self._last_output[self.spec]
+            return
+
         try:
-            table = Table(
-                pipeline=pipeline, pagination='remote',
-                height=458, page_size=12
-            )
-            download = Download(
-                view=table, hide=False, filename=f'{self.component.table}',
-                format='csv'
-            )
-            download_pane = download.__panel__()
-            download_pane.sizing_mode = 'fixed'
-            download_pane.styles = {'position': 'absolute', 'right': '-50px'}
-            output = pn.Column(download_pane, table)
+            if self._rendered:
+                pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
+            output = self._render_pipeline(pipeline)
+            self._rendered = True
+            self._last_output.clear()
+            self._last_output[self.spec] = output
             yield output
         except Exception as e:
             import traceback

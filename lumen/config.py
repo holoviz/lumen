@@ -7,10 +7,12 @@ import weakref
 
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, ClassVar
+from weakref import WeakKeyDictionary
 
 import panel as pn
 import param  # type: ignore
 
+from panel import state
 from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
 from panel.widgets.indicators import Indicator
@@ -33,6 +35,45 @@ class ConfigDict(dict):
             msg = f"{self.name} with name '{key}' was not found."
             msg = match_suggestion_message(key, list(self), msg)
             raise ValidationError(msg) from e
+
+
+class SessionCache:
+
+    _session_contexts: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
+
+    _global_context = {}
+
+    @property
+    def _curcontext(self):
+        if state.curdoc:
+            if state.curdoc in self._session_contexts:
+                context = self._session_contexts[state.curdoc]
+            else:
+                self._session_contexts[state.curdoc] = context = {}
+            return context
+        else:
+            return self._global_context
+
+    def __contains__(self, key):
+        return key in self._curcontext or key in self._global_context
+
+    def __getitem__(self, key):
+        return self._curcontext[key]
+
+    def __setitem__(self, key, value):
+        self._curcontext[key] = value
+
+    def get(self, key, default=None):
+        obj = dict(self._global_context, **self._curcontext).get(key, default)
+        if hasattr(obj, "copy"):
+            obj = obj.copy()
+        return obj
+
+    def keys(self):
+        return dict(self._global_context, **self._curcontext).keys()
+
+    def pop(self, key, default=None):
+        return self._curcontext.pop(key, default)
 
 
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}
@@ -88,17 +129,20 @@ class _config(param.Parameterized):
     """
 
     _root = param.String(default=None, doc="""
-      Root directory relative to which data and modules are loaded.""")
+        Root directory relative to which data and modules are loaded.""")
 
     _dev = param.Boolean(default=None, doc="""
-      Whether Lumen should run in development mode.""")
+        Whether Lumen should run in development mode.""")
+
+    serializer = param.String(default='session', doc="""
+        The default serializer to use when ephemeral data has to be persisted.""")
 
     template_vars = param.Dict(default={}, doc="""
-      Template variables which may be referenced in a dashboard yaml
-      specification.""")
+        Template variables which may be referenced in a dashboard yaml
+        specification.""")
 
     yamls = param.List(default=[], doc="""
-      List of yaml files currently being served.""")
+        List of yaml files currently being served.""")
 
     _modules: ClassVar[dict[str, ModuleType]] = {}
 

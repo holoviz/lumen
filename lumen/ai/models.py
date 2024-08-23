@@ -29,8 +29,8 @@ class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
         description="""
-        Explain whether a table join is required to answer the user's query, or
-        if the user is requesting a join or merge.
+        Concisely explain whether a table join is required to answer the user's query, or
+        if the user is requesting a join or merge using a couple sentences.
         """
     )
 
@@ -43,7 +43,8 @@ class TableJoins(BaseModel):
         description=(
             "List of tables that need to be joined to answer the user's query. "
             "Use table names verbatim; e.g. if table is `read_csv('table.csv')` "
-            "then use `read_csv('table.csv')` and not `table`"
+            "then use `read_csv('table.csv')` and not `table`, but if the table has "
+            "no extension, i.e. `table`, then use only `table`."
         ),
     )
 
@@ -58,9 +59,9 @@ class Sql(BaseModel):
         """
     )
 
-    expr_name: str = Field(
+    expr_slug: str = Field(
         description="""
-        Give the SQL expression a descriptive name that includes whatever transforms were applied to it.
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it.
         """
     )
 

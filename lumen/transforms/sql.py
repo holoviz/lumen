@@ -54,6 +54,10 @@ class SQLTransform(Transform):
         string
             New SQL query derived from the above query.
         """
+        if sql_in.startswith('"') and sql_in.endswith('"'):
+            sql_in = sql_in[1:-1]
+        elif sql_in.startswith("'") and sql_in.endswith("'"):
+            sql_in = sql_in[1:-1]
         return sql_in
 
     @classmethod
@@ -76,6 +80,7 @@ class SQLGroupBy(SQLTransform):
     transform_type: ClassVar[str] = 'sql_group_by'
 
     def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
         template = """
             SELECT
                 {{by_cols}}, {{aggs}}
@@ -96,17 +101,20 @@ class SQLLimit(SQLTransform):
     Performs a LIMIT SQL operation on the query
     """
 
-    limit = param.Integer(default=1000, doc="Limit on the number of rows to return")
+    limit = param.Integer(default=1000, allow_None=True, doc="Limit on the number of rows to return")
 
     transform_type: ClassVar[str] = 'sql_limit'
 
     def apply(self, sql_in):
-        template = """
-            SELECT
-                *
-            FROM ( {{sql_in}} )
-            LIMIT {{limit}}
-        """
+        if self.limit is None:
+            return sql_in
+        normalized = sql_in.rstrip(';').lower()
+        limited = 'limit' in normalized or 'fetch' in normalized
+        sql_in = super().apply(sql_in)
+        if limited:
+            template = "SELECT * FROM ({{sql_in}}) LIMIT {{limit}}"
+        else:
+            template = "{{sql_in}} LIMIT {{limit}}"
         return self._render_template(template, sql_in=sql_in, limit=self.limit)
 
 
@@ -117,6 +125,7 @@ class SQLDistinct(SQLTransform):
     transform_type: ClassVar[str] = 'sql_distinct'
 
     def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
         template = """
             SELECT DISTINCT
                 {{columns}}
@@ -131,6 +140,7 @@ class SQLMinMax(SQLTransform):
     transform_type: ClassVar[str] = 'sql_minmax'
 
     def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
         aggs = []
         for col in self.columns:
             aggs.append(f'MIN("{col}") as "{col}_min"')
@@ -149,12 +159,34 @@ class SQLColumns(SQLTransform):
     transform_type: ClassVar[str] = 'sql_columns'
 
     def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
         template = """
             SELECT
                 {{columns}}
             FROM ( {{sql_in}} )
         """
         return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
+
+
+class SQLCast(SQLTransform):
+
+    columns = param.Dict(default={})
+
+    force = param.Boolean(default=False, doc="Whether to cast to null if it can't be converted.")
+
+    transform_type: ClassVar[str] = 'sql_cast'
+
+    def apply(self, sql_in):
+        if not self.columns:
+            return sql_in
+        sql_in = super().apply(sql_in)
+        cast_statement = 'TRY_CAST' if self.force else 'CAST'
+        casts = ",".join(
+            f'{cast_statement}({col} as {cast_type}) as {col}'
+            for col, cast_type in self.columns.items()
+        )
+        template = "SELECT *, {{casts}} FROM ({{sql_in}})"
+        return self._render_template(template, sql_in=sql_in, casts=casts)
 
 
 class SQLFilter(SQLTransform):
@@ -179,6 +211,7 @@ class SQLFilter(SQLTransform):
         return f'{col} BETWEEN {start!r} AND {end!r}'
 
     def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
         conditions = []
         for col, val in self.conditions:
             if val is None:
