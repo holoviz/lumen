@@ -257,15 +257,15 @@ class AzureOpenAI(Llm):
             model_kwargs["azure_endpoint"] = self.azure_endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
 
-        if self.use_interceptor:
+        if self.interceptor_path:
             if self._interceptor is None:
-                self._interceptor = OpenAIInterceptor()
+                self._interceptor = OpenAIInterceptor(db_path=self.interceptor_path)
             self._interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
             llm = patch(llm)
 
-        if self.use_interceptor:
+        if self.interceptor_path:
             # must be called after instructor
             self._interceptor.patch_client_response(llm)
 
