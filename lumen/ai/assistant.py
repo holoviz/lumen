@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from io import StringIO
 from typing import Literal
@@ -423,7 +424,7 @@ class Assistant(Viewer):
                 step.success_title = f"Selected {subagent.name[:-5]}"
         return selected
 
-    def _serialize(self, obj):
+    def _serialize(self, obj, exclude_passwords=True):
         if isinstance(obj, (Tabs, Column)):
             for o in obj:
                 if isinstance(obj, ChatStep) and not obj.title.startswith("Selected"):
@@ -433,7 +434,10 @@ class Assistant(Viewer):
                     break
             else:
                 return ""
-            return self._serialize(o)
+            string = self._serialize(o)
+            if exclude_passwords:
+                string = re.sub(r"password:.*\n", "", string)
+            return string
 
         if isinstance(obj, HTML) and 'catalog' in obj.tags:
             return f"Summarized table listing: {obj.object[:30]}"
