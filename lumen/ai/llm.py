@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from functools import partial
 
 import panel as pn
@@ -21,6 +23,8 @@ class Llm(param.Parameterized):
 
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
+
+    _supports_model_stream = True
 
     __abstract = True
 
@@ -77,6 +81,16 @@ class Llm(param.Parameterized):
         model_key: str = "default",
         **kwargs,
     ):
+        if response_model and not self._supports_model_stream:
+            yield await self.invoke(
+                messages,
+                system=system,
+                response_model=response_model,
+                model_key=model_key,
+                **kwargs,
+            )
+            return
+
         string = ""
         chunks = await self.invoke(
             messages,
@@ -105,7 +119,7 @@ class Llm(param.Parameterized):
                     yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_key, messages, **kwargs):
-        client = self.get_client(model_key, kwargs.get("response_model"))
+        client = self.get_client(model_key, **kwargs)
         return await client(messages=messages, **kwargs)
 
 
@@ -132,7 +146,7 @@ class Llama(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None):
+    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         if client_callable := pn.state.cache.get(model_key):
             return client_callable
         from huggingface_hub import hf_hub_download
@@ -163,7 +177,7 @@ class Llama(Llm):
         return client_callable
 
     async def run_client(self, model_key, messages, **kwargs):
-        client = self.get_client(model_key)
+        client = self.get_client(model_key, **kwargs)
         return await client(messages=messages, **kwargs)
 
 
@@ -188,7 +202,7 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None):
+    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -228,7 +242,7 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None):
+    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -258,3 +272,77 @@ class AILauncher(OpenAI):
         "default": {"model": "gpt-3.5-turbo"},
         "reasoning": {"model": "gpt-4-turbo-preview"},
     })
+
+
+class MistralAI(Llm):
+
+    api_key = param.String(default=os.getenv("MISTRAL_API_KEY"))
+
+    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
+
+    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "mistral-small-latest"},
+        "reasoning": {"model": "mistral-large-latest"},
+    })
+
+    _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
+
+    @property
+    def _client_kwargs(self):
+        return {"temperature": self.temperature}
+
+    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        async def llm_chat_async(*args, **kwargs):
+            response = await llm.chat.complete_async(*args, **kwargs)
+            return response.choices[0].message.content
+
+        from mistralai import Mistral
+
+        model_kwargs = self._get_model_kwargs(model_key)
+        model = model_kwargs.pop("model")
+
+        llm = Mistral(api_key=self.api_key)
+        if response_model:
+            return patch(
+                create=partial(llm.chat.complete_async, model=model),
+                mode=self.mode,
+            )
+        else:
+            stream = kwargs.get("stream", False)
+            if stream:
+                return partial(llm.chat.stream_async, model=model)
+            else:
+                return partial(llm_chat_async, model=model)
+
+    @classmethod
+    def _get_delta(cls, chunk):
+        if chunk.data.choices:
+            return chunk.data.choices[0].delta.content or ""
+        return ""
+
+    async def invoke(
+        self,
+        messages: list | str,
+        system: str = "",
+        response_model: BaseModel | None = None,
+        allow_partial: bool = False,
+        model_key: str = "default",
+        **input_kwargs,
+    ) -> BaseModel:
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+
+        if messages[0]["role"] == "assistant":
+            # Mistral cannot start with assistant
+            messages = messages[1:]
+
+        return await super().invoke(
+            messages,
+            system,
+            response_model,
+            allow_partial,
+            model_key,
+            **input_kwargs,
+        )
