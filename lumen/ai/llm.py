@@ -294,11 +294,11 @@ class MistralAI(Llm):
         return {"temperature": self.temperature}
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
-        async def llm_chat_async(*args, **kwargs):
+        from mistralai import Mistral
+
+        async def llm_chat_non_stream_async(*args, **kwargs):
             response = await llm.chat.complete_async(*args, **kwargs)
             return response.choices[0].message.content
-
-        from mistralai import Mistral
 
         model_kwargs = self._get_model_kwargs(model_key)
         model = model_kwargs.pop("model")
@@ -309,12 +309,12 @@ class MistralAI(Llm):
                 create=partial(llm.chat.complete_async, model=model),
                 mode=self.mode,
             )
+
+        stream = kwargs.get("stream", False)
+        if stream:
+            return partial(llm.chat.stream_async, model=model)
         else:
-            stream = kwargs.get("stream", False)
-            if stream:
-                return partial(llm.chat.stream_async, model=model)
-            else:
-                return partial(llm_chat_async, model=model)
+            return partial(llm_chat_non_stream_async, model=model)
 
     @classmethod
     def _get_delta(cls, chunk):
@@ -346,3 +346,38 @@ class MistralAI(Llm):
             model_key,
             **input_kwargs,
         )
+
+
+
+class AzureMistralAI(MistralAI):
+
+    api_key = param.String(default=os.getenv("AZURE_API_KEY"))
+
+    azure_endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"))
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "azureai"},
+    })
+
+    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        from mistralai_azure import MistralAzure
+
+        async def llm_chat_non_stream_async(*args, **kwargs):
+            response = await llm.chat.complete_async(*args, **kwargs)
+            return response.choices[0].message.content
+
+        model_kwargs = self._get_model_kwargs(model_key)
+        model = model_kwargs.pop("model")
+
+        llm = MistralAzure(azure_api_key=self.api_key, azure_endpoint=self.azure_endpoint)
+        if response_model:
+            return patch(
+                create=partial(llm.chat.complete_async, model=model),
+                mode=self.mode,
+            )
+
+        stream = kwargs.get("stream", False)
+        if stream:
+            return partial(llm.chat.stream_async, model=model)
+        else:
+            return partial(llm_chat_non_stream_async, model=model)
