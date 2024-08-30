@@ -278,7 +278,7 @@ class MistralAI(Llm):
 
     api_key = param.String(default=os.getenv("MISTRAL_API_KEY"))
 
-    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
+    mode = param.Selector(default=Mode.MISTRAL_TOOLS, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
@@ -305,6 +305,8 @@ class MistralAI(Llm):
 
         llm = Mistral(api_key=self.api_key)
         if response_model:
+            # can't use from_mistral due to new mistral API
+            # https://github.com/jxnl/instructor/issues/969
             return patch(
                 create=partial(llm.chat.complete_async, model=model),
                 mode=self.mode,
