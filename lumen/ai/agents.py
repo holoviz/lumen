@@ -118,7 +118,7 @@ class Agent(Viewer):
         if self.embeddings:
             context = self.embeddings.query(messages)
         if context:
-            system_prompt += f"\n### CONTEXT: {context}".strip()
+            system_prompt += f"\n### CONTEXT: {context}"
         return system_prompt
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
@@ -285,7 +285,7 @@ class ChatAgent(Agent):
 
         system_prompt = self.system_prompt
         if context:
-            system_prompt += f"\n### CONTEXT: {context}".strip()
+            system_prompt += f"\n### CONTEXT: {context}"
         return system_prompt
 
 
@@ -330,7 +330,7 @@ class ChatDetailsAgent(ChatAgent):
         context += f"\nHere are the columns of the table: {columns}"
 
         if context:
-            system_prompt += f"\n### CONTEXT: {context}".strip()
+            system_prompt += f"\n### CONTEXT: {context}"
         return system_prompt
 
 
@@ -645,7 +645,7 @@ class SQLAgent(LumenBaseAgent):
             schema = get_schema(source, table, include_min_max=False)
             join_prompt = render_template(
                 "join_required.jinja2",
-                schema=schema,
+                schema=yaml.safe_dump(schema),
                 table=table
             )
             response = self.llm.stream(
@@ -757,7 +757,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         prompt = f"{transform.__doc__}"
         if not schema:
             raise ValueError(f"No schema found for table {table!r}")
-        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```json\n{schema}\n```"
+        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```yaml\n{yaml.safe_dump(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -893,7 +893,7 @@ class BaseViewAgent(LumenBaseAgent):
         schema = get_schema(pipeline, include_min_max=False)
         view_prompt = render_template(
             "plot_agent.jinja2",
-            schema=schema,
+            schema=yaml.safe_dump(schema),
             table=pipeline.table,
             current_view=memory.get('current_view'),
             doc=self.view_type.__doc__.split("\n\n")[0]

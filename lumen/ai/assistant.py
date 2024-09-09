@@ -7,6 +7,7 @@ from io import StringIO
 from typing import Literal
 
 import param
+import yaml
 
 from panel import bind
 from panel.chat import ChatInterface, ChatStep
@@ -267,7 +268,8 @@ class Assistant(Viewer):
             # If the selected table cannot be fetched we should invalidate it
             spec = None
         sql = memory.get("current_sql")
-        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
+        analyses_names = [analysis.__name__ for analysis in self._analyses]
+        system = render_template("check_validity.jinja2", table=table, spec=yaml.safe_dump(spec), sql=sql, analyses=analyses_names)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
                 messages=messages,
