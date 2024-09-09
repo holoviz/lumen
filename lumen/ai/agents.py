@@ -118,7 +118,7 @@ class Agent(Viewer):
         if self.embeddings:
             context = self.embeddings.query(messages)
         if context:
-            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
+            system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
@@ -285,7 +285,7 @@ class ChatAgent(Agent):
 
         system_prompt = self.system_prompt
         if context:
-            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
+            system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
 
@@ -330,7 +330,7 @@ class ChatDetailsAgent(ChatAgent):
         context += f"\nHere are the columns of the table: {columns}"
 
         if context:
-            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
+            system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
 
@@ -397,7 +397,7 @@ class TableAgent(LumenBaseAgent):
                     tables = closest_tables
                 elif len(tables) > FUZZY_TABLE_LENGTH:
                     tables = await self._get_closest_tables(messages, tables)
-                system_prompt = await self._system_prompt_with_context(messages) + tables_schema_str
+                system_prompt = await self._system_prompt_with_context(messages, context=tables_schema_str)
                 if self.debug:
                     print(f"{self.name} is being instructed that it should {system_prompt}")
                 if len(tables) > 1:
@@ -682,7 +682,7 @@ class SQLAgent(LumenBaseAgent):
             join_required=join_required,
             table=table
         )
-        system = await self._system_prompt_with_context(messages[-1:]) + sql_prompt
+        system = await self._system_prompt_with_context(messages[-1:], context=sql_prompt)
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
@@ -1063,7 +1063,7 @@ class AnalysisAgent(LumenBaseAgent):
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
-                system_prompt = await self._system_prompt_with_context(messages, analyses)
+                system_prompt = await self._system_prompt_with_context(messages, context=analyses)
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
