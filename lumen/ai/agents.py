@@ -670,7 +670,7 @@ class SQLAgent(LumenBaseAgent):
             else:
                 table_schema = get_schema(source, source_table, include_min_max=False)
             table_schemas[source_table] = {
-                "schema": table_schema,
+                "schema": yaml.safe_dump(table_schema),
                 "sql": source.get_sql_expr(source_table)
             }
 
