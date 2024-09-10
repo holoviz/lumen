@@ -653,20 +653,22 @@ class SQLAgent(LumenBaseAgent):
 
         tables_to_source = {}
         for source_table in join_tables:
+            available_sources = memory["available_sources"]
             if multi_source:
                 try:
                     _, a_source_name, a_table = source_table.split("//", maxsplit=2)
                 except ValueError:
                     a_source_name, a_table = source_table.split("//", maxsplit=1)
-                for source in memory["available_sources"]:
+                for source in available_sources:
                     if source.name == a_source_name:
                         a_source = source
                         break
                 if a_table in tables_to_source:
                     a_table = f"//{a_source_name}//{a_table}"
             else:
-                a_source = next(iter(memory["available_sources"]))
+                a_source = next(iter(available_sources))
                 a_table = source_table
+
             tables_to_source[a_table] = a_source
         return tables_to_source
 
