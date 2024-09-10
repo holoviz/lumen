@@ -39,6 +39,12 @@ class JoinRequired(BaseModel):
 
 class TableJoins(BaseModel):
 
+    chain_of_thought: str = Field(
+        description="""
+        Consider the tables that need to be joined to answer the user's query.
+        """
+    )
+
     tables: list[str] = Field(
         description=(
             "List of tables that need to be joined to answer the user's query. "

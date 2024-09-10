@@ -363,9 +363,15 @@ class TableAgent(LumenBaseAgent):
 
     @staticmethod
     def _create_table_model(tables):
-        table_model = create_model("Table", table=(Literal[tables], FieldInfo(
-            description="The most relevant table based on the user query; if none are relevant, select the first."
-        )))
+        table_model = create_model(
+            "Table",
+            chain_of_thought=(str, FieldInfo(
+                description="Restate the user query--then reason through which table has the sufficient columns."
+            )),
+            table=(Literal[tables], FieldInfo(
+                description="The most relevant table based on the user query; if none are relevant, select the first."
+            ))
+        )
         return table_model
 
     async def answer(self, messages: list | str):
@@ -376,7 +382,7 @@ class TableAgent(LumenBaseAgent):
             for source in available_sources:
                 for table in source.get_tables():
                     tables_to_source[table] = source
-                    schema = get_schema(source, table, include_min_max=False, include_enum=False, limit=1)
+                    schema = get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
                     tables_schema_str += f"### {table}\n```yaml\n{yaml.safe_dump(schema)}```\n"
         else:
             source = memory["current_source"]
@@ -409,9 +415,10 @@ class TableAgent(LumenBaseAgent):
                         allow_partial=False,
                     )
                     table = result.table
+                    step.stream(result.chain_of_thought)
                 else:
                     table = tables[0]
-                step.stream(f"Selected table: {table}")
+                    step.stream(f"Selected table: {table}")
 
         if table in tables_to_source:
             source = tables_to_source[table]
@@ -599,24 +606,50 @@ class SQLAgent(LumenBaseAgent):
         memory["current_sql"] = sql_query
         return sql_query
 
+    async def check_join_required(self, messages, schema, table):
+        with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
+            join_prompt = render_template(
+                "join_required.jinja2",
+                schema=yaml.safe_dump(schema),
+                table=table
+            )
+            response = self.llm.stream(
+                messages[-1:],
+                system=join_prompt,
+                response_model=JoinRequired,
+            )
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
+            join_required = output.join_required
+            step.success_title = 'Query requires join' if join_required else 'No join required'
+        return join_required
+
     async def find_join_tables(self, messages: list | str, join_tables: list[str] | None = None):
+        print("JOINING TABLES...")
         if join_tables:
             multi_source = any('//' in jt for jt in join_tables)
         else:
             multi_source = len(memory['available_sources']) > 1
             if multi_source:
-                available_tables = ", ".join(f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables())
+                available_tables = [f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables()]
             else:
                 available_tables = memory['current_source'].get_tables()
 
+            find_joins_prompt = render_template(
+                "find_joins.jinja2",
+                available_tables=available_tables
+            )
             with self.interface.add_step(title="Determining tables required for join") as step:
                 output = await self.llm.invoke(
                     messages,
-                    system=f"List the tables that need to be joined; be sure to include both `//`: {available_tables}",
+                    system=find_joins_prompt,
                     response_model=TableJoins,
                 )
                 join_tables = output.tables
-                step.stream(f'\nJoin requires following tables: {join_tables}', replace=True)
+                step.stream(
+                    f'{output.chain_of_thought}\nJoin requires following tables: {join_tables}',
+                    replace=True
+                )
                 step.success_title = 'Found tables required for join'
 
         sources = {}
@@ -641,27 +674,9 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
-            schema = get_schema(source, table, include_min_max=False)
-            join_prompt = render_template(
-                "join_required.jinja2",
-                schema=yaml.safe_dump(schema),
-                table=table
-            )
-            response = self.llm.stream(
-                messages[-1:],
-                system=join_prompt,
-                response_model=JoinRequired,
-            )
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-            join_required = output.join_required
-            step.success_title = 'Query requires join' if join_required else 'No join required'
-
-        if join_required:
-            sources = await self.find_join_tables(messages)
-        else:
-            sources = {source.name: (source, table)}
+        schema = get_schema(source, table, include_min_max=False)
+        join_required = await self.check_join_required(messages, schema, table)
+        sources = await self.find_join_tables(messages) if join_required else {source.name: (source, table)}
 
         table_schemas = {}
         for source, source_table in sources.values():
