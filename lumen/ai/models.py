@@ -72,9 +72,11 @@ class Validity(BaseModel):
 
     correct_assessment: str = Field(
         description="""
-        Thoughts on whether the current table meets the requirement
-        to answer the user's query, i.e. table contains all necessary columns,
-        unless user explicitly asks for a refresh.
+        Restate the current table and think thru whether the current table meets the requirement
+        to answer the user's query, i.e. table contains all the necessary raw columns.
+        However, if the query can be solved through SQL, the data is assumed to be valid.
+        If the number of rows is insufficient, the table is invalid.
+        If the user user explicitly asks for a refresh, then the table is invalid.
         """
     )
 

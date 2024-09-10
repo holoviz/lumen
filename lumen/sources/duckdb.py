@@ -11,7 +11,7 @@ from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
 from ..transforms.sql import (
-    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
+    SQLCount, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
 from ..util import get_dataframe_schema
 from .base import (
@@ -313,4 +313,10 @@ class DuckDBSource(BaseSQLSource):
                     cast = lambda v: v
                 schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
                 schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
+
+            count_expr = SQLCount().apply(sql_expr)
+            count_expr = ' '.join(count_expr.splitlines())
+            count_data = self._connection.execute(count_expr).fetch_df()
+            schema['count'] = cast(count_data['count'].iloc[0])
+
         return schemas if table is None else schemas[table]
