@@ -237,6 +237,7 @@ class DuckDBSource(BaseSQLSource):
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 
     def get_sql_expr(self, table: str):
+        print(self.tables, "TABLES...")
         if isinstance(self.tables, dict):
             table = self.tables[table]
         if '(' not in table and ')' not in table:

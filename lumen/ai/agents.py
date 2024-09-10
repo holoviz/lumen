@@ -365,10 +365,7 @@ class TableAgent(LumenBaseAgent):
     def _create_table_model(tables):
         table_model = create_model(
             "Table",
-            chain_of_thought=(str, FieldInfo(
-                description="Restate the user query--then reason through which table has the sufficient columns."
-            )),
-            table=(Literal[tables], FieldInfo(
+            relevant_table=(Literal[tables], FieldInfo(
                 description="The most relevant table based on the user query; if none are relevant, select the first."
             ))
         )
@@ -414,11 +411,10 @@ class TableAgent(LumenBaseAgent):
                         response_model=table_model,
                         allow_partial=False,
                     )
-                    table = result.table
-                    step.stream(result.chain_of_thought)
+                    table = result.relevant_table
                 else:
                     table = tables[0]
-                    step.stream(f"Selected table: {table}")
+                step.stream(f"Selected table: {table}")
 
         if table in tables_to_source:
             source = tables_to_source[table]
@@ -520,7 +516,7 @@ class SQLAgent(LumenBaseAgent):
         return out
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, sources, errors=None):
+    async def _create_valid_sql(self, messages, system, tables_to_source, errors=None):
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -549,20 +545,24 @@ class SQLAgent(LumenBaseAgent):
         if not sql_query:
             raise ValueError("No SQL query was generated.")
 
+        sources = set(tables_to_source.values())
         if len(sources) > 1:
             mirrors = {}
-            for a_source, a_table in sources.values():
+            for a_table, a_source in tables_to_source.items():
                 if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
                            for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
                     renamed_table = a_table.replace(".", "_")
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
                     renamed_table = a_table
+                if "//" in renamed_table:
+                    # Remove source prefixes from table names
+                    renamed_table = re.sub(r"//[^/]+//", "", renamed_table)
                 sql_query = sql_query.replace(a_table, renamed_table)
                 mirrors[renamed_table] = (a_source, a_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
         else:
-            source = next(iter(sources.values()))[0]
+            source = next(iter(sources))
 
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
@@ -624,50 +624,61 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
         return join_required
 
-    async def find_join_tables(self, messages: list | str, join_tables: list[str] | None = None):
-        print("JOINING TABLES...")
-        if join_tables:
-            multi_source = any('//' in jt for jt in join_tables)
+    async def find_join_tables(self, messages: list | str):
+        multi_source = len(memory['available_sources']) > 1
+        if multi_source:
+            available_tables = [
+                f"//{a_source}//{a_table}" for a_source in memory["available_sources"]
+                for a_table in a_source.get_tables()
+            ]
         else:
-            multi_source = len(memory['available_sources']) > 1
-            if multi_source:
-                available_tables = [f"//{a_source}//{a_table}" for a_source in memory["available_sources"] for a_table in a_source.get_tables()]
-            else:
-                available_tables = memory['current_source'].get_tables()
+            available_tables = memory['current_source'].get_tables()
 
-            find_joins_prompt = render_template(
-                "find_joins.jinja2",
-                available_tables=available_tables
+        find_joins_prompt = render_template(
+            "find_joins.jinja2",
+            available_tables=available_tables
+        )
+        with self.interface.add_step(title="Determining tables required for join") as step:
+            output = await self.llm.invoke(
+                messages,
+                system=find_joins_prompt,
+                response_model=TableJoins,
             )
-            with self.interface.add_step(title="Determining tables required for join") as step:
-                output = await self.llm.invoke(
-                    messages,
-                    system=find_joins_prompt,
-                    response_model=TableJoins,
-                )
-                join_tables = output.tables
-                step.stream(
-                    f'{output.chain_of_thought}\nJoin requires following tables: {join_tables}',
-                    replace=True
-                )
-                step.success_title = 'Found tables required for join'
+            join_tables = output.tables
+            step.stream(
+                f'{output.chain_of_thought}\nJoin requires following tables: {join_tables}',
+                replace=True
+            )
+            step.success_title = 'Found tables required for join'
 
-        sources = {}
+        tables_to_source = {}
         for source_table in join_tables:
-            if multi_source:
-                try:
-                    _, a_source_name, a_table = source_table.split("//", maxsplit=2)
-                except ValueError:
-                    a_source_name, a_table = source_table.split("//", maxsplit=1)
-                a_source = next((source for source in memory["available_sources"] if a_source_name == source.name), None)
-            else:
-                a_source = memory['current_source']
-                a_source_name = a_source.name
-                a_table = source_table
-            sources[a_source_name] = (a_source, a_table)
-        return sources
+            try:
+                _, a_source_name, a_table = source_table.split("//", maxsplit=2)
+            except ValueError:
+                a_source_name, a_table = source_table.split("//", maxsplit=1)
+            for source in memory["available_sources"]:
+                if source.name == a_source_name:
+                    a_source = source
+                    break
+            if a_table in tables_to_source:
+                a_table = f"{a_source_name}//{a_table}"
+            tables_to_source[a_table] = a_source
+        return tables_to_source
 
     async def answer(self, messages: list | str):
+        """
+        Steps:
+        1. Retrieve the current source and table from memory.
+        2. If the source lacks a `get_sql_expr` method, return `None`.
+        3. Fetch the schema for the current table using `get_schema` without min/max values.
+        4. Determine if a join is required by calling `check_join_required`.
+        5. If required, find additional tables via `find_join_tables`; otherwise, use the current source and table.
+        6. For each source and table, get the schema and SQL expression, storing them in `table_schemas`.
+        7. Render the SQL prompt using the table schemas, dialect, join status, and table.
+        8. If a join is required, remove source/table prefixes from the last message.
+        9. Construct the SQL query with `_create_valid_sql`.
+        """
         source = memory["current_source"]
         table = memory["current_table"]
 
@@ -676,10 +687,13 @@ class SQLAgent(LumenBaseAgent):
 
         schema = get_schema(source, table, include_min_max=False)
         join_required = await self.check_join_required(messages, schema, table)
-        sources = await self.find_join_tables(messages) if join_required else {source.name: (source, table)}
+        if join_required:
+            tables_to_source = await self.find_join_tables(messages)
+        else:
+            tables_to_source = {table: source}
 
         table_schemas = {}
-        for source, source_table in sources.values():
+        for source_table, source in tables_to_source.items():
             if source_table == table:
                 table_schema = schema
             else:
@@ -701,7 +715,7 @@ class SQLAgent(LumenBaseAgent):
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
-        sql_query = await self._create_valid_sql(messages, system, sources)
+        sql_query = await self._create_valid_sql(messages, system, tables_to_source)
         return sql_query
 
     async def invoke(self, messages: list | str):
