@@ -662,7 +662,7 @@ class SQLAgent(LumenBaseAgent):
                     a_source = source
                     break
             if a_table in tables_to_source:
-                a_table = f"{a_source_name}//{a_table}"
+                a_table = f"//{a_source_name}//{a_table}"
             tables_to_source[a_table] = a_source
         return tables_to_source
 
