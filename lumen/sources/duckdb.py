@@ -204,6 +204,7 @@ class DuckDBSource(BaseSQLSource):
         # Reuse connection unless it has changed
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             params['_connection'] = self._connection
+        params.pop("name", None)
         source = type(self)(**params)
         if not materialize:
             return source
