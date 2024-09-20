@@ -47,6 +47,7 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
         corresponding SQL expressions.
         """
         params = dict(self.param.values(), **kwargs)
+        params.pop("name", None)
         params['tables'] = tables
         return IntakeDremioSQLSource(**params)
 
