@@ -326,13 +326,18 @@ class LumenBaseAgent(Agent):
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
 
+
 class TableAgent(LumenBaseAgent):
     """
     Displays a single table / dataset. Does not discuss.
     """
 
     system_prompt = param.String(
-        default="You are an agent responsible for finding the correct table based on the user prompt."
+        default=textwrap.dedent("""
+            Identify the most relevant table that contains the most columns useful
+            for answering the user's query. Keep in mind that additional tables
+            can be joined later, so focus on selecting the best starting point.
+        """)
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -343,6 +348,9 @@ class TableAgent(LumenBaseAgent):
     def _create_table_model(tables):
         table_model = create_model(
             "Table",
+            chain_of_thought=(str, FieldInfo(
+                description="The thought process behind selecting the table, listing out which columns are useful."
+            )),
             relevant_table=(Literal[tables], FieldInfo(
                 description="The most relevant table based on the user query; if none are relevant, select the first."
             ))
@@ -387,9 +395,10 @@ class TableAgent(LumenBaseAgent):
                         allow_partial=False,
                     )
                     table = result.relevant_table
+                    step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
                 else:
                     table = tables[0]
-                step.stream(f"Selected table: {table}")
+                    step.stream(f"Selected table: {table}")
 
         if table in tables_to_source:
             source = tables_to_source[table]
@@ -575,6 +584,10 @@ class SQLAgent(LumenBaseAgent):
             memory["current_data"] = describe_data(df)
 
         memory["available_sources"].append(sql_expr_source)
+        print(
+            f"Added source; now {len(memory['available_sources'])} "
+            f"available sources: {memory['available_sources']}"
+            )
         memory["current_source"] = sql_expr_source
         memory["current_pipeline"] = pipeline
         memory["current_table"] = pipeline.table
