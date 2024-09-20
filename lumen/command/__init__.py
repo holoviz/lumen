@@ -13,7 +13,7 @@ from bokeh.command.util import (  # type: ignore
 )
 from bokeh.document import Document
 from panel.command import Serve, main as _pn_main, transform_cmds
-from panel.io.server import Application
+from panel.io.application import Application
 from panel.io.state import set_curdoc
 
 from .. import __version__
