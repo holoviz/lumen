@@ -9,7 +9,7 @@ from __future__ import annotations
 import warnings
 
 from functools import partial
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import pandas as pd
 import panel as pn
@@ -17,7 +17,6 @@ import param  # type: ignore
 
 from panel.io.cache import _container_hash, _hash_funcs
 from panel.util import classproperty
-from typing_extensions import Literal
 
 from .state import state
 from .util import (
@@ -82,7 +81,7 @@ class Component(param.Parameterized):
         for pname, pval in params.items():
             if is_ref(pval):
                 refs[pname] = pval
-            elif isinstance(pval, (pn.widgets.Widget, param.Parameter, Variable)):
+            elif isinstance(pval, (pn.widgets.Widget | param.Parameter | Variable)):
                 var = state.variables.add_variable(pval)
                 processed[pname] = var.value
                 refs[pname] = f'$variables.{var.name}'

@@ -4,7 +4,7 @@ import sys
 
 from functools import partial
 from itertools import product
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 import panel as pn
@@ -15,7 +15,6 @@ from panel.io.document import unlocked
 from panel.io.state import state as pn_state
 from panel.viewable import Viewer
 from panel.widgets import Widget
-from typing_extensions import Literal
 
 from .base import Component
 from .filters.base import Filter, ParamFilter, WidgetFilter

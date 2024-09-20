@@ -91,23 +91,23 @@ def extract_type(pobj):
         return numbers.Number
     elif isinstance(pobj, param.NumericTuple):
         if isinstance(pobj.length):
-            return typing.Tuple[(numbers.Number,)*pobj.length]
+            return tuple[(numbers.Number,)*pobj.length]
         else:
-            return typing.Tuple[numbers.Number, ...]
+            return tuple[numbers.Number, ...]
     elif isinstance(pobj, param.Tuple):
         if isinstance(pobj.length):
-            return typing.Tuple[(typing.Any,)*pobj.length]
+            return tuple[(typing.Any,)*pobj.length]
         else:
-            return typing.Tuple[typing.Any, ...]
+            return tuple[typing.Any, ...]
     elif isinstance(pobj, param.List):
         item_type = pobj.item_type or pobj.class_
         if item_type is None:
-            return typing.List[typing.Any]
+            return list[typing.Any]
         if isinstance(item_type, tuple):
             item_type = typing.Union[item_type]
-        return typing.List[item_type]
+        return list[item_type]
     elif isinstance(pobj, param.Dict):
-        return typing.Dict[typing.Hashable, typing.Any]
+        return dict[typing.Hashable, typing.Any]
     elif isinstance(pobj, param.Array):
         return np.ndarray
     elif isinstance(pobj, param.DataFrame):
@@ -280,7 +280,7 @@ def write_index(bases):
             page += f'## [`{base.__name__}`]({base.__name__})\n\n'
             if description:
                 page += f'{description}\n\n'
-    path = REFERENCE_PATH / f'index.md'
+    path = REFERENCE_PATH / 'index.md'
     with open(path, 'w') as f:
         f.write(page)
 
