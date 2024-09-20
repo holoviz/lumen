@@ -133,6 +133,19 @@ class SQLDistinct(SQLTransform):
         return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
 
 
+class SQLCount(SQLTransform):
+
+    transform_type: ClassVar[str] = 'sql_count'
+
+    def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
+        template = """
+            SELECT
+                COUNT({{column}}) as count
+            FROM ( {{sql_in}} )"""
+        return self._render_template(template, sql_in=sql_in)
+
+
 class SQLMinMax(SQLTransform):
 
     columns = param.List(default=[], doc="Columns to return min/max values for.")
