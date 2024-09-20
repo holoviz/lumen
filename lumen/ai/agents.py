@@ -1026,7 +1026,7 @@ class AnalysisAgent(LumenBaseAgent):
     _output_type = AnalysisOutput
 
     async def _system_prompt_with_context(
-        self, messages: list | str, analyses: list[Analysis] = []
+        self, messages: list | str, context: str = "", analyses: list[Analysis] = []
     ) -> str:
         system_prompt = self.system_prompt
         for name, analysis in analyses.items():
@@ -1041,6 +1041,8 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             columns = list(current_data.columns)
         system_prompt += f"\nHere are the columns of the table: {columns}"
+        if context:
+            system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
     async def answer(self, messages: list | str, agents: list[Agent] | None = None):
@@ -1063,7 +1065,7 @@ class AnalysisAgent(LumenBaseAgent):
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
-                system_prompt = await self._system_prompt_with_context(messages, context=analyses)
+                system_prompt = await self._system_prompt_with_context(messages, analyses=analyses)
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
