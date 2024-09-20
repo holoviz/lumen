@@ -577,7 +577,7 @@ class SQLAgent(LumenBaseAgent):
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
 
-        memory["available_sources"].add(sql_expr_source)
+        memory["available_sources"].append(sql_expr_source)
         memory["current_source"] = sql_expr_source
         memory["current_pipeline"] = pipeline
         memory["current_table"] = pipeline.table
