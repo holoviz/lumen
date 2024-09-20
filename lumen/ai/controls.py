@@ -165,7 +165,7 @@ class SourceControls(pn.viewable.Viewer):
         duckdb_source.tables[table] = f"SELECT * FROM {table}"
         memory["current_source"] = duckdb_source
         memory["current_table"] = table
-        memory["available_sources"].add(duckdb_source)
+        memory["available_sources"].append(duckdb_source)
         self._last_table = table
 
     @param.depends("add", watch=True)
@@ -197,7 +197,7 @@ class SourceControls(pn.viewable.Viewer):
                 duckdb_source.tables[table] = f"SELECT * FROM {table}"
                 memory["current_source"] = duckdb_source
                 memory["current_table"] = table
-                memory["available_sources"].add(duckdb_source)
+                memory["available_sources"].append(duckdb_source)
                 self._last_table = table
 
     def __panel__(self):
