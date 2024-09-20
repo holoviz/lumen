@@ -7,7 +7,7 @@ from functools import partial
 import panel as pn
 import param
 
-from instructor import from_openai
+from instructor import from_anthropic, from_openai
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
@@ -39,6 +39,11 @@ class Llm(param.Parameterized):
     def _client_kwargs(self):
         return {}
 
+    def _add_system_message(self, messages, system, input_kwargs):
+        if system:
+            messages = [{"role": "system", "content": system}] + messages
+        return messages, input_kwargs
+
     async def invoke(
         self,
         messages: list | str,
@@ -51,8 +56,7 @@ class Llm(param.Parameterized):
         system = system.strip().replace("\n\n", "\n")
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
-        if system:
-            messages = [{"role": "system", "content": system}] + messages
+        messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
@@ -384,3 +388,79 @@ class AzureMistralAI(MistralAI):
             return partial(llm.chat.stream_async, model=model)
         else:
             return partial(llm_chat_non_stream_async, model=model)
+
+
+class AnthropicAI(Llm):
+
+    api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"))
+
+    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.TOOLS])
+
+    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "claude-3-haiku-20240307"},
+        "reasoning": {"model": "claude-3-5-sonnet-20240620"},
+    })
+
+    _supports_model_stream = True
+
+    @property
+    def _client_kwargs(self):
+        return {"temperature": self.temperature, "max_tokens": 1024}
+
+    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        from anthropic import AsyncAnthropic
+
+        model_kwargs = self._get_model_kwargs(model_key)
+        model = model_kwargs.pop("model")
+
+        llm = AsyncAnthropic(api_key=self.api_key)
+
+        if response_model:
+            client = from_anthropic(llm)
+            return partial(client.messages.create, model=model)
+        else:
+            return partial(llm.messages.create, model=model)
+
+    @classmethod
+    def _get_delta(cls, chunk):
+        if hasattr(chunk, 'delta'):
+            if hasattr(chunk.delta, "text"):
+                return chunk.delta.text
+        return ""
+
+    def _add_system_message(self, messages, system, input_kwargs):
+        input_kwargs["system"] = system
+        return messages, input_kwargs
+
+    async def invoke(
+        self,
+        messages: list | str,
+        system: str = "",
+        response_model: BaseModel | None = None,
+        allow_partial: bool = False,
+        model_key: str = "default",
+        **input_kwargs,
+    ) -> BaseModel:
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+
+        # check that first message is user message; if not, insert empty message
+        if messages[0]["role"] != "user":
+            messages.insert(0, {"role": "user", "content": "--"})
+
+        # check that role alternates between user and assistant and
+        # there are no duplicates in a row; if so insert empty message
+        for i in range(len(messages) - 1):
+            if messages[i]["role"] == messages[i + 1]["role"]:
+                role = "user" if messages[i]["role"] == "assistant" else "assistant"
+                messages.insert(i + 1, {"role": role, "content": "--"})
+            if messages[i]["content"] == messages[i + 1]["content"]:
+                messages.insert(i + 1, {"role": "assistant", "content": "--"})
+
+            # ensure no empty messages
+            if not messages[i]["content"]:
+                messages[i]["content"] = "--"
+
+        return await super().invoke(messages, system, response_model, allow_partial, model_key, **input_kwargs)
