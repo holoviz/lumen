@@ -65,7 +65,8 @@ def test_duckdb_get_schema(duckdb_source):
             'inclusiveMaximum': '2009-01-07 00:00:00',
             'inclusiveMinimum': '2009-01-01 00:00:00',
             'type': 'string'
-        }
+        },
+        'count': '5'
     }
     source = duckdb_source.get_schema('test_sql')
     source["C"]["enum"].sort()
@@ -84,7 +85,8 @@ def test_duckdb_get_schema_with_none(duckdb_source):
             'inclusiveMaximum': '2009-01-07 00:00:00',
             'inclusiveMinimum': '2009-01-01 00:00:00',
             'type': 'string'
-        }
+        },
+        'count': '5'
     }
     source = duckdb_source.get_schema('test_sql_with_none')
     source["C"]["enum"].sort(key=enum.index)

@@ -263,10 +263,11 @@ class Assistant(Viewer):
                 raise KeyError(f'Table {table} could not be found in available sources.')
 
         try:
-            spec = get_schema(source, table=table)
+            spec = get_schema(source, table=table, include_count=True)
         except Exception:
             # If the selected table cannot be fetched we should invalidate it
             spec = None
+
         sql = memory.get("current_sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
         system = render_template("check_validity.jinja2", table=table, spec=yaml.safe_dump(spec), sql=sql, analyses=analyses_names)
