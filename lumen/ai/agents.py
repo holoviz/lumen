@@ -355,11 +355,13 @@ class TableAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default=textwrap.dedent("""
+        default=textwrap.dedent(
+            """
             Identify the most relevant table that contains the most columns useful
             for answering the user's query. Keep in mind that additional tables
             can be joined later, so focus on selecting the best starting point.
-        """)
+            """
+        )
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -508,10 +510,12 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default=textwrap.dedent("""
-        You are an agent responsible for writing a SQL query that will
-        perform the data transformations the user requested.
-        """)
+        default=textwrap.dedent(
+            """
+            You are an agent responsible for writing a SQL query that will
+            perform the data transformations the user requested.
+            """
+        )
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
