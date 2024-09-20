@@ -45,7 +45,6 @@ class Llm(param.Parameterized):
         **input_kwargs,
     ) -> BaseModel:
         system = system.strip().replace("\n\n", "\n")
-        print("\033[33m" + system + "\033[0m")  # useful for debugging
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         if system:

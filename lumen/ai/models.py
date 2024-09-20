@@ -39,6 +39,12 @@ class JoinRequired(BaseModel):
 
 class TableJoins(BaseModel):
 
+    chain_of_thought: str = Field(
+        description="""
+        Concisely consider the tables that need to be joined to answer the user's query.
+        """
+    )
+
     tables: list[str] = Field(
         description=(
             "List of tables that need to be joined to answer the user's query. "
@@ -72,9 +78,10 @@ class Validity(BaseModel):
 
     correct_assessment: str = Field(
         description="""
-        Thoughts on whether the current table meets the requirement
-        to answer the user's query, i.e. table contains all necessary columns,
-        unless user explicitly asks for a refresh.
+        Restate the current table and think through whether the current table meets the requirement
+        to answer the user's query, i.e. table contains all necessary raw columns that are not
+        derivable from SQL expressions. If the user user explicitly asks for a refresh,
+        then the table is invalid.
         """
     )
 
