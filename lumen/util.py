@@ -64,6 +64,7 @@ def get_dataframe_schema(df, columns=None):
         dtype = df.dtypes[name]
         column = df[name]
         if dtype.kind in 'uifM':
+            kind = None
             if df.empty:
                 if dtype.kind == 'M':
                     vmin, vmax = pd.NaT, pd.NaT
