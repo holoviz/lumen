@@ -13,7 +13,7 @@ import bokeh.command.util  # type: ignore
 from bokeh.application.handlers.code import CodeHandler  # type: ignore
 from bokeh.command.util import die  # type: ignore
 from panel.command import Serve, transform_cmds
-from panel.io.server import Application
+from panel.io.application import Application
 
 from ..config import config
 

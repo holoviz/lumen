@@ -176,7 +176,7 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
         return {k: expand_spec(
             v, context, getenv, getshell, getheaders, getcookies, getoauth
         ) for k, v in pars.items()}
-    elif isinstance(pars, (list, tuple, set)):
+    elif isinstance(pars, list | tuple | set):
         return type(pars)(expand_spec(
             v, context, getenv, getshell, getheaders, getcookies, getoauth
         ) for v in pars)

@@ -429,7 +429,7 @@ class Assistant(Viewer):
         return selected
 
     def _serialize(self, obj, exclude_passwords=True):
-        if isinstance(obj, (Tabs, Column)):
+        if isinstance(obj, Tabs | Column):
             for o in obj:
                 if isinstance(obj, ChatStep) and not obj.title.startswith("Selected"):
                     # only want the chain of thoughts from the selected agent

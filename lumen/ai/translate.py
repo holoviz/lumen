@@ -2,8 +2,9 @@ import datetime
 import inspect
 import warnings
 
+from collections.abc import Callable
 from typing import (
-    Any, Callable, Literal, Optional, TypeVar, Union,
+    Any, Literal, TypeVar, Union,
 )
 
 import param
@@ -12,7 +13,7 @@ from pydantic import BaseConfig, BaseModel, create_model
 from pydantic.color import Color
 from pydantic.fields import FieldInfo, PydanticUndefined
 
-DATE_TYPE = Union[datetime.datetime, datetime.date]
+DATE_TYPE = datetime.datetime | datetime.date
 PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.String: str,
     param.Integer: int,
@@ -39,7 +40,7 @@ class ArbitraryTypesModel(BaseModel):
         arbitrary_types_allowed = True
 
 
-def _create_literal(obj: list[Union[str, type]]) -> type:
+def _create_literal(obj: list[str | type]) -> type:
     """
     Create a literal type from a list of objects.
     """
@@ -85,7 +86,7 @@ def parameter_to_field(
     elif param_type is param.ClassSelector:
         type_ = _get_model(parameter.class_, created_models)
         if isinstance(type_, tuple):
-            type_ = Union[tuple([PARAM_TYPE_MAPPING.get(t, t) for t in type_])]
+            type_ = Union[tuple([PARAM_TYPE_MAPPING.get(t, t) for t in type_])]  # noqa
         if parameter.default is not None:
             default_factory = parameter.default
             if not callable(default_factory):
@@ -118,9 +119,9 @@ def parameter_to_field(
     elif parameter.name == "align":
         type_ = _create_literal(["auto", "start", "center", "end"])
     elif parameter.name == "aspect_ratio":
-        type_ = Union[Literal["auto"], float]
+        type_ = Literal["auto"] | float
     elif parameter.name == "margin":
-        type_ = Union[float, tuple[float, float], tuple[float, float, float, float]]
+        type_ = float | tuple[float, float] | tuple[float, float, float, float]
     else:
         raise NotImplementedError(
             f"Parameter {parameter.name!r} of {param_type.__name__!r} not supported"
@@ -134,7 +135,7 @@ def parameter_to_field(
             pass
 
     if parameter.allow_None:
-        type_ = Optional[type_]
+        type_ = type_ | None
 
     return type_, field_info
 
@@ -142,10 +143,10 @@ def parameter_to_field(
 def param_to_pydantic(
     parameterized: type[param.Parameterized],
     base_model: type[BaseModel] = ArbitraryTypesModel,
-    created_models: Optional[dict[str, BaseModel]] = None,
-    schema: Optional[dict[str, Any]] = None,
-    excluded: Union[str, list[str]] = "_internal_params",
-    extra_fields: Optional[dict[str, tuple[type, FieldInfo]]] = None,
+    created_models: dict[str, BaseModel] | None = None,
+    schema: dict[str, Any] | None = None,
+    excluded: str | list[str] = "_internal_params",
+    extra_fields: dict[str, tuple[type, FieldInfo]] | None = None,
 ) -> dict[str, BaseModel]:
     """
     Translate a param Parameterized to a Pydantic BaseModel.
