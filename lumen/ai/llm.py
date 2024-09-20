@@ -4,10 +4,10 @@ import os
 
 from functools import partial
 
+import instructor
 import panel as pn
 import param
 
-from instructor import from_anthropic, from_openai
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
@@ -220,7 +220,7 @@ class OpenAI(Llm):
             model_kwargs["organization"] = self.organization
         llm = openai.AsyncOpenAI(**model_kwargs)
         if response_model:
-            client = from_openai(llm)
+            client = instructor.from_openai(llm)
             client_callable = partial(client.chat.completions.create, model=model)
         else:
             client_callable = partial(llm.chat.completions.create, model=model)
@@ -260,7 +260,7 @@ class AzureOpenAI(Llm):
             model_kwargs["azure_endpoint"] = self.azure_endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
         if response_model:
-            client = from_openai(llm)
+            client = instructor.from_openai(llm)
             client_callable = partial(client.chat.completions.create, model=model)
         else:
             client_callable = partial(llm.chat.completions.create, model=model)
@@ -418,7 +418,7 @@ class AnthropicAI(Llm):
         llm = AsyncAnthropic(api_key=self.api_key)
 
         if response_model:
-            client = from_anthropic(llm)
+            client = instructor.from_anthropic(llm)
             return partial(client.messages.create, model=model)
         else:
             return partial(llm.messages.create, model=model)
