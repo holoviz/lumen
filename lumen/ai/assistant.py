@@ -7,6 +7,7 @@ from io import StringIO
 from typing import Literal
 
 import param
+import yaml
 
 from panel import bind
 from panel.chat import ChatInterface, ChatStep
@@ -268,7 +269,8 @@ class Assistant(Viewer):
             spec = None
 
         sql = memory.get("current_sql")
-        system = render_template("check_validity.jinja2", table=table, spec=spec, sql=sql, analyses=self._analyses)
+        analyses_names = [analysis.__name__ for analysis in self._analyses]
+        system = render_template("check_validity.jinja2", table=table, spec=yaml.safe_dump(spec), sql=sql, analyses=analyses_names)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
                 messages=messages,
@@ -291,6 +293,7 @@ class Assistant(Viewer):
                 memory.pop("current_data", None)
                 memory.pop("current_pipeline", None)
                 print("\033[91mInvalidated SQL from memory.\033[0m")
+            return output.correct_assessment
 
     async def _create_suggestion(self, instance, event):
         messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
@@ -451,8 +454,12 @@ class Assistant(Viewer):
 
     async def invoke(self, messages: list | str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        await self._invalidate_memory(messages[-2:])
-        agent = await self._get_agent(messages[-3:])
+        invalidation_assessment = await self._invalidate_memory(messages[-2:])
+        context_length = 3
+        if invalidation_assessment:
+            messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
+            context_length += 1
+        agent = await self._get_agent(messages[-context_length:])
         if agent is None:
             msg = (
                 "Assistant could not settle on an agent to perform the requested query. "
@@ -467,12 +474,12 @@ class Assistant(Viewer):
             print(f"{message['role']!r}: {message['content']}")
             print("ENTRY" + "-" * 10)
 
-        print("\n\033[95mAGENT:\033[0m", agent, messages[-3:])
+        print("\n\033[95mAGENT:\033[0m", agent, messages[-context_length:])
 
         kwargs = {}
         if isinstance(agent, AnalysisAgent):
             kwargs["agents"] = self.agents
-        await agent.invoke(messages[-3:], **kwargs)
+        await agent.invoke(messages[-context_length:], **kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             self._add_analysis_suggestions()

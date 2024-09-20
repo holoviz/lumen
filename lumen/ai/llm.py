@@ -48,6 +48,7 @@ class Llm(param.Parameterized):
         model_key: str = "default",
         **input_kwargs,
     ) -> BaseModel:
+        system = system.strip().replace("\n\n", "\n")
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         if system:

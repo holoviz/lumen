@@ -1,0 +1,10 @@
+Here are the table schemas; select the table name containing all the columns necessary to answer `{{ query }}`
+
+{% for source in available_sources %}
+{% for table_data in source.tables %}
+### {{ table_data.table }}
+```yaml
+{{ table_data.schema | safe }}
+```
+{% endfor %}
+{% endfor %}
