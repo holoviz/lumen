@@ -232,7 +232,7 @@ class DuckDBSource(BaseSQLSource):
         return source
 
     def get_tables(self):
-        if isinstance(self.tables, (dict, list)):
+        if isinstance(self.tables, dict | list):
             return list(self.tables)
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 

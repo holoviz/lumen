@@ -122,7 +122,7 @@ class WizardItem(ReactiveHTML):
     def select(self, selector=None):
         items = super().select(selector)
         for values in self.param.objects().values():
-            if isinstance(values, (list, dict)):
+            if isinstance(values, list | dict):
                 values = values.values() if isinstance(values, dict) else values
                 items += [o for v in values if isinstance(v, Viewable) for o in v.select(selector)]
             elif isinstance(values, Viewable):

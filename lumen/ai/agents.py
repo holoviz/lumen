@@ -4,7 +4,7 @@ import json
 import re
 import textwrap
 
-from typing import Literal, Optional
+from typing import Literal
 
 import pandas as pd
 import panel as pn
@@ -814,7 +814,7 @@ class TransformPipelineAgent(LumenBaseAgent):
                     default=True,
                 ),
             ),
-            transforms=(Optional[list[Literal[tuple(transforms)]]], None),
+            transforms=(list[Literal[tuple(transforms)]] | None, None),
         )
         return transform_model
 
