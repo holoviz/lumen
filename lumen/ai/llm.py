@@ -40,6 +40,7 @@ class Llm(param.Parameterized):
         return {}
 
     def _add_system_message(self, messages, system, input_kwargs):
+        print(system)
         if system:
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs

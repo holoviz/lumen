@@ -84,6 +84,7 @@ class LumenOutput(Viewer):
                 display: flex;
                 text-align: left;
                 padding: 0px;
+                margin-left: -10px;
                 }
                 """
             ]
