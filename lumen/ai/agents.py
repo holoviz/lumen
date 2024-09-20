@@ -34,8 +34,7 @@ from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
 from .models import (
-    DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
-    VegaLiteSpec,
+    FuzzyTable, JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -236,28 +235,7 @@ class ChatAgent(Agent):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
-    requires = param.List(default=["current_source"], readonly=True)
-
-    @retry_llm_output()
-    async def requirements(self, messages: list | str, errors=None):
-        if 'current_data' in memory:
-            return self.requires
-
-        with self.interface.add_step(title="Checking if data is required") as step:
-            response = self.llm.stream(
-                messages,
-                system=(
-                    "The user may or may not want to chat about a particular dataset. "
-                    "Determine whether the provided user prompt requires access to "
-                    "actual data. If they're only searching for one, it's not required."
-                ),
-                response_model=DataRequired,
-            )
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-            if output.data_required:
-                return self.requires + ['current_table']
-        return self.requires
+    requires = param.List(default=["current_sql"], readonly=True)
 
     async def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
