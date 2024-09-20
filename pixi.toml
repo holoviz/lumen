@@ -68,7 +68,7 @@ sqlalchemy = "*"
 # [feature.ai.dependencies]
 # datashader = "*"
 # python-duckdb = "*"
-# instructor = ">=1"
+# instructor = ">=1.4.3"
 # nbformat = "*"
 # openai = "*"
 # pyarrow = "*"
