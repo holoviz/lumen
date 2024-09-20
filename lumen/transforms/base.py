@@ -6,8 +6,9 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 
+from collections.abc import Callable
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Literal, Union,
+    TYPE_CHECKING, Any, ClassVar, Literal,
 )
 
 import numpy as np
@@ -27,8 +28,8 @@ pd_version = Version(pd.__version__)
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
-    DataFrame = Union[pd.DataFrame, dDataFrame]
-    Series = Union[pd.Series, dSeries]
+    DataFrame = pd.DataFrame | dDataFrame
+    Series = pd.Series | dSeries
 
 
 class Transform(MultiTypeComponent):

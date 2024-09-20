@@ -3,13 +3,12 @@ from __future__ import annotations
 import os
 
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import panel as pn
 import param  # type: ignore
 
 from panel.widgets import Widget as _PnWidget
-from typing_extensions import Literal
 
 from ..base import MultiTypeComponent
 from ..state import state
@@ -354,7 +353,7 @@ class Widget(Variable):
         for pname, pobj in self._widget.param.objects().items():
             pval = pvals[pname]
             if (
-                pval is pobj.default or pname in spec or  # noqa: PLR1714
+                pval is pobj.default or pname in spec or  # noqa
                 (pname == 'name' and not pval) or pname == 'value_throttled'
                 or pname == 'design'  # Design is Panel 1.0 only
             ):

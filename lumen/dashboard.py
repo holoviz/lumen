@@ -6,9 +6,10 @@ import importlib.util
 import os
 import traceback
 
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar,
+    TYPE_CHECKING, Any, ClassVar, Literal,
 )
 
 import panel as pn
@@ -18,7 +19,6 @@ import yaml
 from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
 from panel.viewable import Viewable, Viewer
-from typing_extensions import Literal
 
 from .auth import Auth
 from .base import Component, MultiTypeComponent
@@ -887,7 +887,7 @@ class Dashboard(Component, Viewer):
                 continue
             for pipeline in layout._pipelines.values():
                 for filt in pipeline.filters:
-                    if ((all(isinstance(layout, (type(None), Future)) or any(filt in p.filters for p in layout._pipelines.values())
+                    if ((all(isinstance(layout, (type(None) | Future)) or any(filt in p.filters for p in layout._pipelines.values())
                              for layout in self.layouts) and
                          filt.panel is not None) and filt.shared) and filt not in filters:
                         views.append(filt.panel)

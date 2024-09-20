@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import types
 
+from collections.abc import Callable
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Literal,
+    TYPE_CHECKING, Any, ClassVar, Literal,
 )
 
 import bokeh  # type: ignore
