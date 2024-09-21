@@ -28,7 +28,7 @@ class LumenOutput(Viewer):
     def __init__(self, **params):
         if 'spec' not in params and 'component' in params and params['component'] is not None:
             component_spec = params['component'].to_spec()
-            params['spec'] = yaml.safe_dump(component_spec)
+            params['spec'] = yaml.dump(component_spec)
         super().__init__(**params)
         code_editor = pn.widgets.CodeEditor(
             value=self.param.spec, language=self.language, sizing_mode="stretch_both",
@@ -200,7 +200,7 @@ class AnalysisOutput(LumenOutput):
             self._rendered = False
             spec = view.to_spec()
             self.param.update(
-                spec=yaml.safe_dump(spec),
+                spec=yaml.dump(spec),
                 active=2
             )
 

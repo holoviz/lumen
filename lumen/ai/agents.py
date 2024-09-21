@@ -326,20 +326,13 @@ class LumenBaseAgent(Agent):
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
 
-
 class TableAgent(LumenBaseAgent):
     """
     Displays a single table / dataset. Does not discuss.
     """
 
     system_prompt = param.String(
-        default=textwrap.dedent(
-            """
-            Identify the most relevant table that contains the most columns useful
-            for answering the user's query. Keep in mind that additional tables
-            can be joined later, so focus on selecting the best starting point.
-            """
-        )
+        default="You are an agent responsible for finding the correct table based on the user prompt."
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -350,9 +343,6 @@ class TableAgent(LumenBaseAgent):
     def _create_table_model(tables):
         table_model = create_model(
             "Table",
-            chain_of_thought=(str, FieldInfo(
-                description="The thought process behind selecting the table, listing out which columns are useful."
-            )),
             relevant_table=(Literal[tables], FieldInfo(
                 description="The most relevant table based on the user query; if none are relevant, select the first."
             ))
@@ -368,7 +358,7 @@ class TableAgent(LumenBaseAgent):
                 tables_to_source[table] = source
                 if isinstance(source, DuckDBSource) and source.ephemeral:
                     schema = get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
-                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.safe_dump(schema)}```\n"
+                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
                 else:
                     tables_schema_str += f"### {table}\n"
 
@@ -397,10 +387,9 @@ class TableAgent(LumenBaseAgent):
                         allow_partial=False,
                     )
                     table = result.relevant_table
-                    step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
                 else:
                     table = tables[0]
-                    step.stream(f"Selected table: {table}")
+                step.stream(f"Selected table: {table}")
 
         if table in tables_to_source:
             source = tables_to_source[table]
@@ -485,12 +474,10 @@ class SQLAgent(LumenBaseAgent):
     """
 
     system_prompt = param.String(
-        default=textwrap.dedent(
-            """
-            You are an agent responsible for writing a SQL query that will
-            perform the data transformations the user requested.
-            """
-        )
+        default=textwrap.dedent("""
+        You are an agent responsible for writing a SQL query that will
+        perform the data transformations the user requested.
+        """)
     )
 
     requires = param.List(default=["current_table", "current_source"], readonly=True)
@@ -598,7 +585,7 @@ class SQLAgent(LumenBaseAgent):
         with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
             join_prompt = render_template(
                 "join_required.jinja2",
-                schema=yaml.safe_dump(schema),
+                schema=yaml.dump(schema),
                 table=table
             )
             response = self.llm.stream(
@@ -693,7 +680,7 @@ class SQLAgent(LumenBaseAgent):
             else:
                 table_schema = get_schema(source, source_table, include_min_max=False)
             table_schemas[source_table] = {
-                "schema": yaml.safe_dump(table_schema),
+                "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table)
             }
 
@@ -780,7 +767,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         prompt = f"{transform.__doc__}"
         if not schema:
             raise ValueError(f"No schema found for table {table!r}")
-        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```yaml\n{yaml.safe_dump(schema)}\n```"
+        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```yaml\n{yaml.dump(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -916,7 +903,7 @@ class BaseViewAgent(LumenBaseAgent):
         schema = get_schema(pipeline, include_min_max=False)
         view_prompt = render_template(
             "plot_agent.jinja2",
-            schema=yaml.safe_dump(schema),
+            schema=yaml.dump(schema),
             table=pipeline.table,
             current_view=memory.get('current_view'),
             doc=self.view_type.__doc__.split("\n\n")[0]
@@ -1123,7 +1110,7 @@ class AnalysisAgent(LumenBaseAgent):
                     pipeline = memory['current_pipeline']
                     if len(pipeline.data) > 0:
                         memory["current_data"] = describe_data(pipeline.data)
-                yaml_spec = yaml.safe_dump(spec)
+                yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
             else:

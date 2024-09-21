@@ -270,7 +270,7 @@ class Assistant(Viewer):
 
         sql = memory.get("current_sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = render_template("check_validity.jinja2", table=table, spec=yaml.safe_dump(spec), sql=sql, analyses=analyses_names)
+        system = render_template("check_validity.jinja2", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
                 messages=messages,
