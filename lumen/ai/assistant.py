@@ -148,11 +148,11 @@ class Assistant(Viewer):
         )
 
         if "current_source" in memory and "available_sources" not in memory:
-            memory["available_sources"] = {memory["current_source"]}
+            memory["available_sources"] = [memory["current_source"]]
         elif "current_source" not in memory and "available_sources" in memory:
             memory["current_source"] = memory["available_sources"][0]
         elif "available_sources" not in memory:
-            memory["available_sources"] = set([])
+            memory["available_sources"] = []
 
         self._controls = Column(
             notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
@@ -270,7 +270,7 @@ class Assistant(Viewer):
 
         sql = memory.get("current_sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = render_template("check_validity.jinja2", table=table, spec=yaml.safe_dump(spec), sql=sql, analyses=analyses_names)
+        system = render_template("check_validity.jinja2", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
                 messages=messages,
