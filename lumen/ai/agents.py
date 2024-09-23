@@ -380,7 +380,7 @@ class TableAgent(LumenBaseAgent):
                 tables_to_source[table] = source
                 if isinstance(source, DuckDBSource) and source.ephemeral:
                     schema = get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
-                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.safe_dump(schema)}```\n"
+                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
                 else:
                     tables_schema_str += f"### {table}\n"
 
@@ -607,7 +607,7 @@ class SQLAgent(LumenBaseAgent):
         with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
             join_prompt = render_template(
                 "join_required.jinja2",
-                schema=yaml.safe_dump(schema),
+                schema=yaml.dump(schema),
                 table=table
             )
             response = self.llm.stream(
@@ -702,7 +702,7 @@ class SQLAgent(LumenBaseAgent):
             else:
                 table_schema = get_schema(source, source_table, include_min_max=False)
             table_schemas[source_table] = {
-                "schema": yaml.safe_dump(table_schema),
+                "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table)
             }
 
@@ -789,7 +789,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         prompt = f"{transform.__doc__}"
         if not schema:
             raise ValueError(f"No schema found for table {table!r}")
-        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```yaml\n{yaml.safe_dump(schema)}\n```"
+        prompt += f"\n\nThe data columns follows the following JSON schema:\n\n```yaml\n{yaml.dump(schema)}\n```"
         if "current_transform" in memory:
             prompt += f"The previous transform specification was: {memory['current_transform']}"
         return prompt
@@ -925,7 +925,7 @@ class BaseViewAgent(LumenBaseAgent):
         schema = get_schema(pipeline, include_min_max=False)
         view_prompt = render_template(
             "plot_agent.jinja2",
-            schema=yaml.safe_dump(schema),
+            schema=yaml.dump(schema),
             table=pipeline.table,
             current_view=memory.get('current_view'),
             doc=self.view_type.__doc__.split("\n\n")[0]
@@ -1132,7 +1132,7 @@ class AnalysisAgent(LumenBaseAgent):
                     pipeline = memory['current_pipeline']
                     if len(pipeline.data) > 0:
                         memory["current_data"] = describe_data(pipeline.data)
-                yaml_spec = yaml.safe_dump(spec)
+                yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
             else:
