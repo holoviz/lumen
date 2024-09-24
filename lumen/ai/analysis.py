@@ -1,6 +1,8 @@
 import panel as pn
 import param
 
+from lumen.ai.utils import get_data
+
 from ..base import Component
 from .controls import SourceControls
 from .memory import memory
@@ -33,13 +35,14 @@ class Analysis(param.ParameterizedFunction):
     _field_params = []
 
     @classmethod
-    def applies(cls, pipeline) -> bool:
+    async def applies(cls, pipeline) -> bool:
         applies = True
+        data = await get_data(pipeline)
         for col in cls.columns:
             if isinstance(col, tuple):
-                applies &= any(c in pipeline.data.columns for c in col)
+                applies &= any(c in data.columns for c in col)
             else:
-                applies &= col in pipeline.data.columns
+                applies &= col in data.columns
         return applies
 
     def controls(self):

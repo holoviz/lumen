@@ -146,6 +146,16 @@ async def get_schema(
     return schema
 
 
+async def get_data(pipeline):
+    """
+    A wrapper be able to use asyncio.to_thread and not
+    block the main thread when calling pipeline.data
+    """
+    def get_data_sync():
+        return pipeline.data
+    return asyncio.to_thread(get_data_sync)
+
+
 def describe_data(df: pd.DataFrame) -> str:
     def format_float(num):
         if pd.isna(num):

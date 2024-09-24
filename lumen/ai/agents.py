@@ -39,7 +39,8 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, get_schema, render_template, retry_llm_output,
+    clean_sql, describe_data, get_data, get_schema, render_template,
+    retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -438,7 +439,7 @@ class TableAgent(LumenBaseAgent):
         memory["current_pipeline"] = pipeline = Pipeline(
             source=source, table=table, **get_kwargs
         )
-        df = pipeline.data
+        df = await get_data(pipeline)
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
         if self.debug:
@@ -605,7 +606,7 @@ class SQLAgent(LumenBaseAgent):
             step.status = "failed"
             raise e
 
-        df = pipeline.data
+        df = await get_data(pipeline)
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
 
@@ -759,8 +760,9 @@ class PipelineAgent(LumenBaseAgent):
                 table=memory["current_table"],
             )
         memory["current_pipeline"] = pipeline
-        pipeline._update_data(force=True)
-        memory["current_data"] = describe_data(pipeline.data)
+        await asyncio.to_thread(pipeline._update_data, force=True)
+        data = await get_data(pipeline)
+        memory["current_data"] = describe_data(data)
         return pipeline
 
     async def invoke(self, messages: list | str):
@@ -912,8 +914,9 @@ class TransformPipelineAgent(LumenBaseAgent):
             else:
                 pipeline.add_transform(transform)
 
-        pipeline._update_data(force=True)
-        memory["current_data"] = describe_data(pipeline.data)
+        await asyncio.to_thread(pipeline._update_data, force=True)
+        data = await get_data(pipeline)
+        memory["current_data"] = describe_data(data)
         return pipeline
 
     async def invoke(self, messages: list | str):
@@ -927,7 +930,7 @@ class BaseViewAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_plot"], readonly=True)
 
-    def _extract_spec(self, model: BaseModel):
+    async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
     async def answer(self, messages: list | str) -> hvPlotUIView:
@@ -951,7 +954,7 @@ class BaseViewAgent(LumenBaseAgent):
             system=system_prompt + view_prompt,
             response_model=self._get_model(schema),
         )
-        spec = self._extract_spec(output)
+        spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought")
         with self.interface.add_step(title="Generating view...") as step:
             step.stream(chain_of_thought)
@@ -1002,7 +1005,7 @@ class hvPlotAgent(BaseViewAgent):
         })
         return model[cls.view_type.__name__]
 
-    def _extract_spec(self, model):
+    async def _extract_spec(self, model):
         pipeline = memory["current_pipeline"]
         spec = {
             key: val for key, val in dict(model).items()
@@ -1014,7 +1017,8 @@ class hvPlotAgent(BaseViewAgent):
 
         # Add defaults
         spec["responsive"] = True
-        if len(pipeline.data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
+        data = await get_data(pipeline)
+        if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             spec["rasterize"] = True
             spec["cnorm"] = "log"
         return spec
@@ -1039,7 +1043,7 @@ class VegaLiteAgent(BaseViewAgent):
     def _get_model(cls, schema):
         return VegaLiteSpec
 
-    def _extract_spec(self, model):
+    async def _extract_spec(self, model):
         vega_spec = json.loads(model.json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
@@ -1092,7 +1096,7 @@ class AnalysisAgent(LumenBaseAgent):
 
     async def answer(self, messages: list | str, agents: list[Agent] | None = None):
         pipeline = memory['current_pipeline']
-        analyses = {a.name: a for a in self.analyses if a.applies(pipeline)}
+        analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
             print("NONE found...")
             return None
@@ -1125,8 +1129,10 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.add_step(title="Creating view...", user="Assistant") as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
+
+            data = await get_data(pipeline)
             for field in analysis_callable._field_params:
-                analysis_callable.param[field].objects = list(pipeline.data.columns)
+                analysis_callable.param[field].objects = list(data.columns)
             memory["current_analysis"] = analysis_callable
 
             if analysis_callable.autorun:
@@ -1143,8 +1149,8 @@ class AnalysisAgent(LumenBaseAgent):
                 # Ensure current_data reflects processed pipeline
                 if pipeline is not memory['current_pipeline']:
                     pipeline = memory['current_pipeline']
-                    if len(pipeline.data) > 0:
-                        memory["current_data"] = describe_data(pipeline.data)
+                    if len(data) > 0:
+                        memory["current_data"] = describe_data(data)
                 yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
