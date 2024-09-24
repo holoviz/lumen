@@ -82,7 +82,7 @@ class Join(Analysis):
         table = memory.get("current_table")
         self._previous_source = source
         self._previous_table = table
-        columns = source.get_schema(table).keys()
+        columns = list(source.get_schema(table).keys())
         index_col = pn.widgets.AutocompleteInput.from_param(
             self.param.index_col, options=columns, name="Join on",
             placeholder="Start typing column name", search_strategy="includes",
