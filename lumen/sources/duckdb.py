@@ -280,6 +280,7 @@ class DuckDBSource(BaseSQLSource):
                 continue
             sql_expr = self.get_sql_expr(entry)
             data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
+            print(data)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 continue
@@ -319,5 +320,6 @@ class DuckDBSource(BaseSQLSource):
             count_expr = ' '.join(count_expr.splitlines())
             count_data = self._connection.execute(count_expr).fetch_df()
             schema['count'] = cast(count_data['count'].iloc[0])
+            print(schema)
 
         return schemas if table is None else schemas[table]

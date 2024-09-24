@@ -527,6 +527,9 @@ class SQLAgent(LumenBaseAgent):
 
     @retry_llm_output()
     async def _create_valid_sql(self, messages, system, tables_to_source, errors=None):
+        import time
+        start = time.perf_counter()
+
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -552,6 +555,8 @@ class SQLAgent(LumenBaseAgent):
                     step_message += f"\n```sql\n{sql_query}\n```"
                 step.stream(step_message, replace=True)
 
+        print(f"SQL thought took {time.perf_counter() - start:.2f}s")
+
         if not sql_query:
             raise ValueError("No SQL query was generated.")
 
@@ -574,6 +579,9 @@ class SQLAgent(LumenBaseAgent):
         else:
             source = next(iter(sources))
 
+        # time
+        print(f"SQL mirrors took {time.perf_counter() - start:.2f}s")
+
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
@@ -581,9 +589,11 @@ class SQLAgent(LumenBaseAgent):
             # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
             sql_transforms = [SQLLimit(limit=1_000_000)]
+            print(f"SQL source took {time.perf_counter() - start:.2f}s")
             pipeline = Pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
+            print(f"SQL run took {time.perf_counter() - start:.2f}s")
         except InstructorRetryException as e:
             error_msg = str(e)
             step.stream(f'\n```python\n{error_msg}\n```')
@@ -605,9 +615,13 @@ class SQLAgent(LumenBaseAgent):
             step.status = "failed"
             raise e
 
+        print(f"SQL validation took {time.perf_counter() - start:.2f}s")
+
         df = pipeline.data
         if len(df) > 0:
             memory["current_data"] = describe_data(df)
+
+        print(f"SQL describe took {time.perf_counter() - start:.2f}s")
 
         memory["available_sources"].append(sql_expr_source)
         memory["current_source"] = sql_expr_source
