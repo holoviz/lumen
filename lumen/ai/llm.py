@@ -443,7 +443,7 @@ class AnthropicAI(Llm):
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor_path:
-            raise NotImplementedError("Interceptors are not supported for MistralAI.")
+            raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
 
         from anthropic import AsyncAnthropic
 
