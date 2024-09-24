@@ -153,7 +153,7 @@ async def get_data(pipeline):
     """
     def get_data_sync():
         return pipeline.data
-    return asyncio.to_thread(get_data_sync)
+    return await asyncio.to_thread(get_data_sync)
 
 
 def describe_data(df: pd.DataFrame) -> str:
