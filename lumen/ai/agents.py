@@ -124,7 +124,7 @@ class Agent(Viewer):
             result = self.embeddings.query(text, table_name=table_name)[0][1]
             context += "\n" + result
         if context:
-            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
+            system_prompt = f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
