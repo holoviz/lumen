@@ -115,10 +115,16 @@ class Agent(Viewer):
         self, messages: list | str, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
+        table_name = memory.get("current_table")
         if self.embeddings:
-            context = self.embeddings.query(messages)
+            # TODO: refactor this so it joins messages in a more robust way
+            text = "\n".join([message["content"] for message in messages])
+            # TODO: refactor this so it's not subsetting by index
+            # [(0, 'The creator of this dataset is named Andrew HH', 0.7491879463195801, 'windturbines.parquet')]
+            result = self.embeddings.query(text, table_name=table_name)[0][1]
+            context += "\n" + result
         if context:
-            system_prompt += f"\n### CONTEXT: {context}"
+            system_prompt += f"{system_prompt}\n### CONTEXT: {context}".strip()
         return system_prompt
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
@@ -283,10 +289,7 @@ class ChatAgent(Agent):
                 f"\nHere's a summary of the dataset the user just asked about:\n```\n{memory['current_data']}\n```"
             )
 
-        system_prompt = self.system_prompt
-        if context:
-            system_prompt += f"\n### CONTEXT: {context}"
-        return system_prompt
+        return await super()._system_prompt_with_context(messages, context=context)
 
 
 class ChatDetailsAgent(ChatAgent):
@@ -313,7 +316,6 @@ class ChatDetailsAgent(ChatAgent):
     async def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
     ) -> str:
-        system_prompt = self.system_prompt
         topic = (await self.llm.invoke(
             messages,
             system="What is the topic of the table?",
@@ -329,9 +331,7 @@ class ChatDetailsAgent(ChatAgent):
             columns = list(current_data.columns)
         context += f"\nHere are the columns of the table: {columns}"
 
-        if context:
-            system_prompt += f"\n### CONTEXT: {context}"
-        return system_prompt
+        return await super()._system_prompt_with_context(messages, context=context)
 
 
 class LumenBaseAgent(Agent):
