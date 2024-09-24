@@ -441,7 +441,7 @@ class TableAgent(LumenBaseAgent):
         )
         df = await get_data(pipeline)
         if len(df) > 0:
-            memory["current_data"] = describe_data(df)
+            memory["current_data"] = await describe_data(df)
         if self.debug:
             print(f"{self.name} thinks that the user is talking about {table=!r}.")
         return pipeline
@@ -608,7 +608,7 @@ class SQLAgent(LumenBaseAgent):
 
         df = await get_data(pipeline)
         if len(df) > 0:
-            memory["current_data"] = describe_data(df)
+            memory["current_data"] = await describe_data(df)
 
         memory["available_sources"].append(sql_expr_source)
         memory["current_source"] = sql_expr_source
@@ -762,7 +762,7 @@ class PipelineAgent(LumenBaseAgent):
         memory["current_pipeline"] = pipeline
         await asyncio.to_thread(pipeline._update_data, force=True)
         data = await get_data(pipeline)
-        memory["current_data"] = describe_data(data)
+        memory["current_data"] = await describe_data(data)
         return pipeline
 
     async def invoke(self, messages: list | str):
@@ -916,7 +916,7 @@ class TransformPipelineAgent(LumenBaseAgent):
 
         await asyncio.to_thread(pipeline._update_data, force=True)
         data = await get_data(pipeline)
-        memory["current_data"] = describe_data(data)
+        memory["current_data"] = await describe_data(data)
         return pipeline
 
     async def invoke(self, messages: list | str):
@@ -1150,7 +1150,7 @@ class AnalysisAgent(LumenBaseAgent):
                 if pipeline is not memory['current_pipeline']:
                     pipeline = memory['current_pipeline']
                     if len(data) > 0:
-                        memory["current_data"] = describe_data(data)
+                        memory["current_data"] = await describe_data(data)
                 yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
