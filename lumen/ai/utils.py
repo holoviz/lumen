@@ -146,6 +146,16 @@ async def get_schema(
     return schema
 
 
+async def get_pipeline(**kwargs):
+    """
+    A wrapper be able to use asyncio.to_thread and not
+    block the main thread when calling Pipeline
+    """
+    def get_pipeline_sync():
+        return Pipeline(**kwargs)
+    return await asyncio.to_thread(get_pipeline_sync)
+
+
 async def get_data(pipeline):
     """
     A wrapper be able to use asyncio.to_thread and not

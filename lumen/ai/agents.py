@@ -39,8 +39,8 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, get_data, get_schema, render_template,
-    retry_llm_output,
+    clean_sql, describe_data, get_data, get_pipeline, get_schema,
+    render_template, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -436,7 +436,7 @@ class TableAgent(LumenBaseAgent):
             get_kwargs['sql_transforms'] = [SQLLimit(limit=1_000_000)]
         memory["current_source"] = source
         memory["current_table"] = table
-        memory["current_pipeline"] = pipeline = Pipeline(
+        memory["current_pipeline"] = pipeline = await get_pipeline(
             source=source, table=table, **get_kwargs
         )
         df = await get_data(pipeline)
@@ -582,7 +582,7 @@ class SQLAgent(LumenBaseAgent):
             # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
             sql_transforms = [SQLLimit(limit=1_000_000)]
-            pipeline = Pipeline(
+            pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
         except InstructorRetryException as e:
@@ -755,7 +755,7 @@ class PipelineAgent(LumenBaseAgent):
         if "current_pipeline" in memory:
             pipeline = memory["current_pipeline"]
         else:
-            pipeline = Pipeline(
+            pipeline = await get_pipeline(
                 source=memory["current_source"],
                 table=memory["current_table"],
             )
