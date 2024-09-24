@@ -325,6 +325,9 @@ class MistralAI(Llm):
         return {"temperature": self.temperature}
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        if self.interceptor_path:
+            raise NotImplementedError("Interceptors are not supported for MistralAI.")
+
         from mistralai import Mistral
 
         async def llm_chat_non_stream_async(*args, **kwargs):
@@ -393,6 +396,9 @@ class AzureMistralAI(MistralAI):
     })
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        if self.interceptor_path:
+            raise NotImplementedError("Interceptors are not supported for MistralAI.")
+
         from mistralai_azure import MistralAzure
 
         async def llm_chat_non_stream_async(*args, **kwargs):
@@ -436,6 +442,9 @@ class AnthropicAI(Llm):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        if self.interceptor_path:
+            raise NotImplementedError("Interceptors are not supported for MistralAI.")
+
         from anthropic import AsyncAnthropic
 
         model_kwargs = self._get_model_kwargs(model_key)
