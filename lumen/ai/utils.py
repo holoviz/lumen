@@ -102,6 +102,7 @@ def get_schema(
     table: str | None = None,
     include_min_max: bool = True,
     include_enum: bool = True,
+    include_count: bool = False,
     **get_kwargs
 ):
     if isinstance(source, Pipeline):
@@ -111,6 +112,10 @@ def get_schema(
             get_kwargs["limit"] = 100
         schema = source.get_schema(table, **get_kwargs)
     schema = dict(schema)
+
+    # first pop regardless to prevent
+    # argument of type 'numpy.int64' is not iterable
+    count = schema.pop("count", None)
 
     if include_min_max:
         for field, spec in schema.items():
@@ -133,6 +138,9 @@ def get_schema(
         for field, spec in schema.items():
             if "enum" in spec:
                 spec.pop("enum")
+
+    if count and include_count:
+        spec["count"] = count
 
     schema = format_schema(schema)
     return schema

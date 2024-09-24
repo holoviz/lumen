@@ -8,14 +8,13 @@ dynamic = ["version"]
 description = "A monitoring solution built on Panel."
 readme = "README.md"
 license = { text = "BSD" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "HoloViz developers", email = "developers@holoviz.org" }]
 maintainers = [{ name = "HoloViz developers", email = "developers@holoviz.org" }]
 classifiers = [
     "License :: OSI Approved :: BSD License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -35,7 +34,7 @@ dependencies = [
     "numpy",
     "packaging",
     "pandas",
-    "panel >=1.3.0",
+    "panel >=1.5.0",
     "param >=1.9.0",
 ]
 
@@ -47,7 +46,7 @@ HoloViz = "https://holoviz.org/"
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures']
 sql = ['duckdb', 'intake-sql', 'sqlalchemy']
-ai = ['nbformat', 'duckdb', 'pyarrow', 'openai', 'instructor >=1', 'pydantic >=2.8.0', 'datashader']
+ai = ['nbformat', 'duckdb', 'pyarrow', 'openai', 'instructor >=1.4.3', 'pydantic >=2.8.0', 'datashader']
 ai-local = ['lumen[ai]', 'huggingface_hub']
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python']
 

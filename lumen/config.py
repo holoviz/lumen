@@ -118,7 +118,7 @@ class Template(param.Parameter):
         self._validate_value(val, self.allow_None)
 
     def _validate_value(self, val, allow_None):
-        if isinstance(val, (dict, str)) or issubclass(val, BasicTemplate):
+        if isinstance(val, dict | str) or issubclass(val, BasicTemplate):
             return
         raise ValueError(f"Template type {type(val).__name__} not recognized.")
 

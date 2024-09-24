@@ -14,7 +14,7 @@ from itertools import product
 from os.path import basename
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING, Any, ClassVar, Literal, Union,
+    TYPE_CHECKING, Any, ClassVar, Literal,
 )
 from urllib.parse import quote, urlparse
 
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
-    DataFrame = Union[pd.DataFrame, dDataFrame]
-    Series = Union[pd.Series, dSeries]
+    DataFrame = pd.DataFrame | dDataFrame
+    Series = pd.Series | dSeries
 
     DataFrameTypes: tuple[type, ...]
     try:
@@ -639,7 +639,7 @@ class FileSource(Source):
             tables = self.tables or {}
         files = {}
         for name, table in tables.items():
-            if isinstance(table, (list, tuple)):
+            if isinstance(table, (list | tuple)):
                 table, ext = table
             else:
                 if isinstance(table, str) and table.startswith('http'):

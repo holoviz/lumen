@@ -64,6 +64,7 @@ def get_dataframe_schema(df, columns=None):
         dtype = df.dtypes[name]
         column = df[name]
         if dtype.kind in 'uifM':
+            kind = None
             if df.empty:
                 if dtype.kind == 'M':
                     vmin, vmax = pd.NaT, pd.NaT
@@ -176,7 +177,7 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
         return {k: expand_spec(
             v, context, getenv, getshell, getheaders, getcookies, getoauth
         ) for k, v in pars.items()}
-    elif isinstance(pars, (list, tuple, set)):
+    elif isinstance(pars, list | tuple | set):
         return type(pars)(expand_spec(
             v, context, getenv, getshell, getheaders, getcookies, getoauth
         ) for v in pars)

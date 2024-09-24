@@ -675,7 +675,7 @@ class IndicatorView(View):
             params['data'] = self.get_data()
         else:
             value = self.get_value()
-            if (not isinstance(value, (type(None), str)) and np.isnan(value)):
+            if (not isinstance(value, type(None) | str) and np.isnan(value)):
                 value = None
             params['value'] = value
         return params
