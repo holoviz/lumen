@@ -263,7 +263,7 @@ class Assistant(Viewer):
                 raise KeyError(f'Table {table} could not be found in available sources.')
 
         try:
-            spec = get_schema(source, table=table, include_count=True)
+            spec = await get_schema(source, table=table, include_count=True)
         except Exception:
             # If the selected table cannot be fetched we should invalidate it
             spec = None

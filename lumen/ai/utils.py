@@ -97,7 +97,7 @@ def format_schema(schema):
     return formatted
 
 
-def get_schema(
+async def get_schema(
     source: Source | Pipeline,
     table: str | None = None,
     include_min_max: bool = True,
@@ -106,11 +106,11 @@ def get_schema(
     **get_kwargs
 ):
     if isinstance(source, Pipeline):
-        schema = source.get_schema()
+        schema = await asyncio.to_thread(source.get_schema)
     else:
         if "limit" not in get_kwargs:
             get_kwargs["limit"] = 100
-        schema = source.get_schema(table, **get_kwargs)
+        schema = await asyncio.to_thread(source.get_schema, table, **get_kwargs)
     schema = dict(schema)
 
     # first pop regardless to prevent

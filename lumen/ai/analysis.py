@@ -4,7 +4,6 @@ import param
 from ..base import Component
 from .controls import SourceControls
 from .memory import memory
-from .utils import get_schema
 
 
 class Analysis(param.ParameterizedFunction):
@@ -80,7 +79,7 @@ class Join(Analysis):
         table = memory.get("current_table")
         self._previous_source = source
         self._previous_table = table
-        columns = list(get_schema(source, table=table).keys())
+        columns = source.get_schema(table).keys()
         index_col = pn.widgets.AutocompleteInput.from_param(
             self.param.index_col, options=columns, name="Join on",
             placeholder="Start typing column name", search_strategy="includes",

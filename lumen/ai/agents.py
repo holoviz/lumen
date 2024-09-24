@@ -274,7 +274,7 @@ class ChatAgent(Agent):
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
             memory["current_table"] = table = memory.get("current_table", tables[0])
-            schema = get_schema(memory["current_source"], table)
+            schema = await get_schema(memory["current_source"], table)
             if schema:
                 context = f"{table} with schema: {schema}"
 
@@ -389,7 +389,7 @@ class TableAgent(LumenBaseAgent):
             for table in source.get_tables():
                 tables_to_source[table] = source
                 if isinstance(source, DuckDBSource) and source.ephemeral:
-                    schema = get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
+                    schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
                     tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
                 else:
                     tables_schema_str += f"### {table}\n"
@@ -715,7 +715,7 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        schema = get_schema(source, table, include_min_max=False)
+        schema = await get_schema(source, table, include_min_max=False)
         join_required = await self.check_join_required(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
@@ -727,7 +727,7 @@ class SQLAgent(LumenBaseAgent):
             if source_table == table:
                 table_schema = schema
             else:
-                table_schema = get_schema(source, source_table, include_min_max=False)
+                table_schema = await get_schema(source, source_table, include_min_max=False)
             table_schemas[source_table] = {
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table)
@@ -881,7 +881,7 @@ class TransformPipelineAgent(LumenBaseAgent):
         self, messages: list | str, transform: type[Transform], system_prompt: str
     ) -> Transform:
         excluded = transform._internal_params + ["controls", "type"]
-        schema = get_schema(memory["current_pipeline"])
+        schema = await get_schema(memory["current_pipeline"])
         table = memory["current_table"]
         model = param_to_pydantic(transform, excluded=excluded, schema=schema)[
             transform.__name__
@@ -949,7 +949,7 @@ class BaseViewAgent(LumenBaseAgent):
 
         # Write prompts
         system_prompt = await self._system_prompt_with_context(messages)
-        schema = get_schema(pipeline, include_min_max=False)
+        schema = await get_schema(pipeline, include_min_max=False)
         view_prompt = render_template(
             "plot_agent.jinja2",
             schema=yaml.dump(schema),
