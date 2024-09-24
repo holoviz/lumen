@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 from typing import TYPE_CHECKING, Any
@@ -248,8 +249,11 @@ class DuckDBSource(BaseSQLSource):
             sql_expr = self.sql_expr.format(table=table)
         return sql_expr.rstrip(";")
 
+    def _execute(self, sql_expr):
+        return self._connection.execute(sql_expr).fetch_df(date_as_object=True)
+
     @cached
-    def get(self, table, **query):
+    async def get(self, table, **query):
         query.pop('__dask', None)
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
@@ -258,7 +262,7 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        df = self._connection.execute(sql_expr).fetch_df(date_as_object=True)
+        df = await asyncio.to_thread(self._execute, sql_expr)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -458,7 +459,7 @@ class Source(MultiTypeComponent):
             msg = match_suggestion_message(table or '', names, msg)
             raise ValidationError(msg) from e
 
-    def get(self, table: str, **query) -> DataFrame:
+    async def get(self, table: str, **query) -> DataFrame:
         """
         Return a table; optionally filtered by the given query.
 
@@ -501,9 +502,9 @@ class RESTSource(Source):
                 response.json().items()}
 
     @cached
-    def get(self, table: str, **query) -> pd.DataFrame:
+    async def get(self, table: str, **query) -> pd.DataFrame:
         query = dict(table=table, **query)
-        r = requests.get(self.url+'/data', params=query)
+        r = await asyncio.to_thread(requests.get, self.url+'/data', params=query)
         df = pd.DataFrame(r.json())
         return df
 
@@ -527,9 +528,9 @@ class InMemorySource(Source):
         else:
             return {t: get_dataframe_schema(self.get(t))['items']['properties'] for t in self.get_tables()}
 
-    def get(self, table: str, **query) -> pd.DataFrame:
+    async def get(self, table: str, **query) -> pd.DataFrame:
         dask = query.pop('__dask', False)
-        table = self.tables.get(table)
+        table = await asyncio.to_thread(self.tables.get, table)
         df = FilterTransform.apply_to(table, conditions=list(query.items()))
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
@@ -700,9 +701,9 @@ class FileSource(Source):
         return df
 
     @cached
-    def get(self, table: str, **query) -> DataFrame:
+    async def get(self, table: str, **query) -> DataFrame:
         dask = query.pop('__dask', self.dask)
-        df = self._load_table(table)
+        df = await asyncio.to_thread(self._load_table, table)
         df = FilterTransform.apply_to(df, conditions=list(query.items()))
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
@@ -820,11 +821,11 @@ class WebsiteSource(Source):
         return ['status']
 
     @cached
-    def get(self, table: str, **query) -> pd.DataFrame:
+    async def get(self, table: str, **query) -> pd.DataFrame:
         data = []
         for url in self.urls:
             try:
-                r = requests.get(url)
+                r = await asyncio.to_thread(requests.get, url)
                 live = r.status_code == 200
             except Exception:
                 live = False
@@ -922,7 +923,8 @@ class PanelSessionSource(Source):
         return data
 
     @cached
-    def get(self, table: str, **query) -> pd.DataFrame:
+    async def get(self, table: str, **query) -> pd.DataFrame:
+        # TODO: make this async instead of using ThreadPoolExecutor
         data = []
         with futures.ThreadPoolExecutor(len(self.urls)) as executor:
             tasks = {executor.submit(self._get_session_info, table, url): url
@@ -1016,7 +1018,7 @@ class JoinedSource(Source):
         return schemas if table is None else schemas[table]
 
     @cached
-    def get(self, table: str, **query) -> DataFrame:
+    async def get(self, table: str, **query) -> DataFrame:
         df, left_key = None, None
         for spec in self.tables[table]:
             source, subtable = spec['source'], spec['table']
@@ -1024,7 +1026,7 @@ class JoinedSource(Source):
             right_key = spec.get('index')
             if df is not None and left_key and right_key not in query:
                 source_query[right_key] = list(df[left_key].unique())
-            df_merge = self.sources[source].get(subtable, **source_query)
+            df_merge = await asyncio.to_thread(self.sources[source].get, subtable, **source_query)
             if df is None:
                 df = df_merge
                 left_key = spec.get('index')
@@ -1140,7 +1142,7 @@ class DerivedSource(Source):
         return source.get(table, **query)
 
     @cached
-    def get(self, table: str, **query) -> DataFrame:
+    async def get(self, table: str, **query) -> DataFrame:
         df = self._get_source_table(table)
         if self.tables:
             transforms = self.tables[table].get('transforms', []) + self.transforms
@@ -1148,7 +1150,7 @@ class DerivedSource(Source):
             transforms = self.transforms
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
-            df = transform.apply(df)
+            df = await asyncio.to_thread(transform.apply, df)
         return df
 
     get.__doc__ = Source.get.__doc__

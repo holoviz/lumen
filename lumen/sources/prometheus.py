@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import urllib.parse as urlparse
 
@@ -242,11 +243,11 @@ class PrometheusSource(Source):
         return {"timeseries": schema} if table is None else schema
 
     @cached
-    def get(self, table, **query):
+    async def get(self, table, **query):
         if table not in ('timeseries',):
             raise ValueError(f"PrometheusSource has no '{table}' table, "
                              "it currently only has a 'timeseries' table.")
-        return self._make_query()
+        return await asyncio.to_thread(self._make_query)
 
     def get_tables(self):
         return list(self._metrics)

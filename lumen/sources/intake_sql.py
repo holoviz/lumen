@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 import param  # type: ignore
@@ -49,7 +51,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
         return self._get_source(table)._sql_expr
 
     @cached
-    def get(self, table, **query):
+    async def get(self, table, **query):
         '''
         Applies SQL Transforms, creating new temp catalog on the fly
         and querying the database.
@@ -62,12 +64,12 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
                 raise ValueError(
                     'SQLTransforms cannot be applied to non-SQL based Intake source.'
                 )
-            return super().get(table, **query)
+            return await super().get(table, **query)
         conditions = list(query.items())
         if self.filter_in_sql:
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         source = self._apply_transforms(source, sql_transforms)
-        df = self._read(source)
+        df = await asyncio.to_thread(self._read, source)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df if dask or not hasattr(df, 'compute') else df.compute()

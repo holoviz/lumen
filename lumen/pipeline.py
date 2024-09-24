@@ -146,10 +146,8 @@ class Pipeline(Viewer, Component):
     _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
     def __init__(self, *, source, table, schema=None, filters=None, **params):
-        print(schema, "SCHEMA...")
         if schema is None:
             schema = source.get_schema(table)
-        print(schema, "SCHEMA...")
         if filters == 'auto':
             filters = [
                 Filter.from_spec(filt, source_schema={table: schema})

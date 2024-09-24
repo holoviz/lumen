@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 
 from typing import Any
@@ -288,10 +289,10 @@ class AE5Source(Source):
         return allocations[self._allocation_columns]
 
     @cached
-    def get(self, table, **query):
+    async def get(self, table, **query):
         if table not in self._tables:
             raise ValueError(f"AE5Source has no '{table}' table, choose from {self._tables!r}.")
-        return getattr(self, f'_get_{table}')()
+        return await asyncio.to_thread(getattr(self, f'_get_{table}'))
 
     @cached_schema
     def get_schema(

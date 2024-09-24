@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 import intake  # type: ignore
@@ -49,7 +51,7 @@ class IntakeBaseSource(Source):
         return schemas if table is None else schemas[table]
 
     @cached
-    def get(self, table, **query):
+    async def get(self, table, **query):
         dask = query.pop('__dask', self.dask)
         try:
             entry = self.cat[table]
@@ -57,7 +59,7 @@ class IntakeBaseSource(Source):
             raise KeyError(f"'{table}' table could not be found in Intake "
                            "catalog. Available tables include: "
                            f"{list(self.cat)}.")
-        df = self._read(entry, dask)
+        df = await asyncio.to_thread(self._read, entry, dask)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
