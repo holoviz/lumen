@@ -186,7 +186,7 @@ class Assistant(Viewer):
                     else:
                         return
                     await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
-                    self._add_analysis_suggestions()
+                    await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
 
