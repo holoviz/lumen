@@ -7,6 +7,8 @@ import yaml
 from panel.viewable import Viewer
 from param.parameterized import discard_events
 
+from lumen.ai.utils import get_data
+
 from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
@@ -75,7 +77,7 @@ class LumenOutput(Viewer):
         ]
         self._last_output = {}
 
-    def _render_pipeline(self, pipeline):
+    async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote',
             min_height=500, sizing_mode="stretch_both", stylesheets=[
@@ -104,7 +106,8 @@ class LumenOutput(Viewer):
         else:
             sql_limit = None
         if sql_limit:
-            limited = len(pipeline.data) == sql_limit.limit
+            data = await get_data(pipeline)
+            limited = len(data) == sql_limit.limit
             if limited:
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
@@ -139,7 +142,7 @@ class LumenOutput(Viewer):
                 yaml_spec = load_yaml(self.spec)
                 self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
-                output = self._render_pipeline(self.component)
+                output = await self._render_pipeline(self.component)
             else:
                 output = self.component.__panel__()
             self._rendered = True
@@ -225,7 +228,7 @@ class SQLOutput(LumenOutput):
         try:
             if self._rendered:
                 pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
-            output = self._render_pipeline(pipeline)
+            output = await self._render_pipeline(pipeline)
             self._rendered = True
             self._last_output.clear()
             self._last_output[self.spec] = output
