@@ -1,4 +1,5 @@
 import io
+import zipfile
 
 import pandas as pd
 import panel as pn
@@ -162,10 +163,16 @@ class SourceControls(pn.viewable.Viewer):
         elif extension.endswith("xlsx"):
             sheet = table_controls.sheet
             df = pd.read_excel(file, sheet_name=sheet)
-        elif extension.endswith(('shp', 'zip')):
+        elif extension.endswith(('geojson', 'wkt', 'zip')):
+            if extension.endswith('zip'):
+                zf = zipfile.ZipFile(file)
+                if not any(f.filename.endswith('shp') for f in zf.filelist):
+                    raise ValueError("Could not interpret zip file contents")
+                file.seek(0)
             import geopandas as gpd
-            df = gpd.read_file(file)
-            df['geometry'] = df['geometry'].to_wkb()
+            geo_df = gpd.read_file(file)
+            df = pd.DataFrame(geo_df)
+            df['geometry'] = geo_df['geometry'].to_wkb()
             params['initializers'] = init = ["""
             INSTALL spatial;
             LOAD spatial;

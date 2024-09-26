@@ -343,7 +343,7 @@ class Assistant(Viewer):
         return out
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent]):
-        agents = [agent for agent in agents if agent.applies()]
+        agents = [agent for agent in agents if await agent.applies()]
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")

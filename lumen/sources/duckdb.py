@@ -267,6 +267,7 @@ class DuckDBSource(BaseSQLSource):
                 f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
             ).fetch_df()
             df['geometry'] = gpd.GeoSeries.from_wkb(geom.geometry.apply(bytes))
+            df = gpd.GeoDataFrame(df)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
