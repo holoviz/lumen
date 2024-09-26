@@ -149,7 +149,7 @@ class Assistant(Viewer):
 
         if "current_source" in memory and "available_sources" not in memory:
             memory["available_sources"] = [memory["current_source"]]
-        elif "current_source" not in memory and "available_sources" in memory:
+        elif "current_source" not in memory and memory.get("available_sources"):
             memory["current_source"] = memory["available_sources"][0]
         elif "available_sources" not in memory:
             memory["available_sources"] = []
@@ -343,7 +343,7 @@ class Assistant(Viewer):
         return out
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent]):
-        agents = [agent for agent in agents if agent.applies()]
+        agents = [agent for agent in agents if await agent.applies()]
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
