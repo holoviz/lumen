@@ -149,7 +149,7 @@ class Assistant(Viewer):
 
         if "current_source" in memory and "available_sources" not in memory:
             memory["available_sources"] = [memory["current_source"]]
-        elif "current_source" not in memory and "available_sources" in memory:
+        elif "current_source" not in memory and memory.get("available_sources"):
             memory["current_source"] = memory["available_sources"][0]
         elif "available_sources" not in memory:
             memory["available_sources"] = []
