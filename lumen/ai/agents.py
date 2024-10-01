@@ -235,7 +235,7 @@ class ChatAgent(Agent):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
-    requires = param.List(default=["current_sql"], readonly=True)
+    requires = param.List(default=["current_table"], readonly=True)
 
     async def _system_prompt_with_context(
         self, messages: list | str, context: str = ""
