@@ -23,6 +23,12 @@ class Batch(BaseModel):
     kwargs: dict[str, Any]
     response: str | None
 
+    def serialize(self) -> list[dict[str, Any]]:
+        return [
+            {"role": message.role, "content": message.content}
+            for message in self.messages
+        ]
+
 
 class Session(BaseModel):
     session_id: str
@@ -188,7 +194,9 @@ class Interceptor(param.Parameterized):
                     (self.session_id, batch_id, key, json.dumps(value)),
                 )
             except TypeError as exc:
-                raise RuntimeError("The method patch_client must be called before instructor.patch") from exc
+                raise RuntimeError(
+                    "The method patch_client must be called before instructor.patch"
+                ) from exc
 
         self.conn.commit()
 
@@ -280,8 +288,7 @@ class Interceptor(param.Parameterized):
             )
 
         return Session(
-            session_id=session_id,
-            batches=[Batch(**batch) for batch in batches]
+            session_id=session_id, batches=[Batch(**batch) for batch in batches]
         )
 
     def get_all_sessions(self) -> dict[str, Session]:
@@ -318,7 +325,9 @@ class Interceptor(param.Parameterized):
 
 class OpenAIInterceptor(Interceptor):
 
-    def patch_client(self, client, mode: Literal["store_all", "store_inputs"] = "store_all") -> None:
+    def patch_client(
+        self, client, mode: Literal["store_all", "store_inputs"] = "store_all"
+    ) -> None:
         """
         Patch the OpenAI client's create method to store messages and arguments in the database.
 
