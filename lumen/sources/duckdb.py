@@ -258,7 +258,16 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        df = self._connection.execute(sql_expr).fetch_df(date_as_object=True)
+        rel = self._connection.execute(sql_expr)
+        has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
+        df = rel.fetch_df(date_as_object=True)
+        if has_geom:
+            import geopandas as gpd
+            geom = self._connection.execute(
+                f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
+            ).fetch_df()
+            df['geometry'] = gpd.GeoSeries.from_wkb(geom.geometry.apply(bytes))
+            df = gpd.GeoDataFrame(df)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
