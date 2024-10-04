@@ -22,6 +22,7 @@ from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
+from .embeddings import Embeddings
 from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
@@ -36,6 +37,8 @@ class Assistant(Viewer):
     """
 
     agents = param.List(default=[ChatAgent])
+
+    embeddings = param.ClassSelector(class_=Embeddings)
 
     llm = param.ClassSelector(class_=Llm, default=Llama())
 
@@ -54,6 +57,7 @@ class Assistant(Viewer):
     def __init__(
         self,
         llm: Llm | None = None,
+        embeddings: Embeddings | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         logs_filename: str = "",
@@ -111,11 +115,15 @@ class Assistant(Viewer):
             interface.post_hook = on_message
 
         llm = llm or self.llm
+        embeddings = embeddings or self.embeddings
         instantiated = []
         self._analyses = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
+                if embeddings:
+                    print(f"embeddings for {agent}")
+                    kwargs["embeddings"] = embeddings
                 agent = agent(interface=interface, **kwargs)
             if agent.llm is None:
                 agent.llm = llm
