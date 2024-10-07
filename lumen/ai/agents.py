@@ -955,9 +955,10 @@ class BaseViewAgent(LumenBaseAgent):
             response_model=self._get_model(schema),
         )
         spec = await self._extract_spec(output)
-        chain_of_thought = spec.pop("chain_of_thought")
-        with self.interface.add_step(title="Generating view...") as step:
-            step.stream(chain_of_thought)
+        chain_of_thought = spec.pop("chain_of_thought", None)
+        if chain_of_thought:
+            with self.interface.add_step(title="Generating view...") as step:
+                step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)

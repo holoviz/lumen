@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
+from pydantic.fields import FieldInfo
 
 
 class FuzzyTable(BaseModel):
@@ -99,3 +100,46 @@ class Topic(BaseModel):
 class VegaLiteSpec(BaseModel):
 
     json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
+
+
+def make_plan_model(agent_names: tuple[str]):
+    step = create_model(
+        "Step",
+        expert=(Literal[agent_names], FieldInfo(description="The name of the expert to assign a task to.")),
+        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task."))
+    )
+    return create_model(
+        "Plan",
+        chain_of_thought=(
+            str,
+            FieldInfo(
+                description="Describe at a high-level how the actions of each expert will solve the user query."
+            ),
+        ),
+        steps=(
+            list[step],
+            FieldInfo(
+                description="A list of tuples of the experts name and instructions to that expert to help him solve the overall task"
+            )
+        ),
+    )
+
+
+def make_agent_model(agent_names: tuple[str], primary: bool = False):
+    if primary:
+        description = "The agent that will provide the output the user requested, e.g. a plot or a table. This should be the FINAL step in your chain of thought."
+    else:
+        description = "The most relevant agent to use."
+    return create_model(
+        "Agent",
+        chain_of_thought=(
+            str,
+            FieldInfo(
+                description="Describe what this agent should do."
+            ),
+        ),
+        agent=(
+            Literal[agent_names],
+            FieldInfo(default=..., description=description)
+        ),
+    )
