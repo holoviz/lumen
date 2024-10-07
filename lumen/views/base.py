@@ -1147,15 +1147,47 @@ class YdataProfilingView(View):
         df = self.get_data()
         return dict(df=df, **self.kwargs)
 
+    def _save_to_pdf(self, report_html: str):
+        with self._file_download.param.update(loading=True):
+            try:
+                import weasyprint
+
+                from PyPDF2 import PdfReader, PdfWriter
+            except ImportError:
+                raise ImportError("weasyprint and PyPDF2 must be installed to save the report as PDF")
+
+            pdf = weasyprint.HTML(string=report_html).write_pdf()
+            with BytesIO(pdf) as buf:
+                reader = PdfReader(buf)
+                writer = PdfWriter()
+                # remove empty pages
+                for page_num in range(len(reader.pages)):
+                    page = reader.pages[page_num]
+                    if page.extract_text().strip():
+                        writer.add_page(page)
+
+            buf = BytesIO()
+            writer.write(buf)
+            buf.seek(0)
+        return buf
+
     def get_panel(self) -> pn.pane.HTML:
         from ydata_profiling import ProfileReport
         report_html = ProfileReport(**self._get_params()).html
+
+        self._file_download = pn.widgets.FileDownload(
+            callback=pn.bind(self._save_to_pdf, report_html),
+            filename="profile_report.pdf",
+        )
+
         escaped_html = html.escape(report_html)
         iframe = f"""
         <iframe srcdoc="{escaped_html}" width="100%" height="100%" frameborder="0" marginheight="0" marginwidth="0">
         </iframe>
         """
-        return self._panel_type(iframe, min_height=700, sizing_mode="stretch_both")
+        return pn.Column(
+            self._panel_type(iframe, sizing_mode="stretch_both"), self._file_download, min_height=700, sizing_mode="stretch_both"
+        )
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
