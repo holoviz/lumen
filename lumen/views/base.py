@@ -5,6 +5,7 @@ object.
 from __future__ import annotations
 
 import html
+import logging
 import sys
 
 from io import BytesIO, StringIO
@@ -1156,6 +1157,8 @@ class YdataProfilingView(View):
             except ImportError:
                 raise ImportError("weasyprint and PyPDF2 must be installed to save the report as PDF")
 
+            # stop all the long list of warnings from weasyprint
+            logging.getLogger("weasyprint").setLevel(logging.ERROR)
             pdf = weasyprint.HTML(string=report_html).write_pdf()
             with BytesIO(pdf) as buf:
                 reader = PdfReader(buf)
