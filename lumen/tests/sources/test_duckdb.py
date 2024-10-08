@@ -1,6 +1,8 @@
 import datetime as dt
 import os
 
+from shutil import copy2
+
 import pandas as pd
 import pytest
 
@@ -15,8 +17,10 @@ except ImportError:
 
 
 @pytest.fixture
-def duckdb_source():
-    root = os.path.dirname(__file__)
+def duckdb_source(tmp_path):
+    file = os.path.join(os.path.dirname(__file__), 'test.db')
+    root = str(tmp_path)
+    copy2(file, root)
     duckdb_source = DuckDBSource(
         initializers=[
             "INSTALL sqlite;",
@@ -30,7 +34,8 @@ def duckdb_source():
             'test_sql_with_none': f"sqlite_scan('{root + '/test.db'}', 'mixed_none')",
         }
     )
-    return duckdb_source
+    yield duckdb_source
+    duckdb_source.clear_cache()
 
 
 @pytest.fixture
@@ -122,7 +127,6 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
 
 
-@pytest.mark.flaky(reruns=3)
 def test_duckdb_transforms(duckdb_source, source_tables):
     df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
@@ -131,7 +135,6 @@ def test_duckdb_transforms(duckdb_source, source_tables):
     pd.testing.assert_frame_equal(transformed, expected)
 
 
-@pytest.mark.flaky(reruns=3)
 def test_duckdb_transforms_cache(duckdb_source, source_tables):
     df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
