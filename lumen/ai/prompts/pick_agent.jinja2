@@ -1,10 +1,14 @@
-Select the most relevant agent for the user's query.
-
-Each agent can request other agents to fill in the blanks, so pick the agent that can best answer the entire query.
-
-Here's the choice of agents and their uses:
-```
+{% if primary %}
+Select the agent that will provide the agent with the output they requested.
+{% endif %}
+Here's the choice of experts and their uses:
 {% for agent in agents %}
-- `{{ agent.name[:-5] }}`: {{ agent.__doc__.strip().split() | join(' ') }}
+- `{{ agent.name[:-5] }}`
+  Provides: {{ agent.provides }}
+  Description: {{ agent.__doc__.strip().split() | join(' ') }}
 {% endfor %}
-```
+{% if primary %}
+If the request requires multiple steps, pick the agent that can will perform the final step and provide the user with the output the user asked for, e.g. if the request requires performing some calculation and a plot, pick the plotting agent. The agent you select can request other agents to fill in the blanks.
+{% else %}
+The agent is only responsible for answering part of the query and should provide one (or more) of the following pieces of information {{ unmet_dependencies }}.
+{% endif %}

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
+from pydantic.fields import FieldInfo
 
 
 class FuzzyTable(BaseModel):
@@ -99,3 +100,59 @@ class Topic(BaseModel):
 class VegaLiteSpec(BaseModel):
 
     json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
+
+
+def make_plan_models(agent_names: list[str], tables: list[str]):
+    step = create_model(
+        "Step",
+        expert=(Literal[agent_names], FieldInfo(description="The name of the expert to assign a task to.")),
+        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task."))
+    )
+    extras = {}
+    if tables:
+        extras['tables'] = (
+            list[Literal[tuple(tables)]],
+            FieldInfo(
+                description="A list of tables you want to inspect before coming up with a plan."
+            )
+        )
+    reasoning = create_model(
+        'Reasoning',
+        chain_of_thought=(
+            str,
+            FieldInfo(
+                description="Describe at a high-level how the actions of each expert will solve the user query."
+            ),
+        ),
+        **extras
+    )
+    plan = create_model(
+        "Plan",
+        steps=(
+            list[step],
+            FieldInfo(
+                description="A list of steps to perform that will solve user query. Ensure you include ALL the steps needed to solve the task, matching the chain of thought."
+            )
+        )
+    )
+    return reasoning, plan
+
+
+def make_agent_model(agent_names: list[str], primary: bool = False):
+    if primary:
+        description = "The agent that will provide the output the user requested, e.g. a plot or a table. This should be the FINAL step in your chain of thought."
+    else:
+        description = "The most relevant agent to use."
+    return create_model(
+        "Agent",
+        chain_of_thought=(
+            str,
+            FieldInfo(
+                description="Describe what this agent should do."
+            ),
+        ),
+        agent=(
+            Literal[tuple(agent_names)],
+            FieldInfo(default=..., description=description)
+        ),
+    )
