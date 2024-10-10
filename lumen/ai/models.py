@@ -102,30 +102,43 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
 
 
-def make_plan_model(agent_names: tuple[str]):
+def make_plan_models(agent_names: list[str], tables: list[str]):
     step = create_model(
         "Step",
         expert=(Literal[agent_names], FieldInfo(description="The name of the expert to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task."))
     )
-    return create_model(
-        "Plan",
+    extras = {}
+    if tables:
+        extras['tables'] = (
+            list[Literal[tuple(tables)]],
+            FieldInfo(
+                description="A list of tables you want to inspect before coming up with a plan."
+            )
+        )
+    reasoning = create_model(
+        'Reasoning',
         chain_of_thought=(
             str,
             FieldInfo(
                 description="Describe at a high-level how the actions of each expert will solve the user query."
             ),
         ),
+        **extras
+    )
+    plan = create_model(
+        "Plan",
         steps=(
             list[step],
             FieldInfo(
-                description="A list of tuples of the experts name and instructions to that expert to help him solve the overall task"
+                description="A list of steps to perform that will solve user query. Ensure you include ALL the steps needed to solve the task, matching the chain of thought."
             )
-        ),
+        )
     )
+    return reasoning, plan
 
 
-def make_agent_model(agent_names: tuple[str], primary: bool = False):
+def make_agent_model(agent_names: list[str], primary: bool = False):
     if primary:
         description = "The agent that will provide the output the user requested, e.g. a plot or a table. This should be the FINAL step in your chain of thought."
     else:
@@ -139,7 +152,7 @@ def make_agent_model(agent_names: tuple[str], primary: bool = False):
             ),
         ),
         agent=(
-            Literal[agent_names],
+            Literal[tuple(agent_names)],
             FieldInfo(default=..., description=description)
         ),
     )

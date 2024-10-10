@@ -23,7 +23,7 @@ from .export import export_notebook
 from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import memory
-from .models import Validity, make_agent_model, make_plan_model
+from .models import Validity, make_agent_model, make_plan_models
 from .utils import get_schema, render_template, retry_llm_output
 
 
@@ -350,18 +350,49 @@ class Assistant(Viewer):
 
     async def _make_plan(self, messages: list | str, agents: dict[str, Agent]) -> list[tuple(Agent, any)]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
-        plan_model = make_plan_model(agent_names)
+        tables = {}
+        for src in memory['available_sources']:
+            for table in src.get_tables():
+                tables[table] = src
+
+        reason_model, plan_model = make_plan_models(agent_names, list(tables))
         planned = False
         unmet_dependencies = ()
+        user_msg = messages[-1]
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned or unmet_dependencies:
-                system = render_template(
-                    'plan_agent.jinja2', agents=list(agents.values()), current_agent=self._current_agent.object,
-                    unmet_dependencies=unmet_dependencies, memory=memory
-                )
                 agent_chain = []
-                plan = await self._fill_model(messages, system, plan_model)
-                istep.stream(plan.chain_of_thought, replace=True)
+                requested_tables, provided_tables = [], []
+                if 'current_table' in memory:
+                    requested_tables.append(memory['current_table'])
+                elif len(tables) == 1:
+                    requested_tables.append(next(iter(tables)))
+                reasoning = None
+                info = ''
+                while reasoning is None or requested_tables:
+                    for table in getattr(reasoning, 'tables', []):
+                        if table in provided_tables:
+                            continue
+                        provided_tables.append(table)
+                        schema = await get_schema(tables[table], table, limit=1)
+                        info += f'- {table}:  {schema}\n\n'
+                    system = render_template(
+                        'plan_agent.jinja2', agents=list(agents.values()), current_agent=self._current_agent.object,
+                        unmet_dependencies=unmet_dependencies, memory=memory, table_info=info, tables=list(tables)
+                    )
+                    output = self.llm.stream(
+                        messages=messages,
+                        system=system,
+                        response_model=reason_model
+                    )
+                    async for reasoning in output:
+                        istep.stream(reasoning.chain_of_thought, replace=True)
+                    requested_tables = [t for t in reasoning.tables if t and t not in provided_tables]
+                    if requested_tables:
+                        continue
+                    new_msg = dict(role=user_msg['role'], content=f"<user query>{user_msg['content']}</user query> {reasoning.chain_of_thought}")
+                    messages = messages[:-1] + [new_msg]
+                    plan = await self._fill_model(messages, system, plan_model)
                 step = plan.steps[-1]
                 subagent = agents[step.expert]
                 unmet_dependencies = tuple(
@@ -369,16 +400,17 @@ class Assistant(Viewer):
                 )
                 agent_chain.append((subagent, unmet_dependencies, step.instruction))
                 for step in plan.steps[:-1][::-1]:
-                    requires = tuple(await subagent.requirements(messages))
                     subagent = agents[step.expert]
+                    requires = tuple(await subagent.requirements(messages))
                     unmet_dependencies = tuple(
-                        dep for dep in set(unmet_dependencies+requires) if dep not in subagent.provides and dep not in memory
+                        dep for dep in set(unmet_dependencies+requires)
+                        if dep not in subagent.provides and dep not in memory
                     )
                     agent_chain.append((subagent, subagent.provides, step.instruction))
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                 planned = True
-            istep.stream(f'{plan.chain_of_thought}\n\nHere are the steps:\n\n', replace=True)
+            istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.instruction}\n")
             istep.success_title = "Successfully came up with a plan."
