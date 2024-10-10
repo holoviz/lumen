@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from functools import partial
+from types import SimpleNamespace
 
 import instructor
 import panel as pn
@@ -325,32 +326,30 @@ class MistralAI(Llm):
         return {"temperature": self.temperature}
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
-        if self.interceptor_path:
-            raise NotImplementedError("Interceptors are not supported for MistralAI.")
-
         from mistralai import Mistral
 
-        async def llm_chat_non_stream_async(*args, **kwargs):
-            response = await llm.chat.complete_async(*args, **kwargs)
-            return response.choices[0].message.content
-
         model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs["api_key"] = self.api_key
         model = model_kwargs.pop("model")
-
-        llm = Mistral(api_key=self.api_key)
-        if response_model:
-            # can't use from_mistral due to new mistral API
-            # https://github.com/jxnl/instructor/issues/969
-            return patch(
-                create=partial(llm.chat.complete_async, model=model),
-                mode=self.mode,
-            )
+        llm = Mistral(**model_kwargs)
 
         stream = kwargs.get("stream", False)
-        if stream:
-            return partial(llm.chat.stream_async, model=model)
-        else:
-            return partial(llm_chat_non_stream_async, model=model)
+        llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
+        llm.chat.completions.create = llm.chat.stream_async if stream else llm.chat.complete_async
+
+        if self.interceptor_path:
+            if self._interceptor is None:
+                self._interceptor = OpenAIInterceptor(db_path=self.interceptor_path)
+            self._interceptor.patch_client(llm, mode="store_inputs")
+
+        if response_model:
+            llm = patch(llm)
+
+        if self.interceptor_path:
+            self._interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
+        return client_callable
 
     @classmethod
     def _get_delta(cls, chunk):
@@ -384,7 +383,6 @@ class MistralAI(Llm):
         )
 
 
-
 class AzureMistralAI(MistralAI):
 
     api_key = param.String(default=os.getenv("AZURE_API_KEY"))
@@ -396,9 +394,6 @@ class AzureMistralAI(MistralAI):
     })
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
-        if self.interceptor_path:
-            raise NotImplementedError("Interceptors are not supported for MistralAI.")
-
         from mistralai_azure import MistralAzure
 
         async def llm_chat_non_stream_async(*args, **kwargs):
@@ -406,20 +401,28 @@ class AzureMistralAI(MistralAI):
             return response.choices[0].message.content
 
         model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs["api_key"] = self.api_key
+        model_kwargs["azure_endpoint"] = self.azure_endpoint
         model = model_kwargs.pop("model")
-
-        llm = MistralAzure(azure_api_key=self.api_key, azure_endpoint=self.azure_endpoint)
-        if response_model:
-            return patch(
-                create=partial(llm.chat.complete_async, model=model),
-                mode=self.mode,
-            )
+        llm = MistralAzure(**model_kwargs)
 
         stream = kwargs.get("stream", False)
-        if stream:
-            return partial(llm.chat.stream_async, model=model)
-        else:
-            return partial(llm_chat_non_stream_async, model=model)
+        llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
+        llm.chat.completions.create = llm.chat.stream_async if stream else llm.chat.complete_async
+
+        if self.interceptor_path:
+            if self._interceptor is None:
+                self._interceptor = OpenAIInterceptor(db_path=self.interceptor_path)
+            self._interceptor.patch_client(llm, mode="store_inputs")
+
+        if response_model:
+            llm = patch(llm)
+
+        if self.interceptor_path:
+            self._interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
+        return client_callable
 
 
 class AnthropicAI(Llm):
@@ -450,7 +453,7 @@ class AnthropicAI(Llm):
         model_kwargs = self._get_model_kwargs(model_key)
         model = model_kwargs.pop("model")
 
-        llm = AsyncAnthropic(api_key=self.api_key)
+        llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
 
         if response_model:
             client = instructor.from_anthropic(llm)
