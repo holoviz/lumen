@@ -193,7 +193,7 @@ class Interceptor(param.Parameterized):
             FROM invocations
             LEFT JOIN responses ON invocations.invocation_id = responses.invocation_id
             WHERE invocations.session_id = ?
-            ORDER BY invocations.invocation_id DESC
+            ORDER BY invocations.timestamp ASC
             """,
             (session_id,),
         )
