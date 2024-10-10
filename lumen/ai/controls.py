@@ -1,4 +1,5 @@
 import io
+import zipfile
 
 import pandas as pd
 import panel as pn
@@ -147,8 +148,12 @@ class SourceControls(pn.viewable.Viewer):
         file: io.BytesIO | io.StringIO,
         table_controls: TableControls,
     ):
+        conn = duckdb_source._connection
         extension = table_controls.extension
         table = table_controls.table
+        sql_expr = f"SELECT * FROM {table}"
+        params = {}
+        conversion = None
         if extension.endswith("csv"):
             df = pd.read_csv(file, parse_dates=True)
         elif extension.endswith(("parq", "parquet")):
@@ -158,14 +163,41 @@ class SourceControls(pn.viewable.Viewer):
         elif extension.endswith("xlsx"):
             sheet = table_controls.sheet
             df = pd.read_excel(file, sheet_name=sheet)
+        elif extension.endswith(('geojson', 'wkt', 'zip')):
+            if extension.endswith('zip'):
+                zf = zipfile.ZipFile(file)
+                if not any(f.filename.endswith('shp') for f in zf.filelist):
+                    raise ValueError("Could not interpret zip file contents")
+                file.seek(0)
+            import geopandas as gpd
+            geo_df = gpd.read_file(file)
+            df = pd.DataFrame(geo_df)
+            df['geometry'] = geo_df['geometry'].to_wkb()
+            params['initializers'] = init = ["""
+            INSTALL spatial;
+            LOAD spatial;
+            """]
+            conn.execute(init[0])
+            cols = ', '.join(f'"{c}"' for c in df.columns if c != 'geometry')
+            conversion = f'CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp'
         else:
             raise ValueError(f"Unsupported file extension: {extension}")
 
-        duckdb_source._connection.from_df(df).to_view(table)
-        duckdb_source.tables[table] = f"SELECT * FROM {table}"
+        duckdb_source.param.update(params)
+        df_rel = conn.from_df(df)
+        if conversion:
+            conn.register(f'{table}_temp', df_rel)
+            conn.execute(conversion)
+            conn.unregister(f'{table}_temp')
+        else:
+            df_rel.to_view(table)
+        duckdb_source.tables[table] = sql_expr
         memory["current_source"] = duckdb_source
         memory["current_table"] = table
-        memory["available_sources"].append(duckdb_source)
+        if "available_sources" in memory:
+            memory["available_sources"].append(duckdb_source)
+        else:
+            memory["available_sources"] = [duckdb_source]
         self._last_table = table
 
     @param.depends("add", watch=True)

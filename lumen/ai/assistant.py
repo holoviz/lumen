@@ -149,7 +149,7 @@ class Assistant(Viewer):
 
         if "current_source" in memory and "available_sources" not in memory:
             memory["available_sources"] = [memory["current_source"]]
-        elif "current_source" not in memory and "available_sources" in memory:
+        elif "current_source" not in memory and memory.get("available_sources"):
             memory["current_source"] = memory["available_sources"][0]
         elif "available_sources" not in memory:
             memory["available_sources"] = []
@@ -186,7 +186,7 @@ class Assistant(Viewer):
                     else:
                         return
                     await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
-                    self._add_analysis_suggestions()
+                    await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
 
@@ -233,13 +233,13 @@ class Assistant(Viewer):
         self.interface.param.watch(hide_suggestions, "objects")
         return message
 
-    def _add_analysis_suggestions(self):
+    async def _add_analysis_suggestions(self):
         pipeline = memory['current_pipeline']
         current_analysis = memory.get("current_analysis")
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
         applicable_analyses = []
         for analysis in self._analyses:
-            if analysis.applies(pipeline) and (allow_consecutive or analysis is not type(current_analysis)):
+            if await analysis.applies(pipeline) and (allow_consecutive or analysis is not type(current_analysis)):
                 applicable_analyses.append(analysis)
         self._add_suggestions_to_footer(
             [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
@@ -263,7 +263,7 @@ class Assistant(Viewer):
                 raise KeyError(f'Table {table} could not be found in available sources.')
 
         try:
-            spec = get_schema(source, table=table, include_count=True)
+            spec = await get_schema(source, table=table, include_count=True)
         except Exception:
             # If the selected table cannot be fetched we should invalidate it
             spec = None
@@ -343,7 +343,7 @@ class Assistant(Viewer):
         return out
 
     async def _choose_agent(self, messages: list | str, agents: list[Agent]):
-        agents = [agent for agent in agents if agent.applies()]
+        agents = [agent for agent in agents if await agent.applies()]
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -482,7 +482,7 @@ class Assistant(Viewer):
         await agent.invoke(messages[-context_length:], **kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
-            self._add_analysis_suggestions()
+            await self._add_analysis_suggestions()
         print("\033[92mDONE\033[0m", "\n\n")
 
     def controls(self):
