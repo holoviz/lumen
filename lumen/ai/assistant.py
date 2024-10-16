@@ -4,7 +4,7 @@ import asyncio
 import re
 
 from io import StringIO
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Any
 
 import param
 import yaml
@@ -29,6 +29,9 @@ from .utils import get_schema, render_template, retry_llm_output
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
+    from pydantic import BaseModel
+
+    from ..sources import Source
 
 
 class Assistant(Viewer):
@@ -496,8 +499,8 @@ class PlanningAssistant(Assistant):
         agents: dict[str, Agent],
         tables: dict[str, Source],
         unmet_dependencies: set[str],
-        reason_model: Type[BaseModel],
-        plan_model: Type[BaseModel],
+        reason_model: type[BaseModel],
+        plan_model: type[BaseModel],
         step: ChatStep
     ):
         info = ''
@@ -545,7 +548,6 @@ class PlanningAssistant(Assistant):
 
         reason_model, plan_model = make_plan_models(agent_names, list(tables))
         planned = False
-        info = ''
         unmet_dependencies = set()
         user_msg = messages[-1]
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
