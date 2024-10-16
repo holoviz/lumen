@@ -55,8 +55,6 @@ class Assistant(Viewer):
 
     logs_filename = param.String()
 
-    planning = param.Boolean(default=False)
-
     def __init__(
         self,
         llm: Llm | None = None,
