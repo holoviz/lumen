@@ -4,6 +4,7 @@ import time
 
 from functools import wraps
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import jinja2
 import pandas as pd
@@ -12,6 +13,9 @@ from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 
 from .config import THIS_DIR, UNRECOVERABLE_ERRORS
+
+if TYPE_CHECKING:
+    from panel.chat.step import ChatStep
 
 
 def render_template(template, **context):
@@ -241,8 +245,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             "stats": df_describe_dict,
         }
 
-    data = asyncio.to_thread(describe_data_sync, df)
-    return data
+    return await asyncio.to_thread(describe_data_sync, df)
 
 
 def clean_sql(sql_expr):
@@ -251,3 +254,12 @@ def clean_sql(sql_expr):
     backticks, fencing and extraneous space and semi-colons.
     """
     return sql_expr.replace("```sql", "").replace("```", "").replace('`', '"').strip().rstrip(";")
+
+
+def report_error(exc: Exception, step: ChatStep):
+    error_msg = str(exc)
+    step.stream(f'\n```python\n{error_msg}\n```')
+    if len(error_msg) > 50:
+        error_msg = error_msg[:50] + "..."
+    step.failed_title = error_msg
+    step.status = "failed"
