@@ -198,10 +198,10 @@ class Agent(Viewer):
 
 class SourceAgent(Agent):
     """
-    The SourceAgent allows a user to provide an input source.
+    The SourceAgent allows a user to upload datasets.
 
-    Should only be used if the user explicitly requests adding a source
-    or no source is in memory.
+    Use this if the user is requesting to add a dataset or you think
+    additional information is required to solve the user query.
     """
 
     requires = param.List(default=[], readonly=True)
@@ -456,8 +456,7 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    List all of the available tables or datasets inventory. Not useful
-    if the user requests a specific table.
+    Provides a list of all availables tables/datasets.
     """
 
     system_prompt = param.String(
@@ -507,7 +506,9 @@ class TableListAgent(LumenBaseAgent):
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user queries about the data,
-    such querying subsets of the data, aggregating the data and calculating results.
+    such querying subsets of the data, aggregating the data and calculating results. If the
+    current table does not contain all the available data the SQL agent is also capable of
+    joining it with other tables.
     """
 
     system_prompt = param.String(
@@ -959,9 +960,10 @@ class BaseViewAgent(LumenBaseAgent):
             response_model=self._get_model(schema),
         )
         spec = await self._extract_spec(output)
-        chain_of_thought = spec.pop("chain_of_thought")
-        with self.interface.add_step(title="Generating view...") as step:
-            step.stream(chain_of_thought)
+        chain_of_thought = spec.pop("chain_of_thought", None)
+        if chain_of_thought:
+            with self.interface.add_step(title="Generating view...") as step:
+                step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)
