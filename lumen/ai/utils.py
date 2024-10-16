@@ -241,8 +241,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             "stats": df_describe_dict,
         }
 
-    data = asyncio.to_thread(describe_data_sync, df)
-    return data
+    return await asyncio.to_thread(describe_data_sync, df)
 
 
 def clean_sql(sql_expr):

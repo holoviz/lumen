@@ -5,6 +5,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import duckdb
+import pandas as pd
 import param
 
 from ..config import config
@@ -321,8 +322,10 @@ class DuckDBSource(BaseSQLSource):
                     cast = str
                 else:
                     cast = lambda v: v
-                schema[col]['inclusiveMinimum'] = cast(minmax_data[f'{col}_min'].iloc[0])
-                schema[col]['inclusiveMaximum'] = cast(minmax_data[f'{col}_max'].iloc[0])
+                min_data = minmax_data[f'{col}_min'].iloc[0]
+                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
+                max_data = minmax_data[f'{col}_max'].iloc[0]
+                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
             count_expr = SQLCount().apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
