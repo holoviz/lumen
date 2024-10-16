@@ -560,10 +560,11 @@ class Layout(Component, Viewer):
                 for view in card.views:
                     if view.controls:
                         controls.append(view.control_panel)
-                    transforms = (
-                        view.pipeline.traverse('transforms') +
-                        view.pipeline.traverse('sql_transforms')
-                    )
+                    if view.pipeline is not None:
+                        transforms = (
+                            view.pipeline.traverse('transforms') +
+                            view.pipeline.traverse('sql_transforms')
+                        )
                     for transform in transforms:
                         if transform not in all_transforms and transform.controls:
                             controls.append(transform.control_panel)
@@ -576,10 +577,12 @@ class Layout(Component, Viewer):
             for v1, v2 in zip(linked_views, card.views):
                 if v1.controls:
                     v1.param.watch(partial(self._sync_component, v2), v1.controls)
-                for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
+                if v1.pipeline is None or v2.pipeline is None:
+                    continue
+                for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
                     if t1.controls:
                         t1.param.watch(partial(self._sync_component, t2), t1.controls)
-                for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
+                for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
                     if t1.controls:
                         t1.param.watch(partial(self._sync_component, t2), t1.controls)
         self._view_controls = pn.Column(*controls, sizing_mode='stretch_width')
