@@ -40,7 +40,7 @@ from .models import (
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema,
-    render_template, retry_llm_output,
+    render_template, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -181,7 +181,7 @@ class Agent(Viewer):
     async def requirements(self, messages: list | str):
         return self.requires
 
-    async def invoke(self, messages: list | str):
+    async def answer(self, messages: list | str):
         system_prompt = await self._system_prompt_with_context(messages)
 
         message = None
@@ -191,6 +191,9 @@ class Agent(Viewer):
             message = self.interface.stream(
                 output, replace=True, message=message, user=self.user, max_width=self._max_width
             )
+
+    async def invoke(self, messages: list | str):
+        await self.answer(messages)
 
 
 class SourceAgent(Agent):
@@ -598,15 +601,16 @@ class SQLAgent(LumenBaseAgent):
             elif e.n_attempts > 2:
                 raise e
         except Exception as e:
-            error_msg = str(e)
-            step.stream(f'\n```python\n{error_msg}\n```')
-            if len(error_msg) > 50:
-                error_msg = error_msg[:50] + "..."
-            step.failed_title = error_msg
-            step.status = "failed"
+            report_error(e, step)
             raise e
 
-        df = await get_data(pipeline)
+        try:
+            df = await get_data(pipeline)
+        except Exception as e:
+            source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
+            report_error(e, step)
+            raise e
+
         if len(df) > 0:
             memory["current_data"] = await describe_data(df)
 
