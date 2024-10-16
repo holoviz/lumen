@@ -13,7 +13,7 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from .interceptor import OpenAIInterceptor
+from .interceptor import Interceptor
 
 
 class Llm(param.Parameterized):
@@ -24,7 +24,7 @@ class Llm(param.Parameterized):
 
     use_logfire = param.Boolean(default=False)
 
-    interceptor = param.ClassSelector(default=None, class_=OpenAIInterceptor)
+    interceptor = param.ClassSelector(default=None, class_=Interceptor)
 
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
