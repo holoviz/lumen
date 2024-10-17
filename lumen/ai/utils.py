@@ -241,7 +241,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             "stats": df_describe_dict,
         }
 
-    data = asyncio.to_thread(describe_data_sync, df)
+    data = await asyncio.to_thread(describe_data_sync, df)
     return data
 
 
