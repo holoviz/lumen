@@ -5,6 +5,7 @@ from typing import ClassVar
 import param  # type: ignore
 
 from panel import panel
+from panel.custom import JSComponent
 from panel.reactive import ReactiveHTML
 from panel.widgets import FileDownload
 
@@ -155,3 +156,38 @@ class IconButton(ReactiveHTML):
         for cb in self._callbacks:
             cb(event)
         self._disabled_watcher = self.param.watch(self._enable_button, ['disabled'])
+
+
+class HtmlPdfDownloadButton(JSComponent):
+
+    value = param.String()
+
+    _esm = """
+    export function render({ model }) {
+      const button = document.createElement('button');
+      button.textContent = 'Download PDF';
+      button.addEventListener('click', () => {
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <html>
+            <head>
+              <title>Profile Report</title>
+              <style>
+                body { margin: 0; padding: 20px; }
+              </style>
+            </head>
+            <body>${model.value}</body>
+          </html>
+        `);
+        printWindow.document.close();
+
+        printWindow.onload = function() {
+          printWindow.print();
+          printWindow.onafterprint = function() {
+            printWindow.close();
+          };
+        };
+      });
+      return button;
+    }
+    """
