@@ -73,6 +73,8 @@ nbformat = "*"
 openai = "*"
 pyarrow = "*"
 pydantic = ">=2.8.0"
+
+[feature.test.pypi-dependencies]
 pydantic_extra_types = "*"
 
 [feature.test.pypi-dependencies]
