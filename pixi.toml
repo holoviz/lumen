@@ -73,6 +73,7 @@ nbformat = "*"
 openai = "*"
 pyarrow = "*"
 pydantic = ">=2.8.0"
+pydantic_extra_types = "*"
 
 # [feature.ai.dependencies]
 # datashader = "*"
