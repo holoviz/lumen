@@ -8,10 +8,13 @@ import pytest
 
 from panel.chat import ChatStep
 
-from lumen.ai.utils import (
-    UNRECOVERABLE_ERRORS, clean_sql, describe_data, format_schema, get_schema,
-    render_template, report_error, retry_llm_output,
-)
+try:
+    from lumen.ai.utils import (
+        UNRECOVERABLE_ERRORS, clean_sql, describe_data, format_schema,
+        get_schema, render_template, report_error, retry_llm_output,
+    )
+except ImportError:
+    pytest.skip("Skipping tests that require lumen.ai", allow_module_level=True)
 
 
 def test_render_template_with_valid_template():
