@@ -79,6 +79,8 @@ addopts = [
     "--doctest-modules",
     "--doctest-ignore-import-errors",
 ]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 minversion = "7"
 xfail_strict = true
 log_cli_level = "INFO"

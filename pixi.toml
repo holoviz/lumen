@@ -64,6 +64,14 @@ toolz = "*"
 intake-sql = "*"
 python-duckdb = "*"
 sqlalchemy = "*"
+# ai
+datashader = "*"
+duckdb = "*"
+instructor = ">=1.4.3"
+nbformat = "*"
+openai = "*"
+pyarrow = "*"
+pydantic = ">=2.8.0"
 
 # [feature.ai.dependencies]
 # datashader = "*"
