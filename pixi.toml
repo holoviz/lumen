@@ -73,6 +73,8 @@ nbformat = "*"
 openai = "*"
 pyarrow = "*"
 pydantic = ">=2.8.0"
+
+[feature.test.pypi-dependencies]
 pydantic_extra_types = "*"
 
 # [feature.ai.dependencies]
@@ -84,6 +86,7 @@ pydantic_extra_types = "*"
 # pyarrow = "*"
 # pydantic = ">=2.8.0"
 #
+
 # [feature.ai-local.dependencies]
 # huggingface_hub = "*"
 #
