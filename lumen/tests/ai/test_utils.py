@@ -176,9 +176,18 @@ class TestGetSchema:
         mock_source.get_schema.return_value = {
             "field1": {"type": "string", "enum": ["value1", "value2"]}
         }
+        schema = await get_schema(mock_source, include_enum=True)
+        assert "enum" in schema["field1"]
+        assert schema["field1"]["enum"] == ["value1", "value2"]
+
+    @pytest.mark.asyncio
+    async def test_no_enum(self):
+        mock_source = MagicMock()
+        mock_source.get_schema.return_value = {
+            "field1": {"type": "string", "enum": ["value1", "value2"]}
+        }
         schema = await get_schema(mock_source, include_enum=False)
         assert "enum" not in schema["field1"]
-        assert schema["field1"]["enum"] == ["value1", "value2"]
 
     @pytest.mark.asyncio
     async def test_count(self):
