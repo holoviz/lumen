@@ -50,6 +50,7 @@ pytest-cov = "*"
 pytest-github-actions-annotate-failures = "*"
 pytest-rerunfailures = "*"
 pytest-xdist = "*"
+pytest-asyncio = "*"
 
 [feature.test-core.tasks]
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
