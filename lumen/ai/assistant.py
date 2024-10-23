@@ -4,7 +4,7 @@ import asyncio
 import re
 
 from io import StringIO
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import param
 import yaml
