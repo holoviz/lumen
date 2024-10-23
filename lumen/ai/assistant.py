@@ -535,7 +535,6 @@ class PlanningAssistant(Assistant):
             requested.append(memory['current_table'])
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
-        print(requested)
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
