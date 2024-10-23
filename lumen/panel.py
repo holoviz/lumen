@@ -171,7 +171,6 @@ class HtmlPdfDownloadButton(JSComponent):
         printWindow.document.write(`
           <html>
             <head>
-              <title>Profile Report</title>
               <style>
                 body { margin: 0; padding: 20px; }
               </style>
@@ -191,3 +190,19 @@ class HtmlPdfDownloadButton(JSComponent):
       return button;
     }
     """
+
+    _stylesheets = [
+        """
+        button {
+            background: #0072B5;
+            color: white;
+            border: none;
+            margin: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        button:hover {
+            background: #4099da;
+        }
+        """
+    ]

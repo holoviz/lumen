@@ -1158,8 +1158,8 @@ class YdataProfilingView(View):
         </iframe>
         """
         ydata_pane = self._panel_type(iframe, min_height=700, sizing_mode="stretch_both")
-        download_button = HtmlPdfDownloadButton(value=report_html)
-        return pn.Column(ydata_pane, download_button)
+        download_button = HtmlPdfDownloadButton(value=report_html, align="end")
+        return pn.Column(download_button, ydata_pane)
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]

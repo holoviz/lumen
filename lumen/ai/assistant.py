@@ -408,7 +408,7 @@ class Assistant(Viewer):
                 step.stream(f"Assistant decided the {agent_name!r} will provide {', '.join(deps)}.")
                 self._current_agent.object = f"## **Current Agent**: {agent_name}"
                 custom_messages = messages.copy()
-                if isinstance(subagent, (TableAgent | SQLAgent)):
+                if isinstance(subagent, (TableAgent, SQLAgent)):
                     custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
                     if custom_agent:
                         custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
