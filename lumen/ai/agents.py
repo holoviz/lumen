@@ -198,9 +198,9 @@ class Agent(Viewer):
 
 class SourceAgent(Agent):
     """
-    The SourceAgent allows a user to upload datasets.
+    The SourceAgent allows a user to upload new datasets.
 
-    Use this if the user is requesting to add a dataset or you think
+    Only use this if the user is requesting to add a dataset or you think
     additional information is required to solve the user query.
     """
 
@@ -352,7 +352,6 @@ class LumenBaseAgent(Agent):
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
 
-
 class TableAgent(LumenBaseAgent):
     """
     Displays a single table / dataset. Does not discuss.
@@ -479,8 +478,9 @@ class TableListAgent(LumenBaseAgent):
         self.interface.send(f"Show the table: {table!r}")
 
     async def answer(self, messages: list | str):
-        source = memory["current_source"]
-        tables = source.get_tables()
+        tables = []
+        for source in memory['available_sources']:
+            tables += source.get_tables()
         if not tables:
             return
 
@@ -720,7 +720,17 @@ class SQLAgent(LumenBaseAgent):
                 table_schema = schema
             else:
                 table_schema = await get_schema(source, source_table, include_min_max=False)
-            table_schemas[source_table] = {
+
+            # Look up underlying table name
+            table_name = source_table
+            if (
+                'tables' in source.param and
+                isinstance(source.tables, dict) and
+                'select ' not in source.tables[table_name].lower()
+            ):
+                table_name = source.tables[table_name]
+
+            table_schemas[table_name] = {
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table)
             }

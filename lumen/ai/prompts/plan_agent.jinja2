@@ -13,16 +13,17 @@ Ensure that you provide each expert some context to ensure they do not repeat pr
 Currently you have the following information available to you:
 {% for item in memory.keys() %}
 - {{ item }}
-{% endfor %}
-And have access to the following data tables:
+{%- endfor %}
+{% if table_info %}
+In order to make an informed decision here are schemas for the most relevant tables (note that these schemas are computed on a subset of data):
+{{ table_info }}
+{% endif %}
+{%- if tables %}
+Additionally the following tables are available and you may request to look at them before revising your plan:
 {% for table in tables %}
 - {{ table }}
 {% endfor %}
-{% if table_info %}
-In order to make an informed decision here are schemas for the most relevant tables:
-{{ table_info }}
-Do not request any additional tables.
-{% endif %}
+{%- endif -%}
 Here's the choice of experts and their uses:
 {% for agent in agents %}
 - `{{ agent.name[:-5] }}`
@@ -30,10 +31,6 @@ Here's the choice of experts and their uses:
   Provides: {{ agent.provides }}
   Description: {{ agent.__doc__.strip().split() | join(' ') }}
 {% endfor %}
-
-{% if not table_info %}
-If you do not think you can solve the problem given the current information provide a list of requested tables.
-{% endif %}
 
 {% if unmet_dependencies %}
 Note that a previous plan was unsuccessful because it did not satisfy the following required pieces of information: {unmet_dependencies!r}
