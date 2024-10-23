@@ -9,9 +9,9 @@ from typing import (
 
 import param
 
-from pydantic import BaseConfig, BaseModel, create_model
-from pydantic.color import Color
+from pydantic import BaseModel, ConfigDict, create_model
 from pydantic.fields import FieldInfo, PydanticUndefined
+from pydantic_extra_types.color import Color
 
 DATE_TYPE = datetime.datetime | datetime.date
 PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
@@ -36,8 +36,7 @@ class ArbitraryTypesModel(BaseModel):
     A Pydantic model that allows arbitrary types.
     """
 
-    class Config(BaseConfig):
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def _create_literal(obj: list[str | type]) -> type:

@@ -50,6 +50,7 @@ pytest-cov = "*"
 pytest-github-actions-annotate-failures = "*"
 pytest-rerunfailures = "*"
 pytest-xdist = "*"
+pytest-asyncio = "*"
 
 [feature.test-core.tasks]
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
@@ -64,6 +65,17 @@ toolz = "*"
 intake-sql = "*"
 python-duckdb = "*"
 sqlalchemy = "*"
+# ai
+datashader = "*"
+duckdb = "*"
+instructor = ">=1.4.3"
+nbformat = "*"
+openai = "*"
+pyarrow = "*"
+pydantic = ">=2.8.0"
+
+[feature.test.pypi-dependencies]
+pydantic_extra_types = "*"
 
 # [feature.ai.dependencies]
 # datashader = "*"
@@ -74,6 +86,7 @@ sqlalchemy = "*"
 # pyarrow = "*"
 # pydantic = ">=2.8.0"
 #
+
 # [feature.ai-local.dependencies]
 # huggingface_hub = "*"
 #
