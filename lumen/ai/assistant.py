@@ -17,7 +17,7 @@ from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload
 
 from .agents import (
-    Agent, AnalysisAgent, ChatAgent, SQLAgent,
+    Agent, AnalysisAgent, ChatAgent, SQLAgent, TableAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
@@ -124,7 +124,11 @@ class Assistant(Viewer):
                     for analysis in agent.analyses if analysis._callable_by_llm
                 )
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
+                agent.interface = interface
+                self._analyses.extend(agent.analyses)
+                instantiated.append(agent)
                 break
+
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
                 agent = agent(interface=interface, **kwargs)
@@ -132,8 +136,6 @@ class Assistant(Viewer):
                 agent.llm = llm
             # must use the same interface or else nothing shows
             agent.interface = interface
-            if isinstance(agent, AnalysisAgent):
-                self._analyses.extend(agent.analyses)
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
@@ -195,6 +197,7 @@ class Assistant(Viewer):
                         if isinstance(agent, AnalysisAgent):
                             break
                     else:
+                        print("No analysis agent found.")
                         return
                     await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
                     await self._add_analysis_suggestions()
@@ -405,7 +408,7 @@ class Assistant(Viewer):
                 step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
                 self._current_agent.object = f"## **Current Agent**: {agent_name}"
                 custom_messages = messages.copy()
-                if isinstance(subagent, SQLAgent):
+                if isinstance(subagent, (TableAgent, SQLAgent)):
                     custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
                     if custom_agent:
                         custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
