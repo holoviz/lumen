@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import json
 import os
@@ -14,6 +15,9 @@ from lumen.ai.export import (
 from lumen.pipeline import Pipeline
 from lumen.sources.intake import IntakeSource
 from lumen.views import Table
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
 
 @pytest.fixture
@@ -116,8 +120,8 @@ def test_format_output_pipeline(source):
     pipeline = Pipeline(source=source, table="test")
     msg = ChatMessage(object=LumenOutput(component=pipeline), user="User")
 
-    cells = json.loads(format_output(msg))
-    cells[0].pop("id")  # Remove the 'id' field if present
+    cells = format_output(msg)
+    cells[0].pop("id")
 
     expected_source = (
         f"pipeline = lm.Pipeline.from_spec({{\n"
