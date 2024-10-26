@@ -7,17 +7,21 @@ import pytest
 
 from panel.chat import ChatMessage
 
-from lumen.ai.assistant import Assistant
-from lumen.ai.export import (
-    LumenOutput, export_notebook, format_markdown, format_output,
-    make_preamble,
-)
 from lumen.pipeline import Pipeline
 from lumen.sources.intake import IntakeSource
 from lumen.views import Table
 
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
+
+try:
+    from lumen.ai.assistant import Assistant
+    from lumen.ai.export import (
+        LumenOutput, export_notebook, format_markdown, format_output,
+        make_preamble,
+    )
+except ImportError:
+    pytest.skip("Skipping tests that require lumen.ai", allow_module_level=True)
 
 
 @pytest.fixture
