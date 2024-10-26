@@ -116,18 +116,18 @@ def test_format_output_pipeline(source):
     pipeline = Pipeline(source=source, table="test")
     msg = ChatMessage(object=LumenOutput(component=pipeline), user="User")
 
-    cells = format_output(msg)
+    cells = json.loads(format_output(msg))
     cells[0].pop("id")  # Remove the 'id' field if present
 
     expected_source = (
-        "pipeline = lm.Pipeline.from_spec({\n"
-        '  "source": {\n'
-        '    "uri": "/Users/ahuang/repos/lumen/lumen/tests/sources/catalog.yml",\n'
-        '    "type": "intake"\n'
-        "  },\n"
-        '  "table": "test"\n'
-        "})\n"
-        "pipeline"
+        f"pipeline = lm.Pipeline.from_spec({{\n"
+        f'  "source": {{\n'
+        f'    "uri": "{source.uri}",\n'
+        f'    "type": "intake"\n'
+        f"  }},\n"
+        f'  "table": "test"\n'
+        f"}})\n"
+        f"pipeline"
     )
 
     assert cells == [
@@ -157,7 +157,7 @@ def test_format_output_view(source):
             "source": "view = lm.View.from_spec({\n"
             '  "pipeline": {\n'
             '    "source": {\n'
-            '      "uri": "/Users/ahuang/repos/lumen/lumen/tests/sources/catalog.yml",\n'
+            f'      "uri": "{source.uri}",\n'
             '      "type": "intake"\n'
             "    },\n"
             '    "table": "test"\n'
