@@ -123,6 +123,7 @@ ignore = [
     "PLW2901", # `for` loop variable is overwritten
     "RUF005", # Consider {expr} instead of concatenation
     "RUF012", # Mutable class attributes should use `typing.ClassVar`
+    "UP038", # isinstance and issubclass uses a |-separated union
 ]
 extend-unsafe-fixes = [
     "F401", # Unused imports
