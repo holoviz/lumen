@@ -1,5 +1,4 @@
 import asyncio
-import difflib
 import json
 import re
 import textwrap
@@ -16,6 +15,7 @@ from panel.chat import ChatInterface
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
+from wordllama import WordLlama
 
 from ..base import Component
 from ..dashboard import Config
@@ -34,8 +34,7 @@ from .embeddings import Embeddings
 from .llm import Llm
 from .memory import memory
 from .models import (
-    DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
-    VegaLiteSpec,
+    DataRequired, JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -90,6 +89,7 @@ class Agent(Viewer):
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._chat_invoke)
         super().__init__(**params)
+        self._word_llama = WordLlama.load()
         if not self.debug:
             pn.config.exception_handler = _exception_handler
 
@@ -123,33 +123,13 @@ class Agent(Viewer):
         return system_prompt
 
     async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
-        system = (
-            f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{memory.get('current_table', 'N/A')}`. "
-        )
-        tables = tuple(table.replace('"', "") for table in tables)
-
-        fuzzy_table = (await self.llm.invoke(
-            messages,
-            system=system,
-            response_model=FuzzyTable,
-            allow_partial=False
-        ))
-        if not fuzzy_table.required:
-            return [memory.get("current_table") or tables[0]]
-
-        # make case insensitive, but keep original case to transform back
-        if not fuzzy_table.keywords:
-            return tables[:n]
-
-        table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
-        tables_lower = {table.lower(): table for table in tables}
-
-        # get closest matches
-        closest_tables = set()
-        for keyword in table_keywords:
-            closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
-        closest_tables = [tables_lower[table] for table in closest_tables]
+        query = messages[-1]
+        if len(tables) > 2:
+            k = min(n, len(tables))
+            top_tables = self._word_llama.topk(query, tables, k=k)  # first get the top n tables
+        else:
+            top_tables = tables
+        closest_tables = self._word_llama.filter(query, top_tables, threshold=0.05)  # then filter them by a threshold
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
             tables = await self._select_table(tables)

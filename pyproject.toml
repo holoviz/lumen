@@ -46,7 +46,7 @@ HoloViz = "https://holoviz.org/"
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
 sql = ['duckdb', 'intake-sql', 'sqlalchemy']
-ai = ['nbformat', 'duckdb', 'pyarrow', 'openai', 'instructor >=1.4.3', 'pydantic >=2.8.0', 'datashader', 'pydantic-extra-types']
+ai = ['nbformat', 'duckdb', 'pyarrow', 'openai', 'instructor >=1.4.3', 'pydantic >=2.8.0', 'datashader', 'pydantic-extra-types', 'wordllama']
 ai-local = ['lumen[ai]', 'huggingface_hub']
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python']
 
