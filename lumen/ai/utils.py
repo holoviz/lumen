@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import time
 
 from functools import wraps
@@ -140,10 +141,13 @@ async def get_schema(
             if "max" in spec:
                 spec.pop("max")
 
-    if not include_enum:
-        for field, spec in schema.items():
-            if "enum" in spec:
-                spec.pop("enum")
+    for field, spec in schema.items():
+        if "enum" not in spec:
+            continue
+        elif not include_enum:
+            spec.pop("enum")
+        elif "limit" in get_kwargs:
+            spec["enum"].append("...")
 
     if count and include_count:
         spec["count"] = count
@@ -174,7 +178,7 @@ async def get_data(pipeline):
 
 async def describe_data(df: pd.DataFrame) -> str:
     def format_float(num):
-        if pd.isna(num):
+        if pd.isna(num) or math.isinf(num):
             return num
         # if is integer, round to 0 decimals
         if num == int(num):
@@ -209,7 +213,10 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.select_dtypes(include=["object"]).columns:
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
-            df_describe_dict[col]["nunique"] = df[col].nunique()
+            try:
+                df_describe_dict[col]["nunique"] = df[col].nunique()
+            except Exception:
+                df_describe_dict[col]["nunique"] = 'unknown'
             try:
                 df_describe_dict[col]["lengths"] = {
                     "max": df[col].str.len().max(),

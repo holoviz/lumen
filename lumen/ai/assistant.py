@@ -4,7 +4,7 @@ import asyncio
 import re
 
 from io import StringIO
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import param
 import yaml
@@ -17,7 +17,7 @@ from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload
 
 from .agents import (
-    Agent, AnalysisAgent, ChatAgent, SQLAgent,
+    Agent, AnalysisAgent, ChatAgent, SQLAgent, TableAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
@@ -124,7 +124,11 @@ class Assistant(Viewer):
                     for analysis in agent.analyses if analysis._callable_by_llm
                 )
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
+                agent.interface = interface
+                self._analyses.extend(agent.analyses)
+                instantiated.append(agent)
                 break
+
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
                 agent = agent(interface=interface, **kwargs)
@@ -132,8 +136,6 @@ class Assistant(Viewer):
                 agent.llm = llm
             # must use the same interface or else nothing shows
             agent.interface = interface
-            if isinstance(agent, AnalysisAgent):
-                self._analyses.extend(agent.analyses)
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
@@ -195,6 +197,7 @@ class Assistant(Viewer):
                         if isinstance(agent, AnalysisAgent):
                             break
                     else:
+                        print("No analysis agent found.")
                         return
                     await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
                     await self._add_analysis_suggestions()
@@ -402,10 +405,10 @@ class Assistant(Viewer):
         for subagent, deps, instruction in agent_chain[:-1]:
             agent_name = type(subagent).name.replace('Agent', '')
             with self.interface.add_step(title=f"Querying {agent_name} agent...") as step:
-                step.stream(f"Assistant decided the {agent_name!r} will provide {', '.join(deps)}.")
+                step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
                 self._current_agent.object = f"## **Current Agent**: {agent_name}"
                 custom_messages = messages.copy()
-                if isinstance(subagent, SQLAgent):
+                if isinstance(subagent, (TableAgent, SQLAgent)):
                     custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
                     if custom_agent:
                         custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
@@ -417,7 +420,8 @@ class Assistant(Viewer):
                 if instruction:
                     custom_messages.append({"role": "user", "content": instruction})
                 await subagent.answer(custom_messages)
-                step.success_title = f"{agent_name} agent responded"
+                step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
+                step.success_title = f"{agent_name} agent successfully responded"
         return selected
 
     def _serialize(self, obj, exclude_passwords=True):
@@ -490,38 +494,56 @@ class PlanningAssistant(Assistant):
     instead of simply resolving the dependencies step-by-step.
     """
 
+    @classmethod
+    async def _lookup_schemas(
+        cls,
+        tables: dict[str, Source],
+        requested: list[str],
+        provided: list[str],
+        cache: dict[str, dict] | None = None
+    ) -> str:
+        cache = cache or {}
+        to_query, queries = [], []
+        for table in requested:
+            if table in provided or table in cache:
+                continue
+            to_query.append(table)
+            queries.append(get_schema(tables[table], table, limit=3))
+        for table, schema in zip(to_query, await asyncio.gather(*queries)):
+            cache[table] = schema
+        schema_info = ''
+        for table in requested:
+            if table in provided:
+                continue
+            provided.append(table)
+            schema_info += f'- {table}: {cache[table]}\n\n'
+        return schema_info
+
     async def _make_plan(
         self,
-        user_msg: dict[str, Any],
         messages: list,
         agents: dict[str, Agent],
         tables: dict[str, Source],
         unmet_dependencies: set[str],
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
-        step: ChatStep
-    ):
+        step: ChatStep,
+        schemas: dict[str, dict] | None = None
+    ) -> BaseModel:
+        user_msg = messages[-1]
         info = ''
         reasoning = None
-        requested_tables, provided_tables = [], []
+        requested, provided = [], []
         if 'current_table' in memory:
-            requested_tables.append(memory['current_table'])
+            requested.append(memory['current_table'])
         elif len(tables) == 1:
-            requested_tables.append(next(iter(tables)))
-        while reasoning is None or requested_tables:
-            # Add context of table schemas
-            schemas = []
-            requested = getattr(reasoning, 'tables', requested_tables)
-            for table in requested:
-                if table in provided_tables:
-                    continue
-                provided_tables.append(table)
-                schemas.append(get_schema(tables[table], table, limit=3))
-            for table, schema in zip(requested, await asyncio.gather(*schemas)):
-                info += f'- {table}: {schema}\n\n'
+            requested.append(next(iter(tables)))
+        while reasoning is None or requested:
+            info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
+            available = [t for t in tables if t not in provided]
             system = render_template(
                 'plan_agent.jinja2', agents=list(agents.values()), current_agent=self._current_agent.object,
-                unmet_dependencies=unmet_dependencies, memory=memory, table_info=info, tables=list(tables)
+                unmet_dependencies=unmet_dependencies, memory=memory, table_info=info, tables=available
             )
             async for reasoning in self.llm.stream(
                 messages=messages,
@@ -529,13 +551,31 @@ class PlanningAssistant(Assistant):
                 response_model=reason_model,
             ):
                 step.stream(reasoning.chain_of_thought, replace=True)
-            requested_tables = [t for t in reasoning.tables if t and t not in provided_tables]
-            if requested_tables:
-                continue
+            requested = [
+                t for t in getattr(reasoning, 'tables', [])
+                if t and t not in provided
+            ]
         new_msg = dict(role=user_msg['role'], content=f"<user query>{user_msg['content']}</user query> {reasoning.chain_of_thought}")
         messages = messages[:-1] + [new_msg]
         plan = await self._fill_model(messages, system, plan_model)
         return plan
+
+    async def _resolve_plan(self, plan, agents, messages):
+        step = plan.steps[-1]
+        subagent = agents[step.expert]
+        unmet_dependencies = {
+            r for r in await subagent.requirements(messages) if r not in memory
+        }
+        agent_chain = [(subagent, unmet_dependencies, step.instruction)]
+        for step in plan.steps[:-1][::-1]:
+            subagent = agents[step.expert]
+            requires = set(await subagent.requirements(messages))
+            unmet_dependencies = {
+                dep for dep in (unmet_dependencies | requires)
+                if dep not in subagent.provides and dep not in memory
+            }
+            agent_chain.append((subagent, subagent.provides, step.instruction))
+        return agent_chain, unmet_dependencies
 
     async def _resolve_dependencies(self, messages: list, agents: dict[str, Agent]) -> list[tuple(Agent, any)]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
@@ -547,29 +587,17 @@ class PlanningAssistant(Assistant):
         reason_model, plan_model = make_plan_models(agent_names, list(tables))
         planned = False
         unmet_dependencies = set()
-        user_msg = messages[-1]
+        schemas = {}
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
-            while not planned or unmet_dependencies:
+            while not planned:
                 plan = await self._make_plan(
-                    user_msg, messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep
+                    messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
                 )
-                step = plan.steps[-1]
-                subagent = agents[step.expert]
-                unmet_dependencies = {
-                    r for r in await subagent.requirements(messages) if r not in memory
-                }
-                agent_chain = [(subagent, unmet_dependencies, step.instruction)]
-                for step in plan.steps[:-1][::-1]:
-                    subagent = agents[step.expert]
-                    requires = set(await subagent.requirements(messages))
-                    unmet_dependencies = {
-                        dep for dep in (unmet_dependencies | requires)
-                        if dep not in subagent.provides and dep not in memory
-                    }
-                    agent_chain.append((subagent, subagent.provides, step.instruction))
+                agent_chain, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
-                planned = True
+                else:
+                    planned = True
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
