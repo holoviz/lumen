@@ -68,7 +68,6 @@ class TestRetryLLMOutput:
             mock_func(errors=["Failed"])
         assert mock_sleep.call_count == 0
 
-    @pytest.mark.asyncio
     @patch("asyncio.sleep", return_value=None)
     async def test_async_success(self, mock_sleep):
         @retry_llm_output(retries=2)
@@ -79,7 +78,6 @@ class TestRetryLLMOutput:
         assert result == "Success"
         assert mock_sleep.call_count == 0
 
-    @pytest.mark.asyncio
     @patch("asyncio.sleep", return_value=None)
     async def test_async_failure(self, mock_sleep):
         @retry_llm_output(retries=2)
@@ -92,7 +90,6 @@ class TestRetryLLMOutput:
             await mock_func()
         assert mock_sleep.call_count == 1
 
-    @pytest.mark.asyncio
     @patch("asyncio.sleep", return_value=None)
     async def test_async_failure_unrecoverable(self, mock_sleep):
         @retry_llm_output(retries=2)
@@ -133,7 +130,6 @@ def test_format_schema_no_enum():
 
 class TestGetSchema:
 
-    @pytest.mark.asyncio
     async def test_get_schema_from_source(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {"field1": {"type": "integer"}}
@@ -141,7 +137,6 @@ class TestGetSchema:
         assert "field1" in schema
         assert schema["field1"]["type"] == "int"
 
-    @pytest.mark.asyncio
     async def test_min_max(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
@@ -157,7 +152,6 @@ class TestGetSchema:
         assert schema["field1"]["min"] == 0
         assert schema["field1"]["max"] == 100
 
-    @pytest.mark.asyncio
     async def test_no_min_max(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
@@ -173,7 +167,6 @@ class TestGetSchema:
         assert "inclusiveMinimum" not in schema["field1"]
         assert "inclusiveMaximum" not in schema["field1"]
 
-    @pytest.mark.asyncio
     async def test_enum(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
@@ -183,7 +176,6 @@ class TestGetSchema:
         assert "enum" in schema["field1"]
         assert schema["field1"]["enum"] == ["value1", "value2"]
 
-    @pytest.mark.asyncio
     async def test_no_enum(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
@@ -192,7 +184,6 @@ class TestGetSchema:
         schema = await get_schema(mock_source, include_enum=False)
         assert "enum" not in schema["field1"]
 
-    @pytest.mark.asyncio
     async def test_count(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
@@ -203,7 +194,6 @@ class TestGetSchema:
         assert "count" in schema["field1"]
         assert schema["field1"]["count"] == 1000
 
-    @pytest.mark.asyncio
     async def test_no_count(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
@@ -213,7 +203,6 @@ class TestGetSchema:
         schema = await get_schema(mock_source, include_count=False)
         assert "count" not in schema
 
-    @pytest.mark.asyncio
     async def test_table(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {"field1": {"type": "integer"}}
@@ -221,7 +210,6 @@ class TestGetSchema:
         mock_source.get_schema.assert_called_with("test_table", limit=100)
         assert "field1" in schema
 
-    @pytest.mark.asyncio
     async def test_custom_limit(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {"field1": {"type": "integer"}}
@@ -231,7 +219,6 @@ class TestGetSchema:
 
 class TestDescribeData:
 
-    @pytest.mark.asyncio
     async def test_describe_numeric_data(self):
         df = pd.DataFrame({
             "col1": np.arange(0, 100000),
@@ -243,7 +230,6 @@ class TestDescribeData:
         assert result["stats"]["col1"]["nulls"] == '0'
         assert result["stats"]["col2"]["nulls"] == '0'
 
-    @pytest.mark.asyncio
     async def test_describe_with_nulls(self):
         df = pd.DataFrame({
             "col1": np.arange(0, 100000),
@@ -255,7 +241,6 @@ class TestDescribeData:
         assert result["stats"]["col1"]["nulls"] != '0'
         assert result["stats"]["col2"]["nulls"] != '0'
 
-    @pytest.mark.asyncio
     async def test_describe_string_data(self):
         df = pd.DataFrame({
             "col1": ["apple", "banana", "cherry", "date", "elderberry"] * 2000,
@@ -266,7 +251,6 @@ class TestDescribeData:
         assert result["stats"]["col2"]["lengths"]["max"] == 1
         assert result["stats"]["col1"]["lengths"]["max"] == 10
 
-    @pytest.mark.asyncio
     async def test_describe_datetime_data(self):
         df = pd.DataFrame({
             "col1": pd.date_range("2018-08-18", periods=10000),
@@ -276,7 +260,6 @@ class TestDescribeData:
         assert "col1" in result["stats"]
         assert "col2" in result["stats"]
 
-    @pytest.mark.asyncio
     async def test_describe_large_data(self):
         df = pd.DataFrame({
             "col1": range(6000),
@@ -286,7 +269,6 @@ class TestDescribeData:
         assert result["summary"]["is_summarized"] is True
         assert len(df.sample(5000)) == 5000  # Should summarize to 5000 rows
 
-    @pytest.mark.asyncio
     async def test_describe_small_data(self):
         df = pd.DataFrame({
             "col1": [1, 2],
