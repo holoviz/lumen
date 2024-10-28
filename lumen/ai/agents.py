@@ -240,7 +240,7 @@ class ChatAgent(Agent):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
-    requires = param.List(default=["current_source", "current_table"], readonly=True)
+    requires = param.List(default=["current_source"], readonly=True)
 
     @retry_llm_output()
     async def requirements(self, messages: list | str, errors=None):
