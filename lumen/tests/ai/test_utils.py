@@ -184,6 +184,15 @@ class TestGetSchema:
         schema = await get_schema(mock_source, include_enum=False)
         assert "enum" not in schema["field1"]
 
+    async def test_enum_limit(self):
+        mock_source = MagicMock()
+        mock_source.get_schema.return_value = {
+            "field1": {"type": "string", "enum": ["value1", "value2", "value3"]}
+        }
+        schema = await get_schema(mock_source, include_enum=True, limit=2)
+        assert "enum" in schema["field1"]
+        assert "..." in schema["field1"]["enum"]
+
     async def test_count(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {

@@ -146,7 +146,7 @@ async def get_schema(
             continue
         elif not include_enum:
             spec.pop("enum")
-        elif "limit" in get_kwargs:
+        elif "limit" in get_kwargs and len(spec["enum"]) > get_kwargs["limit"]:
             spec["enum"].append("...")
 
     if count and include_count:
