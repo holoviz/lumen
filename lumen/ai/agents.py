@@ -40,7 +40,7 @@ from .models import (
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema,
-    render_template, retry_llm_output,
+    render_template, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -187,7 +187,7 @@ class Agent(Viewer):
     async def requirements(self, messages: list | str):
         return self.requires
 
-    async def invoke(self, messages: list | str):
+    async def answer(self, messages: list | str):
         system_prompt = await self._system_prompt_with_context(messages)
 
         message = None
@@ -198,13 +198,16 @@ class Agent(Viewer):
                 output, replace=True, message=message, user=self.user, max_width=self._max_width
             )
 
+    async def invoke(self, messages: list | str):
+        await self.answer(messages)
+
 
 class SourceAgent(Agent):
     """
-    The SourceAgent allows a user to provide an input source.
+    The SourceAgent allows a user to upload new datasets.
 
-    Should only be used if the user explicitly requests adding a source
-    or no source is in memory.
+    Only use this if the user is requesting to add a dataset or you think
+    additional information is required to solve the user query.
     """
 
     requires = param.List(default=[], readonly=True)
@@ -349,7 +352,6 @@ class LumenBaseAgent(Agent):
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
 
-
 class TableAgent(LumenBaseAgent):
     """
     Displays a single table / dataset. Does not discuss.
@@ -453,8 +455,7 @@ class TableAgent(LumenBaseAgent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    List all of the available tables or datasets inventory. Not useful
-    if the user requests a specific table.
+    Provides a list of all availables tables/datasets.
     """
 
     system_prompt = param.String(
@@ -477,8 +478,9 @@ class TableListAgent(LumenBaseAgent):
         self.interface.send(f"Show the table: {table!r}")
 
     async def answer(self, messages: list | str):
-        source = memory["current_source"]
-        tables = source.get_tables()
+        tables = []
+        for source in memory['available_sources']:
+            tables += source.get_tables()
         if not tables:
             return
 
@@ -504,7 +506,9 @@ class TableListAgent(LumenBaseAgent):
 class SQLAgent(LumenBaseAgent):
     """
     Responsible for generating and modifying SQL queries to answer user queries about the data,
-    such querying subsets of the data, aggregating the data and calculating results.
+    such querying subsets of the data, aggregating the data and calculating results. If the
+    current table does not contain all the available data the SQL agent is also capable of
+    joining it with other tables.
     """
 
     system_prompt = param.String(
@@ -598,15 +602,16 @@ class SQLAgent(LumenBaseAgent):
             elif e.n_attempts > 2:
                 raise e
         except Exception as e:
-            error_msg = str(e)
-            step.stream(f'\n```python\n{error_msg}\n```')
-            if len(error_msg) > 50:
-                error_msg = error_msg[:50] + "..."
-            step.failed_title = error_msg
-            step.status = "failed"
+            report_error(e, step)
             raise e
 
-        df = await get_data(pipeline)
+        try:
+            df = await get_data(pipeline)
+        except Exception as e:
+            source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
+            report_error(e, step)
+            raise e
+
         if len(df) > 0:
             memory["current_data"] = await describe_data(df)
 
@@ -715,7 +720,17 @@ class SQLAgent(LumenBaseAgent):
                 table_schema = schema
             else:
                 table_schema = await get_schema(source, source_table, include_min_max=False)
-            table_schemas[source_table] = {
+
+            # Look up underlying table name
+            table_name = source_table
+            if (
+                'tables' in source.param and
+                isinstance(source.tables, dict) and
+                'select ' not in source.tables[table_name].lower()
+            ):
+                table_name = source.tables[table_name]
+
+            table_schemas[table_name] = {
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table)
             }
@@ -955,9 +970,10 @@ class BaseViewAgent(LumenBaseAgent):
             response_model=self._get_model(schema),
         )
         spec = await self._extract_spec(output)
-        chain_of_thought = spec.pop("chain_of_thought")
-        with self.interface.add_step(title="Generating view...") as step:
-            step.stream(chain_of_thought)
+        chain_of_thought = spec.pop("chain_of_thought", None)
+        if chain_of_thought:
+            with self.interface.add_step(title="Generating view...") as step:
+                step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)

@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import inspect
+import math
 import time
 
 from functools import wraps
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import jinja2
 import pandas as pd
@@ -12,6 +16,9 @@ from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 
 from .config import THIS_DIR, UNRECOVERABLE_ERRORS
+
+if TYPE_CHECKING:
+    from panel.chat.step import ChatStep
 
 
 def render_template(template, **context):
@@ -134,10 +141,13 @@ async def get_schema(
             if "max" in spec:
                 spec.pop("max")
 
-    if not include_enum:
-        for field, spec in schema.items():
-            if "enum" in spec:
-                spec.pop("enum")
+    for field, spec in schema.items():
+        if "enum" not in spec:
+            continue
+        elif not include_enum:
+            spec.pop("enum")
+        elif "limit" in get_kwargs and len(spec["enum"]) > get_kwargs["limit"]:
+            spec["enum"].append("...")
 
     if count and include_count:
         spec["count"] = count
@@ -168,7 +178,7 @@ async def get_data(pipeline):
 
 async def describe_data(df: pd.DataFrame) -> str:
     def format_float(num):
-        if pd.isna(num):
+        if pd.isna(num) or math.isinf(num):
             return num
         # if is integer, round to 0 decimals
         if num == int(num):
@@ -203,7 +213,10 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.select_dtypes(include=["object"]).columns:
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
-            df_describe_dict[col]["nunique"] = df[col].nunique()
+            try:
+                df_describe_dict[col]["nunique"] = df[col].nunique()
+            except Exception:
+                df_describe_dict[col]["nunique"] = 'unknown'
             try:
                 df_describe_dict[col]["lengths"] = {
                     "max": df[col].str.len().max(),
@@ -241,8 +254,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             "stats": df_describe_dict,
         }
 
-    data = asyncio.to_thread(describe_data_sync, df)
-    return data
+    return await asyncio.to_thread(describe_data_sync, df)
 
 
 def clean_sql(sql_expr):
@@ -251,3 +263,12 @@ def clean_sql(sql_expr):
     backticks, fencing and extraneous space and semi-colons.
     """
     return sql_expr.replace("```sql", "").replace("```", "").replace('`', '"').strip().rstrip(";")
+
+
+def report_error(exc: Exception, step: ChatStep):
+    error_msg = str(exc)
+    step.stream(f'\n```python\n{error_msg}\n```')
+    if len(error_msg) > 50:
+        error_msg = error_msg[:50] + "..."
+    step.failed_title = error_msg
+    step.status = "failed"

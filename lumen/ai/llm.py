@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from functools import partial
+from types import SimpleNamespace
 
 import instructor
 import panel as pn
@@ -11,6 +12,8 @@ import param
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
+
+from .interceptor import Interceptor
 
 
 class Llm(param.Parameterized):
@@ -21,12 +24,17 @@ class Llm(param.Parameterized):
 
     use_logfire = param.Boolean(default=False)
 
+    interceptor = param.ClassSelector(default=None, class_=Interceptor)
+
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
 
     _supports_model_stream = True
 
     __abstract = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
 
     def _get_model_kwargs(self, model_key):
         if model_key in self.model_kwargs:
@@ -219,11 +227,18 @@ class OpenAI(Llm):
         if self.organization:
             model_kwargs["organization"] = self.organization
         llm = openai.AsyncOpenAI(**model_kwargs)
+
+        if self.interceptor:
+            self.interceptor.patch_client(llm, mode="store_inputs")
+
         if response_model:
-            client = instructor.from_openai(llm)
-            client_callable = partial(client.chat.completions.create, model=model)
-        else:
-            client_callable = partial(llm.chat.completions.create, model=model)
+            llm = patch(llm)
+
+        if self.interceptor:
+            # must be called after instructor
+            self.interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
 
         if self.use_logfire:
             import logfire
@@ -259,11 +274,18 @@ class AzureOpenAI(Llm):
         if self.azure_endpoint:
             model_kwargs["azure_endpoint"] = self.azure_endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
+
+        if self.interceptor:
+            self.interceptor.patch_client(llm, mode="store_inputs")
+
         if response_model:
-            client = instructor.from_openai(llm)
-            client_callable = partial(client.chat.completions.create, model=model)
-        else:
-            client_callable = partial(llm.chat.completions.create, model=model)
+            llm = patch(llm)
+
+        if self.interceptor:
+            # must be called after instructor
+            self.interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
         return client_callable
 
 
@@ -301,27 +323,26 @@ class MistralAI(Llm):
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         from mistralai import Mistral
 
-        async def llm_chat_non_stream_async(*args, **kwargs):
-            response = await llm.chat.complete_async(*args, **kwargs)
-            return response.choices[0].message.content
-
         model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs["api_key"] = self.api_key
         model = model_kwargs.pop("model")
-
-        llm = Mistral(api_key=self.api_key)
-        if response_model:
-            # can't use from_mistral due to new mistral API
-            # https://github.com/jxnl/instructor/issues/969
-            return patch(
-                create=partial(llm.chat.complete_async, model=model),
-                mode=self.mode,
-            )
+        llm = Mistral(**model_kwargs)
 
         stream = kwargs.get("stream", False)
-        if stream:
-            return partial(llm.chat.stream_async, model=model)
-        else:
-            return partial(llm_chat_non_stream_async, model=model)
+        llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
+        llm.chat.completions.create = llm.chat.stream_async if stream else llm.chat.complete_async
+
+        if self.interceptor:
+            self.interceptor.patch_client(llm, mode="store_inputs")
+
+        if response_model:
+            llm = patch(llm)
+
+        if self.interceptor:
+            self.interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
+        return client_callable
 
     @classmethod
     def _get_delta(cls, chunk):
@@ -355,7 +376,6 @@ class MistralAI(Llm):
         )
 
 
-
 class AzureMistralAI(MistralAI):
 
     api_key = param.String(default=os.getenv("AZURE_API_KEY"))
@@ -374,20 +394,26 @@ class AzureMistralAI(MistralAI):
             return response.choices[0].message.content
 
         model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs["api_key"] = self.api_key
+        model_kwargs["azure_endpoint"] = self.azure_endpoint
         model = model_kwargs.pop("model")
-
-        llm = MistralAzure(azure_api_key=self.api_key, azure_endpoint=self.azure_endpoint)
-        if response_model:
-            return patch(
-                create=partial(llm.chat.complete_async, model=model),
-                mode=self.mode,
-            )
+        llm = MistralAzure(**model_kwargs)
 
         stream = kwargs.get("stream", False)
-        if stream:
-            return partial(llm.chat.stream_async, model=model)
-        else:
-            return partial(llm_chat_non_stream_async, model=model)
+        llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
+        llm.chat.completions.create = llm.chat.stream_async if stream else llm.chat.complete_async
+
+        if self.interceptor:
+            self.interceptor.patch_client(llm, mode="store_inputs")
+
+        if response_model:
+            llm = patch(llm)
+
+        if self.interceptor:
+            self.interceptor.patch_client_response(llm)
+
+        client_callable = partial(llm.chat.completions.create, model=model)
+        return client_callable
 
 
 class AnthropicAI(Llm):
@@ -410,12 +436,15 @@ class AnthropicAI(Llm):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
     def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+        if self.interceptor:
+            raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
+
         from anthropic import AsyncAnthropic
 
         model_kwargs = self._get_model_kwargs(model_key)
         model = model_kwargs.pop("model")
 
-        llm = AsyncAnthropic(api_key=self.api_key)
+        llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
 
         if response_model:
             client = instructor.from_anthropic(llm)

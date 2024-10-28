@@ -31,6 +31,7 @@ from ..base import MultiTypeComponent
 from ..config import _INDICATORS
 from ..downloads import Download
 from ..filters.base import Filter, ParamFilter
+from ..panel import HtmlPdfDownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms.base import Transform
@@ -1150,12 +1151,15 @@ class YdataProfilingView(View):
     def get_panel(self) -> pn.pane.HTML:
         from ydata_profiling import ProfileReport
         report_html = ProfileReport(**self._get_params()).html
+
         escaped_html = html.escape(report_html)
         iframe = f"""
         <iframe srcdoc="{escaped_html}" width="100%" height="100%" frameborder="0" marginheight="0" marginwidth="0">
         </iframe>
         """
-        return self._panel_type(iframe, min_height=700, sizing_mode="stretch_both")
+        ydata_pane = self._panel_type(iframe, min_height=700, sizing_mode="stretch_both")
+        download_button = HtmlPdfDownloadButton(value=report_html, align="end")
+        return pn.Column(download_button, ydata_pane)
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
