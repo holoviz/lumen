@@ -126,11 +126,13 @@ def test_format_output_pipeline(source):
 
     cells = format_output(msg)
     cells[0].pop("id")
-
+    uri = source.uri
+    if os.name == "nt":
+        uri = uri.replace("\\", "\\\\")
     expected_source = (
         f"pipeline = lm.Pipeline.from_spec({{\n"
         f'  "source": {{\n'
-        f'    "uri": "{source.uri}",\n'
+        f'    "uri": "{uri}",\n'
         f'    "type": "intake"\n'
         f"  }},\n"
         f'  "table": "test"\n'
@@ -156,6 +158,9 @@ def test_format_output_view(source):
 
     cells = format_output(msg)
     cells[0].pop("id")
+    uri = source.uri
+    if os.name == "nt":
+        uri = uri.replace("\\", "\\\\")
     assert cells == [
         {
             "cell_type": "code",
@@ -165,7 +170,7 @@ def test_format_output_view(source):
             "source": "view = lm.View.from_spec({\n"
             '  "pipeline": {\n'
             '    "source": {\n'
-            f'      "uri": "{source.uri}",\n'
+            f'      "uri": "{uri}",\n'
             '      "type": "intake"\n'
             "    },\n"
             '    "table": "test"\n'
