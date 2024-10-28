@@ -35,7 +35,7 @@ from .llm import Llm
 from .memory import memory
 from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
-    VegaLiteSpec,
+    VegaLiteSpec, make_table_model,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -240,7 +240,7 @@ class ChatAgent(Agent):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
-    requires = param.List(default=["current_source"], readonly=True)
+    requires = param.List(default=["current_source", "current_table"], readonly=True)
 
     @retry_llm_output()
     async def requirements(self, messages: list | str, errors=None):
@@ -352,107 +352,6 @@ class LumenBaseAgent(Agent):
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
 
-class TableAgent(LumenBaseAgent):
-    """
-    Displays a single table / dataset. Does not discuss.
-    """
-
-    system_prompt = param.String(
-        default=textwrap.dedent(
-            """
-            Identify the most relevant table that contains the most columns useful
-            for answering the user's query. Keep in mind that additional tables
-            can be joined later, so focus on selecting the best starting point.
-            """
-        )
-    )
-
-    requires = param.List(default=["current_source"], readonly=True)
-
-    provides = param.List(default=["current_table", "current_pipeline"], readonly=True)
-
-    @staticmethod
-    def _create_table_model(tables):
-        table_model = create_model(
-            "Table",
-            chain_of_thought=(str, FieldInfo(
-                description="The thought process behind selecting the table, listing out which columns are useful."
-            )),
-            relevant_table=(Literal[tables], FieldInfo(
-                description="The most relevant table based on the user query; if none are relevant, select the first."
-            ))
-        )
-        return table_model
-
-    async def answer(self, messages: list | str):
-        available_sources = memory["available_sources"]
-        tables_to_source = {}
-        tables_schema_str = "\nHere are the tables\n"
-        for source in available_sources:
-            for table in source.get_tables():
-                tables_to_source[table] = source
-                if isinstance(source, DuckDBSource) and source.ephemeral:
-                    schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
-                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
-                else:
-                    tables_schema_str += f"### {table}\n"
-
-        tables = tuple(tables_to_source)
-        if messages and messages[-1]["content"].startswith("Show the table: '"):
-            # Handle the case where the TableListAgent explicitly requested a table
-            table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
-        elif len(tables) == 1:
-            table = tables[0]
-        else:
-            with self.interface.add_step(title="Choosing the most relevant table...") as step:
-                closest_tables = memory.pop("closest_tables", [])
-                if closest_tables:
-                    tables = closest_tables
-                elif len(tables) > FUZZY_TABLE_LENGTH:
-                    tables = await self._get_closest_tables(messages, tables)
-                system_prompt = await self._system_prompt_with_context(messages, context=tables_schema_str)
-                if self.debug:
-                    print(f"{self.name} is being instructed that it should {system_prompt}")
-                if len(tables) > 1:
-                    table_model = self._create_table_model(tables)
-                    result = await self.llm.invoke(
-                        messages,
-                        system=system_prompt,
-                        response_model=table_model,
-                        allow_partial=False,
-                    )
-                    table = result.relevant_table
-                    step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
-                else:
-                    table = tables[0]
-                    step.stream(f"Selected table: {table}")
-
-        if table in tables_to_source:
-            source = tables_to_source[table]
-        else:
-            sources = [src for src in available_sources if table in src]
-            source = sources[0] if sources else memory["current_source"]
-
-        get_kwargs = {}
-        if isinstance(source, BaseSQLSource):
-            get_kwargs['sql_transforms'] = [SQLLimit(limit=1_000_000)]
-        memory["current_source"] = source
-        memory["current_table"] = table
-        memory["current_pipeline"] = pipeline = await get_pipeline(
-            source=source, table=table, **get_kwargs
-        )
-        df = await get_data(pipeline)
-        if len(df) > 0:
-            memory["current_data"] = await describe_data(df)
-        if self.debug:
-            print(f"{self.name} thinks that the user is talking about {table=!r}.")
-        return pipeline
-
-    async def invoke(self, messages: list | str):
-        pipeline = await self.answer(messages)
-        self._render_lumen(pipeline)
-
-
 class TableListAgent(LumenBaseAgent):
     """
     Provides a list of all availables tables/datasets.
@@ -520,9 +419,60 @@ class SQLAgent(LumenBaseAgent):
         )
     )
 
-    requires = param.List(default=["current_table", "current_source"], readonly=True)
+    requires = param.List(default=["current_source"], readonly=True)
 
-    provides = param.List(default=["current_sql", "current_pipeline"], readonly=True)
+    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+
+    async def _select_relevant_table(self, messages: list | str) -> tuple[str, BaseSQLSource]:
+        """Select the most relevant table based on the user query."""
+        available_sources = memory["available_sources"]
+        tables_to_source = {}
+        tables_schema_str = "\nHere are the tables\n"
+        for source in available_sources:
+            for table in source.get_tables():
+                tables_to_source[table] = source
+                if isinstance(source, DuckDBSource) and source.ephemeral:
+                    schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
+                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
+                else:
+                    tables_schema_str += f"### {table}\n"
+
+        tables = tuple(tables_to_source)
+        if messages and messages[-1]["content"].startswith("Show the table: '"):
+            # Handle the case where explicitly requested a table
+            table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
+        elif len(tables) == 1:
+            table = tables[0]
+        else:
+            with self.interface.add_step(title="Choosing the most relevant table...") as step:
+                closest_tables = memory.pop("closest_tables", [])
+                if closest_tables:
+                    tables = closest_tables
+                elif len(tables) > FUZZY_TABLE_LENGTH:
+                    tables = await self._get_closest_tables(messages, tables)
+                system_prompt = await self._system_prompt_with_context(messages, context=tables_schema_str)
+
+                if len(tables) > 1:
+                    table_model = make_table_model(tables)
+                    result = await self.llm.invoke(
+                        messages,
+                        system=system_prompt,
+                        response_model=table_model,
+                        allow_partial=False,
+                    )
+                    table = result.relevant_table
+                    step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
+                else:
+                    table = tables[0]
+                    step.stream(f"Selected table: {table}")
+
+        if table in tables_to_source:
+            source = tables_to_source[table]
+        else:
+            sources = [src for src in available_sources if table in src]
+            source = sources[0] if sources else memory["current_source"]
+
+        return table, source
 
     def _render_sql(self, query):
         pipeline = memory['current_pipeline']
@@ -701,8 +651,7 @@ class SQLAgent(LumenBaseAgent):
         8. If a join is required, remove source/table prefixes from the last message.
         9. Construct the SQL query with `_create_valid_sql`.
         """
-        source = memory["current_source"]
-        table = memory["current_table"]
+        table, source = await self._select_relevant_table(messages)
 
         if not hasattr(source, "get_sql_expr"):
             return None

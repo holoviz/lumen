@@ -156,3 +156,16 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
             FieldInfo(default=..., description=description)
         ),
     )
+
+
+def make_table_model(tables):
+    table_model = create_model(
+        "Table",
+        chain_of_thought=(str, FieldInfo(
+            description="A concise, one sentence decision-tree-style analysis on choosing a table."
+        )),
+        relevant_table=(Literal[tables], FieldInfo(
+            description="The most relevant table based on the user query; if none are relevant, select the first."
+        ))
+    )
+    return table_model

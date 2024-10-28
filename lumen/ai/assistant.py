@@ -17,7 +17,7 @@ from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload
 
 from .agents import (
-    Agent, AnalysisAgent, ChatAgent, SQLAgent, TableAgent,
+    Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
@@ -408,7 +408,7 @@ class Assistant(Viewer):
                 step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
                 self._current_agent.object = f"## **Current Agent**: {agent_name}"
                 custom_messages = messages.copy()
-                if isinstance(subagent, (TableAgent, SQLAgent)):
+                if isinstance(subagent, SQLAgent):
                     custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
                     if custom_agent:
                         custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
