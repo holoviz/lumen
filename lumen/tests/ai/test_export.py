@@ -1,4 +1,3 @@
-import asyncio
 import datetime as dt
 import json
 import os
@@ -10,9 +9,6 @@ from panel.chat import ChatMessage
 from lumen.pipeline import Pipeline
 from lumen.sources.intake import IntakeSource
 from lumen.views import Table
-
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 try:
     from lumen.ai.assistant import Assistant
@@ -120,7 +116,8 @@ def test_format_markdown_with_text_avatar():
     assert cell.source == expected_source
 
 
-def test_format_output_pipeline(source):
+# requires async because internally uses async_executor
+async def test_format_output_pipeline(source):
     pipeline = Pipeline(source=source, table="test")
     msg = ChatMessage(object=LumenOutput(component=pipeline), user="User")
 
@@ -151,7 +148,8 @@ def test_format_output_pipeline(source):
     ]
 
 
-def test_format_output_view(source):
+# requires async because internally uses async_executor
+async def test_format_output_view(source):
     pipeline = Pipeline(source=source, table="test")
     table = Table(pipeline=pipeline)
     msg = ChatMessage(object=LumenOutput(component=table), user="User")
@@ -182,7 +180,8 @@ def test_format_output_view(source):
     ]
 
 
-def test_export_notebook(source):
+# requires async because internally uses async_executor
+async def test_export_notebook(source):
     assistant = Assistant()
     assistant.interface.objecs = [
         ChatMessage(
