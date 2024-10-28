@@ -39,8 +39,8 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, get_data, get_pipeline, get_schema,
-    render_template, report_error, retry_llm_output,
+    clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
+    get_schema, render_template, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -247,13 +247,17 @@ class ChatAgent(Agent):
         if 'current_data' in memory:
             return self.requires
 
+        available_sources = memory["available_sources"]
+        _, tables_schema_str = await gather_table_sources(available_sources)
         with self.interface.add_step(title="Checking if data is required") as step:
             response = self.llm.stream(
                 messages,
                 system=(
-                    "The user may or may not want to chat about a particular dataset. "
-                    "Determine whether the provided user prompt requires access to "
-                    "actual data. If they're only searching for one, it's not required."
+                    "Assess if the user's prompt requires loading data. "
+                    "If the inquiry is just about available tables, no data access required. "
+                    "However, if relevant tables apply to the query, load the data for a "
+                    "more accurate and up-to-date response. "
+                    f"Here are the available tables:\n{tables_schema_str}"
                 ),
                 response_model=DataRequired,
             )
@@ -426,17 +430,8 @@ class SQLAgent(LumenBaseAgent):
     async def _select_relevant_table(self, messages: list | str) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
         available_sources = memory["available_sources"]
-        tables_to_source = {}
-        tables_schema_str = "\nHere are the tables\n"
-        for source in available_sources:
-            for table in source.get_tables():
-                tables_to_source[table] = source
-                if isinstance(source, DuckDBSource) and source.ephemeral:
-                    schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
-                    tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
-                else:
-                    tables_schema_str += f"### {table}\n"
 
+        tables_to_source, tables_schema_str = await gather_table_sources(available_sources)
         tables = tuple(tables_to_source)
         if messages and messages[-1]["content"].startswith("Show the table: '"):
             # Handle the case where explicitly requested a table
