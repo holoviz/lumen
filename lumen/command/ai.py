@@ -39,7 +39,6 @@ assistant = lmai.Assistant(
         lmai.agents.TableAgent,
         lmai.agents.TableListAgent,
         lmai.agents.SQLAgent,
-        lmai.agents.PipelineAgent,
         lmai.agents.hvPlotAgent,
         lmai.agents.ChatAgent,
         lmai.agents.AnalysisAgent(analyses=[lmai.analysis.Join])
