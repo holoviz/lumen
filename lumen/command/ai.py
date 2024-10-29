@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import ast
-import glob
-import os
 import sys
-
-from textwrap import dedent
 
 import bokeh.command.util  # type: ignore
 
@@ -40,7 +35,7 @@ def build_single_handler_applications(paths: list[str], argvs: dict[str, list[st
     ''' Custom to allow for standalone `lumen-ai` command to launch without data'''
     handler = AIHandler(paths)
     if handler.failed:
-        raise RuntimeError(f"Error loading {tables}:\n\n{handler.error}\n{handler.error_detail} ")
+        raise RuntimeError(f"Error loading {paths}:\n\n{handler.error}\n{handler.error_detail} ")
     return {'/lumen_ai': Application(handler)}
 
 bokeh.command.subcommands.serve.build_single_handler_applications = build_single_handler_applications

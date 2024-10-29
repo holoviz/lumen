@@ -11,7 +11,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from .agents import (
-    Agent, ChatAgent, SourceAgent, SQLAgent
+    AnalysisAgent, ChatAgent, SourceAgent, SQLAgent
 )
 from .assistant import Assistant, PlanningAssistant
 from .llm import Llm, OpenAI
@@ -91,7 +91,7 @@ class LumenAI(Viewer):
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
 
-    def _create_view(self, server: bool = None):
+    def _create_view(self, server: boolean = None):
         if (state.curdoc and state.curdoc.session_context) or server is True:
             panel_extension(
                 *{ext for agent in self._assistant.agents for ext in agent._extensions}, template=self.template
