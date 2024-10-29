@@ -400,7 +400,8 @@ class TableListAgent(LumenBaseAgent):
             min_width=350,
             widths={'Table': '90%'},
             disabled=True,
-            page_size=10
+            page_size=10,
+            header_filters=True
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
