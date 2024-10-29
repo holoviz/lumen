@@ -54,6 +54,9 @@ class LumenAI(Viewer):
             agents=agents,
             llm=self.llm
         )
+        self._resolve_data(data)
+
+    def _resolve_data(self, data: DataT | list[DataT] | None):
         if data is None:
             return
         elif not isinstance(data, list):
