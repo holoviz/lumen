@@ -212,13 +212,13 @@ class SourceAgent(Agent):
 
     _extensions = ('filedropper',)
 
-    async def answer(self, messages: list[str]):
+    async def answer(self, messages: list):
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
         self.interface.send(source_controls, respond=False, user="SourceAgent")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
 
-    async def invoke(self, messages: list[str]):
+    async def invoke(self, messages: list):
         await self.answer(messages)
 
 
