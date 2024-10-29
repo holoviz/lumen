@@ -1,8 +1,8 @@
 import panel as pn
 
 from . import agents, embeddings, llm  # noqa
-from .app import LumenAI  # noqa
 from .agents import Analysis  # noqa
+from .app import LumenAI  # noqa
 from .assistant import Assistant, PlanningAssistant  # noqa
 from .memory import memory  # noqa
 

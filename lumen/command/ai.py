@@ -41,29 +41,13 @@ def build_single_handler_applications(paths: list[str], argvs: dict[str, list[st
 bokeh.command.subcommands.serve.build_single_handler_applications = build_single_handler_applications
 
 def main(args=None):
-    start, template_vars = None, None
-    for i, arg in enumerate(sys.argv):
-        if '--template-vars' in arg:
-            start = i
-            if '=' in arg:
-                end = i
-                template_vars = arg.split('=')[1]
-            else:
-                end = i + 1
-                template_vars = sys.argv[end]
-            break
-
-    if start is not None:
-        sys.argv = sys.argv[:start] + sys.argv[end + 1:]
-        config.template_vars = ast.literal_eval(template_vars)
-
     parser = argparse.ArgumentParser(
         prog="lumen-ai",
         description="""
         Lumen AI - Launch Lumen AI applications easily.\n\n To start the application without any
-          data, simply run 'lumen-ai' with no additional arguments. You can upload data through
-          the chat interface afterwards.
-          """,
+        data, simply run 'lumen-ai' with no additional arguments. You can upload data through
+        the chat interface afterwards.
+        """,
         epilog="See '<command> --help' to read about a specific subcommand."
     )
 

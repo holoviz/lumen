@@ -11,7 +11,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from .agents import (
-    AnalysisAgent, ChatAgent, SourceAgent, SQLAgent
+    AnalysisAgent, ChatAgent, SourceAgent, SQLAgent,
 )
 from .assistant import Assistant, PlanningAssistant
 from .llm import Llm, OpenAI
@@ -63,12 +63,15 @@ class LumenAI(Viewer):
             data = [data]
         sources = []
         mirrors, tables = {}, {}
+        remote = False
         for src in data:
             if isinstance(src, Source):
                 sources.append(src)
             elif isinstance(src, Pipeline):
                 mirrors[src.name] = src
             elif isinstance(src, str):
+                if src.startswith('http'):
+                    remote = True
                 if src.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{src}')"
                 elif src.endswith(".csv"):
@@ -81,20 +84,21 @@ class LumenAI(Viewer):
                     )
                 tables[src] = table
         if tables or mirrors:
-            sources.append(
-                DuckDBSource(tables=tables, mirrors=mirrors, uri=':memory:')
-            )
+            initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
+            source = DuckDBSource(tables=tables, mirrors=mirrors, uri=':memory:', initializers=initializers)
+            sources.append(source)
         if not sources:
             raise ValueError(
                 'Must provide at least one data source.'
             )
         memory['available_sources'] = sources
-        memory['current_source'] = sources[0]
+        if sources:
+            memory['current_source'] = sources[0]
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
 
-    def _create_view(self, server: boolean = None):
+    def _create_view(self, server: bool | None = None):
         if (state.curdoc and state.curdoc.session_context) or server is True:
             panel_extension(
                 *{ext for agent in self._assistant.agents for ext in agent._extensions}, template=self.template
