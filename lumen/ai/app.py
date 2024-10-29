@@ -21,25 +21,47 @@ DataT = str | Source | Pipeline
 
 
 class LumenAI(Viewer):
+    """
+    LumenAI provides a high-level entrypoint to start chatting with your data.
 
-    analyses = param.List(default=[])
+    This high-level wrapper allows providing the data sources you will
+    be chatting with and then configures the assistant and agents.
 
-    assistant = param.ClassSelector(class_=Assistant, default=PlanningAssistant, is_instance=False)
+    Example:
 
-    agents = param.List(default=[])
+    ```python
+    import lumen.ai as lmai
 
-    default_agents = param.List(default=[
-        ChatAgent, SourceAgent, SQLAgent
-    ])
+    lmai.LumenAI('~/data.csv').servable()
+    ```
+    """
 
-    llm = param.ClassSelector(class_=Llm, default=OpenAI())
+    analyses = param.List(default=[], doc="""
+        List of custom analyses. If provided the AnalysesAgent will be added."""
+    )
+
+    assistant = param.ClassSelector(
+        class_=Assistant, default=PlanningAssistant, is_instance=False, doc="""
+        The Assistant class that will be responsible for coordinating the Agents."""
+    )
+
+    agents = param.List(default=[], doc="""
+        List of additional Agents to add beyond the default_agents."""
+    )
+
+    default_agents = param.List(default=[ChatAgent, SourceAgent, SQLAgent], doc="""
+        List of default agents which will always be added.""")
+
+    llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
+        The LLM provider to be used by default""")
 
     template = param.Selector(
         default=config.param.template.names['fast'],
-        objects=config.param.template.names
+        objects=config.param.template.names, doc="""
+        Panel template to serve the application in."""
     )
 
-    title = param.String(default='Lumen.ai')
+    title = param.String(default='Lumen.ai', doc="Title of the app.")
 
     def __init__(
         self,
