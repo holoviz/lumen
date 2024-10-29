@@ -58,7 +58,7 @@ class Llm(param.Parameterized):
 
     async def invoke(
         self,
-        messages: str,
+        messages: list,
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
@@ -89,7 +89,7 @@ class Llm(param.Parameterized):
 
     async def stream(
         self,
-        messages: str,
+        messages: list,
         system: str = "",
         response_model: BaseModel | None = None,
         field: str | None = None,
@@ -355,7 +355,7 @@ class MistralAI(Llm):
 
     async def invoke(
         self,
-        messages: str,
+        messages: list,
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
@@ -465,7 +465,7 @@ class AnthropicAI(Llm):
 
     async def invoke(
         self,
-        messages: str,
+        messages: list,
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
