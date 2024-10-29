@@ -36,7 +36,6 @@ assistant = lmai.Assistant(
     llm=llm,
     agents=[
         lmai.agents.SourceAgent,
-        lmai.agents.TableAgent,
         lmai.agents.TableListAgent,
         lmai.agents.SQLAgent,
         lmai.agents.hvPlotAgent,

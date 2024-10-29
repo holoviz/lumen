@@ -11,9 +11,11 @@ from typing import TYPE_CHECKING
 
 import jinja2
 import pandas as pd
+import yaml
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
+from lumen.sources.duckdb import DuckDBSource
 
 from .config import THIS_DIR, UNRECOVERABLE_ERRORS
 
@@ -272,3 +274,21 @@ def report_error(exc: Exception, step: ChatStep):
         error_msg = error_msg[:50] + "..."
     step.failed_title = error_msg
     step.status = "failed"
+
+
+async def gather_table_sources(available_sources: list[Source]) -> tuple[dict[str, Source], str]:
+    """
+    Get a dictionary of tables to their respective sources
+    and a markdown string of the tables and their schemas.
+    """
+    tables_to_source = {}
+    tables_schema_str = "\nHere are the tables\n"
+    for source in available_sources:
+        for table in source.get_tables():
+            tables_to_source[table] = source
+            if isinstance(source, DuckDBSource) and source.ephemeral:
+                schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
+                tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
+            else:
+                tables_schema_str += f"### {table}\n"
+    return tables_to_source, tables_schema_str
