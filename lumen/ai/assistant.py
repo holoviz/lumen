@@ -129,9 +129,6 @@ class Assistant(Viewer):
                 agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
                 agent.interface = interface
                 self._analyses.extend(agent.analyses)
-                instantiated.append(agent)
-                break
-
             if agent.llm is None:
                 agent.llm = llm
             # must use the same interface or else nothing shows
