@@ -88,7 +88,7 @@ class Agent(Viewer):
             )
 
         if "interface" not in params:
-            params["interface"] = ChatInterface(callback=self._chat_invoke)
+            params["interface"] = ChatInterface(callback=self._interface_callback)
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
@@ -105,7 +105,7 @@ class Agent(Viewer):
         """
         return True
 
-    async def _chat_respond(self, contents: list | str, user: str, instance: ChatInterface):
+    async def _interface_callback(self, contents: list | str, user: str, instance: ChatInterface):
         await self.respond(contents)
         self._retries_left = 1
 
