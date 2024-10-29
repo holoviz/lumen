@@ -10,8 +10,6 @@ from bokeh.command.util import die  # type: ignore
 from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
-from ..config import config
-
 SOURCE_CODE = """
 import lumen.ai as lmai
 
@@ -39,6 +37,7 @@ def build_single_handler_applications(paths: list[str], argvs: dict[str, list[st
     return {'/lumen_ai': Application(handler)}
 
 bokeh.command.subcommands.serve.build_single_handler_applications = build_single_handler_applications
+
 
 def main(args=None):
     parser = argparse.ArgumentParser(

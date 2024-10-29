@@ -153,7 +153,7 @@ class DuckDBSource(BaseSQLSource):
         -------
         source: DuckDBSource
         """
-        source = DuckDBSource(uri=':memory:', ephemeral=True, mirrors=tables, **kwargs)
+        source = DuckDBSource(uri=':memory:', ephemeral=True, **kwargs)
         table_defs = {}
         for name, df in tables.items():
             source._connection.from_df(df).to_view(name)
