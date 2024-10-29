@@ -113,7 +113,7 @@ class Agent(Viewer):
         return self.interface
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = ""
+        self, messages: str, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
         if self.embeddings:
@@ -178,10 +178,10 @@ class Agent(Viewer):
         self.interface.pop(-1)
         return tables
 
-    async def requirements(self, messages: list | str):
+    async def requirements(self, messages: str):
         return self.requires
 
-    async def answer(self, messages: list | str):
+    async def answer(self, messages: str):
         system_prompt = await self._system_prompt_with_context(messages)
 
         message = None
@@ -192,7 +192,7 @@ class Agent(Viewer):
                 output, replace=True, message=message, user=self.user, max_width=self._max_width
             )
 
-    async def invoke(self, messages: list | str):
+    async def invoke(self, messages: str):
         await self.answer(messages)
 
 
@@ -212,13 +212,13 @@ class SourceAgent(Agent):
 
     _extensions = ('filedropper',)
 
-    async def answer(self, messages: list | str):
+    async def answer(self, messages: list[str]):
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
         self.interface.send(source_controls, respond=False, user="SourceAgent")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
 
-    async def invoke(self, messages: list[str] | str):
+    async def invoke(self, messages: list[str]):
         await self.answer(messages)
 
 
@@ -245,7 +245,7 @@ class ChatAgent(Agent):
     requires = param.List(default=["current_source"], readonly=True)
 
     @retry_llm_output()
-    async def requirements(self, messages: list | str, errors=None):
+    async def requirements(self, messages: str, errors=None):
         if 'current_data' in memory:
             return self.requires
 
@@ -270,7 +270,7 @@ class ChatAgent(Agent):
         return self.requires
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = ""
+        self, messages: str, context: str = ""
     ) -> str:
         source = memory.get("current_source")
         if not source:
@@ -321,7 +321,7 @@ class ChatDetailsAgent(ChatAgent):
     )
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = ""
+        self, messages: str, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
         topic = (await self.llm.invoke(
@@ -384,7 +384,7 @@ class TableListAgent(LumenBaseAgent):
         table = self._df.iloc[event.row, 0]
         self.interface.send(f"Show the table: {table!r}")
 
-    async def answer(self, messages: list | str):
+    async def answer(self, messages: str):
         tables = []
         for source in memory['available_sources']:
             tables += source.get_tables()
@@ -407,7 +407,7 @@ class TableListAgent(LumenBaseAgent):
         self.interface.stream(table_list, user="Lumen")
         return tables
 
-    async def invoke(self, messages: list | str):
+    async def invoke(self, messages: str):
         await self.answer(messages)
 
 
@@ -592,7 +592,7 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
         return join_required
 
-    async def find_join_tables(self, messages: list | str):
+    async def find_join_tables(self, messages: list):
         multi_source = len(memory['available_sources']) > 1
         if multi_source:
             available_tables = [
@@ -640,7 +640,7 @@ class SQLAgent(LumenBaseAgent):
             tables_to_source[a_table] = a_source
         return tables_to_source
 
-    async def answer(self, messages: list | str):
+    async def answer(self, messages: str):
         """
         Steps:
         1. Retrieve the current source and table from memory.
@@ -702,7 +702,7 @@ class SQLAgent(LumenBaseAgent):
         print(sql_query)
         return sql_query
 
-    async def invoke(self, messages: list | str):
+    async def invoke(self, messages: str):
         sql_query = await self.answer(messages)
         self._render_sql(sql_query)
 
@@ -716,7 +716,7 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    async def answer(self, messages: list | str) -> hvPlotUIView:
+    async def answer(self, messages: str) -> hvPlotUIView:
         pipeline = memory["current_pipeline"]
 
         # Write prompts
@@ -746,7 +746,7 @@ class BaseViewAgent(LumenBaseAgent):
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)
 
-    async def invoke(self, messages: list | str):
+    async def invoke(self, messages: str):
         view = await self.answer(messages)
         self._render_lumen(view)
 
@@ -861,7 +861,7 @@ class AnalysisAgent(LumenBaseAgent):
     _output_type = AnalysisOutput
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = "", analyses: list[Analysis] = []
+        self, messages: str, context: str = "", analyses: list[Analysis] = []
     ) -> str:
         system_prompt = self.system_prompt
         for name, analysis in analyses.items():
@@ -880,7 +880,7 @@ class AnalysisAgent(LumenBaseAgent):
             system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    async def answer(self, messages: list | str, agents: list[Agent] | None = None):
+    async def answer(self, messages: str, agents: list[Agent] | None = None):
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
@@ -888,7 +888,7 @@ class AnalysisAgent(LumenBaseAgent):
             return None
 
         # Short cut analysis selection if there's an exact match
-        if isinstance(messages, list) and messages:
+        if len(messages):
             analysis = messages[0].get('content').replace('Apply ', '')
             if analysis in analyses:
                 analyses = {analysis: analyses[analysis]}
@@ -945,7 +945,7 @@ class AnalysisAgent(LumenBaseAgent):
                 view = None
         return view
 
-    async def invoke(self, messages: list | str, agents=None):
+    async def invoke(self, messages: str, agents=None):
         view = await self.answer(messages, agents=agents)
         analysis = memory["current_analysis"]
         if view is None and analysis.autorun:

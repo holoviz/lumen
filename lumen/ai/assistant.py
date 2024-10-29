@@ -339,7 +339,7 @@ class Assistant(Viewer):
         )
         return out
 
-    async def _choose_agent(self, messages: list | str, agents: list[Agent] | None = None, primary: bool = False, unmet_dependencies: tuple[str] | None = None):
+    async def _choose_agent(self, messages: str, agents: list[Agent] | None = None, primary: bool = False, unmet_dependencies: tuple[str] | None = None):
         if agents is None:
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies()]
@@ -390,7 +390,7 @@ class Assistant(Viewer):
                 step.success_title = f"Solved a dependency with {output.agent}"
         return agent_chain[::-1]+[(agent, (), None)]
 
-    async def _get_agent(self, messages: list | str):
+    async def _get_agent(self, messages: str):
         if len(self.agents) == 1:
             return self.agents[0]
 
@@ -448,7 +448,7 @@ class Assistant(Viewer):
             obj = obj.value
         return str(obj)
 
-    async def invoke(self, messages: list | str) -> str:
+    async def invoke(self, messages: str) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3

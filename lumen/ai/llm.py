@@ -58,7 +58,7 @@ class Llm(param.Parameterized):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: str,
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
@@ -66,8 +66,6 @@ class Llm(param.Parameterized):
         **input_kwargs,
     ) -> BaseModel:
         system = system.strip().replace("\n\n", "\n")
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
 
         kwargs = dict(self._client_kwargs)
@@ -91,7 +89,7 @@ class Llm(param.Parameterized):
 
     async def stream(
         self,
-        messages: list | str,
+        messages: str,
         system: str = "",
         response_model: BaseModel | None = None,
         field: str | None = None,
@@ -357,16 +355,13 @@ class MistralAI(Llm):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: str,
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
         model_key: str = "default",
         **input_kwargs,
     ) -> BaseModel:
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-
         if messages[0]["role"] == "assistant":
             # Mistral cannot start with assistant
             messages = messages[1:]
@@ -470,16 +465,13 @@ class AnthropicAI(Llm):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: str,
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
         model_key: str = "default",
         **input_kwargs,
     ) -> BaseModel:
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-
         # check that first message is user message; if not, insert empty message
         if messages[0]["role"] != "user":
             messages.insert(0, {"role": "user", "content": "--"})
