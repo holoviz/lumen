@@ -4,6 +4,7 @@ import param
 
 from panel.config import config, panel_extension
 from panel.io.state import state
+from panel.io.resources import CSS_URLS
 from panel.layout import Row
 from panel.viewable import Viewer
 
@@ -54,6 +55,9 @@ class LumenAI(Viewer):
 
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
+
+    show_controls = param.Boolean(default=True, doc="""
+        Whether to show assistant controls in the sidebar.""")
 
     template = param.Selector(
         default=config.param.template.names['fast'],
@@ -121,6 +125,7 @@ class LumenAI(Viewer):
         return self._create_view(server=True).show(**kwargs)
 
     def _create_view(self, server: bool | None = None):
+        config.css_files.append(CSS_URLS['font-awesome'])
         if (state.curdoc and state.curdoc.session_context) or server is True:
             panel_extension(
                 *{ext for agent in self._assistant.agents for ext in agent._extensions}, template=self.template
@@ -129,7 +134,8 @@ class LumenAI(Viewer):
             template = state.template
             template.title = self.title
             template.main.append(self._assistant)
-            template.sidebar.append(self._assistant.controls())
+            if self.show_controls:
+                template.sidebar.append(self._assistant.controls())
             return template
         return super()._create_view()
 
@@ -140,6 +146,8 @@ class LumenAI(Viewer):
         return self._create_view().servable(title, **kwargs)
 
     def __panel__(self):
+        if not self.show_controls:
+            return self._assistant
         return Row(
             Row(self._assistant.controls(), max_width=300),
             self._assistant
