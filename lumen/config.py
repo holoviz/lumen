@@ -58,7 +58,9 @@ class SessionCache:
         return key in self._curcontext or key in self._global_context
 
     def __getitem__(self, key):
-        return self._curcontext[key]
+        if key in self._curcontext:
+            return self._curcontext[key]
+        return self._global_context[key]
 
     def __setitem__(self, key, value):
         self._curcontext[key] = value

@@ -118,6 +118,9 @@ class Assistant(Viewer):
         instantiated = []
         self._analyses = []
         for agent in agents or self.agents:
+            if not isinstance(agent, Agent):
+                kwargs = {"llm": llm} if agent.llm is None else {}
+                agent = agent(interface=interface, **kwargs)
             if isinstance(agent, AnalysisAgent):
                 analyses = "\n".join(
                     f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
@@ -129,9 +132,6 @@ class Assistant(Viewer):
                 instantiated.append(agent)
                 break
 
-            if not isinstance(agent, Agent):
-                kwargs = {"llm": llm} if agent.llm is None else {}
-                agent = agent(interface=interface, **kwargs)
             if agent.llm is None:
                 agent.llm = llm
             # must use the same interface or else nothing shows
