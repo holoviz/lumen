@@ -29,6 +29,10 @@ class Llm(param.Parameterized):
     # Allows defining a dictionary of default models.
     model_kwargs = param.Dict(default={})
 
+    # Whether the LLM supports streaming of any kind
+    _supports_stream = True
+
+    # Whether the LLM supports streaming of Pydantic model output
     _supports_model_stream = True
 
     __abstract = True
@@ -94,7 +98,8 @@ class Llm(param.Parameterized):
         model_key: str = "default",
         **kwargs,
     ):
-        if response_model and not self._supports_model_stream:
+        if ((response_model and not self._supports_model_stream) or
+            not self._supports_stream):
             yield await self.invoke(
                 messages,
                 system=system,
