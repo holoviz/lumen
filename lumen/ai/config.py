@@ -37,4 +37,4 @@ UNRECOVERABLE_ERRORS = (
     RecursionError,
 )
 
-pn.chat.ChatStep.min_width = 350
+pn.chat.ChatStep.min_width = 450

@@ -43,6 +43,16 @@ from .utils import (
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
+class AgentStepResults(param.Parameterized):
+    """
+    The results of an Agent's step_through method.
+    """
+
+    output = param.Parameter()
+
+    is_stream = param.Boolean(default=False)
+
+
 class Agent(Viewer):
     """
     An Agent in Panel is responsible for handling a specific type of
@@ -178,23 +188,25 @@ class Agent(Viewer):
         self.interface.pop(-1)
         return tables
 
-    async def requirements(self, messages: list):
+    async def requirements(self, messages: list) -> list[str]:
         return self.requires
 
-    async def step_through(self, messages: list):
+    async def step_through(self, messages: list, title: str = "") -> AgentStepResults:
         system_prompt = await self._system_prompt_with_context(messages)
         response = self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model, field="output"
         )
-        return response
+        return AgentStepResults(output=response, is_stream=True)
 
-    async def respond(self, messages: list):
-        response = await self.step_through(messages)
+    async def respond(self, messages: list, title: str = "") -> None:
+        results = await self.step_through(messages, title=title)
+        if not results.is_stream:
+            return self.interface.stream(results.output)
 
         message = None
-        async for chunk in response:
+        async for output_chunk in results.output:
             message = self.interface.stream(
-                chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
             )
 
 
@@ -214,14 +226,14 @@ class SourceAgent(Agent):
 
     _extensions = ('filedropper',)
 
-    async def step_through(self, messages: list):
+    async def step_through(self, messages: list, title: str = ""):
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
-        return source_controls
+        return AgentStepResults(output=source_controls)
 
-    async def respond(self, messages: list):
-        response = await self.step_through(messages)
-        self.interface.send(response, respond=False, user="SourceAgent")
-        while not response._add_button.clicks > 0:
+
+    async def respond(self, messages: list, title: str = "") -> None:
+        results = await self.step_through(messages, title=title)
+        while not results._add_button.clicks > 0:
             await asyncio.sleep(0.05)
 
 
@@ -360,9 +372,9 @@ class LumenBaseAgent(Agent):
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
-    async def respond(self, messages: list):
-        view = await self.step_through(messages)
-        self._render_lumen(view)
+    async def respond(self, messages: list, title: str = "") -> None:
+        results = await self.step_through(messages, title=title)
+        self._render_lumen(results.output)
 
 class TableListAgent(LumenBaseAgent):
     """
@@ -390,7 +402,7 @@ class TableListAgent(LumenBaseAgent):
         table = self._df.iloc[event.row, 0]
         self.interface.send(f"Show the table: {table!r}")
 
-    async def step_through(self, messages: list):
+    async def step_through(self, messages: list, title: str = "") -> AgentStepResults:
         tables = []
         for source in memory['available_sources']:
             tables += source.get_tables()
@@ -410,11 +422,11 @@ class TableListAgent(LumenBaseAgent):
             header_filters=True
         )
         table_list.on_click(self._use_table)
-        return table_list
+        return AgentStepResults(output=table_list)
 
-    async def respond(self, messages: list):
-        response = await self.step_through(messages)
-        self.interface.stream(response, user="Lumen")
+    async def respond(self, messages: list, title: str = "") -> None:
+        results = await self.step_through(messages, title=title)
+        self.interface.stream(results.output, user="Lumen")
 
 
 class SQLAgent(LumenBaseAgent):
@@ -485,7 +497,7 @@ class SQLAgent(LumenBaseAgent):
         return table, source
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, tables_to_source, errors=None):
+    async def _create_valid_sql(self, messages, system, tables_to_source, title, errors=None):
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -501,7 +513,7 @@ class SQLAgent(LumenBaseAgent):
                 }
             ]
 
-        with self.interface.add_step(title="Creating SQL query...", success_title="SQL Query") as step:
+        with self.interface.add_step(title=title or "SQL query") as step:
             response = self.llm.stream(messages, system=system, response_model=Sql)
             sql_query = None
             async for output in response:
@@ -576,7 +588,7 @@ class SQLAgent(LumenBaseAgent):
         memory["current_sql"] = sql_query
         return sql_query
 
-    async def check_join_required(self, messages, schema, table):
+    async def _check_join_required(self, messages, schema, table):
         with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
             join_prompt = render_template(
                 "join_required.jinja2",
@@ -642,13 +654,13 @@ class SQLAgent(LumenBaseAgent):
             tables_to_source[a_table] = a_source
         return tables_to_source
 
-    async def step_through(self, messages: list):
+    async def step_through(self, messages: list, title: str = "") -> AgentStepResults:
         """
         Steps:
         1. Retrieve the current source and table from memory.
         2. If the source lacks a `get_sql_expr` method, return `None`.
         3. Fetch the schema for the current table using `get_schema` without min/max values.
-        4. Determine if a join is required by calling `check_join_required`.
+        4. Determine if a join is required by calling `_check_join_required`.
         5. If required, find additional tables via `find_join_tables`; otherwise, use the current source and table.
         6. For each source and table, get the schema and SQL expression, storing them in `table_schemas`.
         7. Render the SQL prompt using the table schemas, dialect, join status, and table.
@@ -661,7 +673,7 @@ class SQLAgent(LumenBaseAgent):
             return None
 
         schema = await get_schema(source, table, include_min_max=False)
-        join_required = await self.check_join_required(messages, schema, table)
+        join_required = await self._check_join_required(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
         else:
@@ -700,13 +712,13 @@ class SQLAgent(LumenBaseAgent):
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
-        sql_query = await self._create_valid_sql(messages, system, tables_to_source)
-        return sql_query
+        sql_query = await self._create_valid_sql(messages, system, tables_to_source, title)
+        return AgentStepResults(output=sql_query)
 
-    async def respond(self, messages: list):
-        output = await self.step_through(messages)
+    async def respond(self, messages: list, title: str = "") -> None:
+        results = await self.step_through(messages, title=title)
         pipeline = memory['current_pipeline']
-        self._render_lumen(pipeline, spec=output)
+        self._render_lumen(pipeline, spec=results.output)
 
 
 class BaseViewAgent(LumenBaseAgent):
@@ -718,7 +730,7 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    async def step_through(self, messages: list) -> hvPlotUIView:
+    async def step_through(self, messages: list, title: str = "") -> AgentStepResults:
         pipeline = memory["current_pipeline"]
 
         # Write prompts
@@ -742,11 +754,12 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
         if chain_of_thought:
-            with self.interface.add_step(title="Generating view...") as step:
+            with self.interface.add_step(title=title or "Generating view...") as step:
                 step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
-        return self.view_type(pipeline=pipeline, **spec)
+        view = self.view_type(pipeline=pipeline, **spec)
+        return AgentStepResults(output=view)
 
 
 class hvPlotAgent(BaseViewAgent):
@@ -878,7 +891,7 @@ class AnalysisAgent(LumenBaseAgent):
             system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    async def step_through(self, messages: list, agents: list[Agent] | None = None):
+    async def step_through(self, messages: list, title: str = "", agents: list[Agent] | None = None) -> AgentStepResults:
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
@@ -910,7 +923,7 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title="Creating view...", user="Assistant") as step:
+        with self.interface.add_step(title=title or "Creating view...", user="Assistant") as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
 
@@ -941,10 +954,11 @@ class AnalysisAgent(LumenBaseAgent):
             else:
                 step.success_title = "Configure the analysis"
                 view = None
-        return view
+        return AgentStepResults(output=view)
 
-    async def respond(self, messages: list, agents=None):
-        view = await self.step_through(messages, agents=agents)
+    async def respond(self, messages: list, title: str = "", agents: list | None = None):
+        results = await self.step_through(messages, agents=agents, title=title)
+        view = results.output
         analysis = memory["current_analysis"]
         if view is None and analysis.autorun:
             self.interface.stream('Failed to find an analysis that applies to this data')

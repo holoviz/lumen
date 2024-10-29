@@ -102,11 +102,13 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
 
 
+
 def make_plan_models(agent_names: list[str], tables: list[str]):
     step = create_model(
         "Step",
         expert=(Literal[agent_names], FieldInfo(description="The name of the expert to assign a task to.")),
-        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task."))
+        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task.")),
+        title=(str, FieldInfo(description="Short title of the task to be performed; up to six words.")),
     )
     extras = {}
     if tables:
