@@ -11,7 +11,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from .agents import (
-    AnalysisAgent, ChatAgent, SourceAgent, SQLAgent,
+    AnalysisAgent, ChatAgent, SourceAgent, SQLAgent, hvPlotAgent,
 )
 from .assistant import Assistant, PlanningAssistant
 from .llm import Llm, OpenAI
@@ -49,7 +49,7 @@ class LumenAI(Viewer):
         List of additional Agents to add beyond the default_agents."""
     )
 
-    default_agents = param.List(default=[ChatAgent, SourceAgent, SQLAgent], doc="""
+    default_agents = param.List(default=[ChatAgent, SourceAgent, SQLAgent, hvPlotAgent], doc="""
         List of default agents which will always be added.""")
 
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
