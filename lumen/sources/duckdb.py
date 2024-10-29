@@ -82,7 +82,9 @@ class DuckDBSource(BaseSQLSource):
             for init in self.initializers:
                 self._connection.execute(init)
         for table, mirror in self.mirrors.items():
-            if isinstance(mirror, tuple):
+            if isinstance(mirror, pd.DataFrame):
+                df = mirror
+            elif isinstance(mirror, tuple):
                 source, src_table = mirror
                 df = source.get(src_table)
             else:

@@ -68,6 +68,8 @@ class Agent(Viewer):
 
     provides = param.List(default=[], readonly=True)
 
+    _extensions = ()
+
     _max_width = 1200
 
     __abstract = True
@@ -207,6 +209,8 @@ class SourceAgent(Agent):
     provides = param.List(default=["current_source"], readonly=True)
 
     on_init = param.Boolean(default=True)
+
+    _extensions = ('filedropper',)
 
     async def answer(self, messages: list | str):
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
@@ -365,6 +369,8 @@ class TableListAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
+    _extensions = ('tabulator',)
+
     @classmethod
     async def applies(cls) -> bool:
         source = memory.get("current_source")
@@ -424,6 +430,8 @@ class SQLAgent(LumenBaseAgent):
     requires = param.List(default=["current_source"], readonly=True)
 
     provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+
+    _extensions = ('codeeditor', 'tabulator',)
 
     async def _select_relevant_table(self, messages: list | str) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
@@ -690,6 +698,7 @@ class SQLAgent(LumenBaseAgent):
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system, tables_to_source)
+        print(sql_query)
         return sql_query
 
     async def invoke(self, messages: list | str):
@@ -812,6 +821,8 @@ class VegaLiteAgent(BaseViewAgent):
     )
 
     view_type = VegaLiteView
+
+    _extensions = ('vega',)
 
     @classmethod
     def _get_model(cls, schema):
