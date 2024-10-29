@@ -701,13 +701,12 @@ class SQLAgent(LumenBaseAgent):
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system, tables_to_source)
-        pipeline = memory['current_pipeline']
-        output = SQLOutput(component=pipeline, spec=sql_query.rstrip(';'))
-        return output
+        return sql_query
 
     async def respond(self, messages: list):
         output = await self.step_through(messages)
-        self._render_lumen(output)
+        pipeline = memory['current_pipeline']
+        self._render_lumen(pipeline, spec=output)
 
 
 class BaseViewAgent(LumenBaseAgent):
