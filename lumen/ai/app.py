@@ -3,8 +3,8 @@ from __future__ import annotations
 import param
 
 from panel.config import config, panel_extension
-from panel.io.state import state
 from panel.io.resources import CSS_URLS
+from panel.io.state import state
 from panel.layout import Row
 from panel.viewable import Viewer
 
