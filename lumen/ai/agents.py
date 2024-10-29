@@ -105,15 +105,15 @@ class Agent(Viewer):
         """
         return True
 
-    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        await self.invoke(contents)
+    async def _chat_respond(self, contents: list | str, user: str, instance: ChatInterface):
+        await self.respond(contents)
         self._retries_left = 1
 
     def __panel__(self):
         return self.interface
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = ""
+        self, messages: list, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
         if self.embeddings:
@@ -178,22 +178,24 @@ class Agent(Viewer):
         self.interface.pop(-1)
         return tables
 
-    async def requirements(self, messages: list | str):
+    async def requirements(self, messages: list):
         return self.requires
 
-    async def answer(self, messages: list | str):
+    async def step_through(self, messages: list):
         system_prompt = await self._system_prompt_with_context(messages)
+        response = self.llm.stream(
+            messages, system=system_prompt, response_model=self.response_model, field="output"
+        )
+        return response
+
+    async def respond(self, messages: list):
+        response = await self.step_through(messages)
 
         message = None
-        async for output in self.llm.stream(
-            messages, system=system_prompt, response_model=self.response_model, field="output"
-        ):
+        async for chunk in response:
             message = self.interface.stream(
-                output, replace=True, message=message, user=self.user, max_width=self._max_width
+                chunk, replace=True, message=message, user=self.user, max_width=self._max_width
             )
-
-    async def invoke(self, messages: list | str):
-        await self.answer(messages)
 
 
 class SourceAgent(Agent):
@@ -212,14 +214,15 @@ class SourceAgent(Agent):
 
     _extensions = ('filedropper',)
 
-    async def answer(self, messages: list | str):
+    async def step_through(self, messages: list):
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
-        self.interface.send(source_controls, respond=False, user="SourceAgent")
-        while not source_controls._add_button.clicks > 0:
-            await asyncio.sleep(0.05)
+        return source_controls
 
-    async def invoke(self, messages: list[str] | str):
-        await self.answer(messages)
+    async def respond(self, messages: list):
+        response = await self.step_through(messages)
+        self.interface.send(response, respond=False, user="SourceAgent")
+        while not response._add_button.clicks > 0:
+            await asyncio.sleep(0.05)
 
 
 class ChatAgent(Agent):
@@ -245,7 +248,7 @@ class ChatAgent(Agent):
     requires = param.List(default=["current_source"], readonly=True)
 
     @retry_llm_output()
-    async def requirements(self, messages: list | str, errors=None):
+    async def requirements(self, messages: list, errors=None):
         if 'current_data' in memory:
             return self.requires
 
@@ -270,7 +273,7 @@ class ChatAgent(Agent):
         return self.requires
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = ""
+        self, messages: list, context: str = ""
     ) -> str:
         source = memory.get("current_source")
         if not source:
@@ -321,7 +324,7 @@ class ChatDetailsAgent(ChatAgent):
     )
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = ""
+        self, messages: list, context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
         topic = (await self.llm.invoke(
@@ -357,6 +360,9 @@ class LumenBaseAgent(Agent):
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
+    async def respond(self, messages: list):
+        view = await self.step_through(messages)
+        self._render_lumen(view)
 
 class TableListAgent(LumenBaseAgent):
     """
@@ -384,7 +390,7 @@ class TableListAgent(LumenBaseAgent):
         table = self._df.iloc[event.row, 0]
         self.interface.send(f"Show the table: {table!r}")
 
-    async def answer(self, messages: list | str):
+    async def step_through(self, messages: list):
         tables = []
         for source in memory['available_sources']:
             tables += source.get_tables()
@@ -404,11 +410,11 @@ class TableListAgent(LumenBaseAgent):
             header_filters=True
         )
         table_list.on_click(self._use_table)
-        self.interface.stream(table_list, user="Lumen")
-        return tables
+        return table_list
 
-    async def invoke(self, messages: list | str):
-        await self.answer(messages)
+    async def respond(self, messages: list):
+        response = await self.step_through(messages)
+        self.interface.stream(response, user="Lumen")
 
 
 class SQLAgent(LumenBaseAgent):
@@ -433,6 +439,8 @@ class SQLAgent(LumenBaseAgent):
     provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
+
+    _output_type = SQLOutput
 
     async def _select_relevant_table(self, messages: list | str) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
@@ -475,12 +483,6 @@ class SQLAgent(LumenBaseAgent):
             source = sources[0] if sources else memory["current_source"]
 
         return table, source
-
-    def _render_sql(self, query):
-        pipeline = memory['current_pipeline']
-        out = SQLOutput(component=pipeline, spec=query.rstrip(';'))
-        self.interface.stream(out, user="SQL", replace=True, max_width=self._max_width)
-        return out
 
     @retry_llm_output()
     async def _create_valid_sql(self, messages, system, tables_to_source, errors=None):
@@ -592,7 +594,7 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if join_required else 'No join required'
         return join_required
 
-    async def find_join_tables(self, messages: list | str):
+    async def find_join_tables(self, messages: list):
         multi_source = len(memory['available_sources']) > 1
         if multi_source:
             available_tables = [
@@ -640,7 +642,7 @@ class SQLAgent(LumenBaseAgent):
             tables_to_source[a_table] = a_source
         return tables_to_source
 
-    async def answer(self, messages: list | str):
+    async def step_through(self, messages: list):
         """
         Steps:
         1. Retrieve the current source and table from memory.
@@ -699,12 +701,13 @@ class SQLAgent(LumenBaseAgent):
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system, tables_to_source)
-        print(sql_query)
-        return sql_query
+        pipeline = memory['current_pipeline']
+        output = SQLOutput(component=pipeline, spec=sql_query.rstrip(';'))
+        return output
 
-    async def invoke(self, messages: list | str):
-        sql_query = await self.answer(messages)
-        self._render_sql(sql_query)
+    async def respond(self, messages: list):
+        output = await self.step_through(messages)
+        self._render_lumen(output)
 
 
 class BaseViewAgent(LumenBaseAgent):
@@ -716,7 +719,7 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    async def answer(self, messages: list | str) -> hvPlotUIView:
+    async def step_through(self, messages: list) -> hvPlotUIView:
         pipeline = memory["current_pipeline"]
 
         # Write prompts
@@ -745,10 +748,6 @@ class BaseViewAgent(LumenBaseAgent):
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         return self.view_type(pipeline=pipeline, **spec)
-
-    async def invoke(self, messages: list | str):
-        view = await self.answer(messages)
-        self._render_lumen(view)
 
 
 class hvPlotAgent(BaseViewAgent):
@@ -861,7 +860,7 @@ class AnalysisAgent(LumenBaseAgent):
     _output_type = AnalysisOutput
 
     async def _system_prompt_with_context(
-        self, messages: list | str, context: str = "", analyses: list[Analysis] = []
+        self, messages: list, context: str = "", analyses: list[Analysis] = []
     ) -> str:
         system_prompt = self.system_prompt
         for name, analysis in analyses.items():
@@ -880,7 +879,7 @@ class AnalysisAgent(LumenBaseAgent):
             system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    async def answer(self, messages: list | str, agents: list[Agent] | None = None):
+    async def step_through(self, messages: list, agents: list[Agent] | None = None):
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
@@ -888,7 +887,7 @@ class AnalysisAgent(LumenBaseAgent):
             return None
 
         # Short cut analysis selection if there's an exact match
-        if isinstance(messages, list) and messages:
+        if len(messages):
             analysis = messages[0].get('content').replace('Apply ', '')
             if analysis in analyses:
                 analyses = {analysis: analyses[analysis]}
@@ -945,8 +944,8 @@ class AnalysisAgent(LumenBaseAgent):
                 view = None
         return view
 
-    async def invoke(self, messages: list | str, agents=None):
-        view = await self.answer(messages, agents=agents)
+    async def respond(self, messages: list, agents=None):
+        view = await self.step_through(messages, agents=agents)
         analysis = memory["current_analysis"]
         if view is None and analysis.autorun:
             self.interface.stream('Failed to find an analysis that applies to this data')

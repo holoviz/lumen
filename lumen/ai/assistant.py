@@ -199,7 +199,7 @@ class Assistant(Viewer):
                     else:
                         print("No analysis agent found.")
                         return
-                    await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
+                    await agent.respond([{'role': 'user', 'content': contents}], agents=self.agents)
                     await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
@@ -419,7 +419,7 @@ class Assistant(Viewer):
                         custom_messages.append({"role": "user", "content": custom_message})
                 if instruction:
                     custom_messages.append({"role": "user", "content": instruction})
-                await subagent.answer(custom_messages)
+                await subagent.step_through(custom_messages)
                 step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
                 step.success_title = f"{agent_name} agent successfully responded"
         return selected
@@ -475,7 +475,7 @@ class Assistant(Viewer):
         kwargs = {}
         if isinstance(agent, AnalysisAgent):
             kwargs["agents"] = self.agents
-        await agent.invoke(messages[-context_length:], **kwargs)
+        await agent.respond(messages[-context_length:], **kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             await self._add_analysis_suggestions()
