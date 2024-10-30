@@ -871,7 +871,7 @@ class AnalysisAgent(LumenBaseAgent):
             system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, agents: list[Agent] | None = None):
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, agents: list[Agent] | None = None) -> None:
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
