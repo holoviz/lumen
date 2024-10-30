@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import param
 import yaml
 
-from panel import bind
+from panel import Card, bind
 from panel.chat import ChatInterface, ChatStep
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
@@ -447,8 +447,9 @@ class Assistant(Viewer):
                     custom_messages.append({"role": "user", "content": instruction})
 
                 respond_kwargs = {}
+                # attach the new steps to the existing steps--used when there is intermediate Lumen output
                 last_steps_message = self.interface.objects[-2]
-                if last_steps_message.user == "Assistant":
+                if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
                     respond_kwargs["steps_layout"] = last_steps_message.object
 
                 await subagent.respond(custom_messages, title=title, render_output=render_output, **respond_kwargs)
@@ -513,7 +514,8 @@ class Assistant(Viewer):
 
         last_steps_message = self.interface.objects[-2]
         respond_kwargs = {"title": title, "render_output": True}
-        if last_steps_message.user == "Assistant":
+        # attach the new steps to the existing steps--used when there is intermediate Lumen output
+        if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
             respond_kwargs["steps_layout"] = last_steps_message.object
         if isinstance(agent, AnalysisAgent):
             respond_kwargs["agents"] = self.agents
