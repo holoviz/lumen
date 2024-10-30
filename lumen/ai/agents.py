@@ -68,6 +68,8 @@ class Agent(Viewer):
 
     provides = param.List(default=[], readonly=True)
 
+    _steps_layout = param.ClassSelector(default=None, class_=pn.Column)
+
     _extensions = ()
 
     _max_width = 1200
@@ -181,7 +183,9 @@ class Agent(Viewer):
     async def requirements(self, messages: list) -> list[str]:
         return self.requires
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True) -> None:
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+        self._steps_layout = steps_layout
+
         system_prompt = await self._system_prompt_with_context(messages)
         response = self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model, field="output"
@@ -213,7 +217,8 @@ class SourceAgent(Agent):
 
     _extensions = ('filedropper',)
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True) -> None:
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+        self._steps_layout = steps_layout
         if not render_output:
             return
 
@@ -251,7 +256,7 @@ class ChatAgent(Agent):
 
         available_sources = memory["available_sources"]
         _, tables_schema_str = await gather_table_sources(available_sources)
-        with self.interface.add_step(title="Checking if data is required") as step:
+        with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,
                 system=(
@@ -387,7 +392,8 @@ class TableListAgent(LumenBaseAgent):
         table = self._df.iloc[event.row, 0]
         self.interface.send(f"Show the table: {table!r}")
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True) -> None:
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+        self._steps_layout = steps_layout
         tables = []
         for source in memory['available_sources']:
             tables += source.get_tables()
@@ -450,7 +456,7 @@ class SQLAgent(LumenBaseAgent):
         elif len(tables) == 1:
             table = tables[0]
         else:
-            with self.interface.add_step(title="Choosing the most relevant table...") as step:
+            with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
                 closest_tables = memory.pop("closest_tables", [])
                 if closest_tables:
                     tables = closest_tables
@@ -497,7 +503,7 @@ class SQLAgent(LumenBaseAgent):
                 }
             ]
 
-        with self.interface.add_step(title=title or "SQL query") as step:
+        with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(messages, system=system, response_model=Sql)
             sql_query = None
             async for output in response:
@@ -573,7 +579,7 @@ class SQLAgent(LumenBaseAgent):
         return sql_query
 
     async def _check_join_required(self, messages, schema, table):
-        with self.interface.add_step(title="Checking if join is required", user="Assistant") as step:
+        with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
             join_prompt = render_template(
                 "join_required.jinja2",
                 schema=yaml.dump(schema),
@@ -604,7 +610,7 @@ class SQLAgent(LumenBaseAgent):
             "find_joins.jinja2",
             available_tables=available_tables
         )
-        with self.interface.add_step(title="Determining tables required for join") as step:
+        with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
                 system=find_joins_prompt,
@@ -638,7 +644,7 @@ class SQLAgent(LumenBaseAgent):
             tables_to_source[a_table] = a_source
         return tables_to_source
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True) -> None:
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
         """
         Steps:
         1. Retrieve the current source and table from memory.
@@ -651,6 +657,7 @@ class SQLAgent(LumenBaseAgent):
         8. If a join is required, remove source/table prefixes from the last message.
         9. Construct the SQL query with `_create_valid_sql`.
         """
+        self._steps_layout = steps_layout
         table, source = await self._select_relevant_table(messages)
 
         if not hasattr(source, "get_sql_expr"):
@@ -710,7 +717,8 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True) -> None:
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+        self._steps_layout = steps_layout
         pipeline = memory["current_pipeline"]
 
         # Write prompts
@@ -734,7 +742,7 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
         if chain_of_thought:
-            with self.interface.add_step(title=title or "Generating view...") as step:
+            with self.interface.add_step(title=title or "Generating view...", steps_layout=self._steps_layout) as step:
                 step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
@@ -871,7 +879,8 @@ class AnalysisAgent(LumenBaseAgent):
             system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, agents: list[Agent] | None = None) -> None:
+    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None, agents: list[Agent] | None = None) -> None:
+        self._steps_layout = steps_layout
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
@@ -885,7 +894,7 @@ class AnalysisAgent(LumenBaseAgent):
                 analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...", user="Assistant") as step:
+            with self.interface.add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -903,7 +912,7 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title=title or "Creating view...", user="Assistant") as step:
+        with self.interface.add_step(title=title or "Creating view...", steps_layout=self._steps_layout) as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
 

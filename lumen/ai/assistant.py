@@ -48,6 +48,8 @@ class AgentChainLink(param.Parameterized):
 
     title = param.String(default="")
 
+    render_output = param.Boolean(default=False)
+
 
 class Assistant(Viewer):
     """
@@ -401,9 +403,15 @@ class Assistant(Viewer):
                 if output.agent is None:
                     continue
                 subagent = agents[output.agent]
-                agent_chain.append(AgentChainLink(agent=subagent, provides=unmet_dependencies, instruction=output.chain_of_thought, title=""))
+                agent_chain.append(
+                    AgentChainLink(
+                        agent=subagent,
+                        provides=unmet_dependencies,
+                        instruction=output.chain_of_thought,
+                    )
+                )
                 step.success_title = f"Solved a dependency with {output.agent}"
-        return agent_chain[::-1] + [AgentChainLink(agent=agent, provides=(), instruction="", title="")]
+        return agent_chain[::-1] + [AgentChainLink(agent=agent)]
 
     async def _get_agent_chain_link(self, messages: list | str) -> AgentChainLink | None:
         if len(self.agents) == 1:
@@ -419,6 +427,7 @@ class Assistant(Viewer):
             subagent = agent_chain_link.agent
             instruction = agent_chain_link.instruction
             title = agent_chain_link.title.capitalize()
+            render_output = agent_chain_link.render_output
 
             agent_name = type(subagent).name.replace('Agent', '')
             with self.interface.add_step(title=f"Querying {agent_name} agent...") as step:
@@ -436,7 +445,13 @@ class Assistant(Viewer):
                         custom_messages.append({"role": "user", "content": custom_message})
                 if instruction:
                     custom_messages.append({"role": "user", "content": instruction})
-                await subagent.respond(custom_messages, title=title, render_output=False)
+
+                respond_kwargs = {}
+                last_steps_message = self.interface.objects[-2]
+                if last_steps_message.user == "Assistant":
+                    respond_kwargs["steps_layout"] = last_steps_message.object
+
+                await subagent.respond(custom_messages, title=title, render_output=render_output, **respond_kwargs)
                 step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
                 step.success_title = f"{agent_name} agent successfully responded"
 
@@ -496,10 +511,13 @@ class Assistant(Viewer):
 
         print("\n\033[95mAGENT:\033[0m", agent, messages[-context_length:])
 
-        kwargs = {"title": title}
+        last_steps_message = self.interface.objects[-2]
+        respond_kwargs = {"title": title, "render_output": True}
+        if last_steps_message.user == "Assistant":
+            respond_kwargs["steps_layout"] = last_steps_message.object
         if isinstance(agent, AnalysisAgent):
-            kwargs["agents"] = self.agents
-        await agent.respond(messages[-context_length:], **kwargs)
+            respond_kwargs["agents"] = self.agents
+        await agent.respond(messages[-context_length:], **respond_kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             await self._add_analysis_suggestions()
@@ -591,7 +609,15 @@ class PlanningAssistant(Assistant):
         unmet_dependencies = {
             r for r in await subagent.requirements(messages) if r not in memory
         }
-        agent_chain = [AgentChainLink(agent=subagent, provides=unmet_dependencies, instruction=step.instruction, title=step.title)]
+        agent_chain = [
+            AgentChainLink(
+                agent=subagent,
+                provides=unmet_dependencies,
+                instruction=step.instruction,
+                title=step.title,
+                render_output=step.render_output
+            )
+        ]
         for step in plan.steps[:-1][::-1]:
             subagent = agents[step.expert]
             requires = set(await subagent.requirements(messages))
@@ -599,7 +625,15 @@ class PlanningAssistant(Assistant):
                 dep for dep in (unmet_dependencies | requires)
                 if dep not in subagent.provides and dep not in memory
             }
-            agent_chain.append(AgentChainLink(agent=subagent, provides=subagent.provides, instruction=step.instruction, title=step.title))
+            agent_chain.append(
+                AgentChainLink(
+                    agent=subagent,
+                    provides=subagent.provides,
+                    instruction=step.instruction,
+                    title=step.title,
+                    render_output=step.render_output
+                )
+            )
         return agent_chain, unmet_dependencies
 
     async def _resolve_dependencies(self, messages: list, agents: dict[str, Agent]) -> list[AgentChainLink]:
