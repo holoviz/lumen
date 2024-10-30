@@ -436,7 +436,7 @@ class Assistant(Viewer):
                         custom_messages.append({"role": "user", "content": custom_message})
                 if instruction:
                     custom_messages.append({"role": "user", "content": instruction})
-                await subagent.step_through(custom_messages, title=title)
+                await subagent.respond(custom_messages, title=title, render_output=False)
                 step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
                 step.success_title = f"{agent_name} agent successfully responded"
 
