@@ -22,7 +22,7 @@ from .agents import (
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
-from .llm import Llama, Llm
+from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity, make_agent_model, make_plan_models
@@ -356,7 +356,13 @@ class Assistant(Viewer):
         )
         return out
 
-    async def _choose_agent(self, messages: list | str, agents: list[Agent] | None = None, primary: bool = False, unmet_dependencies: tuple[str] | None = None):
+    async def _choose_agent(
+        self,
+        messages: list[Message],
+        agents: list[Agent] | None = None,
+        primary: bool = False,
+        unmet_dependencies: tuple[str] | None = None
+    ):
         if agents is None:
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies()]
@@ -413,7 +419,7 @@ class Assistant(Viewer):
                 step.success_title = f"Solved a dependency with {output.agent}"
         return agent_chain[::-1] + [AgentChainLink(agent=agent)]
 
-    async def _get_agent_chain_link(self, messages: list | str) -> AgentChainLink | None:
+    async def _get_agent_chain_link(self, messages: list[Message]) -> AgentChainLink | None:
         if len(self.agents) == 1:
             return self.agents[0]
 
@@ -484,7 +490,7 @@ class Assistant(Viewer):
             obj = obj.value
         return str(obj)
 
-    async def invoke(self, messages: list | str) -> str:
+    async def invoke(self, messages: list[Message]) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3
@@ -565,7 +571,7 @@ class PlanningAssistant(Assistant):
 
     async def _make_plan(
         self,
-        messages: list,
+        messages: list[Message],
         agents: dict[str, Agent],
         tables: dict[str, Source],
         unmet_dependencies: set[str],
@@ -638,7 +644,7 @@ class PlanningAssistant(Assistant):
             )
         return agent_chain, unmet_dependencies
 
-    async def _resolve_dependencies(self, messages: list, agents: dict[str, Agent]) -> list[AgentChainLink]:
+    async def _resolve_dependencies(self, messages: list[Message], agents: dict[str, Agent]) -> list[AgentChainLink]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
         tables = {}
         for src in memory['available_sources']:

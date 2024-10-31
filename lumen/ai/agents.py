@@ -29,7 +29,7 @@ from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
 from .controls import SourceControls
 from .embeddings import Embeddings
-from .llm import Llm
+from .llm import Llm, Message
 from .memory import memory
 from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
@@ -124,7 +124,7 @@ class Agent(Viewer):
             system_prompt += f"\n### CONTEXT: {context}"
         return system_prompt
 
-    async def _get_closest_tables(self, messages: list | str, tables: list[str], n: int = 3) -> list[str]:
+    async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
         system = (
             f"You are great at extracting keywords based on the user query to find the correct table. "
             f"The current table selected: `{memory.get('current_table', 'N/A')}`. "
@@ -180,10 +180,15 @@ class Agent(Viewer):
         self.interface.pop(-1)
         return tables
 
-    async def requirements(self, messages: list) -> list[str]:
+    async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+    async def respond(
+        self, messages: list[Message],
+        title: str = "",
+        render_output: bool = True,
+        steps_layout: pn.Column | None = None
+    ) -> None:
         self._steps_layout = steps_layout
 
         system_prompt = await self._system_prompt_with_context(messages)
@@ -217,7 +222,12 @@ class SourceAgent(Agent):
 
     _extensions = ('filedropper',)
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+    async def respond(
+        self, messages: list,
+        title: str = "",
+        render_output: bool = True,
+        steps_layout: pn.Column | None = None
+    ) -> None:
         self._steps_layout = steps_layout
         if not render_output:
             return
@@ -250,7 +260,7 @@ class ChatAgent(Agent):
     requires = param.List(default=["current_source"], readonly=True)
 
     @retry_llm_output()
-    async def requirements(self, messages: list, errors=None):
+    async def requirements(self, messages: list[Message], errors=None):
         if 'current_data' in memory:
             return self.requires
 
@@ -275,7 +285,7 @@ class ChatAgent(Agent):
         return self.requires
 
     async def _system_prompt_with_context(
-        self, messages: list, context: str = ""
+        self, messages: list[Message], context: str = ""
     ) -> str:
         source = memory.get("current_source")
         if not source:
@@ -326,7 +336,7 @@ class ChatDetailsAgent(ChatAgent):
     )
 
     async def _system_prompt_with_context(
-        self, messages: list, context: str = ""
+        self, messages: list[Message], context: str = ""
     ) -> str:
         system_prompt = self.system_prompt
         topic = (await self.llm.invoke(
@@ -357,7 +367,13 @@ class LumenBaseAgent(Agent):
 
     _max_width = None
 
-    def _render_lumen(self, component: Component, message: pn.chat.ChatMessage = None, render_output: bool = True, **kwargs):
+    def _render_lumen(
+        self,
+        component: Component,
+        message: pn.chat.ChatMessage = None,
+        render_output: bool = True,
+        **kwargs
+    ):
         if not render_output:
             return
 
@@ -392,7 +408,13 @@ class TableListAgent(LumenBaseAgent):
         table = self._df.iloc[event.row, 0]
         self.interface.send(f"Show the table: {table!r}")
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+    async def respond(
+        self,
+        messages: list[Message],
+        title: str = "",
+        render_output: bool = True,
+        steps_layout: pn.Column | None = None
+    ) -> None:
         self._steps_layout = steps_layout
         tables = []
         for source in memory['available_sources']:
@@ -444,7 +466,7 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
-    async def _select_relevant_table(self, messages: list | str) -> tuple[str, BaseSQLSource]:
+    async def _select_relevant_table(self, messages: list[Message]) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
         available_sources = memory["available_sources"]
 
@@ -487,7 +509,14 @@ class SQLAgent(LumenBaseAgent):
         return table, source
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages, system, tables_to_source, title, errors=None):
+    async def _create_valid_sql(
+        self,
+        messages: list[Message],
+        system: str,
+        tables_to_source,
+        title: str,
+        errors=None
+    ):
         if errors:
             last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
             errors = '\n'.join(errors)
@@ -578,7 +607,12 @@ class SQLAgent(LumenBaseAgent):
         memory["current_sql"] = sql_query
         return sql_query
 
-    async def _check_join_required(self, messages, schema, table):
+    async def _check_join_required(
+        self,
+        messages: list[Message],
+        schema,
+        table: str
+    ):
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
             join_prompt = render_template(
                 "join_required.jinja2",
@@ -644,7 +678,13 @@ class SQLAgent(LumenBaseAgent):
             tables_to_source[a_table] = a_source
         return tables_to_source
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+    async def respond(
+        self,
+        messages: list[Message],
+        title: str = "",
+        render_output: bool = True,
+        steps_layout: pn.Column | None = None
+    ) -> None:
         """
         Steps:
         1. Retrieve the current source and table from memory.
@@ -717,7 +757,13 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None) -> None:
+    async def respond(
+        self,
+        messages: list[Message],
+        title: str = "",
+        render_output: bool = True,
+        steps_layout: pn.Column | None = None
+    ) -> None:
         self._steps_layout = steps_layout
         pipeline = memory["current_pipeline"]
 
@@ -828,7 +874,7 @@ class VegaLiteAgent(BaseViewAgent):
     def _get_model(cls, schema):
         return VegaLiteSpec
 
-    async def _extract_spec(self, model):
+    async def _extract_spec(self, model: VegaLiteSpec):
         vega_spec = json.loads(model.json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
@@ -860,7 +906,10 @@ class AnalysisAgent(LumenBaseAgent):
     _output_type = AnalysisOutput
 
     async def _system_prompt_with_context(
-        self, messages: list, context: str = "", analyses: list[Analysis] = []
+        self,
+        messages: list[Message],
+        context: str = "",
+        analyses: list[Analysis] = []
     ) -> str:
         system_prompt = self.system_prompt
         for name, analysis in analyses.items():
@@ -879,7 +928,14 @@ class AnalysisAgent(LumenBaseAgent):
             system_prompt += f"\n### CONTEXT: {context}".strip()
         return system_prompt
 
-    async def respond(self, messages: list, title: str = "", render_output: bool = True, steps_layout: pn.Column | None = None, agents: list[Agent] | None = None) -> None:
+    async def respond(
+        self,
+        messages: list[Message],
+        title: str = "",
+        render_output: bool = True,
+        steps_layout: pn.Column | None = None,
+        agents: list[Agent] | None = None
+    ) -> None:
         self._steps_layout = steps_layout
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
