@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 
 from functools import partial
-from types import SimpleNamespace, TypedDict
+from types import SimpleNamespace
+from typing import Literal, TypedDict
 
 import instructor
 import panel as pn
