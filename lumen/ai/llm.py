@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from .interceptor import Interceptor
 
+
 class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
