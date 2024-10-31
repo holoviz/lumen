@@ -401,7 +401,9 @@ class TableListAgent(LumenBaseAgent):
             widths={'Table': '90%'},
             disabled=True,
             page_size=10,
-            header_filters=True
+            header_filters={
+                "Table": {"type": "input", "placeholder": "Filter by..."},
+            }
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
