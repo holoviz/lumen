@@ -9,19 +9,20 @@ from typing import TYPE_CHECKING
 import param
 import yaml
 
-from panel import bind
+from panel import Card, bind
 from panel.chat import ChatInterface, ChatStep
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload
+from pydantic import BaseModel
 
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
-from .llm import Llama, Llm
+from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .memory import memory
 from .models import Validity, make_agent_model, make_plan_models
@@ -29,9 +30,25 @@ from .utils import get_schema, render_template, retry_llm_output
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
-    from pydantic import BaseModel
 
     from ..sources import Source
+
+
+class AgentChainLink(param.Parameterized):
+    """
+    A link in the chain of agents to
+    be executed.
+    """
+
+    agent = param.ClassSelector(class_=Agent)
+
+    provides = param.ClassSelector(class_=(set, list), default=set())
+
+    instruction = param.String(default="")
+
+    title = param.String(default="")
+
+    render_output = param.Boolean(default=False)
 
 
 class Assistant(Viewer):
@@ -196,7 +213,7 @@ class Assistant(Viewer):
                     else:
                         print("No analysis agent found.")
                         return
-                    await agent.invoke([{'role': 'user', 'content': contents}], agents=self.agents)
+                    await agent.respond([{'role': 'user', 'content': contents}], agents=self.agents)
                     await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
@@ -336,7 +353,13 @@ class Assistant(Viewer):
         )
         return out
 
-    async def _choose_agent(self, messages: list | str, agents: list[Agent] | None = None, primary: bool = False, unmet_dependencies: tuple[str] | None = None):
+    async def _choose_agent(
+        self,
+        messages: list[Message],
+        agents: list[Agent] | None = None,
+        primary: bool = False,
+        unmet_dependencies: tuple[str] | None = None
+    ):
         if agents is None:
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies()]
@@ -353,7 +376,7 @@ class Assistant(Viewer):
         )
         return await self._fill_model(messages, system, agent_model)
 
-    async def _resolve_dependencies(self, messages, agents: dict[str, Agent]) -> list[tuple(Agent, any)]:
+    async def _resolve_dependencies(self, messages, agents: dict[str, Agent]) -> list[AgentChainLink]:
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
@@ -383,11 +406,17 @@ class Assistant(Viewer):
                 if output.agent is None:
                     continue
                 subagent = agents[output.agent]
-                agent_chain.append((subagent, unmet_dependencies, output.chain_of_thought))
+                agent_chain.append(
+                    AgentChainLink(
+                        agent=subagent,
+                        provides=unmet_dependencies,
+                        instruction=output.chain_of_thought,
+                    )
+                )
                 step.success_title = f"Solved a dependency with {output.agent}"
-        return agent_chain[::-1]+[(agent, (), None)]
+        return agent_chain[::-1] + [AgentChainLink(agent=agent)]
 
-    async def _get_agent(self, messages: list | str):
+    async def _get_agent_chain_link(self, messages: list[Message]) -> AgentChainLink | None:
         if len(self.agents) == 1:
             return self.agents[0]
 
@@ -397,16 +426,19 @@ class Assistant(Viewer):
         if not agent_chain:
             return
 
-        selected = agent = agent_chain[-1][0]
-        print(f"Assistant decided on \033[95m{agent!r}\033[0m")
-        for subagent, deps, instruction in agent_chain[:-1]:
+        for agent_chain_link in agent_chain[:-1]:
+            subagent = agent_chain_link.agent
+            instruction = agent_chain_link.instruction
+            title = agent_chain_link.title.capitalize()
+            render_output = agent_chain_link.render_output
+
             agent_name = type(subagent).name.replace('Agent', '')
             with self.interface.add_step(title=f"Querying {agent_name} agent...") as step:
                 step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
                 self._current_agent.object = f"## **Current Agent**: {agent_name}"
                 custom_messages = messages.copy()
                 if isinstance(subagent, SQLAgent):
-                    custom_agent = next((agent for agent in self.agents if isinstance(agent, AnalysisAgent)), None)
+                    custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
                     if custom_agent:
                         custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
                         custom_message = (
@@ -416,10 +448,20 @@ class Assistant(Viewer):
                         custom_messages.append({"role": "user", "content": custom_message})
                 if instruction:
                     custom_messages.append({"role": "user", "content": instruction})
-                await subagent.answer(custom_messages)
+
+                respond_kwargs = {}
+                # attach the new steps to the existing steps--used when there is intermediate Lumen output
+                last_steps_message = self.interface.objects[-2]
+                if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
+                    respond_kwargs["steps_layout"] = last_steps_message.object
+
+                await subagent.respond(custom_messages, title=title, render_output=render_output, **respond_kwargs)
                 step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
                 step.success_title = f"{agent_name} agent successfully responded"
-        return selected
+
+        selected_chain_link = agent_chain[-1]
+        print(f"Assistant decided on \033[95m{selected_chain_link!r}\033[0m")
+        return selected_chain_link
 
     def _serialize(self, obj, exclude_passwords=True):
         if isinstance(obj, Tabs | Column):
@@ -445,21 +487,25 @@ class Assistant(Viewer):
             obj = obj.value
         return str(obj)
 
-    async def invoke(self, messages: list | str) -> str:
+    async def invoke(self, messages: list[Message]) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3
         if invalidation_assessment:
             messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
             context_length += 1
-        agent = await self._get_agent(messages[-context_length:])
-        if agent is None:
+
+        agent_chain_link = await self._get_agent_chain_link(messages[-context_length:])
+        if agent_chain_link is None:
             msg = (
                 "Assistant could not settle on an agent to perform the requested query. "
                 "Please restate your request."
             )
             self.interface.stream(msg, user='Lumen')
             return msg
+
+        agent = agent_chain_link.agent
+        title = agent_chain_link.title.capitalize()
 
         self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
         print("\n\033[95mMESSAGES:\033[0m")
@@ -469,10 +515,14 @@ class Assistant(Viewer):
 
         print("\n\033[95mAGENT:\033[0m", agent, messages[-context_length:])
 
-        kwargs = {}
+        last_steps_message = self.interface.objects[-2]
+        respond_kwargs = {"title": title, "render_output": True}
+        # attach the new steps to the existing steps--used when there is intermediate Lumen output
+        if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
+            respond_kwargs["steps_layout"] = last_steps_message.object
         if isinstance(agent, AnalysisAgent):
-            kwargs["agents"] = self.agents
-        await agent.invoke(messages[-context_length:], **kwargs)
+            respond_kwargs["agents"] = self.agents
+        await agent.respond(messages[-context_length:], **respond_kwargs)
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             await self._add_analysis_suggestions()
@@ -518,7 +568,7 @@ class PlanningAssistant(Assistant):
 
     async def _make_plan(
         self,
-        messages: list,
+        messages: list[Message],
         agents: dict[str, Agent],
         tables: dict[str, Source],
         unmet_dependencies: set[str],
@@ -547,7 +597,8 @@ class PlanningAssistant(Assistant):
                 system=system,
                 response_model=reason_model,
             ):
-                step.stream(reasoning.chain_of_thought, replace=True)
+                if reasoning.chain_of_thought:  # do not replace with empty string
+                    step.stream(reasoning.chain_of_thought, replace=True)
             requested = [
                 t for t in getattr(reasoning, 'tables', [])
                 if t and t not in provided
@@ -557,13 +608,21 @@ class PlanningAssistant(Assistant):
         plan = await self._fill_model(messages, system, plan_model)
         return plan
 
-    async def _resolve_plan(self, plan, agents, messages):
+    async def _resolve_plan(self, plan, agents, messages) -> tuple[list[AgentChainLink], set[str]]:
         step = plan.steps[-1]
         subagent = agents[step.expert]
         unmet_dependencies = {
             r for r in await subagent.requirements(messages) if r not in memory
         }
-        agent_chain = [(subagent, unmet_dependencies, step.instruction)]
+        agent_chain = [
+            AgentChainLink(
+                agent=subagent,
+                provides=unmet_dependencies,
+                instruction=step.instruction,
+                title=step.title,
+                render_output=step.render_output
+            )
+        ]
         for step in plan.steps[:-1][::-1]:
             subagent = agents[step.expert]
             requires = set(await subagent.requirements(messages))
@@ -571,10 +630,18 @@ class PlanningAssistant(Assistant):
                 dep for dep in (unmet_dependencies | requires)
                 if dep not in subagent.provides and dep not in memory
             }
-            agent_chain.append((subagent, subagent.provides, step.instruction))
+            agent_chain.append(
+                AgentChainLink(
+                    agent=subagent,
+                    provides=subagent.provides,
+                    instruction=step.instruction,
+                    title=step.title,
+                    render_output=step.render_output
+                )
+            )
         return agent_chain, unmet_dependencies
 
-    async def _resolve_dependencies(self, messages: list, agents: dict[str, Agent]) -> list[tuple(Agent, any)]:
+    async def _resolve_dependencies(self, messages: list[Message], agents: dict[str, Agent]) -> list[AgentChainLink]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
         tables = {}
         for src in memory['available_sources']:
@@ -598,5 +665,5 @@ class PlanningAssistant(Assistant):
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
-            istep.success_title = "Successfully came up with a plan."
+            istep.success_title = "Successfully came up with a plan"
         return agent_chain[::-1]

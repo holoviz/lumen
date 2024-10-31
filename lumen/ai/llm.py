@@ -4,6 +4,7 @@ import os
 
 from functools import partial
 from types import SimpleNamespace
+from typing import Literal, TypedDict
 
 import instructor
 import panel as pn
@@ -14,6 +15,12 @@ from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
+
+
+class Message(TypedDict):
+    role: Literal["system", "user", "assistant"]
+    content: str
+    name: str | None
 
 
 class Llm(param.Parameterized):
@@ -58,7 +65,7 @@ class Llm(param.Parameterized):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
@@ -91,7 +98,7 @@ class Llm(param.Parameterized):
 
     async def stream(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         field: str | None = None,
@@ -357,7 +364,7 @@ class MistralAI(Llm):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
@@ -470,7 +477,7 @@ class AnthropicAI(Llm):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
