@@ -4,7 +4,7 @@ import json
 import re
 import textwrap
 
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 import panel as pn
@@ -13,6 +13,7 @@ import yaml
 
 from instructor.retry import InstructorRetryException
 from panel.chat import ChatInterface
+from panel.layout import Column
 from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -50,28 +51,40 @@ class Agent(Viewer):
     embeddings.
     """
 
-    debug = param.Boolean(default=False)
+    debug = param.Boolean(default=False, doc="""
+        Whether to enable verbose error reporting.""")
 
-    embeddings = param.ClassSelector(class_=Embeddings)
+    embeddings = param.ClassSelector(class_=Embeddings, doc="""
+        Embeddings object which is queried to provide additional context
+        before asking the LLM to respond.""")
 
-    interface = param.ClassSelector(class_=ChatInterface)
+    interface = param.ClassSelector(class_=ChatInterface, doc="""
+        The ChatInterface to report progress to.""")
 
-    llm = param.ClassSelector(class_=Llm)
+    llm = param.ClassSelector(class_=Llm, doc="""
+        The LLM implementation to query.""")
 
-    system_prompt = param.String()
+    steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
+        The layout progress updates will be streamed to.""")
 
-    response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
+    provides = param.List(default=[], readonly=True, doc="""
+        List of context values this Agent provides to current working memory.""")
 
-    user = param.String(default="Agent")
+    requires = param.List(default=[], readonly=True, doc="""
+        List of context that this Agent requires to be in memory.""")
 
-    requires = param.List(default=[], readonly=True)
+    response_model = param.ClassSelector(class_=BaseModel, is_instance=False, doc="""
+        A Pydantic model determining the schema of the response.""")
 
-    provides = param.List(default=[], readonly=True)
+    system_prompt = param.String(doc="The system prompt.")
 
-    _steps_layout = param.ClassSelector(default=None, class_=pn.Column)
+    user = param.String(default="Agent", doc="""
+        The name of the user that will be respond to the user query.""")
 
+    # Panel extensions this agent requires to be loaded
     _extensions = ()
 
+    # Maximum width of the output
     _max_width = 1200
 
     __abstract = True
@@ -100,16 +113,13 @@ class Agent(Viewer):
         else:
             state.config.raise_with_notifications = True
 
-    @classmethod
-    async def applies(cls) -> bool:
-        """
-        Additional checks to determine if the agent should be used.
-        """
-        return True
-
     async def _interface_callback(self, contents: list | str, user: str, instance: ChatInterface):
         await self.respond(contents)
         self._retries_left = 1
+
+    @property
+    def _steps_layout(self):
+        return Column() if self.steps_layout else self.steps_layout
 
     def __panel__(self):
         return self.interface
@@ -180,30 +190,51 @@ class Agent(Viewer):
         self.interface.pop(-1)
         return tables
 
+    # Public API
+
+    @classmethod
+    async def applies(cls) -> bool:
+        """
+        Additional checks to determine if the agent should be used.
+        """
+        return True
+
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
 
     async def respond(
-        self, messages: list[Message],
-        title: str = "",
-        render_output: bool = True,
-        steps_layout: pn.Column | None = None
-    ) -> None:
-        self._steps_layout = steps_layout
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None
+    ) -> Any:
+        """
+        Provides a response to the user query.
 
+        The type of the response may be a simple string or an object.
+
+        Arguments
+        ---------
+        messages: list[Message]
+            The list of messages corresponding to the user query and any other
+            system messages to be included.
+        render_output: bool
+            Whether to render the output to the chat interface.
+        step_title: str | None
+            If the Agent response is part of a longer query this describes
+            the step currently being processed.
+        """
         system_prompt = await self._system_prompt_with_context(messages)
         response = self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model, field="output"
         )
-
-        if not render_output:
-            return
-
-        message = None
-        async for output_chunk in response:
-            message = self.interface.stream(
-                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
-            )
+        if render_output:
+            message = None
+            async for output_chunk in response:
+                message = self.interface.stream(
+                    output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+                )
+        return response
 
 
 class SourceAgent(Agent):
@@ -223,18 +254,17 @@ class SourceAgent(Agent):
     _extensions = ('filedropper',)
 
     async def respond(
-        self, messages: list,
-        title: str = "",
-        render_output: bool = True,
-        steps_layout: pn.Column | None = None
-    ) -> None:
-        self._steps_layout = steps_layout
-        if not render_output:
-            return
-
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None
+    ) -> Any:
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
-        while not source_controls._add_button.clicks > 0:
-            await asyncio.sleep(0.05)
+        if render_output:
+            self.interface.stream(source_controls)
+            while not source_controls._add_button.clicks > 0:
+                await asyncio.sleep(0.05)
+        return source_controls
 
 
 class ChatAgent(Agent):
@@ -371,12 +401,8 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         message: pn.chat.ChatMessage = None,
-        render_output: bool = True,
         **kwargs
     ):
-        if not render_output:
-            return
-
         out = self._output_type(component=component, **kwargs)
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
@@ -411,20 +437,12 @@ class TableListAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        title: str = "",
-        render_output: bool = True,
-        steps_layout: pn.Column | None = None
-    ) -> None:
-        self._steps_layout = steps_layout
+        render_output: bool = False,
+        step_title: str | None = None
+    ) -> Any:
         tables = []
         for source in memory['available_sources']:
             tables += source.get_tables()
-        if not tables:
-            return
-
-        if not render_output:
-            return
-
         self._df = pd.DataFrame({"Table": tables})
         table_list = pn.widgets.Tabulator(
             self._df,
@@ -438,7 +456,9 @@ class TableListAgent(LumenBaseAgent):
             header_filters=True
         )
         table_list.on_click(self._use_table)
-        self.interface.stream(table_list, user="Lumen")
+        if render_output:
+            self.interface.stream(table_list, user="Lumen")
+        return table_list
 
 
 class SQLAgent(LumenBaseAgent):
@@ -681,10 +701,9 @@ class SQLAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        title: str = "",
-        render_output: bool = True,
-        steps_layout: pn.Column | None = None
-    ) -> None:
+        render_output: bool = False,
+        step_title: str | None = None
+    ) -> Any:
         """
         Steps:
         1. Retrieve the current source and table from memory.
@@ -697,9 +716,7 @@ class SQLAgent(LumenBaseAgent):
         8. If a join is required, remove source/table prefixes from the last message.
         9. Construct the SQL query with `_create_valid_sql`.
         """
-        self._steps_layout = steps_layout
         table, source = await self._select_relevant_table(messages)
-
         if not hasattr(source, "get_sql_expr"):
             return None
 
@@ -743,9 +760,11 @@ class SQLAgent(LumenBaseAgent):
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
-        sql_query = await self._create_valid_sql(messages, system, tables_to_source, title)
+        sql_query = await self._create_valid_sql(messages, system, tables_to_source, step_title)
         pipeline = memory['current_pipeline']
-        self._render_lumen(pipeline, spec=sql_query, render_output=render_output)
+        if render_output:
+            self._render_lumen(pipeline, spec=sql_query)
+        return pipeline
 
 
 class BaseViewAgent(LumenBaseAgent):
@@ -760,11 +779,9 @@ class BaseViewAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        title: str = "",
-        render_output: bool = True,
-        steps_layout: pn.Column | None = None
-    ) -> None:
-        self._steps_layout = steps_layout
+        render_output: bool = False,
+        step_title: str | None = None
+    ) -> Any:
         pipeline = memory["current_pipeline"]
 
         # Write prompts
@@ -788,12 +805,17 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
         if chain_of_thought:
-            with self.interface.add_step(title=title or "Generating view...", steps_layout=self._steps_layout) as step:
+            with self.interface.add_step(
+                title=step_title or "Generating view...",
+                steps_layout=self._steps_layout
+            ) as step:
                 step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
         memory["current_view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, render_output=render_output)
+        if render_output:
+            self._render_lumen(view)
+        return view
 
 
 class hvPlotAgent(BaseViewAgent):
@@ -860,11 +882,8 @@ class VegaLiteAgent(BaseViewAgent):
     If the user asks to plot, visualize or render the data this is your best best.
     """
 
-    system_prompt = param.String(
-        default="""
-        Generate the plot the user requested as a vega-lite specification.
-        """
-    )
+    system_prompt = param.String(default="""
+        Generate the plot the user requested as a vega-lite specification.""")
 
     view_type = VegaLiteView
 
@@ -931,12 +950,10 @@ class AnalysisAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        title: str = "",
-        render_output: bool = True,
-        steps_layout: pn.Column | None = None,
+        render_output: bool = False,
+        step_title: str | None = None,
         agents: list[Agent] | None = None
-    ) -> None:
-        self._steps_layout = steps_layout
+    ) -> Any:
         pipeline = memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
@@ -968,7 +985,7 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title=title or "Creating view...", steps_layout=self._steps_layout) as step:
+        with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
 
@@ -1001,7 +1018,9 @@ class AnalysisAgent(LumenBaseAgent):
                 view = None
 
         analysis = memory["current_analysis"]
-        if view is None and analysis.autorun:
-            self.interface.stream('Failed to find an analysis that applies to this data')
-        else:
-            self._render_lumen(view, analysis=analysis, pipeline=memory['current_pipeline'], render_output=render_output)
+        if render_output:
+            if view is None and analysis.autorun:
+                self.interface.stream('Failed to find an analysis that applies to this data')
+            else:
+                self._render_lumen(view, analysis=analysis, pipeline=memory['current_pipeline'])
+        return view

@@ -213,7 +213,10 @@ class Assistant(Viewer):
                     else:
                         print("No analysis agent found.")
                         return
-                    await agent.respond([{'role': 'user', 'content': contents}], agents=self.agents)
+                    messages = [{'role': 'user', 'content': contents}]
+                    await agent.respond(
+                        messages, render_output=True, agents=self.agents
+                    )
                     await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
@@ -449,13 +452,14 @@ class Assistant(Viewer):
                 if instruction:
                     custom_messages.append({"role": "user", "content": instruction})
 
-                respond_kwargs = {}
                 # attach the new steps to the existing steps--used when there is intermediate Lumen output
                 last_steps_message = self.interface.objects[-2]
+                steps_layout = None
                 if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
-                    respond_kwargs["steps_layout"] = last_steps_message.object
+                    steps_layout = last_steps_message.object
 
-                await subagent.respond(custom_messages, title=title, render_output=render_output, **respond_kwargs)
+                with subagent.param.update(steps_layout=steps_layout):
+                    await subagent.respond(custom_messages, step_title=title, render_output=render_output)
                 step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
                 step.success_title = f"{agent_name} agent successfully responded"
 
@@ -515,14 +519,18 @@ class Assistant(Viewer):
 
         print("\n\033[95mAGENT:\033[0m", agent, messages[-context_length:])
 
-        last_steps_message = self.interface.objects[-2]
-        respond_kwargs = {"title": title, "render_output": True}
         # attach the new steps to the existing steps--used when there is intermediate Lumen output
+        steps_layout = None
+        last_steps_message = self.interface.objects[-2]
         if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
-            respond_kwargs["steps_layout"] = last_steps_message.object
+            steps_layout = last_steps_message.object
+        respond_kwargs = {}
         if isinstance(agent, AnalysisAgent):
             respond_kwargs["agents"] = self.agents
-        await agent.respond(messages[-context_length:], **respond_kwargs)
+        with agent.param.update(steps_layout=steps_layout):
+            await agent.respond(
+                messages[-context_length:], step_title=title, render_output=True, **respond_kwargs
+            )
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
             await self._add_analysis_suggestions()
