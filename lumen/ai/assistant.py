@@ -453,10 +453,11 @@ class Assistant(Viewer):
                     custom_messages.append({"role": "user", "content": instruction})
 
                 # attach the new steps to the existing steps--used when there is intermediate Lumen output
-                last_steps_message = self.interface.objects[-2]
                 steps_layout = None
-                if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
-                    steps_layout = last_steps_message.object
+                for step_message in reversed(self.interface.objects[-5:]):
+                    if step_message.user == "Assistant" and isinstance(step_message.object, Card):
+                        steps_layout = step_message.object
+                        break
 
                 with subagent.param.update(steps_layout=steps_layout):
                     await subagent.respond(custom_messages, step_title=title, render_output=render_output)
@@ -521,9 +522,11 @@ class Assistant(Viewer):
 
         # attach the new steps to the existing steps--used when there is intermediate Lumen output
         steps_layout = None
-        last_steps_message = self.interface.objects[-2]
-        if last_steps_message.user == "Assistant" and isinstance(last_steps_message.object, Card):
-            steps_layout = last_steps_message.object
+        for step_message in reversed(self.interface.objects[-5:]):
+            if step_message.user == "Assistant" and isinstance(step_message.object, Card):
+                steps_layout = step_message.object
+                break
+
         respond_kwargs = {}
         if isinstance(agent, AnalysisAgent):
             respond_kwargs["agents"] = self.agents
