@@ -119,7 +119,10 @@ class Agent(Viewer):
 
     @property
     def _steps_layout(self):
-        return None if not self.steps_layout else self.steps_layout
+        """
+        Stream to a dummy column to be able to suppress the steps output.
+        """
+        return pn.Column() if not self.steps_layout else self.steps_layout
 
     def __panel__(self):
         return self.interface
