@@ -261,7 +261,7 @@ class SourceAgent(Agent):
     ) -> Any:
         source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
         if render_output:
-            self.interface.stream(source_controls)
+            self.interface.send(source_controls, respond=False, user="SourceAgent")
             while not source_controls._add_button.clicks > 0:
                 await asyncio.sleep(0.05)
         return source_controls
