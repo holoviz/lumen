@@ -117,6 +117,10 @@ class Agent(Viewer):
         await self.respond(contents)
         self._retries_left = 1
 
+    @property
+    def _steps_layout(self):
+        return None if not self.steps_layout else self.steps_layout
+
     def __panel__(self):
         return self.interface
 
@@ -292,7 +296,7 @@ class ChatAgent(Agent):
 
         available_sources = memory["available_sources"]
         _, tables_schema_str = await gather_table_sources(available_sources)
-        with self.interface.add_step(title="Checking if data is required", steps_layout=self.steps_layout) as step:
+        with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,
                 system=(
@@ -449,9 +453,7 @@ class TableListAgent(LumenBaseAgent):
             widths={'Table': '90%'},
             disabled=True,
             page_size=10,
-            header_filters={
-                "Table": {"type": "input", "placeholder": "Filter by..."},
-            }
+            header_filters=True
         )
         table_list.on_click(self._use_table)
         if render_output:
@@ -496,7 +498,7 @@ class SQLAgent(LumenBaseAgent):
         elif len(tables) == 1:
             table = tables[0]
         else:
-            with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self.steps_layout) as step:
+            with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
                 closest_tables = memory.pop("closest_tables", [])
                 if closest_tables:
                     tables = closest_tables
@@ -550,7 +552,7 @@ class SQLAgent(LumenBaseAgent):
                 }
             ]
 
-        with self.interface.add_step(title=title or "SQL query", steps_layout=self.steps_layout) as step:
+        with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(messages, system=system, response_model=Sql)
             sql_query = None
             async for output in response:
@@ -631,7 +633,7 @@ class SQLAgent(LumenBaseAgent):
         schema,
         table: str
     ):
-        with self.interface.add_step(title="Checking if join is required", steps_layout=self.steps_layout) as step:
+        with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
             join_prompt = render_template(
                 "join_required.jinja2",
                 schema=yaml.dump(schema),
@@ -662,7 +664,7 @@ class SQLAgent(LumenBaseAgent):
             "find_joins.jinja2",
             available_tables=available_tables
         )
-        with self.interface.add_step(title="Determining tables required for join", steps_layout=self.steps_layout) as step:
+        with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
                 system=find_joins_prompt,
@@ -805,7 +807,7 @@ class BaseViewAgent(LumenBaseAgent):
         if chain_of_thought:
             with self.interface.add_step(
                 title=step_title or "Generating view...",
-                steps_layout=self.steps_layout
+                steps_layout=self._steps_layout
             ) as step:
                 step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
@@ -965,7 +967,7 @@ class AnalysisAgent(LumenBaseAgent):
                 analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...", steps_layout=self.steps_layout) as step:
+            with self.interface.add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -983,7 +985,7 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self.steps_layout) as step:
+        with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analyses[analysis_name].instance(agents=agents)
 
