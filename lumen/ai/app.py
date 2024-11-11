@@ -2,19 +2,26 @@ from __future__ import annotations
 
 import param
 
+from panel.chat import ChatInterface
 from panel.config import config, panel_extension
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Row
+from panel.layout import Column, Row, Tabs
+from panel.pane import Markdown
+from panel.param import ParamMethod
+from panel.theme import Material
 from panel.viewable import Viewer
+from panel.widgets import Button, MultiChoice
 
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from .agents import (
-    AnalysisAgent, ChatAgent, SourceAgent, SQLAgent,
+    AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
 )
 from .assistant import Assistant, PlanningAssistant
+from .components import SplitJS
+from .controls import SourceControls
 from .llm import Llm, OpenAI
 from .memory import memory
 
@@ -50,7 +57,7 @@ class LumenAI(Viewer):
         List of additional Agents to add beyond the default_agents."""
     )
 
-    default_agents = param.List(default=[ChatAgent, SourceAgent, SQLAgent], doc="""
+    default_agents = param.List(default=[ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent], doc="""
         List of default agents which will always be added.""")
 
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
@@ -65,7 +72,7 @@ class LumenAI(Viewer):
         Panel template to serve the application in."""
     )
 
-    title = param.String(default='Lumen.ai', doc="Title of the app.")
+    title = param.String(default='Lumen ai Assistant', doc="Title of the app.")
 
     def __init__(
         self,
@@ -81,6 +88,7 @@ class LumenAI(Viewer):
             llm=self.llm
         )
         self._resolve_data(data)
+        self._main = self._assistant
 
     def _resolve_data(self, data: DataT | list[DataT] | None):
         if data is None:
@@ -111,7 +119,11 @@ class LumenAI(Viewer):
                 tables[src] = table
         if tables or mirrors:
             initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
-            source = DuckDBSource(tables=tables, mirrors=mirrors, uri=':memory:', initializers=initializers)
+            source = DuckDBSource(
+                tables=tables, mirrors=mirrors,
+                uri=':memory:', initializers=initializers,
+                name='Provided'
+            )
             sources.append(source)
         if not sources:
             raise ValueError(
@@ -133,7 +145,8 @@ class LumenAI(Viewer):
             config.template = self.template
             template = state.template
             template.title = self.title
-            template.main.append(self._assistant)
+            template.config.raw_css = ['#header a { font-family: Futura; font-size: 2em; font-weight: bold;}']
+            template.main.append(self._main)
             if self.show_controls:
                 template.sidebar.append(self._assistant.controls())
             return template
@@ -147,10 +160,10 @@ class LumenAI(Viewer):
 
     def __panel__(self):
         if not self.show_controls:
-            return self._assistant
+            return self._main
         return Row(
             Row(self._assistant.controls(), max_width=300),
-            self._assistant
+            self._main
         )
 
     def _repr_mimebundle_(self, include=None, exclude=None):
@@ -158,3 +171,171 @@ class LumenAI(Viewer):
             *{ext for exts in self._assistant.agents for ext in exts}, design='material', notifications=True
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
+
+
+class Explorer(LumenAI):
+
+    show_controls = param.Boolean(default=False, doc="""
+        Whether to show assistant controls in the sidebar.""")
+
+    title = param.String(default='Lumen<sup>ai</sup> Explorer', doc="Title of the app.")
+
+    def __init__(
+        self,
+        data: DataT | list[DataT] | None = None,
+        **params
+    ):
+        super().__init__(data=data, **params)
+        self._assistant.interface.show_button_name = False
+        cb = self._assistant.interface.callback
+        self._assistant.render_output = False
+        self._assistant.interface.callback = self._wrap_callback(cb)
+        self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
+        self._explorations.param.watch(self._cleanup_explorations, ['objects'])
+        self._explorations.param.watch(self._set_context, ['active'])
+        self._contexts = []
+        self._root_conversation = self._assistant.interface.objects
+        self._conversations = []
+        self._output = Tabs(
+            ('Overview', self._table_explorer()),
+            ('Explorations', self._explorations),
+            design=Material
+        )
+        self._main = Column(
+            SplitJS(
+                left=self._output,
+                right=self._assistant,
+                sizing_mode='stretch_both'
+            )
+        )
+        self._output.param.watch(self._update_conversation, 'active')
+
+    def _update_conversation(self, event):
+        if event.new:
+            active = self._explorations.active
+            if active < len(self._conversations):
+                conversation = self._conversations[active]
+            else:
+                conversation = list(self._assistant.interface.objects)
+        else:
+            conversation = self._root_conversation
+        self._assistant.interface.objects = conversation
+
+    def _cleanup_explorations(self, event):
+        if len(event.new) >= len(event.old):
+            return
+        for i, (old, new) in enumerate(zip(event.old, event.new)):
+            if old is not new:
+                self._contexts.pop(i)
+                self._conversations.pop(i)
+
+    def _set_context(self, event):
+        if event.new == len(self._conversations):
+            return
+        self._assistant.interface.objects = self._conversations[event.new]
+
+    def _table_explorer(self):
+        from panel_gwalker import GraphicWalker
+
+        table_select = MultiChoice(width=500, margin=(5, 0))
+        load_button = Button(name='Load table(s)', icon='table-plus', button_type='primary')
+
+        source_map = {}
+        def update_source_map(sources, init=False):
+            selected = list(table_select.value)
+            deduplicate = len(sources) > 1
+            new = {}
+            for source in sources:
+                source_tables = source.get_tables()
+                for t in source_tables:
+                    if deduplicate:
+                        t = f'{source.name} : {t}'
+                    if t.rsplit(' : ', 1)[-1] not in source_map and not init:
+                        selected.append(t)
+                    new[t] = source
+            source_map.clear()
+            source_map.update(new)
+            table_select.param.update(options=list(source_map), value=selected)
+        memory.on_change('available_sources', update_source_map)
+        update_source_map(memory['available_sources'], init=True)
+
+        controls = SourceControls(name='Upload', select_existing=False)
+        tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
+
+        @param.depends(table_select, load_button, watch=True)
+        def get_explorers(tables, load):
+            if not load:
+                return
+            load_button.loading = True
+            explorers = []
+            for table in tables:
+                source = source_map[table]
+                if len(source_map) > 1:
+                    _, table = table.rsplit(' : ', 1)
+                data = source.get(table)
+                walker = GraphicWalker(
+                    data, sizing_mode='stretch_both', min_height=800,
+                    kernel_computation=True, name=table, tab='data'
+                )
+                explorers.append(walker)
+            tabs.objects = explorers + [controls]
+            load_button.loading = False
+
+        return Column(
+            Row(table_select, load_button),
+            tabs,
+            styles={'overflow': 'auto'}
+        )
+
+    def _wrap_callback(self, callback):
+        async def wrapper(contents: list | str, user: str, instance: ChatInterface):
+            if not self._explorations:
+                prev_memory = memory
+            else:
+                prev_memory = self._contexts[self._explorations.active]
+            local_memory = prev_memory.clone()
+            prev_outputs = local_memory.get('outputs', [])
+            prev_pipeline = local_memory.get('current_pipeline')
+            local_memory['outputs'] = outputs = []
+            with self._assistant.param.update(memory=local_memory):
+                await callback(contents, user, instance)
+            if not outputs:
+                prev_memory.update(local_memory)
+                return
+
+            from panel_gwalker import GraphicWalker
+
+            title = local_memory['current_plan']
+            pipeline = local_memory['current_pipeline']
+            new = prev_pipeline is not pipeline
+            content = []
+            if 'current_sql' in local_memory:
+                content.append(Markdown(
+                    f'```sql\n{local_memory["current_sql"]}\n```',
+                    margin=0
+                ))
+            if not new:
+                outputs = prev_outputs + outputs
+            content.append(
+                Tabs(
+                    ('Overview', GraphicWalker(
+                        pipeline.param.data,
+                        kernel_computation=True,
+                        tab='data',
+                        sizing_mode='stretch_both'
+                    )),
+                    *((type(out).__name__.replace('Output', ''), ParamMethod(
+                        out.render, inplace=True,
+                        sizing_mode='stretch_both'
+                    )) for out in outputs), active=len(outputs), dynamic=True
+                )
+            )
+            if new:
+                self._conversations.append(self._assistant.interface.objects)
+                self._explorations.append((title, Column(*content)))
+                self._contexts.append(local_memory)
+                self._explorations.active = len(self._explorations)-1
+                self._output.active = 1
+            else:
+                self._explorations[self._explorations.active] = (title, Column(*content))
+        return wrapper
