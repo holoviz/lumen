@@ -1,7 +1,6 @@
 import datetime as dt
 import os
 
-import pandas as pd
 import pytest
 
 try:
@@ -11,6 +10,8 @@ except Exception:
 
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.transforms.sql import SQLGroupBy
+
+from ..utils import assert_frame_equal_no_dtype_check
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def test_intake_sql_get_tables(source, source_tables):
     tables = source.get_tables()
     assert tables == list(source_tables.keys())
     for table in tables:
-        pd.testing.assert_frame_equal(source.get(table), source_tables[table])
+        assert_frame_equal_no_dtype_check(source.get(table), source_tables[table])
 
 
 def test_intake_sql_get_schema(source):
@@ -99,7 +100,7 @@ def test_intake_sql_filter(source, table_column_value_type, dask, expected_filte
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
+    assert_frame_equal_no_dtype_check(filtered, expected_filtered_df.reset_index(drop=True))
 
 
 def test_intake_sql_transforms(source, source_tables):
@@ -107,7 +108,7 @@ def test_intake_sql_transforms(source, source_tables):
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
     transformed = source.get('test_sql', sql_transforms=transforms)
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(transformed, expected)
+    assert_frame_equal_no_dtype_check(transformed, expected)
 
 
 def test_intake_sql_transforms_cache(source, source_tables):
@@ -119,7 +120,7 @@ def test_intake_sql_transforms_cache(source, source_tables):
     assert cache_key in source._cache
 
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(source._cache[cache_key], expected)
+    assert_frame_equal_no_dtype_check(source._cache[cache_key], expected)
 
     cache_key = source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in source._cache

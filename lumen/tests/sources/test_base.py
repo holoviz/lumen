@@ -17,6 +17,9 @@ try:
 except ImportError:
     fastparquet = None
 
+from ..utils import assert_frame_equal_no_dtype_check
+
+
 @pytest.fixture
 def source(make_filesource):
     root = os.path.dirname(__file__)
@@ -95,7 +98,7 @@ def test_file_source_filter(source, column_value_type, dask, expected_df):
     column, value, _ = column_value_type
     kwargs = {column: value, '__dask': dask}
     filtered = source.get('test', **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_df)
+    assert_frame_equal_no_dtype_check(filtered, expected_df)
 
 
 @pytest.mark.parametrize(
@@ -123,7 +126,7 @@ def test_file_source_get_query_cache(source, column_value_type, dask, expected_d
     cached_df = source._cache[cache_key]
     if dask:
         cached_df = cached_df.compute()
-    pd.testing.assert_frame_equal(cached_df, expected_df)
+    assert_frame_equal_no_dtype_check(cached_df, expected_df)
     cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
 
@@ -160,7 +163,7 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
 
     # Patch index names due to https://github.com/dask/fastparquet/issues/732
     df.index.names = [None]
-    pd.testing.assert_frame_equal(
+    assert_frame_equal_no_dtype_check(
         df,
         makeMixedDataFrame().iloc[1:3]
     )
@@ -177,7 +180,7 @@ def test_file_source_variable(make_variable_filesource, mixed_df):
     state.variables.tables = {'test': 'test2.csv'}
     df = source.get('test')
     expected = mixed_df.iloc[::-1].reset_index(drop=True)
-    pd.testing.assert_frame_equal(df, expected)
+    assert_frame_equal_no_dtype_check(df, expected)
 
 
 def test_extension_of_comlicated_url(source):

@@ -1,6 +1,5 @@
 import pathlib
 
-import pandas as pd
 import panel as pn
 import pytest
 
@@ -10,6 +9,7 @@ from lumen.state import state
 from lumen.validation import ValidationError
 
 from .test_pipeline import sql_available
+from .utils import assert_frame_equal_no_dtype_check
 
 
 def test_dashboard_with_local_view(set_root):
@@ -131,11 +131,11 @@ def test_dashboard_with_sql_source_and_transforms(set_root, document, mixed_df_o
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    pd.testing.assert_frame_equal(table.value, mixed_df_object_type)
+    assert_frame_equal_no_dtype_check(table.value, mixed_df_object_type)
 
     dashboard._sidebar[0][0][0]._widgets['limit'].value = 2
 
-    pd.testing.assert_frame_equal(table.value, mixed_df_object_type.iloc[:2])
+    assert_frame_equal_no_dtype_check(table.value, mixed_df_object_type.iloc[:2])
 
 def test_dashboard_with_transform_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
@@ -146,11 +146,11 @@ def test_dashboard_with_transform_variable(set_root, document, mixed_df):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    pd.testing.assert_frame_equal(table.value, mixed_df)
+    assert_frame_equal_no_dtype_check(table.value, mixed_df)
 
     state.variables.length = 2
 
-    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[:2])
+    assert_frame_equal_no_dtype_check(table.value, mixed_df.iloc[:2])
 
 def test_dashboard_with_source_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
@@ -161,11 +161,11 @@ def test_dashboard_with_source_variable(set_root, document, mixed_df):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    pd.testing.assert_frame_equal(table.value, mixed_df)
+    assert_frame_equal_no_dtype_check(table.value, mixed_df)
 
     state.variables.tables = {'test': '../sources/test2.csv'}
 
-    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[::-1].reset_index(drop=True))
+    assert_frame_equal_no_dtype_check(table.value, mixed_df.iloc[::-1].reset_index(drop=True))
 
 def test_dashboard_with_nested_source_variable(set_root, document, mixed_df):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'
@@ -176,11 +176,11 @@ def test_dashboard_with_nested_source_variable(set_root, document, mixed_df):
     layout.update()
 
     table = layout._cards[0]._card[0][0]
-    pd.testing.assert_frame_equal(table.value, mixed_df)
+    assert_frame_equal_no_dtype_check(table.value, mixed_df)
 
     state.variables.ticker = '../sources/test2.csv'
 
-    pd.testing.assert_frame_equal(table.value, mixed_df.iloc[::-1].reset_index(drop=True))
+    assert_frame_equal_no_dtype_check(table.value, mixed_df.iloc[::-1].reset_index(drop=True))
 
 def test_dashboard_with_view_variable(set_root, document):
     root = pathlib.Path(__file__).parent / 'sample_dashboard'

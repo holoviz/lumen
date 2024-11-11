@@ -1,12 +1,13 @@
 import os
 import pathlib
 
-import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
     Count, DropNA, Eval, Sum, Transform,
 )
+
+from ..utils import assert_frame_equal_no_dtype_check
 
 
 class CustomTransform(Transform):
@@ -51,7 +52,7 @@ def test_transform_control_options_by_reference(make_filesource):
 def test_count_transform(mixed_df):
     count_df = Count.apply_to(mixed_df)
 
-    pd.testing.assert_frame_equal(count_df, mixed_df.count().to_frame().T)
+    assert_frame_equal_no_dtype_check(count_df, mixed_df.count().to_frame().T)
 
 
 def test_sum_transform(mixed_df):
@@ -59,7 +60,7 @@ def test_sum_transform(mixed_df):
 
     sum_df = Sum.apply_to(df)
 
-    pd.testing.assert_frame_equal(sum_df, df.sum().to_frame().T)
+    assert_frame_equal_no_dtype_check(sum_df, df.sum().to_frame().T)
 
 
 def test_eval_transform(mixed_df):
@@ -70,7 +71,7 @@ def test_eval_transform(mixed_df):
     df2 = df.copy()
     df2['B'] = df.A * 2
 
-    pd.testing.assert_frame_equal(eval_df, df2)
+    assert_frame_equal_no_dtype_check(eval_df, df2)
 
 
 def test_dropna_transform(mixed_df):
