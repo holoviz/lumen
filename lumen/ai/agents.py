@@ -291,7 +291,8 @@ class ChatAgent(Agent):
         default=(
             "Be a helpful chatbot to talk about high-level data exploration "
             "like what datasets are available and what each column represents. "
-            "Provide suggestions to get started if necessary."
+            "Provide suggestions to get started if necessary. Do not write analysis "
+            "code unless explicitly asked."
         )
     )
 
@@ -371,7 +372,8 @@ class ChatDetailsAgent(ChatAgent):
             "on your subject matter expertise and do not be afraid to use specialized terminology or "
             "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
             "instead, focus on the details and meaning of the data. Highlight relationships "
-            "between the columns and what could be interesting to dive deeper into."
+            "between the columns and what could be interesting to dive deeper into. Do not write analysis "
+            "code unless explicitly asked"
         )
     )
 
