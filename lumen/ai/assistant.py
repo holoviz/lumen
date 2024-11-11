@@ -622,7 +622,6 @@ class PlanningAssistant(Assistant):
                 'plan_agent.jinja2', agents=list(agents.values()), current_agent=self._current_agent.object,
                 unmet_dependencies=unmet_dependencies, memory=self._memory, table_info=info, tables=available
             )
-            print(system)
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
