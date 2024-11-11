@@ -4,6 +4,7 @@ import panel as pn
 import param
 import yaml
 
+from panel.param import ParamMethod
 from panel.viewable import Viewer
 from param.parameterized import discard_events
 
@@ -23,6 +24,8 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
+    render_output = param.Boolean(default=True)
+
     spec = param.String(allow_None=True)
 
     language = "yaml"
@@ -33,7 +36,8 @@ class LumenOutput(Viewer):
             params['spec'] = yaml.dump(component_spec)
         super().__init__(**params)
         code_editor = pn.widgets.CodeEditor(
-            value=self.param.spec, language=self.language, sizing_mode="stretch_both",
+            value=self.param.spec, language=self.language, theme='tomorrow_night_bright', sizing_mode="stretch_both",
+            stylesheets=['.ace_gutter, .ace_scroller { padding: 1em 0; font-size: 1.2em; }']
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = pn.widgets.ButtonIcon(
@@ -62,19 +66,22 @@ class LumenOutput(Viewer):
         )
         icons = pn.Row(copy_icon, download_icon)
         code_col = pn.Column(code_editor, icons, sizing_mode="stretch_both")
-        placeholder = pn.Column(sizing_mode="stretch_width")
-        self._tabs = pn.Tabs(
-            ("Code", code_col),
-            ("Output", placeholder),
-            styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-            active=self.active,
-            dynamic=True
-        )
-        self._tabs.link(self, bidirectional=True, active='active')
+        if self.render_output:
+            placeholder = pn.Column(
+                ParamMethod(self.render, inplace=True),
+                sizing_mode="stretch_width"
+            )
+            self._main = pn.Tabs(
+                ("Code", code_col),
+                ("Output", placeholder),
+                styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
+                active=self.active,
+                dynamic=True
+            )
+            self._main.link(self, bidirectional=True, active='active')
+        else:
+            self._main = code_col
         self._rendered = False
-        placeholder.objects = [
-            pn.pane.ParamMethod(self._render_component, inplace=True)
-        ]
         self._last_output = {}
 
     async def _render_pipeline(self, pipeline):
@@ -119,12 +126,12 @@ class LumenOutput(Viewer):
         return pn.Column(controls, table)
 
     @param.depends('spec', 'active')
-    async def _render_component(self):
+    async def render(self):
         yield pn.indicators.LoadingSpinner(
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if (self.active != (len(self._tabs)-1)) or self.spec is None:
+        if self.render_output and (self.active != (len(self._main)-1)) or self.spec is None:
             return
 
         if self.spec in self._last_output:
@@ -158,7 +165,7 @@ class LumenOutput(Viewer):
             )
 
     def __panel__(self):
-        return self._tabs
+        return self._main
 
     def __repr__(self):
         return self.spec
@@ -178,23 +185,23 @@ class AnalysisOutput(LumenOutput):
             params['active'] = 0
         super().__init__(**params)
         controls = self.analysis.controls()
-        if controls is not None:
+        if controls is not None and self.render_output:
             if self.analysis._run_button:
                 run_button = self.analysis._run_button
                 run_button.param.watch(self._rerun, 'clicks')
-                self._tabs.insert(1, ('Config', controls))
+                self._main.insert(1, ('Config', controls))
             else:
                 run_button = pn.widgets.Button(
                     icon='player-play', name='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0 , 10)
                 )
-                self._tabs.insert(1, ('Config', pn.Column(controls, run_button)))
+                self._main.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
-                self._tabs.active = 2 if self.analysis.autorun else 1
+                self._main.active = 2 if self.analysis.autorun else 1
         self._rendered = True
 
     async def _rerun(self, event):
-        with self._tabs.param.update(loading=True):
+        with self._main.param.update(loading=True):
             if asyncio.iscoroutinefunction(self.analysis.__call__):
                 view = await self.analysis(self.pipeline)
             else:
@@ -213,7 +220,7 @@ class SQLOutput(LumenOutput):
     language = "sql"
 
     @param.depends('spec', 'active')
-    async def _render_component(self):
+    async def render(self):
         yield pn.indicators.LoadingSpinner(
             value=True, name="Executing SQL query...", height=50, width=50
         )
@@ -242,4 +249,4 @@ class SQLOutput(LumenOutput):
             )
 
     def __panel__(self):
-        return self._tabs
+        return self._main

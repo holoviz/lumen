@@ -31,7 +31,7 @@ from .config import FUZZY_TABLE_LENGTH
 from .controls import SourceControls
 from .embeddings import Embeddings
 from .llm import Llm, Message
-from .memory import memory
+from .memory import _Memory, memory
 from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
     VegaLiteSpec, make_table_model,
@@ -63,6 +63,10 @@ class Agent(Viewer):
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
+
+    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
+        Local memory which will be used to provide the agent context.
+        If None the global memory will be used.""")
 
     steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
@@ -121,6 +125,10 @@ class Agent(Viewer):
     def _steps_layout(self):
         return Column() if self.steps_layout else self.steps_layout
 
+    @property
+    def _memory(self):
+        return memory if self.memory is None else self.memory
+
     def __panel__(self):
         return self.interface
 
@@ -137,7 +145,7 @@ class Agent(Viewer):
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
         system = (
             f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{memory.get('current_table', 'N/A')}`. "
+            f"The current table selected: `{self._memory.get('current_table', 'N/A')}`. "
         )
         tables = tuple(table.replace('"', "") for table in tables)
 
@@ -148,7 +156,7 @@ class Agent(Viewer):
             allow_partial=False
         ))
         if not fuzzy_table.required:
-            return [memory.get("current_table") or tables[0]]
+            return [self._memory.get("current_table") or tables[0]]
 
         # make case insensitive, but keep original case to transform back
         if not fuzzy_table.keywords:
@@ -165,7 +173,7 @@ class Agent(Viewer):
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
             tables = await self._select_table(tables)
-        memory["closest_tables"] = tables
+        self._memory["closest_tables"] = tables
         return tuple(tables)
 
     async def _select_table(self, tables):
@@ -193,7 +201,7 @@ class Agent(Viewer):
     # Public API
 
     @classmethod
-    async def applies(cls) -> bool:
+    async def applies(cls, memory: _Memory) -> bool:
         """
         Additional checks to determine if the agent should be used.
         """
@@ -225,16 +233,14 @@ class Agent(Viewer):
             the step currently being processed.
         """
         system_prompt = await self._system_prompt_with_context(messages)
-        response = self.llm.stream(
+        message = None
+        async for output_chunk in self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model, field="output"
-        )
-        if render_output:
-            message = None
-            async for output_chunk in response:
-                message = self.interface.stream(
-                    output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
-                )
-        return response
+        ):
+            message = self.interface.stream(
+                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+            )
+        return message
 
 
 class SourceAgent(Agent):
@@ -259,11 +265,12 @@ class SourceAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None
     ) -> Any:
-        source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False)
-        if render_output:
-            self.interface.send(source_controls, respond=False, user="SourceAgent")
-            while not source_controls._add_button.clicks > 0:
-                await asyncio.sleep(0.05)
+        source_controls = SourceControls(
+            multiple=True, replace_controls=True, select_existing=False, memory=self.memory
+        )
+        self.interface.send(source_controls, respond=False, user="SourceAgent")
+        while not source_controls._add_button.clicks > 0:
+            await asyncio.sleep(0.05)
         return source_controls
 
 
@@ -291,10 +298,10 @@ class ChatAgent(Agent):
 
     @retry_llm_output()
     async def requirements(self, messages: list[Message], errors=None):
-        if 'current_data' in memory:
+        if 'current_data' in self._memory:
             return self.requires
 
-        available_sources = memory["available_sources"]
+        available_sources = self._memory["available_sources"]
         _, tables_schema_str = await gather_table_sources(available_sources)
         with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
@@ -317,25 +324,25 @@ class ChatAgent(Agent):
     async def _system_prompt_with_context(
         self, messages: list[Message], context: str = ""
     ) -> str:
-        source = memory.get("current_source")
+        source = self._memory.get("current_source")
         if not source:
             raise ValueError("No source found in memory.")
         tables = source.get_tables()
         if len(tables) > 1:
-            if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in memory:
+            if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in self._memory:
                 closest_tables = await self._get_closest_tables(messages, tables, n=5)
             else:
-                closest_tables = memory.get("closest_tables", tables)
+                closest_tables = self._memory.get("closest_tables", tables)
             context = f"Available tables: {', '.join(closest_tables)}"
         else:
-            memory["current_table"] = table = memory.get("current_table", tables[0])
-            schema = await get_schema(memory["current_source"], table)
+            self._memory["current_table"] = table = self._memory.get("current_table", tables[0])
+            schema = await get_schema(self._memory["current_source"], table)
             if schema:
                 context = f"{table} with schema: {schema}"
 
-        if "current_data" in memory:
+        if "current_data" in self._memory:
             context += (
-                f"\nHere's a summary of the dataset the user just asked about:\n```\n{memory['current_data']}\n```"
+                f"\nHere's a summary of the dataset the user just asked about:\n```\n{self._memory['current_data']}\n```"
             )
 
         system_prompt = self.system_prompt
@@ -377,7 +384,7 @@ class ChatDetailsAgent(ChatAgent):
         )).result
         context += f"Topic you are a world-class expert on: {topic}"
 
-        current_data = memory["current_data"]
+        current_data = self._memory["current_data"]
         if isinstance(current_data, dict):
             columns = list(current_data["stats"].keys())
         else:
@@ -401,9 +408,14 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         message: pn.chat.ChatMessage = None,
+        render_output: bool = False,
         **kwargs
     ):
-        out = self._output_type(component=component, **kwargs)
+        out = self._output_type(
+            component=component, render_output=render_output, **kwargs
+        )
+        if 'outputs' in self._memory:
+            self._memory['outputs'].append(out)
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
@@ -422,7 +434,7 @@ class TableListAgent(LumenBaseAgent):
     _extensions = ('tabulator',)
 
     @classmethod
-    async def applies(cls) -> bool:
+    async def applies(cls, memory: _Memory) -> bool:
         source = memory.get("current_source")
         if not source:
             return True  # source not loaded yet; always apply
@@ -441,7 +453,7 @@ class TableListAgent(LumenBaseAgent):
         step_title: str | None = None
     ) -> Any:
         tables = []
-        for source in memory['available_sources']:
+        for source in self._memory['available_sources']:
             tables += source.get_tables()
         self._df = pd.DataFrame({"Table": tables})
         table_list = pn.widgets.Tabulator(
@@ -456,8 +468,7 @@ class TableListAgent(LumenBaseAgent):
             header_filters=True
         )
         table_list.on_click(self._use_table)
-        if render_output:
-            self.interface.stream(table_list, user="Lumen")
+        self.interface.stream(table_list, user="Lumen")
         return table_list
 
 
@@ -488,7 +499,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _select_relevant_table(self, messages: list[Message]) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
-        available_sources = memory["available_sources"]
+        available_sources = self._memory["available_sources"]
 
         tables_to_source, tables_schema_str = await gather_table_sources(available_sources)
         tables = tuple(tables_to_source)
@@ -499,13 +510,12 @@ class SQLAgent(LumenBaseAgent):
             table = tables[0]
         else:
             with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
-                closest_tables = memory.pop("closest_tables", [])
+                closest_tables = self._memory.pop("closest_tables", [])
                 if closest_tables:
                     tables = closest_tables
                 elif len(tables) > FUZZY_TABLE_LENGTH:
                     tables = await self._get_closest_tables(messages, tables)
                 system_prompt = await self._system_prompt_with_context(messages, context=tables_schema_str)
-
                 if len(tables) > 1:
                     table_model = make_table_model(tables)
                     result = await self.llm.invoke(
@@ -524,7 +534,7 @@ class SQLAgent(LumenBaseAgent):
             source = tables_to_source[table]
         else:
             sources = [src for src in available_sources if table in src]
-            source = sources[0] if sources else memory["current_source"]
+            source = sources[0] if sources else self._memory["current_source"]
 
         return table, source
 
@@ -618,13 +628,13 @@ class SQLAgent(LumenBaseAgent):
             raise e
 
         if len(df) > 0:
-            memory["current_data"] = await describe_data(df)
+            self._memory["current_data"] = await describe_data(df)
 
-        memory["available_sources"].append(sql_expr_source)
-        memory["current_source"] = sql_expr_source
-        memory["current_pipeline"] = pipeline
-        memory["current_table"] = pipeline.table
-        memory["current_sql"] = sql_query
+        self._memory["available_sources"].append(sql_expr_source)
+        self._memory["current_source"] = sql_expr_source
+        self._memory["current_pipeline"] = pipeline
+        self._memory["current_table"] = pipeline.table
+        self._memory["current_sql"] = sql_query
         return sql_query
 
     async def _check_join_required(
@@ -651,14 +661,14 @@ class SQLAgent(LumenBaseAgent):
         return join_required
 
     async def find_join_tables(self, messages: list):
-        multi_source = len(memory['available_sources']) > 1
+        multi_source = len(self._memory['available_sources']) > 1
         if multi_source:
             available_tables = [
-                f"//{a_source}//{a_table}" for a_source in memory["available_sources"]
+                f"//{a_source}//{a_table}" for a_source in self._memory["available_sources"]
                 for a_table in a_source.get_tables()
             ]
         else:
-            available_tables = memory['current_source'].get_tables()
+            available_tables = self._memory['current_source'].get_tables()
 
         find_joins_prompt = render_template(
             "find_joins.jinja2",
@@ -679,7 +689,7 @@ class SQLAgent(LumenBaseAgent):
 
         tables_to_source = {}
         for source_table in join_tables:
-            available_sources = memory["available_sources"]
+            available_sources = self._memory["available_sources"]
             if multi_source:
                 try:
                     _, a_source_name, a_table = source_table.split("//", maxsplit=2)
@@ -761,9 +771,8 @@ class SQLAgent(LumenBaseAgent):
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system, tables_to_source, step_title)
-        pipeline = memory['current_pipeline']
-        if render_output:
-            self._render_lumen(pipeline, spec=sql_query)
+        pipeline = self._memory['current_pipeline']
+        self._render_lumen(pipeline, spec=sql_query, render_output=render_output)
         return pipeline
 
 
@@ -782,7 +791,7 @@ class BaseViewAgent(LumenBaseAgent):
         render_output: bool = False,
         step_title: str | None = None
     ) -> Any:
-        pipeline = memory["current_pipeline"]
+        pipeline = self._memory["current_pipeline"]
 
         # Write prompts
         system_prompt = await self._system_prompt_with_context(messages)
@@ -791,7 +800,7 @@ class BaseViewAgent(LumenBaseAgent):
             "plot_agent.jinja2",
             schema=yaml.dump(schema),
             table=pipeline.table,
-            current_view=memory.get('current_view'),
+            current_view=self._memory.get('current_view'),
             doc=self.view_type.__doc__.split("\n\n")[0]
         )
         print(f"{self.name} is being instructed that {view_prompt}.")
@@ -811,10 +820,9 @@ class BaseViewAgent(LumenBaseAgent):
             ) as step:
                 step.stream(chain_of_thought)
         print(f"{self.name} settled on {spec=!r}.")
-        memory["current_view"] = dict(spec, type=self.view_type)
+        self._memory["current_view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        if render_output:
-            self._render_lumen(view)
+        self._render_lumen(view, render_output=render_output)
         return view
 
 
@@ -857,7 +865,7 @@ class hvPlotAgent(BaseViewAgent):
         return model[cls.view_type.__name__]
 
     async def _extract_spec(self, model):
-        pipeline = memory["current_pipeline"]
+        pipeline = self._memory["current_pipeline"]
         spec = {
             key: val for key, val in dict(model).items()
             if val is not None
@@ -937,7 +945,7 @@ class AnalysisAgent(LumenBaseAgent):
             else:
                 doc = analysis.__doc__.replace("\n", " ")
             system_prompt = f'- {name!r} - {doc}\n'
-        current_data = memory["current_data"]
+        current_data = self._memory["current_data"]
         if isinstance(current_data, dict):
             columns = list(current_data["stats"].keys())
         else:
@@ -954,7 +962,7 @@ class AnalysisAgent(LumenBaseAgent):
         step_title: str | None = None,
         agents: list[Agent] | None = None
     ) -> Any:
-        pipeline = memory['current_pipeline']
+        pipeline = self._memory['current_pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
             print("NONE found...")
@@ -992,7 +1000,7 @@ class AnalysisAgent(LumenBaseAgent):
             data = await get_data(pipeline)
             for field in analysis_callable._field_params:
                 analysis_callable.param[field].objects = list(data.columns)
-            memory["current_analysis"] = analysis_callable
+            self._memory["current_analysis"] = analysis_callable
 
             if analysis_callable.autorun:
                 if asyncio.iscoroutinefunction(analysis_callable.__call__):
@@ -1002,14 +1010,14 @@ class AnalysisAgent(LumenBaseAgent):
                 spec = view.to_spec()
                 if isinstance(view, View):
                     view_type = view.view_type
-                    memory["current_view"] = dict(spec, type=view_type)
+                    self._memory["current_view"] = dict(spec, type=view_type)
                 elif isinstance(view, Pipeline):
-                    memory["current_pipeline"] = view
+                    self._memory["current_pipeline"] = view
                 # Ensure current_data reflects processed pipeline
-                if pipeline is not memory['current_pipeline']:
-                    pipeline = memory['current_pipeline']
+                if pipeline is not self._memory['current_pipeline']:
+                    pipeline = self._memory['current_pipeline']
                     if len(data) > 0:
-                        memory["current_data"] = await describe_data(data)
+                        self._memory["current_data"] = await describe_data(data)
                 yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
@@ -1017,10 +1025,15 @@ class AnalysisAgent(LumenBaseAgent):
                 step.success_title = "Configure the analysis"
                 view = None
 
-        analysis = memory["current_analysis"]
-        if render_output:
-            if view is None and analysis.autorun:
-                self.interface.stream('Failed to find an analysis that applies to this data')
-            else:
-                self._render_lumen(view, analysis=analysis, pipeline=memory['current_pipeline'])
+        analysis = self._memory["current_analysis"]
+        pipeline = self._memory['current_pipeline']
+        if view is None and analysis.autorun:
+            self.interface.stream('Failed to find an analysis that applies to this data')
+        else:
+            self._render_lumen(
+                view,
+                analysis=analysis,
+                pipeline=pipeline,
+                render_output=render_output
+            )
         return view
