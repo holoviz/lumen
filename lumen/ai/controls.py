@@ -5,11 +5,13 @@ import pandas as pd
 import panel as pn
 import param
 
-from lumen.ai.memory import memory
-from lumen.sources.duckdb import DuckDBSource
+from panel.viewable import Viewer
+
+from ..sources.duckdb import DuckDBSource
+from .memory import _Memory, memory
 
 
-class TableControls(pn.viewable.Viewer):
+class TableControls(Viewer):
 
     filename = param.String(default="", doc="Filename")
     table = param.String(default="", doc="Table name")
@@ -64,11 +66,18 @@ class TableControls(pn.viewable.Viewer):
         return self.box
 
 
-class SourceControls(pn.viewable.Viewer):
+class SourceControls(Viewer):
 
     add = param.Event(doc="Add tables")
+
+    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
+        Local memory which will be used to provide the agent context.
+        If None the global memory will be used.""")
+
     multiple = param.Boolean(default=False, doc="Allow multiple files")
+
     replace_controls = param.Boolean(default=False, doc="Replace controls")
+
     select_existing = param.Boolean(default=True, doc="Select existing table")
 
     _last_table = param.String(default="", doc="Last table added")
@@ -78,9 +87,9 @@ class SourceControls(pn.viewable.Viewer):
 
         self.tables_tabs = pn.Tabs(sizing_mode="stretch_width")
         self._file_input = pn.widgets.FileDropper(
-            height=90,
+            height=100,
             multiple=self.param.multiple,
-            margin=0,
+            margin=(0, 10, 0, 0),
             sizing_mode="stretch_width",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
@@ -94,7 +103,7 @@ class SourceControls(pn.viewable.Viewer):
 
         if self.select_existing:
             nested_sources_tables = {
-                source.name: source.get_tables() for source in memory["available_sources"]
+                source.name: source.get_tables() for source in self._memory["available_sources"]
             }
             first_table = {k: nested_sources_tables[k][0] for k in list(nested_sources_tables)[:1]}
             self._select_table = pn.widgets.NestedSelect(
@@ -115,13 +124,17 @@ class SourceControls(pn.viewable.Viewer):
             button_type="success",
         )
         self.menu = pn.Column(
-            self._input_tabs,
+            self._input_tabs if self.select_existing else self._input_tabs[0],
             self._add_button,
             self.tables_tabs,
             sizing_mode="stretch_width",
         )
 
         self._table_controls = []
+
+    @property
+    def _memory(self):
+        return memory if self.memory is None else self.memory
 
     def _generate_table_controls(self, event):
         if self._input_tabs.active == 0:
@@ -192,18 +205,19 @@ class SourceControls(pn.viewable.Viewer):
         else:
             df_rel.to_view(table)
         duckdb_source.tables[table] = sql_expr
-        memory["current_source"] = duckdb_source
-        memory["current_table"] = table
-        if "available_sources" in memory:
-            memory["available_sources"].append(duckdb_source)
+        self._memory["current_source"] = duckdb_source
+        self._memory["current_table"] = table
+        if "available_sources" in self._memory:
+            self._memory["available_sources"].append(duckdb_source)
+            self._memory.trigger("available_sources")
         else:
-            memory["available_sources"] = [duckdb_source]
+            self._memory["available_sources"] = [duckdb_source]
         self._last_table = table
 
     @param.depends("add", watch=True)
     def add_tables(self):
         with self.menu.param.update(loading=True):
-            duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True)
+            duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded')
             if duckdb_source.tables is None:
                 duckdb_source.tables = {}
             if self._input_tabs.active == 0:
@@ -212,7 +226,7 @@ class SourceControls(pn.viewable.Viewer):
                     self._add_table(duckdb_source, table_controls.file, table_controls)
 
                 if self.replace_controls:
-                    src = memory["current_source"]
+                    src = self._memory["current_source"]
                     self.tables_tabs[:] = [
                         (
                             t,
@@ -227,9 +241,9 @@ class SourceControls(pn.viewable.Viewer):
             elif self.select_existing and self._input_tabs.active == 1:
                 table = self._select_table.value["table"]
                 duckdb_source.tables[table] = f"SELECT * FROM {table}"
-                memory["current_source"] = duckdb_source
-                memory["current_table"] = table
-                memory["available_sources"].append(duckdb_source)
+                self._memory["current_source"] = duckdb_source
+                self._memory["current_table"] = table
+                self._memory["available_sources"].append(duckdb_source)
                 self._last_table = table
 
     def __panel__(self):
