@@ -24,7 +24,7 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
 from .export import export_notebook
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
-from .memory import memory
+from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
 from .utils import get_schema, render_template, retry_llm_output
 
@@ -36,8 +36,7 @@ if TYPE_CHECKING:
 
 class AgentChainLink(param.Parameterized):
     """
-    A link in the chain of agents to
-    be executed.
+    A link in the chain of agents to be executed.
     """
 
     agent = param.ClassSelector(class_=Agent)
@@ -56,21 +55,36 @@ class Assistant(Viewer):
     An Assistant handles multiple agents.
     """
 
-    agents = param.List(default=[ChatAgent])
+    agents = param.List(default=[ChatAgent], doc="""
+        List of agents the assistant will coordinate.""")
 
-    llm = param.ClassSelector(class_=Llm, default=Llama())
+    demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
+        List of instructions to demo the capabilities of the assistant.""")
 
-    interface = param.ClassSelector(class_=ChatInterface)
+    llm = param.ClassSelector(class_=Llm, default=Llama(), doc="""
+        LLM used by the assistant to plan the execution.""")
 
-    suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS)
+    interface = param.ClassSelector(class_=ChatInterface, doc="""
+        Panel ChatInterface instance for the Assistant to interact with.""")
 
-    demo_inputs = param.List(default=DEMO_MESSAGES)
+    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
+        Local memory which will be used to provide the agent context.
+        If None the global memory will be used.""")
 
-    notebook_preamble = param.String()
+    suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
+        Initial list of suggestions of actions the user can take.""")
 
-    sidebar_widgets = param.List()
+    notebook_preamble = param.String(default='', doc="""
+        Preamble to attach to the notebook export.""")
 
-    logs_filename = param.String()
+    sidebar_widgets = param.List(doc="""
+        Widgets to render into the sidebar.""")
+
+    logs_filename = param.String(default=None, doc="""
+        Log file to write to.""")
+
+    render_output = param.Boolean(default=True, doc="""
+        Whether to write outputs to the ChatInterface.""")
 
     def __init__(
         self,
@@ -80,7 +94,6 @@ class Assistant(Viewer):
         logs_filename: str = "",
         **params,
     ):
-
         def on_message(message, instance):
             def update_on_reaction(reactions):
                 self._logs.update_status(
@@ -174,16 +187,20 @@ class Assistant(Viewer):
             sizing_mode="stretch_width",
         )
 
-        if "current_source" in memory and "available_sources" not in memory:
-            memory["available_sources"] = [memory["current_source"]]
-        elif "current_source" not in memory and memory.get("available_sources"):
-            memory["current_source"] = memory["available_sources"][0]
-        elif "available_sources" not in memory:
-            memory["available_sources"] = []
+        if "current_source" in self._memory and "available_sources" not in self._memory:
+            self._memory["available_sources"] = [self._memory["current_source"]]
+        elif "current_source" not in self._memory and self._memory.get("available_sources"):
+            self._memory["current_source"] = self._memory["available_sources"][0]
+        elif "available_sources" not in self._memory:
+            self._memory["available_sources"] = []
 
         self._controls = Column(
-            notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", memory))
+            notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", self._memory))
         )
+
+    @property
+    def _memory(self):
+        return memory if self.memory is None else self.memory
 
     def _add_suggestions_to_footer(
         self,
@@ -215,7 +232,7 @@ class Assistant(Viewer):
                         return
                     messages = [{'role': 'user', 'content': contents}]
                     await agent.respond(
-                        messages, render_output=True, agents=self.agents
+                        messages, render_output=self.render_output, agents=self.agents
                     )
                     await self._add_analysis_suggestions()
                 else:
@@ -265,8 +282,8 @@ class Assistant(Viewer):
         return message
 
     async def _add_analysis_suggestions(self):
-        pipeline = memory['current_pipeline']
-        current_analysis = memory.get("current_analysis")
+        pipeline = self._memory['current_pipeline']
+        current_analysis = self._memory.get("current_analysis")
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
         applicable_analyses = []
         for analysis in self._analyses:
@@ -281,15 +298,15 @@ class Assistant(Viewer):
         )
 
     async def _invalidate_memory(self, messages):
-        table = memory.get("current_table")
+        table = self._memory.get("current_table")
         if not table:
             return
 
-        source = memory.get("current_source")
+        source = self._memory.get("current_source")
         if table not in source:
-            sources = [src for src in memory.get('available_sources', []) if table in src]
+            sources = [src for src in self._memory.get('available_sources', []) if table in src]
             if sources:
-                memory['current_source'] = source = sources[0]
+                self._memory['current_source'] = source = sources[0]
             else:
                 raise KeyError(f'Table {table} could not be found in available sources.')
 
@@ -299,7 +316,7 @@ class Assistant(Viewer):
             # If the selected table cannot be fetched we should invalidate it
             spec = None
 
-        sql = memory.get("current_sql")
+        sql = self._memory.get("current_sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
         system = render_template("check_validity.jinja2", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
@@ -313,16 +330,16 @@ class Assistant(Viewer):
 
         if output and output.is_invalid:
             if output.is_invalid == "table":
-                memory.pop("current_table", None)
-                memory.pop("current_data", None)
-                memory.pop("current_sql", None)
-                memory.pop("current_pipeline", None)
-                memory.pop("closest_tables", None)
+                self._memory.pop("current_table", None)
+                self._memory.pop("current_data", None)
+                self._memory.pop("current_sql", None)
+                self._memory.pop("current_pipeline", None)
+                self._memory.pop("closest_tables", None)
                 print("\033[91mInvalidated from memory.\033[0m")
             elif output.is_invalid == "sql":
-                memory.pop("current_sql", None)
-                memory.pop("current_data", None)
-                memory.pop("current_pipeline", None)
+                self._memory.pop("current_sql", None)
+                self._memory.pop("current_data", None)
+                self._memory.pop("current_pipeline", None)
                 print("\033[91mInvalidated SQL from memory.\033[0m")
             return output.correct_assessment
 
@@ -365,7 +382,7 @@ class Assistant(Viewer):
     ):
         if agents is None:
             agents = self.agents
-        agents = [agent for agent in agents if await agent.applies()]
+        agents = [agent for agent in agents if await agent.applies(self._memory)]
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
         agent_model = make_agent_model(agent_names, primary=primary)
         if len(agent_names) == 0:
@@ -395,7 +412,7 @@ class Assistant(Viewer):
         subagent = agent
         agent_chain = []
         while (unmet_dependencies := tuple(
-            r for r in await subagent.requirements(messages) if r not in memory
+            r for r in await subagent.requirements(messages) if r not in self._memory
         )):
             with self.interface.add_step(title="Resolving dependencies...", user="Assistant") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
@@ -459,8 +476,8 @@ class Assistant(Viewer):
                         steps_layout = step_message.object
                         break
 
-                with subagent.param.update(steps_layout=steps_layout):
-                    await subagent.respond(custom_messages, step_title=title, render_output=render_output)
+                with subagent.param.update(memory=self.memory, steps_layout=steps_layout):
+                    await subagent.respond(custom_messages, step_title=title, render_output=render_output and self.render_output)
                 step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
                 step.success_title = f"{agent_name} agent successfully responded"
 
@@ -493,6 +510,7 @@ class Assistant(Viewer):
         return str(obj)
 
     async def invoke(self, messages: list[Message]) -> str:
+        self._memory.clone()
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3
@@ -530,9 +548,10 @@ class Assistant(Viewer):
         respond_kwargs = {}
         if isinstance(agent, AnalysisAgent):
             respond_kwargs["agents"] = self.agents
-        with agent.param.update(steps_layout=steps_layout):
+        with agent.param.update(memory=self.memory, steps_layout=steps_layout):
             await agent.respond(
-                messages[-context_length:], step_title=title, render_output=True, **respond_kwargs
+                messages[-context_length:], step_title=title,
+                render_output=self.render_output, **respond_kwargs
             )
         self._current_agent.object = "## No agent active"
         if "current_pipeline" in agent.provides:
@@ -592,8 +611,8 @@ class PlanningAssistant(Assistant):
         info = ''
         reasoning = None
         requested, provided = [], []
-        if 'current_table' in memory:
-            requested.append(memory['current_table'])
+        if 'current_table' in self._memory:
+            requested.append(self._memory['current_table'])
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         while reasoning is None or requested:
@@ -601,7 +620,7 @@ class PlanningAssistant(Assistant):
             available = [t for t in tables if t not in provided]
             system = render_template(
                 'plan_agent.jinja2', agents=list(agents.values()), current_agent=self._current_agent.object,
-                unmet_dependencies=unmet_dependencies, memory=memory, table_info=info, tables=available
+                unmet_dependencies=unmet_dependencies, memory=self._memory, table_info=info, tables=available
             )
             async for reasoning in self.llm.stream(
                 messages=messages,
@@ -623,7 +642,7 @@ class PlanningAssistant(Assistant):
         step = plan.steps[-1]
         subagent = agents[step.expert]
         unmet_dependencies = {
-            r for r in await subagent.requirements(messages) if r not in memory
+            r for r in await subagent.requirements(messages) if r not in self._memory
         }
         agent_chain = [
             AgentChainLink(
@@ -639,7 +658,7 @@ class PlanningAssistant(Assistant):
             requires = set(await subagent.requirements(messages))
             unmet_dependencies = {
                 dep for dep in (unmet_dependencies | requires)
-                if dep not in subagent.provides and dep not in memory
+                if dep not in subagent.provides and dep not in self._memory
             }
             agent_chain.append(
                 AgentChainLink(
@@ -655,7 +674,7 @@ class PlanningAssistant(Assistant):
     async def _resolve_dependencies(self, messages: list[Message], agents: dict[str, Agent]) -> list[AgentChainLink]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
         tables = {}
-        for src in memory['available_sources']:
+        for src in self._memory['available_sources']:
             for table in src.get_tables():
                 tables[table] = src
 
@@ -673,6 +692,7 @@ class PlanningAssistant(Assistant):
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                 else:
                     planned = True
+            self._memory['current_plan'] = plan.title
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")

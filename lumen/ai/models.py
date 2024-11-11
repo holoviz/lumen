@@ -131,6 +131,9 @@ def make_plan_models(agent_names: list[str], tables: list[str]):
     )
     plan = create_model(
         "Plan",
+        title=(
+            str, FieldInfo(description="A title that describes this plan in a few words")
+        ),
         steps=(
             list[step],
             FieldInfo(

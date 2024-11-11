@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakKeyDictionary
 
@@ -21,10 +22,18 @@ class _Memory(SessionCache, Viewer):
 
     _global_view = None
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._callbacks = defaultdict(list)
+        self._rx = {}
+
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
         if state.curdoc in self._views or (state.curdoc is None and self._global_view is not None):
             self._update_view(key, value)
+
+    def on_change(self, key, callback):
+        self._callbacks[key].append(callback)
 
     def _render_item(self, key, item):
         if isinstance(item, Component):
@@ -41,7 +50,20 @@ class _Memory(SessionCache, Viewer):
             for name, item in self._curcontext.items()
         ), sizing_mode='stretch_width', active=list(range(len(self._curcontext))))
 
+    def rx(self, key):
+        if key in self._rx:
+            return self._rx[key]
+        self._rx[key] = rxp = pn.rx(self[key])
+        return rxp
+
+    def trigger(self, key):
+        self._update_view(key, self[key])
+
     def _update_view(self, key, value):
+        for cb in self._callbacks[key]:
+            cb(value)
+        if key in self._rx:
+            self._rx[key].rx.value = value
         view = self._views[state.curdoc] if state.curdoc else self._global_view
         accordion = view[0]
         new_item = self._render_item(key, value)
