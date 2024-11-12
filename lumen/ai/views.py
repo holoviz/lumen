@@ -37,7 +37,7 @@ class LumenOutput(Viewer):
         super().__init__(**params)
         code_editor = pn.widgets.CodeEditor(
             value=self.param.spec, language=self.language, theme='tomorrow_night_bright', sizing_mode="stretch_both",
-            stylesheets=['.ace_gutter, .ace_scroller { padding: 1em 0; font-size: 1.2em; }']
+            on_keyup=False
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = pn.widgets.ButtonIcon(

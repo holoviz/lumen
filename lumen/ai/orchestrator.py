@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import re
 
-from io import StringIO
 from typing import TYPE_CHECKING
 
 import param
@@ -12,16 +11,15 @@ import yaml
 from panel import Card, bind
 from panel.chat import ChatInterface, ChatStep
 from panel.layout import Column, FlexBox, Tabs
-from panel.pane import HTML, Markdown
+from panel.pane import HTML
 from panel.viewable import Viewer
-from panel.widgets import Button, FileDownload
+from panel.widgets import Button
 from pydantic import BaseModel
 
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
-from .export import export_notebook
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .memory import _Memory, memory
@@ -34,9 +32,9 @@ if TYPE_CHECKING:
     from ..sources import Source
 
 
-class AgentChainLink(param.Parameterized):
+class ExecutionNode(param.Parameterized):
     """
-    A link in the chain of agents to be executed.
+    Defines a node in an execution graph.
     """
 
     agent = param.ClassSelector(class_=Agent)
@@ -50,41 +48,40 @@ class AgentChainLink(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Assistant(Viewer):
+class Orchestrator(Viewer):
     """
-    An Assistant handles multiple agents.
+    A Orchestrator is responsible for coordinating the actions
+    of a number of agents towards the user defined query by
+    computing an execution Graph and then executing each
+    step along the graph.
     """
 
     agents = param.List(default=[ChatAgent], doc="""
-        List of agents the assistant will coordinate.""")
+        List of agents to coordinate.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
-        List of instructions to demo the capabilities of the assistant.""")
+        List of instructions to demo the orchestrator.""")
+
+    interface = param.ClassSelector(class_=ChatInterface, doc="""
+        The ChatInterface for the Orchestrator to interact with.""")
 
     llm = param.ClassSelector(class_=Llm, default=Llama(), doc="""
         LLM used by the assistant to plan the execution.""")
 
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        Panel ChatInterface instance for the Assistant to interact with.""")
+    logs_filename = param.String(default=None, doc="""
+        Log file to write to.""")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
+    render_output = param.Boolean(default=True, doc="""
+        Whether to write outputs to the ChatInterface.""")
+
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    notebook_preamble = param.String(default='', doc="""
-        Preamble to attach to the notebook export.""")
-
-    sidebar_widgets = param.List(doc="""
-        Widgets to render into the sidebar.""")
-
-    logs_filename = param.String(default=None, doc="""
-        Log file to write to.""")
-
-    render_output = param.Boolean(default=True, doc="""
-        Whether to write outputs to the ChatInterface.""")
+    __abstract = True
 
     def __init__(
         self,
@@ -124,10 +121,6 @@ class Assistant(Viewer):
             messages = instance[-count:]
             for message in messages:
                 self._logs.update_status(message_id=id(message), removed=True)
-
-        def download_notebook():
-            nb = export_notebook(self, preamble=self.notebook_preamble)
-            return StringIO(nb)
 
         if interface is None:
             interface = ChatInterface(
@@ -177,16 +170,6 @@ class Assistant(Viewer):
         }
         self._add_suggestions_to_footer(self.suggestions)
 
-        self._current_agent = Markdown("## No agent active", margin=0)
-
-        notebook_button = FileDownload(
-            icon="notebook",
-            button_type="success",
-            callback=download_notebook,
-            filename="Lumen_ai.ipynb",
-            sizing_mode="stretch_width",
-        )
-
         if "current_source" in self._memory and "available_sources" not in self._memory:
             self._memory["available_sources"] = [self._memory["current_source"]]
         elif "current_source" not in self._memory and self._memory.get("available_sources"):
@@ -194,13 +177,12 @@ class Assistant(Viewer):
         elif "available_sources" not in self._memory:
             self._memory["available_sources"] = []
 
-        self._controls = Column(
-            notebook_button, *self.sidebar_widgets, self._current_agent, Tabs(("Memory", self._memory))
-        )
-
     @property
     def _memory(self):
         return memory if self.memory is None else self.memory
+
+    def __panel__(self):
+        return self.interface
 
     def _add_suggestions_to_footer(
         self,
@@ -358,7 +340,7 @@ class Assistant(Viewer):
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         print("\033[94mNEW\033[0m" + "-" * 100)
-        await self.invoke(contents)
+        await self.respond(contents)
 
     @retry_llm_output()
     async def _fill_model(self, messages, system, agent_model, errors=None):
@@ -373,120 +355,43 @@ class Assistant(Viewer):
         )
         return out
 
-    async def _choose_agent(
-        self,
-        messages: list[Message],
-        agents: list[Agent] | None = None,
-        primary: bool = False,
-        unmet_dependencies: tuple[str] | None = None
-    ):
-        if agents is None:
-            agents = self.agents
-        agents = [agent for agent in agents if await agent.applies(self._memory)]
-        agent_names = tuple(sagent.name[:-5] for sagent in agents)
-        agent_model = make_agent_model(agent_names, primary=primary)
-        if len(agent_names) == 0:
-            raise ValueError("No agents available to choose from.")
-        if len(agent_names) == 1:
-            return agent_model(agent=agent_names[0], chain_of_thought='')
-        self._current_agent.object = "## **Current Agent**: [Lumen.ai](https://lumen.holoviz.org/)"
-        system = render_template(
-            'pick_agent.jinja2', agents=agents, current_agent=self._current_agent.object,
-            primary=primary, unmet_dependencies=unmet_dependencies
-        )
-        return await self._fill_model(messages, system, agent_model)
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
+        subagent = node.agent
+        instruction = node.instruction
+        title = node.title.capitalize()
+        render_output = node.render_output and self.render_output
+        agent_name = type(subagent).name.replace('Agent', '')
 
-    async def _resolve_dependencies(self, messages, agents: dict[str, Agent]) -> list[AgentChainLink]:
-        if len(agents) == 1:
-            agent = next(iter(agents.values()))
-        else:
-            with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
-                output = await self._choose_agent(messages, self.agents, primary=True)
-                step.stream(output.chain_of_thought, replace=True)
-                step.success_title = f"Selected {output.agent}"
-                agent = agents[output.agent]
-
-        if agent is None:
-            return []
-
-        subagent = agent
-        agent_chain = []
-        while (unmet_dependencies := tuple(
-            r for r in await subagent.requirements(messages) if r not in self._memory
-        )):
-            with self.interface.add_step(title="Resolving dependencies...", user="Assistant") as step:
-                step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
-                print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
-                subagents = [
-                    agent
-                    for agent in self.agents
-                    if any(ur in agent.provides for ur in unmet_dependencies)
-                ]
-                output = await self._choose_agent(messages, subagents, unmet_dependencies)
-                if output.agent is None:
-                    continue
-                subagent = agents[output.agent]
-                agent_chain.append(
-                    AgentChainLink(
-                        agent=subagent,
-                        provides=unmet_dependencies,
-                        instruction=output.chain_of_thought,
+        with self.interface.add_step(title=f"Querying {agent_name} agent...") as step:
+            step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
+            custom_messages = messages.copy()
+            if isinstance(subagent, SQLAgent):
+                custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
+                if custom_agent:
+                    custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
+                    custom_message = (
+                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
+                        f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
-                )
-                step.success_title = f"Solved a dependency with {output.agent}"
-        return agent_chain[::-1] + [AgentChainLink(agent=agent)]
+                    custom_messages.append({"role": "user", "content": custom_message})
+            if instruction:
+                custom_messages.append({"role": "user", "content": instruction})
 
-    async def _get_agent_chain_link(self, messages: list[Message]) -> AgentChainLink | None:
-        if len(self.agents) == 1:
-            return self.agents[0]
+            # attach the new steps to the existing steps--used when there is intermediate Lumen output
+            steps_layout = None
+            for step_message in reversed(self.interface.objects[-5:]):
+                if step_message.user == "Assistant" and isinstance(step_message.object, Card):
+                    steps_layout = step_message.object
+                    break
 
-        agents = {agent.name[:-5]: agent for agent in self.agents}
-        agent_chain = await self._resolve_dependencies(messages, agents)
-
-        if not agent_chain:
-            return
-
-        for agent_chain_link in agent_chain[:-1]:
-            subagent = agent_chain_link.agent
-            instruction = agent_chain_link.instruction
-            title = agent_chain_link.title.capitalize()
-            render_output = agent_chain_link.render_output
-
-            agent_name = type(subagent).name.replace('Agent', '')
-            with self.interface.add_step(title=f"Querying {agent_name} agent...") as step:
-                step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
-                self._current_agent.object = f"## **Current Agent**: {agent_name}"
-                custom_messages = messages.copy()
-                if isinstance(subagent, SQLAgent):
-                    custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
-                    if custom_agent:
-                        custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
-                        custom_message = (
-                            f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
-                            f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
-                        )
-                        custom_messages.append({"role": "user", "content": custom_message})
-                if instruction:
-                    custom_messages.append({"role": "user", "content": instruction})
-
-                # attach the new steps to the existing steps--used when there is intermediate Lumen output
-                steps_layout = None
-                for step_message in reversed(self.interface.objects[-5:]):
-                    if step_message.user == "Assistant" and isinstance(step_message.object, Card):
-                        steps_layout = step_message.object
-                        break
-
-                with subagent.param.update(memory=self.memory, steps_layout=steps_layout):
-                    await subagent.respond(custom_messages, step_title=title, render_output=render_output and self.render_output)
-                step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
-                step.success_title = f"{agent_name} agent successfully responded"
-
-        selected_chain_link = agent_chain[-1]
-        print(f"Assistant decided on \033[95m{selected_chain_link!r}\033[0m")
-        return selected_chain_link
+            respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
+            with subagent.param.update(memory=self.memory, steps_layout=steps_layout):
+                await subagent.respond(custom_messages, step_title=title, render_output=render_output, **respond_kwargs)
+            step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
+            step.success_title = f"{agent_name} agent successfully responded"
 
     def _serialize(self, obj, exclude_passwords=True):
-        if isinstance(obj, Tabs | Column):
+        if isinstance(obj, (Column, Tabs)):
             for o in obj:
                 if isinstance(obj, ChatStep) and not obj.title.startswith("Selected"):
                     # only want the chain of thoughts from the selected agent
@@ -509,66 +414,102 @@ class Assistant(Viewer):
             obj = obj.value
         return str(obj)
 
-    async def invoke(self, messages: list[Message]) -> str:
-        self._memory.clone()
+    async def respond(self, messages: list[Message]) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3
         if invalidation_assessment:
             messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
             context_length += 1
-
-        agent_chain_link = await self._get_agent_chain_link(messages[-context_length:])
-        if agent_chain_link is None:
+        agents = {agent.name[:-5]: agent for agent in self.agents}
+        execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
+        if execution_graph is None:
             msg = (
-                "Assistant could not settle on an agent to perform the requested query. "
+                "Assistant could not settle on a plan of action to perform the requested query. "
                 "Please restate your request."
             )
             self.interface.stream(msg, user='Lumen')
             return msg
-
-        agent = agent_chain_link.agent
-        title = agent_chain_link.title.capitalize()
-
-        self._current_agent.object = f"## **Current Agent**: {agent.name[:-5]}"
-        print("\n\033[95mMESSAGES:\033[0m")
-        for message in messages:
-            print(f"{message['role']!r}: {message['content']}")
-            print("ENTRY" + "-" * 10)
-
-        print("\n\033[95mAGENT:\033[0m", agent, messages[-context_length:])
-
-        # attach the new steps to the existing steps--used when there is intermediate Lumen output
-        steps_layout = None
-        for step_message in reversed(self.interface.objects[-5:]):
-            if step_message.user == "Assistant" and isinstance(step_message.object, Card):
-                steps_layout = step_message.object
-                break
-
-        respond_kwargs = {}
-        if isinstance(agent, AnalysisAgent):
-            respond_kwargs["agents"] = self.agents
-        with agent.param.update(memory=self.memory, steps_layout=steps_layout):
-            await agent.respond(
-                messages[-context_length:], step_title=title,
-                render_output=self.render_output, **respond_kwargs
-            )
-        self._current_agent.object = "## No agent active"
-        if "current_pipeline" in agent.provides:
+        for node in execution_graph:
+            await self._execute_graph_node(node, messages[-context_length:])
+        if "current_pipeline" in self._memory:
             await self._add_analysis_suggestions()
         print("\033[92mDONE\033[0m", "\n\n")
 
-    def controls(self):
-        return self._controls
 
-    def __panel__(self):
-        return self.interface
-
-
-class PlanningAssistant(Assistant):
+class Resolver(Orchestrator):
     """
-    The PlanningAssistant develops a plan and then executes it
-    instead of simply resolving the dependencies step-by-step.
+    Resolver is a type of Orchestrator that chooses the agent to answer the
+    query and then recursively resolves all the information required for
+    that agent until the answer is available.
+    """
+
+    async def _choose_agent(
+        self,
+        messages: list[Message],
+        agents: list[Agent] | None = None,
+        primary: bool = False,
+        unmet_dependencies: tuple[str] | None = None
+    ):
+        if agents is None:
+            agents = self.agents
+        agents = [agent for agent in agents if await agent.applies(self._memory)]
+        agent_names = tuple(sagent.name[:-5] for sagent in agents)
+        agent_model = make_agent_model(agent_names, primary=primary)
+        if len(agent_names) == 0:
+            raise ValueError("No agents available to choose from.")
+        if len(agent_names) == 1:
+            return agent_model(agent=agent_names[0], chain_of_thought='')
+        system = render_template(
+            'pick_agent.jinja2', agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
+        )
+        return await self._fill_model(messages, system, agent_model)
+
+    async def _compute_execution_graph(self, messages, agents: dict[str, Agent]) -> list[ExecutionNode]:
+        if len(agents) == 1:
+            agent = next(iter(agents.values()))
+        else:
+            with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
+                output = await self._choose_agent(messages, self.agents, primary=True)
+                step.stream(output.chain_of_thought, replace=True)
+                step.success_title = f"Selected {output.agent}"
+                agent = agents[output.agent]
+
+        if agent is None:
+            return []
+
+        subagent = agent
+        execution_graph = []
+        while (unmet_dependencies := tuple(
+            r for r in await subagent.requirements(messages) if r not in self._memory
+        )):
+            with self.interface.add_step(title="Resolving dependencies...", user="Assistant") as step:
+                step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
+                print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
+                subagents = [
+                    agent
+                    for agent in self.agents
+                    if any(ur in agent.provides for ur in unmet_dependencies)
+                ]
+                output = await self._choose_agent(messages, subagents, unmet_dependencies)
+                if output.agent is None:
+                    continue
+                subagent = agents[output.agent]
+                execution_graph.append(
+                    ExecutionNode(
+                        agent=subagent,
+                        provides=unmet_dependencies,
+                        instruction=output.chain_of_thought,
+                    )
+                )
+                step.success_title = f"Solved a dependency with {output.agent}"
+        return execution_graph[::-1] + [ExecutionNode(agent=agent)]
+
+
+class Planner(Orchestrator):
+    """
+    The Planner develops a plan to solve the user query step-by-step
+    and then executes it.
     """
 
     @classmethod
@@ -619,8 +560,12 @@ class PlanningAssistant(Assistant):
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
             system = render_template(
-                'plan_agent.jinja2', agents=list(agents.values()), current_agent=self._current_agent.object,
-                unmet_dependencies=unmet_dependencies, memory=self._memory, table_info=info, tables=available
+                'plan_agent.jinja2',
+                agents=list(agents.values()),
+                unmet_dependencies=unmet_dependencies,
+                memory=self._memory,
+                table_info=info,
+                tables=available
             )
             async for reasoning in self.llm.stream(
                 messages=messages,
@@ -638,14 +583,14 @@ class PlanningAssistant(Assistant):
         plan = await self._fill_model(messages, system, plan_model)
         return plan
 
-    async def _resolve_plan(self, plan, agents, messages) -> tuple[list[AgentChainLink], set[str]]:
+    async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
         step = plan.steps[-1]
         subagent = agents[step.expert]
         unmet_dependencies = {
             r for r in await subagent.requirements(messages) if r not in self._memory
         }
-        agent_chain = [
-            AgentChainLink(
+        execution_graph = [
+            ExecutionNode(
                 agent=subagent,
                 provides=unmet_dependencies,
                 instruction=step.instruction,
@@ -660,8 +605,8 @@ class PlanningAssistant(Assistant):
                 dep for dep in (unmet_dependencies | requires)
                 if dep not in subagent.provides and dep not in self._memory
             }
-            agent_chain.append(
-                AgentChainLink(
+            execution_graph.append(
+                ExecutionNode(
                     agent=subagent,
                     provides=subagent.provides,
                     instruction=step.instruction,
@@ -669,9 +614,9 @@ class PlanningAssistant(Assistant):
                     render_output=step.render_output
                 )
             )
-        return agent_chain, unmet_dependencies
+        return execution_graph, unmet_dependencies
 
-    async def _resolve_dependencies(self, messages: list[Message], agents: dict[str, Agent]) -> list[AgentChainLink]:
+    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
         tables = {}
         for src in self._memory['available_sources']:
@@ -687,7 +632,7 @@ class PlanningAssistant(Assistant):
                 plan = await self._make_plan(
                     messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
                 )
-                agent_chain, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
+                execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                 else:
@@ -697,4 +642,4 @@ class PlanningAssistant(Assistant):
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
             istep.success_title = "Successfully came up with a plan"
-        return agent_chain[::-1]
+        return execution_graph[::-1]

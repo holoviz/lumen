@@ -18,8 +18,9 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from .agents import (
     AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
+    TableListAgent,
 )
-from .assistant import Assistant, PlanningAssistant
+from .assistant import Orchestrator, Planner
 from .components import SplitJS
 from .controls import SourceControls
 from .llm import Llm, OpenAI
@@ -28,9 +29,9 @@ from .memory import memory
 DataT = str | Source | Pipeline
 
 
-class LumenAI(Viewer):
+class UI(Viewer):
     """
-    LumenAI provides a high-level entrypoint to start chatting with your data.
+    UI provides a baseclass and high-level entrypoint to start chatting with your data.
 
     This high-level wrapper allows providing the data sources you will
     be chatting with and then configures the assistant and agents.
@@ -40,7 +41,7 @@ class LumenAI(Viewer):
     ```python
     import lumen.ai as lmai
 
-    lmai.LumenAI('~/data.csv').servable()
+    lmai.UI('~/data.csv').servable()
     ```
     """
 
@@ -48,23 +49,20 @@ class LumenAI(Viewer):
         List of custom analyses. If provided the AnalysesAgent will be added."""
     )
 
-    assistant = param.ClassSelector(
-        class_=Assistant, default=PlanningAssistant, is_instance=False, doc="""
-        The Assistant class that will be responsible for coordinating the Agents."""
+    orchestrator = param.ClassSelector(
+        class_=Orchestrator, default=Planner, is_instance=False, doc="""
+        The Orchestrator class that will be responsible for coordinating the Agents."""
     )
 
     agents = param.List(default=[], doc="""
         List of additional Agents to add beyond the default_agents."""
     )
 
-    default_agents = param.List(default=[ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent], doc="""
+    default_agents = param.List(default=[TableListAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent], doc="""
         List of default agents which will always be added.""")
 
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
-
-    show_controls = param.Boolean(default=True, doc="""
-        Whether to show assistant controls in the sidebar.""")
 
     template = param.Selector(
         default=config.param.template.names['fast'],
@@ -72,7 +70,7 @@ class LumenAI(Viewer):
         Panel template to serve the application in."""
     )
 
-    title = param.String(default='Lumen ai Assistant', doc="Title of the app.")
+    title = param.String(default='Lumen<sup>ai</sup> UI', doc="Title of the app.")
 
     def __init__(
         self,
@@ -83,12 +81,12 @@ class LumenAI(Viewer):
         agents = self.default_agents + self.agents
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
-        self._assistant = self.assistant(
+        self._orchestrator = self.orchestrator(
             agents=agents,
             llm=self.llm
         )
         self._resolve_data(data)
-        self._main = self._assistant
+        self._main = self._orchestrator
 
     def _resolve_data(self, data: DataT | list[DataT] | None):
         if data is None:
@@ -140,15 +138,13 @@ class LumenAI(Viewer):
         config.css_files.append(CSS_URLS['font-awesome'])
         if (state.curdoc and state.curdoc.session_context) or server is True:
             panel_extension(
-                *{ext for agent in self._assistant.agents for ext in agent._extensions}, template=self.template
+                *{ext for agent in self._orchestrator.agents for ext in agent._extensions}, template=self.template
             )
             config.template = self.template
             template = state.template
             template.title = self.title
             template.config.raw_css = ['#header a { font-family: Futura; font-size: 2em; font-weight: bold;}']
             template.main.append(self._main)
-            if self.show_controls:
-                template.sidebar.append(self._assistant.controls())
             return template
         return super()._create_view()
 
@@ -159,24 +155,16 @@ class LumenAI(Viewer):
         return self._create_view().servable(title, **kwargs)
 
     def __panel__(self):
-        if not self.show_controls:
-            return self._main
-        return Row(
-            Row(self._assistant.controls(), max_width=300),
-            self._main
-        )
+        return self._main
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for exts in self._assistant.agents for ext in exts}, design='material', notifications=True
+            *{ext for exts in self._orchestrator.agents for ext in exts}, design='material', notifications=True
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
 
 
-class Explorer(LumenAI):
-
-    show_controls = param.Boolean(default=False, doc="""
-        Whether to show assistant controls in the sidebar.""")
+class Explorer(UI):
 
     title = param.String(default='Lumen<sup>ai</sup> Explorer', doc="Title of the app.")
 
@@ -186,15 +174,15 @@ class Explorer(LumenAI):
         **params
     ):
         super().__init__(data=data, **params)
-        self._assistant.interface.show_button_name = False
-        cb = self._assistant.interface.callback
-        self._assistant.render_output = False
-        self._assistant.interface.callback = self._wrap_callback(cb)
+        self._orchestrator.interface.show_button_name = False
+        cb = self._orchestrator.interface.callback
+        self._orchestrator.render_output = False
+        self._orchestrator.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
         self._contexts = []
-        self._root_conversation = self._assistant.interface.objects
+        self._root_conversation = self._orchestrator.interface.objects
         self._conversations = []
         self._output = Tabs(
             ('Overview', self._table_explorer()),
@@ -204,7 +192,7 @@ class Explorer(LumenAI):
         self._main = Column(
             SplitJS(
                 left=self._output,
-                right=self._assistant,
+                right=self._orchestrator,
                 sizing_mode='stretch_both'
             )
         )
@@ -216,10 +204,10 @@ class Explorer(LumenAI):
             if active < len(self._conversations):
                 conversation = self._conversations[active]
             else:
-                conversation = list(self._assistant.interface.objects)
+                conversation = list(self._orchestrator.interface.objects)
         else:
             conversation = self._root_conversation
-        self._assistant.interface.objects = conversation
+        self._orchestrator.interface.objects = conversation
 
     def _cleanup_explorations(self, event):
         if len(event.new) >= len(event.old):
@@ -232,7 +220,7 @@ class Explorer(LumenAI):
     def _set_context(self, event):
         if event.new == len(self._conversations):
             return
-        self._assistant.interface.objects = self._conversations[event.new]
+        self._orchestrator.interface.objects = self._conversations[event.new]
 
     def _table_explorer(self):
         from panel_gwalker import GraphicWalker
@@ -297,7 +285,7 @@ class Explorer(LumenAI):
             prev_outputs = local_memory.get('outputs', [])
             prev_pipeline = local_memory.get('current_pipeline')
             local_memory['outputs'] = outputs = []
-            with self._assistant.param.update(memory=local_memory):
+            with self._orchestrator.param.update(memory=local_memory):
                 await callback(contents, user, instance)
             if not outputs:
                 prev_memory.update(local_memory)
@@ -331,7 +319,7 @@ class Explorer(LumenAI):
                 )
             )
             if new:
-                self._conversations.append(self._assistant.interface.objects)
+                self._conversations.append(self._orchestrator.interface.objects)
                 self._explorations.append((title, Column(*content)))
                 self._contexts.append(local_memory)
                 self._explorations.active = len(self._explorations)-1

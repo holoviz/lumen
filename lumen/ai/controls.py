@@ -2,10 +2,13 @@ import io
 import zipfile
 
 import pandas as pd
-import panel as pn
 import param
 
+from panel.layout import Column, FlexBox, Tabs
 from panel.viewable import Viewer
+from panel.widgets import (
+    Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
+)
 
 from ..sources.duckdb import DuckDBSource
 from .memory import _Memory, memory
@@ -31,13 +34,13 @@ class TableControls(Viewer):
         params["extension"] = extension
         super().__init__(**params)
         self.file = file
-        self._name_input = pn.widgets.TextInput.from_param(
+        self._name_input = TextInput.from_param(
             self.param.table, name="Table name"
         )
-        self._sheet_select = pn.widgets.Select.from_param(
+        self._sheet_select = Select.from_param(
             self.param.sheet, name="Sheet", visible=False
         )
-        self.box = pn.FlexBox(
+        self.box = FlexBox(
             self._name_input,
             self._sheet_select,
         )
@@ -85,8 +88,8 @@ class SourceControls(Viewer):
     def __init__(self, **params):
         super().__init__(**params)
 
-        self.tables_tabs = pn.Tabs(sizing_mode="stretch_width")
-        self._file_input = pn.widgets.FileDropper(
+        self.tables_tabs = Tabs(sizing_mode="stretch_width")
+        self._file_input = FileDropper(
             height=100,
             multiple=self.param.multiple,
             margin=(0, 10, 0, 0),
@@ -94,10 +97,10 @@ class SourceControls(Viewer):
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
         self._file_input.param.watch(self._generate_table_controls, "value")
-        self._upload_tabs = pn.Tabs(sizing_mode="stretch_width")
+        self._upload_tabs = Tabs(sizing_mode="stretch_width")
 
-        self._input_tabs = pn.Tabs(
-            ("Upload", pn.Column(self._file_input, self._upload_tabs)),
+        self._input_tabs = Tabs(
+            ("Upload", Column(self._file_input, self._upload_tabs)),
             sizing_mode="stretch_both",
         )
 
@@ -106,7 +109,7 @@ class SourceControls(Viewer):
                 source.name: source.get_tables() for source in self._memory["available_sources"]
             }
             first_table = {k: nested_sources_tables[k][0] for k in list(nested_sources_tables)[:1]}
-            self._select_table = pn.widgets.NestedSelect(
+            self._select_table = NestedSelect(
                 name="Table",
                 value=first_table,
                 options=nested_sources_tables,
@@ -116,14 +119,14 @@ class SourceControls(Viewer):
             self._input_tabs.append(("Select", self._select_table))
             self._select_table.param.watch(self._generate_table_controls, "value")
 
-        self._add_button = pn.widgets.Button.from_param(
+        self._add_button = Button.from_param(
             self.param.add,
             name="Use tables",
             icon="table-plus",
             visible=False,
             button_type="success",
         )
-        self.menu = pn.Column(
+        self.menu = Column(
             self._input_tabs if self.select_existing else self._input_tabs[0],
             self._add_button,
             self.tables_tabs,
@@ -228,12 +231,7 @@ class SourceControls(Viewer):
                 if self.replace_controls:
                     src = self._memory["current_source"]
                     self.tables_tabs[:] = [
-                        (
-                            t,
-                            pn.widgets.Tabulator(
-                                src.get(t), sizing_mode="stretch_both"
-                            ),
-                        )
+                        (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
                         for t in src.get_tables()
                     ]
                     self.menu[0].visible = False
