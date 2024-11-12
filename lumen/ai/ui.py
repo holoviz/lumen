@@ -32,17 +32,6 @@ DataT = str | Source | Pipeline
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
-
-    This high-level wrapper allows providing the data sources you will
-    be chatting with and then configures the assistant and agents.
-
-    Example:
-
-    ```python
-    import lumen.ai as lmai
-
-    lmai.UI('~/data.csv').servable()
-    ```
     """
 
     analyses = param.List(default=[], doc="""
@@ -71,6 +60,8 @@ class UI(Viewer):
     )
 
     title = param.String(default='Lumen<sup>ai</sup> UI', doc="Title of the app.")
+
+    __abstract = True
 
     def __init__(
         self,
@@ -164,7 +155,43 @@ class UI(Viewer):
         return self._create_view()._repr_mimebundle_(include, exclude)
 
 
-class Explorer(UI):
+class ChatUI(UI):
+    """
+    ChatUI provides a high-level entrypoint to start chatting with your data
+    in a chat based UI.
+
+    This high-level wrapper allows providing the data sources you will
+    be chatting with and then configures the assistant and agents.
+
+    Example:
+
+    ```python
+    import lumen.ai as lmai
+
+    lmai.ChatUI('~/data.csv').servable()
+    ```
+    """
+
+    title = param.String(default='Lumen<sup>ai</sup> UI', doc="Title of the app.")
+
+
+class ExplorerUI(UI):
+    """
+    ExplorerUI provides a high-level entrypoint to start chatting with your data
+    in split UI allowing users to load tables, explore them using Graphic Walker,
+    and then interrogate the data via a chat interface.
+
+    This high-level wrapper allows providing the data sources you will
+    be chatting with and then configures the assistant and agents.
+
+    Example:
+
+    ```python
+    import lumen.ai as lmai
+
+    lmai.ExplorerUI('~/data.csv').servable()
+    ```
+    """
 
     title = param.String(default='Lumen<sup>ai</sup> Explorer', doc="Title of the app.")
 
