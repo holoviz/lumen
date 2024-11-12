@@ -362,7 +362,14 @@ class Orchestrator(Viewer):
         render_output = node.render_output and self.render_output
         agent_name = type(subagent).name.replace('Agent', '')
 
-        with self.interface.add_step(title=f"Querying {agent_name} agent...") as step:
+        # attach the new steps to the existing steps--used when there is intermediate Lumen output
+        steps_layout = None
+        for step_message in reversed(self.interface.objects[-5:]):
+            if step_message.user == "Assistant" and isinstance(step_message.object, Card):
+                steps_layout = step_message.object
+                break
+
+        with self.interface.add_step(title=f"Querying {agent_name} agent...", steps_layout=steps_layout) as step:
             step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
             custom_messages = messages.copy()
             if isinstance(subagent, SQLAgent):
@@ -376,13 +383,6 @@ class Orchestrator(Viewer):
                     custom_messages.append({"role": "user", "content": custom_message})
             if instruction:
                 custom_messages.append({"role": "user", "content": instruction})
-
-            # attach the new steps to the existing steps--used when there is intermediate Lumen output
-            steps_layout = None
-            for step_message in reversed(self.interface.objects[-5:]):
-                if step_message.user == "Assistant" and isinstance(step_message.object, Card):
-                    steps_layout = step_message.object
-                    break
 
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
             with subagent.param.update(memory=self.memory, steps_layout=steps_layout):

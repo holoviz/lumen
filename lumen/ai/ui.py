@@ -20,11 +20,11 @@ from .agents import (
     AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
     TableListAgent,
 )
-from .assistant import Orchestrator, Planner
 from .components import SplitJS
 from .controls import SourceControls
 from .llm import Llm, OpenAI
 from .memory import memory
+from .orchestrator import Orchestrator, Planner
 
 DataT = str | Source | Pipeline
 
