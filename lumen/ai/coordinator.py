@@ -48,11 +48,11 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Orchestrator(Viewer):
+class Coordinator(Viewer):
     """
-    A Orchestrator is responsible for coordinating the actions
+    A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
-    computing an execution Graph and then executing each
+    computing an execution graph and then executing each
     step along the graph.
     """
 
@@ -63,7 +63,7 @@ class Orchestrator(Viewer):
         List of instructions to demo the orchestrator.""")
 
     interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface for the Orchestrator to interact with.""")
+        The ChatInterface for the Coordinator to interact with.""")
 
     llm = param.ClassSelector(class_=Llm, default=Llama(), doc="""
         LLM used by the assistant to plan the execution.""")
@@ -437,9 +437,9 @@ class Orchestrator(Viewer):
         print("\033[92mDONE\033[0m", "\n\n")
 
 
-class Resolver(Orchestrator):
+class Resolver(Coordinator):
     """
-    Resolver is a type of Orchestrator that chooses the agent to answer the
+    Resolver is a type of Coordinator that chooses the agent to answer the
     query and then recursively resolves all the information required for
     that agent until the answer is available.
     """
@@ -506,7 +506,7 @@ class Resolver(Orchestrator):
         return execution_graph[::-1] + [ExecutionNode(agent=agent)]
 
 
-class Planner(Orchestrator):
+class Planner(Coordinator):
     """
     The Planner develops a plan to solve the user query step-by-step
     and then executes it.

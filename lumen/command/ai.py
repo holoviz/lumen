@@ -12,8 +12,7 @@ from panel.io.application import Application
 
 SOURCE_CODE = """
 import lumen.ai as lmai
-
-lmai.LumenAI([{tables}]).servable()"""
+lmai.ExplorerUI([{tables}]).servable()"""
 
 VALID_EXTENSIONS = ['.parq', '.parquet', '.csv', '.json']
 

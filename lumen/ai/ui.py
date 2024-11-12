@@ -22,9 +22,9 @@ from .agents import (
 )
 from .components import SplitJS
 from .controls import SourceControls
+from .coordinator import Coordinator, Planner
 from .llm import Llm, OpenAI
 from .memory import memory
-from .orchestrator import Orchestrator, Planner
 
 DataT = str | Source | Pipeline
 
@@ -39,8 +39,8 @@ class UI(Viewer):
     )
 
     orchestrator = param.ClassSelector(
-        class_=Orchestrator, default=Planner, is_instance=False, doc="""
-        The Orchestrator class that will be responsible for coordinating the Agents."""
+        class_=Coordinator, default=Planner, is_instance=False, doc="""
+        The Coordinator class that will be responsible for coordinating the Agents."""
     )
 
     agents = param.List(default=[], doc="""
