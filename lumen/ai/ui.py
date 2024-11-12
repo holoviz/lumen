@@ -72,12 +72,12 @@ class UI(Viewer):
         agents = self.default_agents + self.agents
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
-        self._orchestrator = self.orchestrator(
+        self._coordinator = self.coordinator(
             agents=agents,
             llm=self.llm
         )
         self._resolve_data(data)
-        self._main = self._orchestrator
+        self._main = self._coordinator
 
     def _resolve_data(self, data: DataT | list[DataT] | None):
         if data is None:
@@ -129,7 +129,7 @@ class UI(Viewer):
         config.css_files.append(CSS_URLS['font-awesome'])
         if (state.curdoc and state.curdoc.session_context) or server is True:
             panel_extension(
-                *{ext for agent in self._orchestrator.agents for ext in agent._extensions}, template=self.template
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions}, template=self.template
             )
             config.template = self.template
             template = state.template
@@ -150,7 +150,7 @@ class UI(Viewer):
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for exts in self._orchestrator.agents for ext in exts}, design='material', notifications=True
+            *{ext for exts in self._coordinator.agents for ext in exts}, design='material', notifications=True
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
 
@@ -201,15 +201,15 @@ class ExplorerUI(UI):
         **params
     ):
         super().__init__(data=data, **params)
-        self._orchestrator.interface.show_button_name = False
-        cb = self._orchestrator.interface.callback
-        self._orchestrator.render_output = False
-        self._orchestrator.interface.callback = self._wrap_callback(cb)
+        self._coordinator.interface.show_button_name = False
+        cb = self._coordinator.interface.callback
+        self._coordinator.render_output = False
+        self._coordinator.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
         self._contexts = []
-        self._root_conversation = self._orchestrator.interface.objects
+        self._root_conversation = self._coordinator.interface.objects
         self._conversations = []
         self._output = Tabs(
             ('Overview', self._table_explorer()),
@@ -219,7 +219,7 @@ class ExplorerUI(UI):
         self._main = Column(
             SplitJS(
                 left=self._output,
-                right=self._orchestrator,
+                right=self._coordinator,
                 sizing_mode='stretch_both'
             )
         )
@@ -231,10 +231,10 @@ class ExplorerUI(UI):
             if active < len(self._conversations):
                 conversation = self._conversations[active]
             else:
-                conversation = list(self._orchestrator.interface.objects)
+                conversation = list(self._coordinator.interface.objects)
         else:
             conversation = self._root_conversation
-        self._orchestrator.interface.objects = conversation
+        self._coordinator.interface.objects = conversation
 
     def _cleanup_explorations(self, event):
         if len(event.new) >= len(event.old):
@@ -247,7 +247,7 @@ class ExplorerUI(UI):
     def _set_context(self, event):
         if event.new == len(self._conversations):
             return
-        self._orchestrator.interface.objects = self._conversations[event.new]
+        self._coordinator.interface.objects = self._conversations[event.new]
 
     def _table_explorer(self):
         from panel_gwalker import GraphicWalker
@@ -312,7 +312,7 @@ class ExplorerUI(UI):
             prev_outputs = local_memory.get('outputs', [])
             prev_pipeline = local_memory.get('current_pipeline')
             local_memory['outputs'] = outputs = []
-            with self._orchestrator.param.update(memory=local_memory):
+            with self._coordinator.param.update(memory=local_memory):
                 await callback(contents, user, instance)
             if not outputs:
                 prev_memory.update(local_memory)
@@ -346,7 +346,7 @@ class ExplorerUI(UI):
                 )
             )
             if new:
-                self._conversations.append(self._orchestrator.interface.objects)
+                self._conversations.append(self._coordinator.interface.objects)
                 self._explorations.append((title, Column(*content)))
                 self._contexts.append(local_memory)
                 self._explorations.active = len(self._explorations)-1
