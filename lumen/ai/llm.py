@@ -220,7 +220,7 @@ class OpenAI(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4o-mini"},
-        "reasoning": {"model": "gpt-4-turbo-preview"},
+        "reasoning": {"model": "gpt-4o"},
     })
 
     @property

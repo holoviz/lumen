@@ -2,7 +2,7 @@ import panel as pn
 
 from . import agents, embeddings, llm  # noqa
 from .agents import Analysis  # noqa
-from .coordinator import Coordinator, Planner, Resolver  # noqa
+from .coordinator import Coordinator, DependencyResolver, Planner  # noqa
 from .memory import memory  # noqa
 from .ui import ChatUI, ExplorerUI  # noqa
 

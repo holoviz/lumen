@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import StringIO
+
 import param
 
 from panel.chat import ChatInterface
@@ -11,7 +13,7 @@ from panel.pane import Markdown
 from panel.param import ParamMethod
 from panel.theme import Material
 from panel.viewable import Viewer
-from panel.widgets import Button, MultiChoice
+from panel.widgets import Button, FileDownload, MultiChoice
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -23,6 +25,7 @@ from .agents import (
 from .components import SplitJS
 from .controls import SourceControls
 from .coordinator import Coordinator, Planner
+from .export import export_notebook
 from .llm import Llm, OpenAI
 from .memory import memory
 
@@ -53,6 +56,9 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
+    notebook_preamble = param.String(default='', doc="""
+        Preamble to add to exported notebook(s).""")
+
     template = param.Selector(
         default=config.param.template.names['fast'],
         objects=config.param.template.names, doc="""
@@ -76,8 +82,22 @@ class UI(Viewer):
             agents=agents,
             llm=self.llm
         )
+        self._notebook_export = FileDownload(
+            icon="notebook",
+            icon_size="1.5em",
+            button_type="primary",
+            callback=self._export_notebook,
+            filename=" ",
+            styles={'position': 'absolute', 'right': '0', 'top': '-5px', 'z-index': '999'},
+            stylesheets=['.bk-btn a { padding: 0 6px; }'],
+            visible=False
+        )
         self._resolve_data(data)
         self._main = self._coordinator
+
+    def _export_notebook(self, _):
+        nb = export_notebook(self._coordinator.interface.objects, preamble=self.notebook_preamble)
+        return StringIO(nb)
 
     def _resolve_data(self, data: DataT | list[DataT] | None):
         if data is None:
@@ -208,6 +228,7 @@ class ExplorerUI(UI):
         self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
+        self._titles = []
         self._contexts = []
         self._root_conversation = self._coordinator.interface.objects
         self._conversations = []
@@ -218,7 +239,7 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=self._output,
+                left=Column(self._notebook_export, self._output, styles={'overflow-x': 'auto'}),
                 right=self._coordinator,
                 sizing_mode='stretch_both'
             )
@@ -232,7 +253,9 @@ class ExplorerUI(UI):
                 conversation = self._conversations[active]
             else:
                 conversation = list(self._coordinator.interface.objects)
+            self._notebook_export.visible = True
         else:
+            self._notebook_export.visible = False
             conversation = self._root_conversation
         self._coordinator.interface.objects = conversation
 
@@ -248,12 +271,18 @@ class ExplorerUI(UI):
         if event.new == len(self._conversations):
             return
         self._coordinator.interface.objects = self._conversations[event.new]
+        self._notebook_export.param.update(
+            visible=True,
+            filename = f"{self._titles[event.new].replace(' ', '_')}"
+        )
 
     def _table_explorer(self):
         from panel_gwalker import GraphicWalker
 
         table_select = MultiChoice(width=500, margin=(5, 0))
-        load_button = Button(name='Load table(s)', icon='table-plus', button_type='primary')
+        load_button = Button(
+            name='Load table(s)', icon='table-plus', button_type='primary'
+        )
 
         source_map = {}
         def update_source_map(sources, init=False):
@@ -285,7 +314,7 @@ class ExplorerUI(UI):
             explorers = []
             for table in tables:
                 source = source_map[table]
-                if len(source_map) > 1:
+                if len(memory['available_sources']) > 1:
                     _, table = table.rsplit(' : ', 1)
                 data = source.get(table)
                 walker = GraphicWalker(
@@ -349,8 +378,12 @@ class ExplorerUI(UI):
                 self._conversations.append(self._coordinator.interface.objects)
                 self._explorations.append((title, Column(*content)))
                 self._contexts.append(local_memory)
+                self._titles.append(title)
+                self._notebook_export.filename = f"{title.replace(' ', '_')}.csv"
                 self._explorations.active = len(self._explorations)-1
                 self._output.active = 1
             else:
-                self._explorations[self._explorations.active] = (title, Column(*content))
+                tab = self._explorations.active
+                self._titles[tab] = title
+                self._explorations[tab] = Column(*content)
         return wrapper
