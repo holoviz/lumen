@@ -521,14 +521,10 @@ class Planner(Coordinator):
         cache: dict[str, dict] | None = None
     ) -> str:
         cache = cache or {}
-        to_query, queries = [], []
         for table in requested:
             if table in provided or table in cache:
                 continue
-            to_query.append(table)
-            queries.append(get_schema(tables[table], table, limit=3))
-        for table, schema in zip(to_query, await asyncio.gather(*queries)):
-            cache[table] = schema
+            cache[table] = await get_schema(tables[table], table, limit=3)
         schema_info = ''
         for table in requested:
             if table in provided:
