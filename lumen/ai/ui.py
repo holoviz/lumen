@@ -38,7 +38,7 @@ class UI(Viewer):
         List of custom analyses. If provided the AnalysesAgent will be added."""
     )
 
-    orchestrator = param.ClassSelector(
+    coordinator = param.ClassSelector(
         class_=Coordinator, default=Planner, is_instance=False, doc="""
         The Coordinator class that will be responsible for coordinating the Agents."""
     )
