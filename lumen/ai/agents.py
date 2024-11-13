@@ -427,7 +427,9 @@ class LumenBaseAgent(Agent):
 
 class TableListAgent(LumenBaseAgent):
     """
-    Provides a list of all availables tables/datasets.
+    Renders a list of all availables tables to the user.
+
+    Not useful for gathering information about the tables.
     """
 
     system_prompt = param.String(
@@ -479,10 +481,11 @@ class TableListAgent(LumenBaseAgent):
 
 class SQLAgent(LumenBaseAgent):
     """
-    Responsible for generating and modifying SQL queries to answer user queries about the data,
-    such querying subsets of the data, aggregating the data and calculating results. If the
-    current table does not contain all the available data the SQL agent is also capable of
-    joining it with other tables.
+    Responsible for generating, modifying and executing SQL queries to
+    answer user queries about the data, such querying subsets of the
+    data, aggregating the data and calculating results. If the current
+    table does not contain all the available data the SQL agent is
+    also capable of joining it with other tables.
     """
 
     system_prompt = param.String(
