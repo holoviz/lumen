@@ -8,10 +8,6 @@ CSS = """
     width: 100%;
 }
 
-#sidebar {
-    overflow: scroll;
-}
-
 .gutter {
     background-color: #eee;
     background-repeat: no-repeat;
