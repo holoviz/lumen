@@ -28,13 +28,12 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
-def render_template(template_path: Path, prompt_overrides: dict, strict_undefined: bool = True, **context):
-    template_path = template_path.relative_to(PROMPTS_DIR)
+def render_template(template_path: Path, prompt_overrides: dict, **context):
+    try:
+        template_path = template_path.relative_to(PROMPTS_DIR)
+    except ValueError:
+        pass
     fs_loader = FileSystemLoader(PROMPTS_DIR)
-
-    env_kwargs = {}
-    if strict_undefined:
-        env_kwargs = {"undefined": StrictUndefined}
 
     if prompt_overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
@@ -51,13 +50,14 @@ def render_template(template_path: Path, prompt_overrides: dict, strict_undefine
         )
         dynamic_loader = DictLoader({"dynamic_template": dynamic_template_content})
         choice_loader = ChoiceLoader([dynamic_loader, fs_loader])
-        env = Environment(loader=choice_loader, **env_kwargs)
-        template = env.get_template("dynamic_template")
+        env = Environment(loader=choice_loader, undefined=StrictUndefined)
+        template_name = "dynamic_template"
     else:
-        env = Environment(loader=fs_loader, **env_kwargs)
-        template = env.get_template(str(template_path))
-    return template.render(**context)
+        env = Environment(loader=fs_loader, undefined=StrictUndefined)
+        template_name = str(template_path)
 
+    template = env.get_template(template_name)
+    return template.render(**context)
 
 def retry_llm_output(retries=3, sleep=1):
     """

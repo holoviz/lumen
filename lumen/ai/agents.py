@@ -225,18 +225,6 @@ class Agent(Viewer):
         """
         return True
 
-    @property
-    def resolved_templates(self):
-        return {
-            prompt_name: render_template(
-                template_path,
-                prompt_overrides=self.prompt_overrides,
-                strict_undefined=False,
-                memory=memory
-            )
-            for prompt_name, template_path in self.template_paths.items()
-        }
-
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
 
