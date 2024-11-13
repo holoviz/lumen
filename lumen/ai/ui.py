@@ -273,7 +273,7 @@ class ExplorerUI(UI):
         self._coordinator.interface.objects = self._conversations[event.new]
         self._notebook_export.param.update(
             visible=True,
-            filename = f"{self._titles[event.new].replace(' ', '_')}"
+            filename = f"{self._titles[event.new].replace(' ', '_')}.ipynb"
         )
 
     def _table_explorer(self):
@@ -376,14 +376,14 @@ class ExplorerUI(UI):
             )
             if new:
                 self._conversations.append(self._coordinator.interface.objects)
-                self._explorations.append((title, Column(*content)))
+                self._explorations.append((title, Column(*content, name=title)))
                 self._contexts.append(local_memory)
                 self._titles.append(title)
-                self._notebook_export.filename = f"{title.replace(' ', '_')}.csv"
+                self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
                 self._explorations.active = len(self._explorations)-1
                 self._output.active = 1
             else:
                 tab = self._explorations.active
-                self._titles[tab] = title
-                self._explorations[tab] = Column(*content)
+                title = self._titles[tab]
+                self._explorations[tab] = Column(*content, name=title)
         return wrapper
