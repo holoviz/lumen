@@ -60,7 +60,7 @@ class Coordinator(Viewer):
         List of agents to coordinate.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
-        List of instructions to demo the orchestrator.""")
+        List of instructions to demo the Coordinator.""")
 
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
