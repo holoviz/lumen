@@ -437,11 +437,11 @@ class Coordinator(Viewer):
         print("\033[92mDONE\033[0m", "\n\n")
 
 
-class Resolver(Coordinator):
+class DependencyResolver(Coordinator):
     """
-    Resolver is a type of Coordinator that chooses the agent to answer the
-    query and then recursively resolves all the information required for
-    that agent until the answer is available.
+    DependencyResolver is a type of Coordinator that chooses the agent
+    to answer the query and then recursively resolves all the
+    information required for that agent until the answer is available.
     """
 
     async def _choose_agent(
@@ -578,7 +578,13 @@ class Planner(Coordinator):
                 t for t in getattr(reasoning, 'tables', [])
                 if t and t not in provided
             ]
-        new_msg = dict(role=user_msg['role'], content=f"<user query>{user_msg['content']}</user query> {reasoning.chain_of_thought}")
+        new_msg = dict(
+            role=user_msg['role'],
+            content=(
+                f"<user query>{user_msg['content']}</user query>"
+                "{reasoning.chain_of_thought}"
+            )
+        )
         messages = messages[:-1] + [new_msg]
         plan = await self._fill_model(messages, system, plan_model)
         return plan
@@ -598,6 +604,7 @@ class Planner(Coordinator):
                 render_output=step.render_output
             )
         ]
+        table_provided = False
         for step in plan.steps[:-1][::-1]:
             subagent = agents[step.expert]
             requires = set(await subagent.requirements(messages))
@@ -605,6 +612,19 @@ class Planner(Coordinator):
                 dep for dep in (unmet_dependencies | requires)
                 if dep not in subagent.provides and dep not in self._memory
             }
+            if "current_table" in unmet_dependencies:
+                unmet_dependencies.remove('current_table')
+                if table_provided:
+                    execution_graph.append(
+                        ExecutionNode(
+                            agent=agents['SQLAgent'],
+                            provides=['current_table'],
+                            instruction='Load the table',
+                            title='Loading table',
+                            render_output=False
+                        )
+                    )
+                table_provided = True
             execution_graph.append(
                 ExecutionNode(
                     agent=subagent,
