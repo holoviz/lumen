@@ -6,7 +6,7 @@ from textwrap import dedent
 import nbformat
 
 from panel import Column
-from panel.chat import ChatStep
+from panel.chat import ChatMessage, ChatStep
 
 from lumen.ai.views import LumenOutput
 from lumen.config import config
@@ -14,7 +14,7 @@ from lumen.pipeline import Pipeline
 from lumen.views import View
 
 
-def make_preamble(preamble):
+def make_preamble(preamble: str):
     now = dt.datetime.now()
     header = nbformat.v4.new_markdown_cell(source=f'# Lumen.ai - Chat Logs {now}')
     source = (preamble + dedent(
@@ -28,7 +28,7 @@ def make_preamble(preamble):
     imports = nbformat.v4.new_code_cell(source=source)
     return [header, imports]
 
-def format_markdown(msg):
+def format_markdown(msg: ChatMessage):
     if msg.avatar.startswith('https://'):
         avatar = f'<img src="{msg.avatar}" width=45 height=45></img>'
     else:
@@ -38,7 +38,7 @@ def format_markdown(msg):
     content = prefix.join(msg.serialize().split('\n'))
     return [nbformat.v4.new_markdown_cell(source=f'{header}\n{prefix}{content}')]
 
-def format_output(msg):
+def format_output(msg: ChatMessage):
     output = msg.object
     code = []
     with config.param.update(serializer='csv'):
@@ -55,9 +55,9 @@ def format_output(msg):
         ])
     return [nbformat.v4.new_code_cell(source='\n'.join(code))]
 
-def export_notebook(assistant, preamble: str = ""):
+def export_notebook(messages: list[ChatMessage], preamble: str = ""):
     cells = make_preamble(preamble)
-    for msg in assistant.interface.objects:
+    for msg in messages:
         if msg.user == 'Help':
             continue
         elif isinstance(msg.object, str):
