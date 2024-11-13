@@ -285,7 +285,7 @@ class ExplorerUI(UI):
             explorers = []
             for table in tables:
                 source = source_map[table]
-                if len(source_map) > 1:
+                if len(memory['available_sources']) > 1:
                     _, table = table.rsplit(' : ', 1)
                 data = source.get(table)
                 walker = GraphicWalker(
