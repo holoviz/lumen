@@ -856,7 +856,7 @@ class DropNA(Transform):
     axis = param.ClassSelector(default=0, class_=(int, str), doc="""
         The axis to rename. 0 or 'index', 1 or 'columns'""")
 
-    how = param.ObjectSelector(default='any', objects=['any', 'all'], doc="""
+    how = param.Selector(default='any', objects=['any', 'all'], doc="""
         Determine if row or column is removed from DataFrame, when we have
         at least one NA or all NA.""")
 

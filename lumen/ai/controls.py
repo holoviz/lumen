@@ -19,7 +19,7 @@ class TableControls(Viewer):
     filename = param.String(default="", doc="Filename")
     table = param.String(default="", doc="Table name")
     extension = param.String(default="", doc="File extension")
-    sheet = param.ObjectSelector(default=None, objects=[], doc="Sheet")
+    sheet = param.Selector(default=None, objects=[], doc="Sheet")
 
     _load = param.Event(doc="Load table")
 
