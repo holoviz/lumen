@@ -331,7 +331,7 @@ class Download(Component, Viewer):
     labels = param.Dict(default={}, doc="""
         A dictionary to override the Button label for each table.""")
 
-    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+    format = param.Selector(default=None, objects=DOWNLOAD_FORMATS, doc="""
         The format to download the data in.""")
 
     kwargs = param.Dict(default={}, doc="""

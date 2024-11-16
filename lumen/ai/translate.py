@@ -105,7 +105,7 @@ def parameter_to_field(
             field_info.default_factory = dict
         elif parameter.default is not None:
             field_info.default_factory = parameter.default
-    elif param_type in [param.Selector, param.ObjectSelector]:
+    elif param_type in [param.Selector, param.ObjectSelector]:  # ObjectSelector is deprecated
         field_info.default = parameter.default
         if literals:
             type_ = _create_literal(literals)
