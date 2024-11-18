@@ -6,6 +6,7 @@ import json
 import re
 import textwrap
 
+from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
@@ -29,7 +30,7 @@ from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import VegaLiteView, View, hvPlotUIView
 from .analysis import Analysis
-from .config import FUZZY_TABLE_LENGTH
+from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
 from .controls import SourceControls
 from .embeddings import Embeddings
 from .llm import Llm
@@ -85,7 +86,11 @@ class Agent(Viewer):
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False, doc="""
         A Pydantic model determining the schema of the response.""")
 
-    system_prompt = param.String(doc="The system prompt.")
+    prompt_overrides = param.Dict(default={}, doc="""
+        Overrides the prompt's 'instructions' or 'context' jinja2 blocks.""")
+
+    template_paths = param.Dict(default={}, doc="""
+        The paths to the prompt's jinja2 templates.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -139,16 +144,6 @@ class Agent(Viewer):
 
     def __panel__(self):
         return self.interface
-
-    async def _system_prompt_with_context(
-        self, messages: list, context: str = ""
-    ) -> str:
-        system_prompt = self.system_prompt
-        if self.embeddings:
-            context = self.embeddings.query(messages)
-        if context:
-            system_prompt += f"\n### CONTEXT: {context}"
-        return system_prompt
 
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
         system = (
@@ -206,6 +201,21 @@ class Agent(Viewer):
         self.interface.pop(-1)
         return tables
 
+    def _render_prompt(self, prompt_name: str, **context) -> str:
+        context["memory"] = self._memory
+        system_prompt = render_template(
+            self.template_paths[prompt_name],
+            prompt_overrides=self.prompt_overrides,
+            **context
+        )
+        return system_prompt
+
+    @abstractmethod
+    async def _render_system_prompt(self, messages: list[Message]) -> str:
+        """
+        Renders the system prompt using the provided prompts.
+        """
+
     # Public API
 
     @classmethod
@@ -214,6 +224,18 @@ class Agent(Viewer):
         Additional checks to determine if the agent should be used.
         """
         return True
+
+    @property
+    def resolved_templates(self):
+        return {
+            prompt_name: render_template(
+                template_path,
+                prompt_overrides=self.prompt_overrides,
+                strict_undefined=False,
+                memory=memory
+            )
+            for prompt_name, template_path in self.template_paths.items()
+        }
 
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
@@ -240,7 +262,7 @@ class Agent(Viewer):
             If the Agent response is part of a longer query this describes
             the step currently being processed.
         """
-        system_prompt = await self._system_prompt_with_context(messages)
+        system_prompt = await self._render_system_prompt(messages)
         message = None
         async for output_chunk in self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model, field="output"
@@ -283,22 +305,23 @@ class SourceAgent(Agent):
 
 
 class ChatAgent(Agent):
-    """
-    Chats and provides info about high level data related topics,
-    e.g. what datasets are available, the columns of the data or
-    statistics about the data, and continuing the conversation.
 
-    Is capable of providing suggestions to get started or comment on interesting tidbits.
-    If data is available, it can also talk about the data itself.
-    """
+    purpose = param.String(
+        """
+        Chats and provides info about high level data related topics,
+        e.g. what datasets are available, the columns of the data or
+        statistics about the data, and continuing the conversation.
 
-    system_prompt = param.String(
-        default=(
-            "Be a helpful chatbot to talk about high-level data exploration "
-            "like what datasets are available and what each column represents. "
-            "Provide suggestions to get started if necessary. Do not write analysis "
-            "code unless explicitly asked."
-        )
+        Is capable of providing suggestions to get started or comment on interesting tidbits.
+        If data is available, it can also talk about the data itself.
+        """
+    )
+
+    template_paths = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+            "data_required": PROMPTS_DIR / "ChatAgent" / "data_required.jinja2",
+        }
     )
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
@@ -312,16 +335,11 @@ class ChatAgent(Agent):
 
         available_sources = self._memory["available_sources"]
         _, tables_schema_str = await gather_table_sources(available_sources)
+        system_prompt = self._render_prompt("data_required", tables_schema_str=tables_schema_str)
         with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,
-                system=(
-                    "Assess if the user's prompt requires loading data. "
-                    "If the inquiry is just about available tables, no data access required. "
-                    "However, if relevant tables apply to the query, load the data for a "
-                    "more accurate and up-to-date response. "
-                    f"Here are the available tables:\n{tables_schema_str}"
-                ),
+                system=system_prompt,
                 response_model=DataRequired,
             )
             async for output in response:
@@ -330,33 +348,30 @@ class ChatAgent(Agent):
                 return self.requires + ['current_table']
         return self.requires
 
-    async def _system_prompt_with_context(
-        self, messages: list[Message], context: str = ""
-    ) -> str:
+    async def _render_system_prompt(self, messages: list[Message]) -> str:
         source = self._memory.get("current_source")
         if not source:
             raise ValueError("No source found in memory.")
+
         tables = source.get_tables()
+        context = {"tables": tables}
         if len(tables) > 1:
-            if len(tables) > FUZZY_TABLE_LENGTH and "closest_tables" not in self._memory:
+            if (
+                len(tables) > FUZZY_TABLE_LENGTH
+                and "closest_tables" not in self._memory
+            ):
                 closest_tables = await self._get_closest_tables(messages, tables, n=5)
             else:
                 closest_tables = self._memory.get("closest_tables", tables)
-            context = f"Available tables: {', '.join(closest_tables)}"
+            context["closest_tables"] = closest_tables
         else:
-            self._memory["current_table"] = table = self._memory.get("current_table", tables[0])
-            schema = await get_schema(self._memory["current_source"], table)
-            if schema:
-                context = f"{table} with schema: {schema}"
-
-        if "current_data" in self._memory:
-            context += (
-                f"\nHere's a summary of the dataset the user just asked about:\n```\n{self._memory['current_data']}\n```"
+            self._memory["current_table"] = table = self._memory.get(
+                "current_table", tables[0]
             )
-
-        system_prompt = self.system_prompt
-        if context:
-            system_prompt += f"\n### CONTEXT: {context}"
+            schema = await get_schema(self._memory["current_source"], table)
+            context["table"] = table
+            context["schema"] = schema
+        system_prompt = self._render_prompt("main", **context)
         return system_prompt
 
 
