@@ -1,33 +1,24 @@
-from pathlib import Path
-
-from .config import DEFAULT_EMBEDDINGS_PATH
+from abc import ABC, abstractmethod
 
 
-class Embeddings:
-
-    def add_directory(self, data_dir: Path):
-        raise NotImplementedError
-
-    def query(self, query_texts: str) -> list:
-        raise NotImplementedError
+class Embeddings(ABC):
+    @abstractmethod
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for a list of texts."""
 
 
-class ChromaDb(Embeddings):
+class OpenAIEmbeddings(Embeddings):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "text-embedding-3-small",
+    ):
+        from openai import OpenAI
 
-    def __init__(self, collection: str, persist_dir: str = DEFAULT_EMBEDDINGS_PATH):
-        import chromadb
-        self.client = chromadb.PersistentClient(path=str(persist_dir / collection))
-        self.collection = self.client.get_or_create_collection(collection)
+        self.client = OpenAI(api_key=api_key)
+        self.model = model
 
-    def add_directory(self, data_dir: Path, file_type='json'):
-        add_kwargs = {
-            "ids": [],
-            "documents": [],
-        }
-        for i, path in enumerate(data_dir.glob(f"**/*.{file_type}")):
-            add_kwargs["ids"].append(f"{i}")
-            add_kwargs["documents"].append(path.read_text())
-        self.collection.add(**add_kwargs)
-
-    def query(self, query_texts: str) -> list:
-        return self.collection.query(query_texts=query_texts)["documents"]
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        texts = [text.replace("\n", " ") for text in texts]
+        response = self.client.embeddings.create(input=texts, model=self.model)
+        return [r.embedding for r in response.data]
