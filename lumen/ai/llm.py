@@ -429,10 +429,13 @@ class AzureMistralAI(MistralAI):
 
 
 class AnthropicAI(Llm):
+    """
+    AnthropicAI allows calling Anthropic models such as Claude.
+    """
 
     api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"))
 
-    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.TOOLS])
+    mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
