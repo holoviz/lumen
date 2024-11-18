@@ -4,7 +4,9 @@ import os
 
 from functools import partial
 from types import SimpleNamespace
-from typing import Any, Literal, TypedDict
+from typing import (
+    TYPE_CHECKING, Any, Literal, TypedDict,
+)
 
 import instructor
 import panel as pn
@@ -16,16 +18,16 @@ from pydantic import BaseModel
 
 from .interceptor import Interceptor
 
+if TYPE_CHECKING:
+    MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
 
-class Message(TypedDict):
-    role: Literal["system", "user", "assistant"]
-    content: str
-    name: str | None
+    class Message(TypedDict):
+        role: Literal["system", "user", "assistant"]
+        content: str
+        name: str | None
 
 
 BASE_MODES = [Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS, Mode.TOOLS]
-
-MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
 
 
 class Llm(param.Parameterized):
