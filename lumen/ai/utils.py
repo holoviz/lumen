@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def render_template(template_path: Path, prompt_overrides: dict, **context):
     try:
-        template_path = template_path.relative_to(PROMPTS_DIR)
+        template_path = template_path.relative_to(PROMPTS_DIR).as_posix()
     except ValueError:
         pass
     fs_loader = FileSystemLoader(PROMPTS_DIR)
