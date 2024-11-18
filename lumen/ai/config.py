@@ -10,6 +10,7 @@ class LlmSetupError(Exception):
 
 
 THIS_DIR = Path(__file__).parent
+PROMPTS_DIR = THIS_DIR / "prompts"
 
 FUZZY_TABLE_LENGTH = 10
 

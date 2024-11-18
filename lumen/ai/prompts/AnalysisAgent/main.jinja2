@@ -1,0 +1,19 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+You are responsible for selecting the appropriate analysis to perform on the data based on the user's query and the available data.
+
+Available analyses include:
+{% for name, analysis in analyses.items() %}
+- **{{ name }}**: {{ analysis.__doc__ if analysis.__doc__ else analysis.__name__ | replace("\n", " ") }}
+{% endfor %}
+{% endblock %}
+
+{% block context %}
+Here are the columns of the current data:
+{% if current_data is mapping %}
+{{ current_data.stats.keys() | join(', ') }}
+{% else %}
+{{ current_data.columns | join(', ') }}
+{% endif %}
+{% endblock %}

@@ -7,31 +7,57 @@ import time
 
 from functools import wraps
 from pathlib import Path
+from textwrap import dedent
 from typing import TYPE_CHECKING
 
-import jinja2
 import pandas as pd
 import yaml
+
+from jinja2 import (
+    ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
+)
+from markupsafe import escape
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
 
-from .config import THIS_DIR, UNRECOVERABLE_ERRORS
+from .config import PROMPTS_DIR, UNRECOVERABLE_ERRORS
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
-def render_template(template, **context):
-    template_path = Path(template)
-    if not template_path.exists():
-        template_path = THIS_DIR / "prompts" / template
-    template_contents = template_path.read_text()
-    template = jinja2.Template(template_contents, undefined=jinja2.StrictUndefined)
-    # raise if missing keys in context for template
-    return template.render(context).strip()
+def render_template(template_path: Path, prompt_overrides: dict, **context):
+    try:
+        template_path = template_path.relative_to(PROMPTS_DIR).as_posix()
+    except ValueError:
+        pass
+    fs_loader = FileSystemLoader(PROMPTS_DIR)
 
+    if prompt_overrides:
+        # Dynamically create block definitions based on dictionary keys with proper escaping
+        block_definitions = "\n".join(
+            f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
+            for key, value in prompt_overrides.items()
+        )
+        # Create the dynamic template content by extending the base template and adding blocks
+        dynamic_template_content = dedent(
+            f"""
+            {{% extends "{template_path}" %}}
+            {block_definitions}
+            """
+        )
+        dynamic_loader = DictLoader({"dynamic_template": dynamic_template_content})
+        choice_loader = ChoiceLoader([dynamic_loader, fs_loader])
+        env = Environment(loader=choice_loader, undefined=StrictUndefined)
+        template_name = "dynamic_template"
+    else:
+        env = Environment(loader=fs_loader, undefined=StrictUndefined)
+        template_name = str(template_path)
+
+    template = env.get_template(template_name)
+    return template.render(**context)
 
 def retry_llm_output(retries=3, sleep=1):
     """

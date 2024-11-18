@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import param
 import yaml
@@ -16,21 +16,21 @@ from panel.viewable import Viewer
 from panel.widgets import Button
 from pydantic import BaseModel
 
+from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
-from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
-from .llm import Llama, Llm
+from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
+from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
-from .utils import get_schema, render_template, retry_llm_output
+from .utils import get_schema, retry_llm_output
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
     from ..sources import Source
-    from .llm import Message
 
 
 class ExecutionNode(param.Parameterized):
@@ -49,7 +49,7 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Coordinator(Viewer):
+class Coordinator(Viewer, Actor):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -81,6 +81,11 @@ class Coordinator(Viewer):
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
+
+    prompt_templates = param.Dict(default={
+        "main": PROMPTS_DIR / "Coordinator" / "main.jinja2",
+        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+    }, doc="""The paths to the prompt's jinja2 templates.""")
 
     __abstract = True
 
@@ -129,6 +134,7 @@ class Coordinator(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
+        interface.callback_exception = "verbose"
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
@@ -300,7 +306,9 @@ class Coordinator(Viewer):
 
         sql = self._memory.get("current_sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = render_template("check_validity.jinja2", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names)
+        system = self._render_prompt(
+            "check_validity", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
+        )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
                 messages=messages,
@@ -414,7 +422,7 @@ class Coordinator(Viewer):
             obj = obj.value
         return str(obj)
 
-    async def respond(self, messages: list[Message]) -> str:
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3
@@ -444,6 +452,11 @@ class DependencyResolver(Coordinator):
     information required for that agent until the answer is available.
     """
 
+    prompt_templates = param.Dict(default={
+        "main": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
+        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+    }, doc="""The paths to the prompt's jinja2 templates.""")
+
     async def _choose_agent(
         self,
         messages: list[Message],
@@ -460,8 +473,8 @@ class DependencyResolver(Coordinator):
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_model(agent=agent_names[0], chain_of_thought='')
-        system = render_template(
-            'pick_agent.jinja2', agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
+        system = await self._render_main_prompt(
+            messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
         )
         return await self._fill_model(messages, system, agent_model)
 
@@ -520,6 +533,11 @@ class Planner(Coordinator):
     and then executes it.
     """
 
+    prompt_templates = param.Dict(default={
+        "main": PROMPTS_DIR / "Planner" / "main.jinja2",
+        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+    }, doc="""The paths to the prompt's jinja2 templates.""")
+
     @classmethod
     async def _lookup_schemas(
         cls,
@@ -563,11 +581,10 @@ class Planner(Coordinator):
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
-            system = render_template(
-                'plan_agent.jinja2',
+            system = await self._render_main_prompt(
+                messages,
                 agents=list(agents.values()),
                 unmet_dependencies=unmet_dependencies,
-                memory=self._memory,
                 table_info=info,
                 tables=available
             )

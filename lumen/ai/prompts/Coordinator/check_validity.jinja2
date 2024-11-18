@@ -1,0 +1,41 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Based on the latest user's query, decide whether the current table and data contains the the required data. If the user
+is referencing "this data" or "that" they probably are referring to the current data. Pay particular attention to
+whether the data actually contains the columns required to answer the query, e.g. if they are asking for a location but
+there are no location related column the data is invalid. If the number of rows is insufficient, the table is invalid.
+However, if the query can be solved through SQL, the data is assumed to be valid.
+{% endblock %}
+
+{% block context %}
+### Current Table:
+```
+{{ table }}
+```
+
+### Current SQL:
+```
+{{ sql }}
+```
+
+{% if spec %}
+### Current Data `{column: stat}`:
+```yaml
+{{ spec }}
+```
+{% else %}
+Schema for current table could not be determined.
+{% endif %}
+
+{% if analyses %}
+If the user requests one of the current analyses, the data is assumed to be valid.
+
+### Current Analyses:
+```
+{% for analysis in analyses %}
+- {{ analysis }}
+{% endfor %}
+{% endif %}
+```
+{% endblock %}
