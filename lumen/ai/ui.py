@@ -20,7 +20,7 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from .agents import (
     AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
-    TableListAgent,
+    TableListAgent, VegaLiteAgent,
 )
 from .components import SplitJS
 from .controls import SourceControls
@@ -50,8 +50,9 @@ class UI(Viewer):
         List of additional Agents to add beyond the default_agents."""
     )
 
-    default_agents = param.List(default=[TableListAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent], doc="""
-        List of default agents which will always be added.""")
+    default_agents = param.List(default=[
+        TableListAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent, VegaLiteAgent
+    ], doc="""List of default agents which will always be added.""")
 
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")

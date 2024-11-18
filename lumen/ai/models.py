@@ -99,8 +99,7 @@ class Topic(BaseModel):
 
 class VegaLiteSpec(BaseModel):
 
-    json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
-
+    json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
 
 
 def make_plan_models(agent_names: list[str], tables: list[str]):

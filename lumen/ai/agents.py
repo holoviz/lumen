@@ -899,7 +899,8 @@ class VegaLiteAgent(BaseViewAgent):
     """
 
     system_prompt = param.String(default="""
-        Generate the plot the user requested as a vega-lite specification.""")
+        Generate the plot the user requested as a vega-lite specification.
+        The data will be provided separately. Never provide a data field.""")
 
     view_type = VegaLiteView
 
