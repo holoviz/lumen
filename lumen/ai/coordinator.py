@@ -474,7 +474,7 @@ class DependencyResolver(Coordinator):
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_model(agent=agent_names[0], chain_of_thought='')
-        system = self._render_main_prompt(
+        system = await self._render_main_prompt(
             messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
         )
         return await self._fill_model(messages, system, agent_model)
@@ -582,7 +582,7 @@ class Planner(Coordinator):
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
-            system = self._render_main_prompt(
+            system = await self._render_main_prompt(
                 messages,
                 agents=list(agents.values()),
                 unmet_dependencies=unmet_dependencies,

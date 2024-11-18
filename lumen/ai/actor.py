@@ -1,11 +1,8 @@
-from typing import TYPE_CHECKING
-
 import param
 
+from .llm import Message
 from .utils import render_template
 
-if TYPE_CHECKING:
-    from .llm import Message
 
 class Actor(param.Parameterized):
 
