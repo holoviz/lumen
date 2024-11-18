@@ -20,7 +20,7 @@ from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS
-from .llm import Llama, Llm, Message
+from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
     from ..sources import Source
+    from .llm import Message
 
 
 class ExecutionNode(param.Parameterized):
