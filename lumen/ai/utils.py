@@ -60,6 +60,7 @@ def retry_llm_output(retries=3, sleep=1):
                     except Exception as e:
                         if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
                             raise
+                        print(str(e))
                         errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)

@@ -586,31 +586,28 @@ class Planner(Coordinator):
         return plan
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
-        step = plan.steps[-1]
-        subagent = agents[step.expert]
-        unmet_dependencies = {
-            r for r in await subagent.requirements(messages) if r not in self._memory
-        }
-        execution_graph = [
-            ExecutionNode(
-                agent=subagent,
-                provides=unmet_dependencies,
-                instruction=step.instruction,
-                title=step.title,
-                render_output=step.render_output
-            )
-        ]
         table_provided = False
-        for step in plan.steps[:-1][::-1]:
+        execution_graph = []
+        unmet_dependencies = set()
+        for step in plan.steps[::-1]:
             subagent = agents[step.expert]
             requires = set(await subagent.requirements(messages))
             unmet_dependencies = {
                 dep for dep in (unmet_dependencies | requires)
                 if dep not in subagent.provides and dep not in self._memory
             }
+            execution_graph.append(
+                ExecutionNode(
+                    agent=subagent,
+                    provides=subagent.provides,
+                    instruction=step.instruction,
+                    title=step.title,
+                    render_output=step.render_output
+                )
+            )
             if "current_table" in unmet_dependencies:
                 unmet_dependencies.remove('current_table')
-                if table_provided:
+                if not table_provided:
                     execution_graph.append(
                         ExecutionNode(
                             agent=agents['SQLAgent'],
@@ -621,15 +618,6 @@ class Planner(Coordinator):
                         )
                     )
                 table_provided = True
-            execution_graph.append(
-                ExecutionNode(
-                    agent=subagent,
-                    provides=subagent.provides,
-                    instruction=step.instruction,
-                    title=step.title,
-                    render_output=step.render_output
-                )
-            )
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
