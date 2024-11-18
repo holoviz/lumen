@@ -19,8 +19,6 @@ from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
-from lumen.ai.llm import Message
-
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
@@ -32,16 +30,17 @@ from ..views import VegaLiteView, View, hvPlotUIView
 from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
 from .controls import SourceControls
 from .embeddings import Embeddings
-from .llm import Llm
+from .llm import Llm, Message
 from .memory import _Memory, memory
 from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
     VegaLiteSpec, make_table_model,
 )
+from .prompter import Prompter
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, render_template, report_error, retry_llm_output,
+    get_schema, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -49,7 +48,7 @@ if TYPE_CHECKING:
     from .llm import Message
 
 
-class Agent(Viewer):
+class Agent(Viewer, Prompter):
     """
     An Agent in Panel is responsible for handling a specific type of
     query. Each agent consists of an LLM and optionally a set of
@@ -84,15 +83,6 @@ class Agent(Viewer):
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False, doc="""
         A Pydantic model determining the schema of the response.""")
-
-    prompt_overrides = param.Dict(default={}, doc="""
-        Overrides the prompt's 'instructions' or 'context' jinja2 blocks.
-        Is a nested dictionary with the prompt name (e.g. main) as the key
-        and the block names as the inner keys with the new content as the
-        values.""")
-
-    prompt_templates = param.Dict(default={}, doc="""
-        The paths to the prompt's jinja2 templates.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -205,22 +195,6 @@ class Agent(Viewer):
         tables = [input_widget.value]
         self.interface.pop(-1)
         return tables
-
-    def _render_prompt(self, prompt_name: str, **context) -> str:
-        context["memory"] = self._memory
-        prompt = render_template(
-            self.prompt_templates[prompt_name],
-            prompt_overrides=self.prompt_overrides.get(prompt_name),
-            **context
-        )
-        return prompt
-
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        """
-        Renders the main prompt using the provided prompts.
-        """
-        main_prompt = self._render_prompt("main", **context)
-        return main_prompt
 
     # Public API
 

@@ -24,7 +24,8 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
-from .utils import get_schema, render_template, retry_llm_output
+from .prompter import Prompter
+from .utils import get_schema, retry_llm_output
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -49,7 +50,7 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Coordinator(Viewer):
+class Coordinator(Viewer, Prompter):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -86,12 +87,6 @@ class Coordinator(Viewer):
         "main": PROMPTS_DIR / "Coordinator" / "main.jinja2",
         "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
     }, doc="""The paths to the prompt's jinja2 templates.""")
-
-    prompt_overrides = param.Dict(default={}, doc="""
-        Overrides the prompt's 'instructions' or 'context' jinja2 blocks.
-        Is a nested dictionary with the prompt name (e.g. main) as the key
-        and the block names as the inner keys with the new content as the
-        values.""")
 
     __abstract = True
 
@@ -428,15 +423,6 @@ class Coordinator(Viewer):
             obj = obj.value
         return str(obj)
 
-    def _render_prompt(self, prompt_name: str, **context) -> str:
-        context["memory"] = self._memory
-        prompt = render_template(
-            self.prompt_templates[prompt_name],
-            prompt_overrides=self.prompt_overrides.get(prompt_name, {}),
-            **context
-        )
-        return prompt
-
     async def respond(self, messages: list[Message]) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
@@ -488,8 +474,8 @@ class DependencyResolver(Coordinator):
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_model(agent=agent_names[0], chain_of_thought='')
-        system = self._render_prompt(
-            'main', agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
+        system = self._render_main_prompt(
+            messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
         )
         return await self._fill_model(messages, system, agent_model)
 
@@ -596,8 +582,8 @@ class Planner(Coordinator):
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
-            system = self._render_prompt(
-                'main',
+            system = self._render_main_prompt(
+                messages,
                 agents=list(agents.values()),
                 unmet_dependencies=unmet_dependencies,
                 table_info=info,
