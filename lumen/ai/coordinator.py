@@ -596,7 +596,6 @@ class Planner(Coordinator):
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
-            print(list(agents.values()), "AGENTS")
             system = self._render_prompt(
                 'main',
                 agents=list(agents.values()),
