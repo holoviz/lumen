@@ -128,7 +128,6 @@ class Coordinator(Viewer):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "verbose"
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
@@ -469,8 +468,16 @@ class DependencyResolver(Coordinator):
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
+            agent = None
             with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
-                output = await self._choose_agent(messages, self.agents, primary=True)
+                try:
+                    output = await self._choose_agent(messages, self.agents, primary=True)
+                except Exception as e:
+                    if self.interface.callback_exception not in ('raise', 'verbose'):
+                        step.failed_title = 'Failed to select main agent...'
+                        step.stream(str(e), replace=True)
+                    else:
+                        raise e
                 step.stream(output.chain_of_thought, replace=True)
                 step.success_title = f"Selected {output.agent}"
                 agent = agents[output.agent]
@@ -643,11 +650,19 @@ class Planner(Coordinator):
         planned = False
         unmet_dependencies = set()
         schemas = {}
+        execution_graph = []
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
-                plan = await self._make_plan(
-                    messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
-                )
+                try:
+                    plan = await self._make_plan(
+                        messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
+                    )
+                except Exception as e:
+                    if self.interface.callback_exception not in ('raise', 'verbose'):
+                        istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                        istep.stream(str(e), replace=True)
+                    else:
+                        raise e
                 execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
