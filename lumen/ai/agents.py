@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import difflib
 import json
 import re
 import textwrap
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 import panel as pn
@@ -30,7 +32,7 @@ from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH
 from .controls import SourceControls
 from .embeddings import Embeddings
-from .llm import Llm, Message
+from .llm import Llm
 from .memory import _Memory, memory
 from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
@@ -42,6 +44,9 @@ from .utils import (
     get_schema, render_template, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
+
+if TYPE_CHECKING:
+    from .llm import Message
 
 
 class Agent(Viewer):
