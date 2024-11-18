@@ -5,7 +5,7 @@ import difflib
 import json
 import re
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import pandas as pd
 import panel as pn
@@ -43,9 +43,6 @@ from .utils import (
     get_schema, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
-
-if TYPE_CHECKING:
-    from .llm import Message
 
 
 class Agent(Viewer, Actor):

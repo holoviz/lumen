@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import param
 import yaml
@@ -21,7 +21,7 @@ from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
-from .llm import Llama, Llm
+from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
     from ..sources import Source
-    from .llm import Message
 
 
 class ExecutionNode(param.Parameterized):
@@ -423,7 +422,7 @@ class Coordinator(Viewer, Actor):
             obj = obj.value
         return str(obj)
 
-    async def respond(self, messages: list[Message]) -> str:
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
         invalidation_assessment = await self._invalidate_memory(messages[-2:])
         context_length = 3

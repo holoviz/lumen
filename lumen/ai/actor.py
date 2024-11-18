@@ -1,3 +1,6 @@
+from abc import abstractmethod
+from typing import Any
+
 import param
 
 from .llm import Message
@@ -30,3 +33,9 @@ class Actor(param.Parameterized):
         """
         main_prompt = self._render_prompt("main", **context)
         return main_prompt
+
+    @abstractmethod
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> Any:
+        """
+        Responds to the provided messages.
+        """
