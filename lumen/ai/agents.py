@@ -4,7 +4,6 @@ import asyncio
 import difflib
 import json
 import re
-import textwrap
 
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Literal
@@ -89,7 +88,7 @@ class Agent(Viewer):
     prompt_overrides = param.Dict(default={}, doc="""
         Overrides the prompt's 'instructions' or 'context' jinja2 blocks.""")
 
-    template_paths = param.Dict(default={}, doc="""
+    prompt_templates = param.Dict(default={}, doc="""
         The paths to the prompt's jinja2 templates.""")
 
     user = param.String(default="Agent", doc="""
@@ -204,16 +203,16 @@ class Agent(Viewer):
     def _render_prompt(self, prompt_name: str, **context) -> str:
         context["memory"] = self._memory
         system_prompt = render_template(
-            self.template_paths[prompt_name],
+            self.prompt_templates[prompt_name],
             prompt_overrides=self.prompt_overrides,
             **context
         )
         return system_prompt
 
     @abstractmethod
-    async def _render_system_prompt(self, messages: list[Message]) -> str:
+    async def _render_main_prompt(self, messages: list[Message]) -> str:
         """
-        Renders the system prompt using the provided prompts.
+        Renders the main prompt using the provided prompts.
         """
 
     # Public API
@@ -250,7 +249,7 @@ class Agent(Viewer):
             If the Agent response is part of a longer query this describes
             the step currently being processed.
         """
-        system_prompt = await self._render_system_prompt(messages)
+        system_prompt = await self._render_main_prompt(messages)
         message = None
         async for output_chunk in self.llm.stream(
             messages, system=system_prompt, response_model=self.response_model, field="output"
@@ -294,18 +293,16 @@ class SourceAgent(Agent):
 
 class ChatAgent(Agent):
 
-    purpose = param.String(
-        """
+    purpose = param.String(default="""
         Chats and provides info about high level data related topics,
         e.g. what datasets are available, the columns of the data or
         statistics about the data, and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
         If data is available, it can also talk about the data itself.
-        """
-    )
+        """)
 
-    template_paths = param.Dict(
+    prompt_templates = param.Dict(
         default={
             "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
             "data_required": PROMPTS_DIR / "ChatAgent" / "data_required.jinja2",
@@ -336,7 +333,7 @@ class ChatAgent(Agent):
                 return self.requires + ['current_table']
         return self.requires
 
-    async def _render_system_prompt(self, messages: list[Message]) -> str:
+    async def _render_main_prompt(self, messages: list[Message]) -> str:
         source = self._memory.get("current_source")
         if not source:
             raise ValueError("No source found in memory.")
@@ -364,51 +361,36 @@ class ChatAgent(Agent):
 
 
 class ChatDetailsAgent(ChatAgent):
-    """
-    Responsible for chatting and providing info about details about the table values,
-    e.g. what should be noted about the data values, valuable, applicable insights about the data,
-    and continuing the conversation. Does not provide overviews;
-    only details, meaning, relationships, and trends of the data.
-    """
+
+    purpose = param.String(default="""
+        Responsible for chatting and providing info about details about the table values,
+        e.g. what should be noted about the data values, valuable, applicable insights about the data,
+        and continuing the conversation. Does not provide overviews;
+        only details, meaning, relationships, and trends of the data.
+        """)
 
     requires = param.List(default=["current_source", "current_table"], readonly=True)
 
-    system_prompt = param.String(
-        default=(
-            "You are a world-class, subject scientist on the topic. Help provide guidance and meaning "
-            "about the data values, highlight valuable and applicable insights. Be very precise "
-            "on your subject matter expertise and do not be afraid to use specialized terminology or "
-            "industry-specific jargon to describe the data values and trends. Do not provide overviews; "
-            "instead, focus on the details and meaning of the data. Highlight relationships "
-            "between the columns and what could be interesting to dive deeper into. Do not write analysis "
-            "code unless explicitly asked"
-        )
+    prompt_templates = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+            "topic": PROMPTS_DIR / "ChatAgent" / "topic.jinja2",
+        }
     )
 
     async def requirements(self, messages: list[Message], errors=None):
         return self.requires
 
-    async def _system_prompt_with_context(
-        self, messages: list[Message], context: str = ""
-    ) -> str:
+    async def _render_main_prompt(self, messages: list[Message]) -> str:
         system_prompt = self.system_prompt
+        topic_system_prompt = self._render_prompt("topic")
         topic = (await self.llm.invoke(
             messages,
-            system="What is the topic of the table?",
+            system=topic_system_prompt,
             response_model=Topic,
             allow_partial=False,
         )).result
-        context += f"Topic you are a world-class expert on: {topic}"
-
-        current_data = self._memory["current_data"]
-        if isinstance(current_data, dict):
-            columns = list(current_data["stats"].keys())
-        else:
-            columns = list(current_data.columns)
-        context += f"\nHere are the columns of the table: {columns}"
-
-        if context:
-            system_prompt += f"\n### CONTEXT: {context}"
+        system_prompt = self._render_prompt("main", topic=topic)
         return system_prompt
 
 
@@ -437,14 +419,19 @@ class LumenBaseAgent(Agent):
 
 
 class TableListAgent(LumenBaseAgent):
-    """
-    Renders a list of all availables tables to the user.
 
-    Not useful for gathering information about the tables.
-    """
+    purpose = param.String(
+        default="""
+        Renders a list of all availables tables to the user.
 
-    system_prompt = param.String(
-        default="You are an agent responsible for listing the available tables in the current source."
+        Not useful for gathering information about the tables.
+        """
+    )
+
+    prompts = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "TableListAgent" / "main.jinja2",
+        }
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -491,21 +478,20 @@ class TableListAgent(LumenBaseAgent):
 
 
 class SQLAgent(LumenBaseAgent):
-    """
-    Responsible for generating, modifying and executing SQL queries to
-    answer user queries about the data, such querying subsets of the
-    data, aggregating the data and calculating results. If the current
-    table does not contain all the available data the SQL agent is
-    also capable of joining it with other tables.
-    """
 
-    system_prompt = param.String(
-        default=textwrap.dedent(
-            """
-            You are an agent responsible for writing a SQL query that will
-            perform the data transformations the user requested.
-            """
-        )
+    purpose = param.String(default="""
+        Responsible for generating, modifying and executing SQL queries to
+        answer user queries about the data, such querying subsets of the
+        data, aggregating the data and calculating results. If the current
+        table does not contain all the available data the SQL agent is
+        also capable of joining it with other tables.
+        """
+    )
+
+    prompts = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
+        }
     )
 
     requires = param.List(default=["current_source"], readonly=True)
@@ -846,11 +832,14 @@ class BaseViewAgent(LumenBaseAgent):
 
 
 class hvPlotAgent(BaseViewAgent):
-    """
-    Generates a plot of the data given a user prompt.
 
-    If the user asks to plot, visualize or render the data this is your best best.
-    """
+    purpose = param.String(
+        default="""
+        Generates a plot of the data given a user prompt.
+
+        If the user asks to plot, visualize or render the data this is your best best.
+        """
+    )
 
     system_prompt = param.String(
         default="""
@@ -903,11 +892,14 @@ class hvPlotAgent(BaseViewAgent):
 
 
 class VegaLiteAgent(BaseViewAgent):
-    """
-    Generates a vega-lite specification of the plot the user requested.
 
-    If the user asks to plot, visualize or render the data this is your best best.
-    """
+    purpose = param.String(
+        default="""
+        Generates a vega-lite specification of the plot the user requested.
+
+        If the user asks to plot, visualize or render the data this is your best best.
+        """
+    )
 
     system_prompt = param.String(default="""
         Generate the plot the user requested as a vega-lite specification.
@@ -933,9 +925,11 @@ class VegaLiteAgent(BaseViewAgent):
 
 
 class AnalysisAgent(LumenBaseAgent):
-    """
-    Perform custom analyses on the data.
-    """
+
+    purpose = param.String(default="""
+        Perform custom analyses on the data.
+        """
+    )
 
     analyses = param.List([])
 
