@@ -20,7 +20,7 @@ except ImportError:
 def test_render_template_with_valid_template():
     template_content = "Hello {{ name }}!"
     with patch.object(Path, "read_text", return_value=template_content):
-        result = render_template("test_template.txt", name="World")
+        result = render_template("test_template.txt", {}, name="World")
         assert result == "Hello World!"
 
 
@@ -28,7 +28,7 @@ def test_render_template_missing_key():
     template_content = "Hello {{ name }}!"
     with patch.object(Path, "read_text", return_value=template_content):
         with pytest.raises(jinja2.exceptions.UndefinedError):
-            render_template("test_template.txt")
+            render_template("test_template.txt", {})
 
 
 class TestRetryLLMOutput:
