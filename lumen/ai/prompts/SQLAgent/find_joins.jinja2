@@ -1,6 +1,12 @@
-Correctly assess and list the tables that need to be joined; be sure to include both `//`.
+{% extends 'Agent/main.jinja2' %}
 
+{% block instructions %}
+Correctly assess and list the tables that need to be joined; be sure to include both `//`.
+{% endblock %}
+
+{% block context %}
 Here are the available tables:
 {% for table in available_tables %}
 - {{ table }}
 {% endfor %}
+{% endblock %}

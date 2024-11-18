@@ -5,7 +5,6 @@ import difflib
 import json
 import re
 
-from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
@@ -20,6 +19,8 @@ from panel.viewable import Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.ai.llm import Message
+
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
@@ -28,7 +29,6 @@ from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import VegaLiteView, View, hvPlotUIView
-from .analysis import Analysis
 from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
 from .controls import SourceControls
 from .embeddings import Embeddings
@@ -86,7 +86,10 @@ class Agent(Viewer):
         A Pydantic model determining the schema of the response.""")
 
     prompt_overrides = param.Dict(default={}, doc="""
-        Overrides the prompt's 'instructions' or 'context' jinja2 blocks.""")
+        Overrides the prompt's 'instructions' or 'context' jinja2 blocks.
+        Is a nested dictionary with the prompt name (e.g. main) as the key
+        and the block names as the inner keys with the new content as the
+        values.""")
 
     prompt_templates = param.Dict(default={}, doc="""
         The paths to the prompt's jinja2 templates.""")
@@ -145,6 +148,9 @@ class Agent(Viewer):
         return self.interface
 
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
+        # this does not work well, but for now keeping this,
+        # and will be removed once embeddings are ready
+        # TODO: move this out somewhere / remove once embeddings are ready...
         system = (
             f"You are great at extracting keywords based on the user query to find the correct table. "
             f"The current table selected: `{self._memory.get('current_table', 'N/A')}`. "
@@ -202,18 +208,19 @@ class Agent(Viewer):
 
     def _render_prompt(self, prompt_name: str, **context) -> str:
         context["memory"] = self._memory
-        system_prompt = render_template(
+        prompt = render_template(
             self.prompt_templates[prompt_name],
-            prompt_overrides=self.prompt_overrides,
+            prompt_overrides=self.prompt_overrides.get(prompt_name),
             **context
         )
-        return system_prompt
+        return prompt
 
-    @abstractmethod
-    async def _render_main_prompt(self, messages: list[Message]) -> str:
+    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         """
         Renders the main prompt using the provided prompts.
         """
+        main_prompt = self._render_prompt("main", **context)
+        return main_prompt
 
     # Public API
 
@@ -261,12 +268,12 @@ class Agent(Viewer):
 
 
 class SourceAgent(Agent):
-    """
-    The SourceAgent allows a user to upload new datasets.
 
-    Only use this if the user is requesting to add a dataset or you think
-    additional information is required to solve the user query.
-    """
+    purpose = param.String(default="""
+        The SourceAgent allows a user to upload new datasets.
+
+        Only use this if the user is requesting to add a dataset or you think
+        additional information is required to solve the user query.""")
 
     requires = param.List(default=[], readonly=True)
 
@@ -299,13 +306,12 @@ class ChatAgent(Agent):
         statistics about the data, and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
-        If data is available, it can also talk about the data itself.
-        """)
+        If data is available, it can also talk about the data itself.""")
 
     prompt_templates = param.Dict(
         default={
             "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-            "data_required": PROMPTS_DIR / "ChatAgent" / "data_required.jinja2",
+            "requires_data": PROMPTS_DIR / "ChatAgent" / "requires_data.jinja2",
         }
     )
 
@@ -320,7 +326,7 @@ class ChatAgent(Agent):
 
         available_sources = self._memory["available_sources"]
         _, tables_schema_str = await gather_table_sources(available_sources)
-        system_prompt = self._render_prompt("data_required", tables_schema_str=tables_schema_str)
+        system_prompt = self._render_prompt("requires_data", tables_schema_str=tables_schema_str)
         with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,
@@ -329,11 +335,11 @@ class ChatAgent(Agent):
             )
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
-            if output.data_required:
+            if output.requires_data:
                 return self.requires + ['current_table']
         return self.requires
 
-    async def _render_main_prompt(self, messages: list[Message]) -> str:
+    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         source = self._memory.get("current_source")
         if not source:
             raise ValueError("No source found in memory.")
@@ -366,8 +372,7 @@ class ChatDetailsAgent(ChatAgent):
         Responsible for chatting and providing info about details about the table values,
         e.g. what should be noted about the data values, valuable, applicable insights about the data,
         and continuing the conversation. Does not provide overviews;
-        only details, meaning, relationships, and trends of the data.
-        """)
+        only details, meaning, relationships, and trends of the data.""")
 
     requires = param.List(default=["current_source", "current_table"], readonly=True)
 
@@ -381,8 +386,7 @@ class ChatDetailsAgent(ChatAgent):
     async def requirements(self, messages: list[Message], errors=None):
         return self.requires
 
-    async def _render_main_prompt(self, messages: list[Message]) -> str:
-        system_prompt = self.system_prompt
+    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         topic_system_prompt = self._render_prompt("topic")
         topic = (await self.llm.invoke(
             messages,
@@ -420,15 +424,11 @@ class LumenBaseAgent(Agent):
 
 class TableListAgent(LumenBaseAgent):
 
-    purpose = param.String(
-        default="""
+    purpose = param.String(default="""
         Renders a list of all availables tables to the user.
+        Not useful for gathering information about the tables.""")
 
-        Not useful for gathering information about the tables.
-        """
-    )
-
-    prompts = param.Dict(
+    prompt_templates = param.Dict(
         default={
             "main": PROMPTS_DIR / "TableListAgent" / "main.jinja2",
         }
@@ -484,13 +484,14 @@ class SQLAgent(LumenBaseAgent):
         answer user queries about the data, such querying subsets of the
         data, aggregating the data and calculating results. If the current
         table does not contain all the available data the SQL agent is
-        also capable of joining it with other tables.
-        """
-    )
+        also capable of joining it with other tables.""")
 
-    prompts = param.Dict(
+    prompt_templates = param.Dict(
         default={
             "main": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
+            "select_table": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
+            "require_joins": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2",
+            "find_joins": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2",
         }
     )
 
@@ -505,7 +506,6 @@ class SQLAgent(LumenBaseAgent):
     async def _select_relevant_table(self, messages: list[Message]) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
         available_sources = self._memory["available_sources"]
-
         tables_to_source, tables_schema_str = await gather_table_sources(available_sources)
         tables = tuple(tables_to_source)
         if messages and messages[-1]["content"].startswith("Show the table: '"):
@@ -515,13 +515,13 @@ class SQLAgent(LumenBaseAgent):
             table = tables[0]
         else:
             with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
-                closest_tables = self._memory.pop("closest_tables", [])
-                if closest_tables:
-                    tables = closest_tables
-                elif len(tables) > FUZZY_TABLE_LENGTH:
-                    tables = await self._get_closest_tables(messages, tables)
-                system_prompt = await self._system_prompt_with_context(messages, context=tables_schema_str)
                 if len(tables) > 1:
+                    closest_tables = self._memory.pop("closest_tables", [])
+                    if closest_tables:
+                        tables = closest_tables
+                    elif len(tables) > FUZZY_TABLE_LENGTH:
+                        tables = await self._get_closest_tables(messages, tables)
+                    system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
                     table_model = make_table_model(tables)
                     result = await self.llm.invoke(
                         messages,
@@ -642,15 +642,15 @@ class SQLAgent(LumenBaseAgent):
         self._memory["current_sql"] = sql_query
         return sql_query
 
-    async def _check_join_required(
+    async def _check_requires_joins(
         self,
         messages: list[Message],
         schema,
         table: str
     ):
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
-            join_prompt = render_template(
-                "join_required.jinja2",
+            join_prompt = self._render_prompt(
+                "require_joins",
                 schema=yaml.dump(schema),
                 table=table
             )
@@ -661,9 +661,9 @@ class SQLAgent(LumenBaseAgent):
             )
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
-            join_required = output.join_required
-            step.success_title = 'Query requires join' if join_required else 'No join required'
-        return join_required
+            requires_joins = output.requires_joins
+            step.success_title = 'Query requires join' if requires_joins else 'No join required'
+        return requires_joins
 
     async def find_join_tables(self, messages: list):
         multi_source = len(self._memory['available_sources']) > 1
@@ -675,9 +675,8 @@ class SQLAgent(LumenBaseAgent):
         else:
             available_tables = self._memory['current_source'].get_tables()
 
-        find_joins_prompt = render_template(
-            "find_joins.jinja2",
-            available_tables=available_tables
+        find_joins_prompt = self._render_prompt(
+            "find_joins", available_tables=available_tables
         )
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
@@ -685,15 +684,15 @@ class SQLAgent(LumenBaseAgent):
                 system=find_joins_prompt,
                 response_model=TableJoins,
             )
-            join_tables = output.tables
+            tables_to_join = output.tables_to_join
             step.stream(
-                f'{output.chain_of_thought}\nJoin requires following tables: {join_tables}',
+                f'{output.chain_of_thought}\nJoin requires following tables: {tables_to_join}',
                 replace=True
             )
             step.success_title = 'Found tables required for join'
 
         tables_to_source = {}
-        for source_table in join_tables:
+        for source_table in tables_to_join:
             available_sources = self._memory["available_sources"]
             if multi_source:
                 try:
@@ -724,7 +723,7 @@ class SQLAgent(LumenBaseAgent):
         1. Retrieve the current source and table from memory.
         2. If the source lacks a `get_sql_expr` method, return `None`.
         3. Fetch the schema for the current table using `get_schema` without min/max values.
-        4. Determine if a join is required by calling `_check_join_required`.
+        4. Determine if a join is required by calling `_check_requires_joins`.
         5. If required, find additional tables via `find_join_tables`; otherwise, use the current source and table.
         6. For each source and table, get the schema and SQL expression, storing them in `table_schemas`.
         7. Render the SQL prompt using the table schemas, dialect, join status, and table.
@@ -736,7 +735,7 @@ class SQLAgent(LumenBaseAgent):
             return None
 
         schema = await get_schema(source, table, include_min_max=False)
-        join_required = await self._check_join_required(messages, schema, table)
+        join_required = await self._check_requires_joins(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
         else:
@@ -764,18 +763,17 @@ class SQLAgent(LumenBaseAgent):
             }
 
         dialect = source.dialect
-        sql_prompt = render_template(
-            "sql_query.jinja2",
+        system_prompt = await self._render_main_prompt(
+            messages,
             tables_sql_schemas=table_schemas,
             dialect=dialect,
             join_required=join_required,
             table=table
         )
-        system = await self._system_prompt_with_context(messages[-1:], context=sql_prompt)
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
-        sql_query = await self._create_valid_sql(messages, system, tables_to_source, step_title)
+        sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['current_pipeline']
         self._render_lumen(pipeline, spec=sql_query, render_output=render_output)
         return pipeline
@@ -787,34 +785,45 @@ class BaseViewAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_plot"], readonly=True)
 
+    prompt_templates = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2",
+        }
+    )
+
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
+    @retry_llm_output()
     async def respond(
         self,
         messages: list[Message],
         render_output: bool = False,
         step_title: str | None = None
     ) -> Any:
-        pipeline = self._memory["current_pipeline"]
+        """
+        Generates a visualization based on user messages and the current data pipeline.
+        """
+        pipeline = self._memory.get("current_pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
 
-        # Write prompts
-        system_prompt = await self._system_prompt_with_context(messages)
         schema = await get_schema(pipeline, include_min_max=False)
-        view_prompt = render_template(
-            "plot_agent.jinja2",
+        if not schema:
+            raise ValueError("Failed to retrieve schema for the current pipeline.")
+
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        system_prompt = await self._render_prompt(
+            "main",
             schema=yaml.dump(schema),
             table=pipeline.table,
             current_view=self._memory.get('current_view'),
-            doc=self.view_type.__doc__.split("\n\n")[0]
+            doc=doc,
         )
-        print(f"{self.name} is being instructed that {view_prompt}.")
-
-        # Query
         output = await self.llm.invoke(
             messages,
-            system=system_prompt + view_prompt,
-            response_model=self._get_model(schema),
+            system=system_prompt,
+            response_model=self._output_type,
         )
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
@@ -824,7 +833,7 @@ class BaseViewAgent(LumenBaseAgent):
                 steps_layout=self._steps_layout
             ) as step:
                 step.stream(chain_of_thought)
-        print(f"{self.name} settled on {spec=!r}.")
+        print(f"{self.name} settled on spec: {spec!r}.")
         self._memory["current_view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, render_output=render_output)
@@ -833,23 +842,14 @@ class BaseViewAgent(LumenBaseAgent):
 
 class hvPlotAgent(BaseViewAgent):
 
-    purpose = param.String(
-        default="""
+    purpose = param.String(default="""
         Generates a plot of the data given a user prompt.
+        If the user asks to plot, visualize or render the data this is your best best.""")
 
-        If the user asks to plot, visualize or render the data this is your best best.
-        """
-    )
-
-    system_prompt = param.String(
-        default="""
-        Generate the plot the user requested.
-        Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
-        no repeated columns are allowed.
-        Do not arbitrarily set `groupby` and `by` fields unless explicitly requested.
-        If a histogram is requested, use `y` instead of `x`.
-        If x is categorical or strings, prefer barh over bar, and use `y` for the values.
-        """
+    prompt_templates = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2",
+        }
     )
 
     view_type = hvPlotUIView
@@ -898,12 +898,13 @@ class VegaLiteAgent(BaseViewAgent):
         Generates a vega-lite specification of the plot the user requested.
 
         If the user asks to plot, visualize or render the data this is your best best.
-        """
-    )
+        """)
 
-    system_prompt = param.String(default="""
-        Generate the plot the user requested as a vega-lite specification.
-        The data will be provided separately. Never provide a data field.""")
+    prompt_templates = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2",
+        }
+    )
 
     view_type = VegaLiteView
 
@@ -927,8 +928,12 @@ class VegaLiteAgent(BaseViewAgent):
 class AnalysisAgent(LumenBaseAgent):
 
     purpose = param.String(default="""
-        Perform custom analyses on the data.
-        """
+        Perform custom analyses on the data.""")
+
+    prompt_templates = param.Dict(
+        default={
+            "main": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2",
+        }
     )
 
     analyses = param.List([])
@@ -937,37 +942,7 @@ class AnalysisAgent(LumenBaseAgent):
 
     provides = param.List(default=['current_view'])
 
-    system_prompt = param.String(
-        default=(
-            "You are in charge of picking the appropriate analysis to perform on the data "
-            "based on the user query and the available data.\n\nAvailable analyses include:\n\n"
-        )
-    )
-
     _output_type = AnalysisOutput
-
-    async def _system_prompt_with_context(
-        self,
-        messages: list[Message],
-        context: str = "",
-        analyses: list[Analysis] = []
-    ) -> str:
-        system_prompt = self.system_prompt
-        for name, analysis in analyses.items():
-            if analysis.__doc__ is None:
-                doc = analysis.__name__
-            else:
-                doc = analysis.__doc__.replace("\n", " ")
-            system_prompt = f'- {name!r} - {doc}\n'
-        current_data = self._memory["current_data"]
-        if isinstance(current_data, dict):
-            columns = list(current_data["stats"].keys())
-        else:
-            columns = list(current_data.columns)
-        system_prompt += f"\nHere are the columns of the table: {columns}"
-        if context:
-            system_prompt += f"\n### CONTEXT: {context}".strip()
-        return system_prompt
 
     async def respond(
         self,
@@ -995,7 +970,11 @@ class AnalysisAgent(LumenBaseAgent):
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
-                system_prompt = await self._system_prompt_with_context(messages, analyses=analyses)
+                system_prompt = await self._render_prompt(
+                    "main",
+                    analyses=analyses,
+                    current_data=self._memory.get("current_data"),
+                )
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,

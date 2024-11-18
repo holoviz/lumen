@@ -1,3 +1,7 @@
+{% extends 'Agent/main.jinja2' %}
+
+{% block context %}
+Available visualization types:
 {{ doc }}
 
 The data to be plotted originates from a table called '{{ table }}' and follows the following YAML schema:
@@ -11,3 +15,4 @@ The previous view specification was:
 {{ current_view }}
 ```
 {% endif %}
+{% endblock %}

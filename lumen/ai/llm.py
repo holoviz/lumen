@@ -21,10 +21,11 @@ from .interceptor import Interceptor
 if TYPE_CHECKING:
     MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
 
-    class Message(TypedDict):
-        role: Literal["system", "user", "assistant"]
-        content: str
-        name: str | None
+
+class Message(TypedDict):
+    role: Literal["system", "user", "assistant"]
+    content: str
+    name: str | None
 
 
 BASE_MODES = [Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS, Mode.TOOLS]

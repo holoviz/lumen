@@ -23,7 +23,7 @@ class DataRequired(BaseModel):
         """
     )
 
-    data_required: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
+    requires_data: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
 
 
 class JoinRequired(BaseModel):
@@ -35,7 +35,7 @@ class JoinRequired(BaseModel):
         """
     )
 
-    join_required: bool = Field(description="Whether a table join is required to answer the user's query.")
+    requires_joins: bool = Field(description="Whether a table join is required to answer the user's query.")
 
 
 class TableJoins(BaseModel):
@@ -46,7 +46,7 @@ class TableJoins(BaseModel):
         """
     )
 
-    tables: list[str] = Field(
+    tables_to_join: list[str] = Field(
         description=(
             "List of tables that need to be joined to answer the user's query. "
             "Use table names verbatim; e.g. if table is `read_csv('table.csv')` "
