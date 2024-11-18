@@ -378,7 +378,7 @@ class ChatDetailsAgent(ChatAgent):
 
     prompt_templates = param.Dict(
         default={
-            "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+            "main": PROMPTS_DIR / "ChatDetailsAgent" / "main.jinja2",
             "topic": PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2",
         }
     )
