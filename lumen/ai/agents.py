@@ -27,6 +27,7 @@ from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import VegaLiteView, View, hvPlotUIView
+from .actor import Actor
 from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
 from .controls import SourceControls
 from .embeddings import Embeddings
@@ -36,7 +37,6 @@ from .models import (
     DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
     VegaLiteSpec, make_table_model,
 )
-from .prompter import Prompter
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from .llm import Message
 
 
-class Agent(Viewer, Prompter):
+class Agent(Viewer, Actor):
     """
     An Agent in Panel is responsible for handling a specific type of
     query. Each agent consists of an LLM and optionally a set of

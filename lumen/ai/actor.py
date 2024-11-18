@@ -5,9 +5,9 @@ import param
 from .utils import render_template
 
 if TYPE_CHECKING:
-    from .message import Message
+    from .llm import Message
 
-class Prompter(param.Parameterized):
+class Actor(param.Parameterized):
 
     prompt_overrides = param.Dict(default={}, doc="""
         Overrides the prompt's 'instructions' or 'context' jinja2 blocks.

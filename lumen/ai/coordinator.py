@@ -16,6 +16,7 @@ from panel.viewable import Viewer
 from panel.widgets import Button
 from pydantic import BaseModel
 
+from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
@@ -24,7 +25,6 @@ from .llm import Llama, Llm
 from .logs import ChatLogs
 from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
-from .prompter import Prompter
 from .utils import get_schema, retry_llm_output
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Coordinator(Viewer, Prompter):
+class Coordinator(Viewer, Actor):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
