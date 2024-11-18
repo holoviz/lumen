@@ -377,6 +377,9 @@ class ChatDetailsAgent(ChatAgent):
         )
     )
 
+    async def requirements(self, messages: list[Message], errors=None):
+        return self.requires
+
     async def _system_prompt_with_context(
         self, messages: list[Message], context: str = ""
     ) -> str:
