@@ -189,6 +189,7 @@ class Coordinator(Viewer, Actor):
         for src in self._memory['available_sources']:
             for table in src.get_tables():
                 items.append({"text": table, "metadata": {"source": src, "category": "table_list"}})
+        self.vector_store.add(items)
 
     @property
     def _memory(self):
