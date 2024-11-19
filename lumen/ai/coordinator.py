@@ -149,6 +149,8 @@ class Coordinator(Viewer, Actor):
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
                 kwargs = {"llm": llm} if agent.llm is None else {}
+                if "vector_store" not in kwargs:
+                    kwargs["vector_store"] = params["vector_store"]
                 agent = agent(interface=interface, **kwargs)
             if isinstance(agent, AnalysisAgent):
                 analyses = "\n".join(
@@ -182,6 +184,11 @@ class Coordinator(Viewer, Actor):
             self._memory["current_source"] = self._memory["available_sources"][0]
         elif "available_sources" not in self._memory:
             self._memory["available_sources"] = []
+
+        items = []
+        for src in self._memory['available_sources']:
+            for table in src.get_tables():
+                items.append({"text": table, "metadata": {"source": src, "category": "table_list"}})
 
     @property
     def _memory(self):

@@ -5,11 +5,13 @@ from abc import ABC, abstractmethod
 import duckdb
 import numpy as np
 
-from .embeddings import Embeddings
+from .embeddings import Embeddings, NumpyEmbeddings
 
 
 class VectorStore(ABC):
-    def __init__(self, embeddings: Embeddings):
+    def __init__(self, embeddings: Embeddings | None = None):
+        if embeddings is None:
+            embeddings = NumpyEmbeddings()
         self.embeddings = embeddings
 
     @abstractmethod
@@ -24,7 +26,7 @@ class VectorStore(ABC):
 
 
 class NumpyVectorStore(VectorStore):
-    def __init__(self, embeddings: Embeddings):
+    def __init__(self, embeddings: Embeddings | None = None):
         super().__init__(embeddings)
         # Initialize empty arrays and lists for storing data
         self.vectors = np.empty(
@@ -173,7 +175,7 @@ class NumpyVectorStore(VectorStore):
 
 
 class DuckDBVectorStore(VectorStore):
-    def __init__(self, embeddings: Embeddings, db_path: str = ":memory:"):
+    def __init__(self, embeddings: Embeddings | None = None, db_path: str = ":memory:"):
         super().__init__(embeddings)
         self.connection = duckdb.connect(database=db_path)
         self._setup_database()
