@@ -35,18 +35,21 @@ class Actor(param.Parameterized):
             if message["role"] == "user":
                 break
         content = message["content"]
-        any_embeddings = [
+
+        # any embeddings across without filters with higher threshold
+        embeddings = [
             result["text"] for result in
             self.vector_store.query(content, top_k=3, threshold=0.8)
         ]
         if "current_table" in memory:
-            table_embeddings = [
+            # specific table embeddings, with lower threshold
+            embeddings += [
                 result["text"] for result in
                 self.vector_store.query(
                     content, top_k=3, filters={"table": memory["current_table"]}, threshold=0.2
                 )
             ]
-        context["embeddings"] = any_embeddings + table_embeddings
+        context["embeddings"] = embeddings
         return context
 
     def _render_prompt(self, prompt_name: str, **context) -> str:
