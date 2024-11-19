@@ -185,11 +185,9 @@ class Coordinator(Viewer, Actor):
         elif "available_sources" not in self._memory:
             self._memory["available_sources"] = []
 
-        items = []
         for src in self._memory['available_sources']:
             for table in src.get_tables():
-                items.append({"text": table, "metadata": {"source": src, "category": "table_list"}})
-        self.vector_store.add(items)
+                self.vector_store.add([{"text": table, "metadata": {"source": src, "category": "table_list"}}])
 
     @property
     def _memory(self):
