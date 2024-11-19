@@ -588,13 +588,13 @@ class Planner(Coordinator):
                 table_info=info,
                 tables=available
             )
-            async for reasoning in self.llm.stream(
+            reasoning = await self.llm.invoke(
                 messages=messages,
                 system=system,
                 response_model=reason_model,
-            ):
-                if reasoning.chain_of_thought:  # do not replace with empty string
-                    step.stream(reasoning.chain_of_thought, replace=True)
+            )
+            if reasoning.chain_of_thought:  # do not replace with empty string
+                step.stream(reasoning.chain_of_thought, replace=True)
             requested = [
                 t for t in getattr(reasoning, 'tables', [])
                 if t and t not in provided
