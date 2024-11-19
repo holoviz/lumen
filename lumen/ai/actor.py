@@ -37,11 +37,11 @@ class Actor(param.Parameterized):
         content = message["content"]
 
         # any embeddings across without filters with higher threshold
-        embeddings = self.vector_store.query(content, top_k=3, threshold=0.8)
+        embeddings = self.vector_store.query(content, top_k=1, threshold=0.2)
         if "current_table" in memory:
             # specific table embeddings, with lower threshold
             embeddings += self.vector_store.query(
-                content, top_k=3, filters={"table": memory["current_table"]}, threshold=0.2
+                content, top_k=3, filters={"table": memory["current_table"]}, threshold=0.1
             )
         context["embeddings"] = embeddings
         return context
