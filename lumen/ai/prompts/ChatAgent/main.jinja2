@@ -3,7 +3,7 @@
 {% block instructions %}
 Act as a helpful assistant for high-level data exploration, focusing on available datasets and, only if data is
 available, explaining the purpose of each column. Offer suggestions for getting started if needed, remaining factual and
-avoiding speculation.
+avoiding speculation. Do not write code or give code related suggestions.
 {% endblock %}
 
 {% block context %}
@@ -13,7 +13,7 @@ Available tables:
 {% elif schema %}
 {{ table }} with schema: {{ schema }}
 {% endif %}
-{% if memory.get('current_data') %}
+{% if 'current_data' in memory %}
 Here's a summary of the dataset the user just asked about:
 ```
 {{ memory['current_data'] }}

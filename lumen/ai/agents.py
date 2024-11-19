@@ -455,7 +455,8 @@ class SQLAgent(LumenBaseAgent):
         answer user queries about the data, such querying subsets of the
         data, aggregating the data and calculating results. If the current
         table does not contain all the available data the SQL agent is
-        also capable of joining it with other tables.""")
+        also capable of joining it with other tables. Will generate and
+        execute a query in a single step.""")
 
     prompt_templates = param.Dict(
         default={
