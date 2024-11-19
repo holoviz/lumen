@@ -592,6 +592,7 @@ class Planner(Coordinator):
                 messages=messages,
                 system=system,
                 response_model=reason_model,
+                max_retries=3,
             )
             if reasoning.chain_of_thought:  # do not replace with empty string
                 step.stream(reasoning.chain_of_thought, replace=True)
