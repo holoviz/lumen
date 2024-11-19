@@ -115,7 +115,7 @@ def make_plan_models(agent_names: list[str], tables: list[str]):
         extras['tables'] = (
             list[Literal[tuple(tables)]],
             FieldInfo(
-                description="A list of tables to load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names should be verbatim noting the quotations."
+                description="A list of tables to load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names should be verbatim noting the quotations, apostrophes, or lack thereof."
             )
         )
     reasoning = create_model(
