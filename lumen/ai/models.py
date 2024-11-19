@@ -6,13 +6,6 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 
-class FuzzyTable(BaseModel):
-
-    required: bool = Field(description="Whether the user's query requires looking for a new table.")
-
-    keywords: list[str] = Field(description="The most likely keywords related to a table name that the user might be referring to.")
-
-
 class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
