@@ -20,6 +20,7 @@ from panel.widgets import Button, FileDownload, MultiChoice
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
+from ..transforms.sql import SQLLimit
 from .agents import (
     AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
     TableListAgent, VegaLiteAgent,
@@ -266,7 +267,7 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=Column(self._output, styles={'overflow-x': 'auto'}),
+                left=Column(self._output, styles={'overflow-x': 'auto'}, sizing_mode='stretch_both'),
                 right=Column(self._exports, self._coordinator),
                 sizing_mode='stretch_both'
             )
@@ -330,7 +331,7 @@ class ExplorerUI(UI):
         memory.on_change('available_sources', update_source_map)
         update_source_map(memory['available_sources'], init=True)
 
-        controls = SourceControls(name='Upload', select_existing=False)
+        controls = SourceControls(select_existing=False, name='Upload')
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
         @param.depends(table_select, load_button, watch=True)
@@ -343,9 +344,11 @@ class ExplorerUI(UI):
                 source = source_map[table]
                 if len(memory['available_sources']) > 1:
                     _, table = table.rsplit(' : ', 1)
-                data = source.get(table)
+                pipeline = Pipeline(
+                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
+                )
                 walker = GraphicWalker(
-                    data, sizing_mode='stretch_both', min_height=800,
+                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
                     kernel_computation=True, name=table, tab='data'
                 )
                 explorers.append(walker)
@@ -356,7 +359,7 @@ class ExplorerUI(UI):
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
             Row(table_select, load_button),
             tabs,
-            styles={'overflow': 'auto'}
+            sizing_mode='stretch_both',
         )
 
     def _wrap_callback(self, callback):

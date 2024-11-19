@@ -35,4 +35,7 @@ CAST or TO_DATE
 double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted
 identifiers.
 {% endif %}
+{% if dialect == 'snowflake' %}
+- Do not under any circumstances add quotes around the database, schema or table name.
+{% endif %}
 {% endblock %}

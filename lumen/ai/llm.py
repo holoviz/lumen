@@ -280,7 +280,7 @@ class OpenAI(Llm):
 
     base_url = param.String(doc="The OpenAI base.")
 
-    mode = param.Selector(default=Mode.FUNCTIONS)
+    mode = param.Selector(default=Mode.TOOLS)
 
     temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
 

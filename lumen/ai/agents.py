@@ -34,8 +34,8 @@ from .embeddings import Embeddings
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .models import (
-    DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
-    VegaLiteSpec, make_table_model,
+    FuzzyTable, JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec,
+    make_table_model,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -282,33 +282,12 @@ class ChatAgent(Agent):
     prompt_templates = param.Dict(
         default={
             "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-            "requires_data": PROMPTS_DIR / "ChatAgent" / "requires_data.jinja2",
         }
     )
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     requires = param.List(default=["current_source"], readonly=True)
-
-    @retry_llm_output()
-    async def requirements(self, messages: list[Message], errors=None):
-        if 'current_data' in self._memory:
-            return self.requires
-
-        available_sources = self._memory["available_sources"]
-        _, tables_schema_str = await gather_table_sources(available_sources)
-        system_prompt = self._render_prompt("requires_data", tables_schema_str=tables_schema_str)
-        with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                response_model=DataRequired,
-            )
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-            if output.requires_data:
-                return self.requires + ['current_table']
-        return self.requires
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         source = self._memory.get("current_source")
@@ -353,9 +332,6 @@ class ChatDetailsAgent(ChatAgent):
             "topic": PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2",
         }
     )
-
-    async def requirements(self, messages: list[Message], errors=None):
-        return self.requires
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         topic_system_prompt = self._render_prompt("topic")
@@ -455,7 +431,8 @@ class SQLAgent(LumenBaseAgent):
         answer user queries about the data, such querying subsets of the
         data, aggregating the data and calculating results. If the current
         table does not contain all the available data the SQL agent is
-        also capable of joining it with other tables.""")
+        also capable of joining it with other tables. Will generate and
+        execute a query in a single step.""")
 
     prompt_templates = param.Dict(
         default={
@@ -765,7 +742,10 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    @retry_llm_output()
+    @classmethod
+    def _get_model(cls, schema):
+        raise NotImplementedError()
+
     async def respond(
         self,
         messages: list[Message],
@@ -784,7 +764,7 @@ class BaseViewAgent(LumenBaseAgent):
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        system_prompt = await self._render_prompt(
+        system_prompt = self._render_prompt(
             "main",
             schema=yaml.dump(schema),
             table=pipeline.table,
@@ -794,7 +774,7 @@ class BaseViewAgent(LumenBaseAgent):
         output = await self.llm.invoke(
             messages,
             system=system_prompt,
-            response_model=self._output_type,
+            response_model=self._get_model(schema),
         )
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
@@ -941,7 +921,7 @@ class AnalysisAgent(LumenBaseAgent):
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
-                system_prompt = await self._render_prompt(
+                system_prompt = self._render_prompt(
                     "main",
                     analyses=analyses,
                     current_data=self._memory.get("current_data"),
