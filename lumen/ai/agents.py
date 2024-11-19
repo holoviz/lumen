@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import re
 
@@ -30,7 +29,7 @@ from ..views import VegaLiteView, View, hvPlotUIView
 from .actor import Actor
 from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
 from .controls import SourceControls
-from .embeddings import Embeddings
+from .embeddings import NumpyEmbeddings
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .models import (
@@ -42,6 +41,7 @@ from .utils import (
     clean_sql, create_aliases, describe_data, gather_table_sources, get_data,
     get_pipeline, get_schema, report_error, retry_llm_output,
 )
+from .vector_store import NumpyVectorStore, VectorStore
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
@@ -55,9 +55,9 @@ class Agent(Viewer, Actor):
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
 
-    embeddings = param.ClassSelector(class_=Embeddings, doc="""
-        Embeddings object which is queried to provide additional context
-        before asking the LLM to respond.""")
+    vector_store = param.ClassSelector(class_=VectorStore, doc="""
+        Vector store object which is queried to provide additional context
+        before asking the LLM to respond and help search for tables.""")
 
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface to report progress to.""")
@@ -106,6 +106,8 @@ class Agent(Viewer, Actor):
                 respond=False
             )
 
+        if "vector_store" not in params:
+            params["vector_store"] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         if "interface" not in params:
             params["interface"] = ChatInterface(callback=self._interface_callback)
         super().__init__(**params)
@@ -136,39 +138,10 @@ class Agent(Viewer, Actor):
         return self.interface
 
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
-        # this does not work well, but for now keeping this,
-        # and will be removed once embeddings are ready
-        # TODO: move this out somewhere / remove once embeddings are ready...
-        system = (
-            f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{self._memory.get('current_table', 'N/A')}`. "
-        )
-        tables = tuple(table.replace('"', "") for table in tables)
-
-        fuzzy_table = (await self.llm.invoke(
-            messages,
-            system=system,
-            response_model=FuzzyTable,
-            allow_partial=False
-        ))
-        if not fuzzy_table.required:
-            return [self._memory.get("current_table") or tables[0]]
-
-        # make case insensitive, but keep original case to transform back
-        if not fuzzy_table.keywords:
-            return tables[:n]
-
-        table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
-        tables_lower = {table.lower(): table for table in tables}
-
-        # get closest matches
-        closest_tables = set()
-        for keyword in table_keywords:
-            closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
-        closest_tables = [tables_lower[table] for table in closest_tables]
-        if len(closest_tables) == 0:
-            # if no tables are found, ask the user to select ones and load it
-            tables = await self._select_table(tables)
+        self.vector_store: VectorStore
+        # how to keep this in sync with new source/tables?
+        self.vector_store.add([{"text": table, "metadata": "table"} for table in tables])
+        self.vector_store.query(messages[-1], top_k=n, filters={"metadata": "table"})
         self._memory["closest_tables"] = tables
         return tuple(tables)
 

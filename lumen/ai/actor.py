@@ -9,21 +9,27 @@ from .utils import render_template
 
 class Actor(param.Parameterized):
 
-    prompt_overrides = param.Dict(default={}, doc="""
+    prompt_overrides = param.Dict(
+        default={},
+        doc="""
         Overrides the prompt's 'instructions' or 'context' jinja2 blocks.
         Is a nested dictionary with the prompt name (e.g. main) as the key
         and the block names as the inner keys with the new content as the
-        values.""")
+        values.""",
+    )
 
-    prompt_templates = param.Dict(default={}, doc="""
-        The paths to the prompt's jinja2 templates.""")
+    prompt_templates = param.Dict(
+        default={},
+        doc="""
+        The paths to the prompt's jinja2 templates.""",
+    )
 
     def _render_prompt(self, prompt_name: str, **context) -> str:
         context["memory"] = self._memory
         prompt = render_template(
             self.prompt_templates[prompt_name],
             prompt_overrides=self.prompt_overrides.get(prompt_name, {}),
-            **context
+            **context,
         )
         return prompt
 
