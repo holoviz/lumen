@@ -170,7 +170,7 @@ def make_table_model(tables):
             description="A concise, one sentence decision-tree-style analysis on choosing a table."
         )),
         relevant_table=(Literal[tables], FieldInfo(
-            description="The most relevant table based on the user query; if none are relevant, select the first. Table names should be verbatim noting the quotations."
+            description="The most relevant table based on the user query; if none are relevant, select the first. Table names should be verbatim noting the quotations, apostrophes, or lack thereof."
         ))
     )
     return table_model
