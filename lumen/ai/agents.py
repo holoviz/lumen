@@ -34,8 +34,8 @@ from .embeddings import Embeddings
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .models import (
-    DataRequired, FuzzyTable, JoinRequired, Sql, TableJoins, Topic,
-    VegaLiteSpec, make_table_model,
+    FuzzyTable, JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec,
+    make_table_model,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -282,33 +282,12 @@ class ChatAgent(Agent):
     prompt_templates = param.Dict(
         default={
             "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-            "requires_data": PROMPTS_DIR / "ChatAgent" / "requires_data.jinja2",
         }
     )
 
     response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     requires = param.List(default=["current_source"], readonly=True)
-
-    @retry_llm_output()
-    async def requirements(self, messages: list[Message], errors=None):
-        if 'current_data' in self._memory:
-            return self.requires
-
-        available_sources = self._memory["available_sources"]
-        _, tables_schema_str = await gather_table_sources(available_sources)
-        system_prompt = self._render_prompt("requires_data", tables_schema_str=tables_schema_str)
-        with self.interface.add_step(title="Checking if data is required", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                response_model=DataRequired,
-            )
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-            if output.requires_data:
-                return self.requires + ['current_table']
-        return self.requires
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         source = self._memory.get("current_source")
@@ -353,9 +332,6 @@ class ChatDetailsAgent(ChatAgent):
             "topic": PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2",
         }
     )
-
-    async def requirements(self, messages: list[Message], errors=None):
-        return self.requires
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         topic_system_prompt = self._render_prompt("topic")

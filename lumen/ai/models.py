@@ -13,19 +13,6 @@ class FuzzyTable(BaseModel):
     keywords: list[str] = Field(description="The most likely keywords related to a table name that the user might be referring to.")
 
 
-class DataRequired(BaseModel):
-
-    chain_of_thought: str = Field(
-        description="""
-        Thoughts on whether the user's query requires data loaded for insights;
-        if the user wants to explore a dataset, it's required.
-        If only finding a dataset, it's not required.
-        """
-    )
-
-    requires_data: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
-
-
 class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
