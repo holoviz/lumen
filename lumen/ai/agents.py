@@ -499,6 +499,7 @@ class SQLAgent(LumenBaseAgent):
                         system=system_prompt,
                         response_model=table_model,
                         allow_partial=False,
+                        max_retries=3,
                     )
                     table = result.relevant_table
                     step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
