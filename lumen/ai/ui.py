@@ -54,6 +54,9 @@ class UI(Viewer):
         TableListAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent, VegaLiteAgent
     ], doc="""List of default agents which will always be added.""")
 
+    export_functions = param.Dict(default={}, doc="""
+       Dictionary mapping from name of exporter to export function.""")
+
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
@@ -89,12 +92,19 @@ class UI(Viewer):
             button_type="primary",
             callback=self._export_notebook,
             filename=" ",
+        )
+        self._exports = Column(
+            self._notebook_export, *(
+                Button(name=label, on_click=lambda _: e(self._coordinator.interface))
+                for label, e in self.export_functions.items()
+            ),
+            sizing_mode='stretch_width',
             styles={'position': 'absolute', 'right': '0', 'top': '-5px', 'z-index': '999'},
             stylesheets=['.bk-btn a { padding: 0 6px; }'],
             visible=False
         )
         self._resolve_data(data)
-        self._main = self._coordinator
+        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
 
     def _export_notebook(self, _):
         nb = export_notebook(self._coordinator.interface.objects, preamble=self.notebook_preamble)
@@ -240,7 +250,7 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=Column(self._notebook_export, self._output, styles={'overflow-x': 'auto'}),
+                left=Column(self._exports, self._output, styles={'overflow-x': 'auto'}),
                 right=self._coordinator,
                 sizing_mode='stretch_both'
             )
@@ -254,9 +264,9 @@ class ExplorerUI(UI):
                 conversation = self._conversations[active]
             else:
                 conversation = list(self._coordinator.interface.objects)
-            self._notebook_export.visible = True
+            self._exports.visible = True
         else:
-            self._notebook_export.visible = False
+            self._exports.visible = False
             conversation = self._root_conversation
         self._coordinator.interface.objects = conversation
 
@@ -273,16 +283,16 @@ class ExplorerUI(UI):
             return
         self._coordinator.interface.objects = self._conversations[event.new]
         self._notebook_export.param.update(
-            visible=True,
             filename = f"{self._titles[event.new].replace(' ', '_')}.ipynb"
         )
+        self._exports.visible = True
 
     def _table_explorer(self):
         from panel_gwalker import GraphicWalker
 
-        table_select = MultiChoice(width=500, margin=(5, 0))
+        table_select = MultiChoice(sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=3)
         load_button = Button(
-            name='Load table(s)', icon='table-plus', button_type='primary'
+            name='Load table(s)', icon='table-plus', button_type='primary', align='center'
         )
 
         source_map = {}
@@ -295,7 +305,7 @@ class ExplorerUI(UI):
                 for t in source_tables:
                     if deduplicate:
                         t = f'{source.name} : {t}'
-                    if t.rsplit(' : ', 1)[-1] not in source_map and not init:
+                    if t.rsplit(' : ', 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
                         selected.append(t)
                     new[t] = source
             source_map.clear()
@@ -327,6 +337,7 @@ class ExplorerUI(UI):
             load_button.loading = False
 
         return Column(
+            Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
             Row(table_select, load_button),
             tabs,
             styles={'overflow': 'auto'}
