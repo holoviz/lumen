@@ -5,4 +5,10 @@
 {% endblock %}
 
 {% block embeddings %}
+{% if embeddings is defined and embeddings %}
+Additional context:
+{% for embedding in embeddings %}
+{{ loop.index }}. {{ embedding }}
+{% endfor %}
+{% endif %}
 {% endblock %}

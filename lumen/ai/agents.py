@@ -41,7 +41,7 @@ from .utils import (
     clean_sql, create_aliases, describe_data, gather_table_sources, get_data,
     get_pipeline, get_schema, report_error, retry_llm_output,
 )
-from .vector_store import NumpyVectorStore, VectorStore
+from .vector_store import NumpyVectorStore
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
@@ -54,10 +54,6 @@ class Agent(Viewer, Actor):
 
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
-
-    vector_store = param.ClassSelector(class_=VectorStore, doc="""
-        Vector store object which is queried to provide additional context
-        before asking the LLM to respond and help search for tables.""")
 
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface to report progress to.""")
@@ -138,10 +134,11 @@ class Agent(Viewer, Actor):
         return self.interface
 
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
-        self.vector_store: VectorStore
-        # how to keep this in sync with new source/tables?
-        self.vector_store.add([{"text": table, "metadata": "table"} for table in tables])
-        self.vector_store.query(messages[-1], top_k=n, filters={"metadata": "table"})
+        results = self.vector_store.query(messages[-1], top_k=n, filters={"category": "table_list"})
+        closest_tables = [result["text"] for result in results if result["similarity"] > 0.3]
+        if len(closest_tables) == 0:
+            # if no tables are found, ask the user to select ones and load it
+            tables = await self._select_table(tables)
         self._memory["closest_tables"] = tables
         return tuple(tables)
 
@@ -288,6 +285,7 @@ class ChatAgent(Agent):
             schema = await get_schema(self._memory["current_source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
+        context = self._add_embeddings(messages, context)
         system_prompt = self._render_prompt("main", **context)
         return system_prompt
 
@@ -316,13 +314,14 @@ class ChatDetailsAgent(ChatAgent):
             self._memory["current_data"] = await describe_data(df)
 
         topic_system_prompt = self._render_prompt("topic")
-        topic = (await self.llm.invoke(
+        context["topic"] = (await self.llm.invoke(
             messages,
             system=topic_system_prompt,
             response_model=Topic,
             allow_partial=False,
         )).result
-        system_prompt = self._render_prompt("main", topic=topic)
+        context = self._add_embeddings(messages, context)
+        system_prompt = self._render_prompt("main", **context)
         return system_prompt
 
 
