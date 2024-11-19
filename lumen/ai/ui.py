@@ -8,7 +8,9 @@ from panel.chat import ChatInterface
 from panel.config import config, panel_extension
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column, Row, Tabs
+from panel.layout import (
+    Column, HSpacer, Row, Tabs,
+)
 from panel.pane import Markdown
 from panel.param import ParamMethod
 from panel.theme import Material
@@ -69,7 +71,7 @@ class UI(Viewer):
         Panel template to serve the application in."""
     )
 
-    title = param.String(default='Lumen<sup>ai</sup> UI', doc="Title of the app.")
+    title = param.String(default='Lumen UI', doc="Title of the app.")
 
     __abstract = True
 
@@ -92,21 +94,26 @@ class UI(Viewer):
             button_type="primary",
             callback=self._export_notebook,
             filename=" ",
+            stylesheets=['.bk-btn a { padding: 0 6px; }'],
         )
-        self._exports = Column(
+        self._exports = Row(
+            HSpacer(),
             self._notebook_export, *(
-                Button(name=label, on_click=lambda _: e(self._coordinator.interface))
+                Button(
+                    name=label, button_type='primary',
+                    on_click=lambda _: e(self._coordinator.interface),
+                    stylesheets=['.bk-btn { padding: 4.5px 6px;']
+                )
                 for label, e in self.export_functions.items()
             ),
+            styles={'position': 'absolute', 'right': '20px', 'top': '-5px', 'z-index': '999'},
             sizing_mode='stretch_width',
-            styles={'position': 'absolute', 'right': '0', 'top': '-5px', 'z-index': '999'},
-            stylesheets=['.bk-btn a { padding: 0 6px; }'],
             visible=False
         )
         self._resolve_data(data)
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
 
-    def _export_notebook(self, _):
+    def _export_notebook(self):
         nb = export_notebook(self._coordinator.interface.objects, preamble=self.notebook_preamble)
         return StringIO(nb)
 
@@ -203,7 +210,16 @@ class ChatUI(UI):
     ```
     """
 
-    title = param.String(default='Lumen<sup>ai</sup> UI', doc="Title of the app.")
+    title = param.String(default='Lumen ChatUI', doc="Title of the app.")
+
+    def __init__(
+        self,
+        data: DataT | list[DataT] | None = None,
+        **params
+    ):
+        super().__init__(data, **params)
+        self._notebook_export.filename = f"{self.title.replace(' ', '_')}.ipynb"
+        self._exports.visible = True
 
 
 class ExplorerUI(UI):
@@ -224,7 +240,7 @@ class ExplorerUI(UI):
     ```
     """
 
-    title = param.String(default='Lumen<sup>ai</sup> Explorer', doc="Title of the app.")
+    title = param.String(default='Lumen Explorer', doc="Title of the app.")
 
     def __init__(
         self,
@@ -250,8 +266,8 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=Column(self._exports, self._output, styles={'overflow-x': 'auto'}),
-                right=self._coordinator,
+                left=Column(self._output, styles={'overflow-x': 'auto'}),
+                right=Column(self._exports, self._coordinator),
                 sizing_mode='stretch_both'
             )
         )
