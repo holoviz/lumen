@@ -132,7 +132,7 @@ class Agent(Viewer, Actor):
         return self.interface
 
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
-        results = self.vector_store.query(messages[-1], top_k=n, filters={"category": "table_list"})
+        results = self.vector_store.query(messages[-1]["content"], top_k=n, filters={"category": "table_list"})
         closest_tables = [result["text"] for result in results if result["similarity"] > 0.3]
         if len(closest_tables) == 0:
             # if no tables are found, ask the user to select ones and load it
