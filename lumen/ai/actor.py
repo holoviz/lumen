@@ -4,6 +4,7 @@ from typing import Any
 import param
 
 from .llm import Message
+from .memory import memory
 from .utils import render_template
 from .vector_store import VectorStore
 
@@ -34,11 +35,18 @@ class Actor(param.Parameterized):
             if message["role"] == "user":
                 break
         content = message["content"]
-        embeddings = [
+        any_embeddings = [
             result["text"] for result in
-            self.vector_store.query(content, top_k=3)
+            self.vector_store.query(content, top_k=3, threshold=0.8)
         ]
-        context["embeddings"] = embeddings
+        if "current_table" in memory:
+            table_embeddings = [
+                result["text"] for result in
+                self.vector_store.query(
+                    content, top_k=3, filters={"table": memory["current_table"]}, threshold=0.2
+                )
+            ]
+        context["embeddings"] = any_embeddings + table_embeddings
         return context
 
     def _render_prompt(self, prompt_name: str, **context) -> str:
