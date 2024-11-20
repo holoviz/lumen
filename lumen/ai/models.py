@@ -102,7 +102,7 @@ def make_plan_models(agent_names: list[str], tables: list[str]):
         extras['tables'] = (
             list[Literal[tuple(tables)]],
             FieldInfo(
-                description="A list of tables to load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
+                description="A list of tables to load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim."
             )
         )
     reasoning = create_model(
@@ -157,7 +157,7 @@ def make_table_model(tables):
             description="A concise, one sentence decision-tree-style analysis on choosing a table."
         )),
         relevant_table=(Literal[tuple(tables)], FieldInfo(
-            description="The most relevant table based on the user query; if none are relevant, select the first. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
+            description="The most relevant table based on the user query; if none are relevant, select the first. Table names MUST match verbatim."
         ))
     )
     return table_model
