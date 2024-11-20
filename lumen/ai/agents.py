@@ -474,7 +474,10 @@ class SQLAgent(LumenBaseAgent):
                     elif len(tables) > FUZZY_TABLE_LENGTH:
                         tables = await self._get_closest_tables(messages, tables)
                     system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
-                    table_model = make_table_model(tables)
+                    tables_aliases = {
+                        re.sub(r'[^a-zA-Z0-9_]', '_', table): table for table in tables
+                    }
+                    table_model = make_table_model(list(tables_aliases))
                     result = await self.llm.invoke(
                         messages,
                         system=system_prompt,
@@ -482,7 +485,7 @@ class SQLAgent(LumenBaseAgent):
                         allow_partial=False,
                         max_retries=3,
                     )
-                    table = result.relevant_table
+                    table = tables_aliases[result.relevant_table]
                     step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
                 else:
                     table = tables[0]

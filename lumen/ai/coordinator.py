@@ -570,7 +570,8 @@ class Planner(Coordinator):
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
-        schemas: dict[str, dict] | None = None
+        schemas: dict[str, dict] | None = None,
+        tables_aliases: dict[str, str] | None = None
     ) -> BaseModel:
         user_msg = messages[-1]
         info = ''
@@ -594,13 +595,14 @@ class Planner(Coordinator):
                 messages=messages,
                 system=system,
                 response_model=reason_model,
+                allow_partial=False,
                 max_retries=3,
             )
             if reasoning.chain_of_thought:  # do not replace with empty string
                 step.stream(reasoning.chain_of_thought, replace=True)
             requested = [
-                t for t in getattr(reasoning, 'tables', [])
-                if t and t not in provided
+                tables_aliases[t] for t in getattr(reasoning, 'tables', [])
+                if t and tables_aliases[t] not in provided
             ]
         new_msg = dict(
             role=user_msg['role'],
@@ -655,7 +657,10 @@ class Planner(Coordinator):
             for table in src.get_tables():
                 tables[table] = src
 
-        reason_model, plan_model = make_plan_models(agent_names, list(tables))
+        tables_aliases = {
+            re.sub(r'[^a-zA-Z0-9_]', '_', table): table for table in tables
+        }
+        reason_model, plan_model = make_plan_models(agent_names, list(tables_aliases))
         planned = False
         unmet_dependencies = set()
         schemas = {}
@@ -664,7 +669,7 @@ class Planner(Coordinator):
             while not planned:
                 try:
                     plan = await self._make_plan(
-                        messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
+                        messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas, tables_aliases
                     )
                 except Exception as e:
                     if self.interface.callback_exception not in ('raise', 'verbose'):
