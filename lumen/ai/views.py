@@ -1,11 +1,17 @@
 import asyncio
+import traceback
 
 import panel as pn
 import param
 import yaml
 
+from panel.layout import Column, Row, Tabs
+from panel.pane import Alert
 from panel.param import ParamMethod
 from panel.viewable import Viewer
+from panel.widgets import (
+    Button, ButtonIcon, Checkbox, CodeEditor, LoadingSpinner,
+)
 from param.parameterized import discard_events
 
 from lumen.ai.utils import get_data
@@ -28,6 +34,8 @@ class LumenOutput(Viewer):
 
     spec = param.String(allow_None=True)
 
+    title = param.String(allow_None=True)
+
     language = "yaml"
 
     def __init__(self, **params):
@@ -35,19 +43,19 @@ class LumenOutput(Viewer):
             component_spec = params['component'].to_spec()
             params['spec'] = yaml.dump(component_spec)
         super().__init__(**params)
-        code_editor = pn.widgets.CodeEditor(
+        code_editor = CodeEditor(
             value=self.param.spec, language=self.language, theme='tomorrow_night_bright', sizing_mode="stretch_both",
             on_keyup=False
         )
         code_editor.link(self, bidirectional=True, value='spec')
-        copy_icon = pn.widgets.ButtonIcon(
+        copy_icon = ButtonIcon(
             icon="copy", active_icon="check", toggle_duration=1000
         )
         copy_icon.js_on_click(
             args={"code_editor": code_editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
-        download_icon = pn.widgets.ButtonIcon(
+        download_icon = ButtonIcon(
             icon="download", active_icon="check", toggle_duration=1000
         )
         download_icon.js_on_click(
@@ -64,14 +72,14 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = pn.Row(copy_icon, download_icon)
-        code_col = pn.Column(code_editor, icons, sizing_mode="stretch_both")
+        icons = Row(copy_icon, download_icon)
+        code_col = Column(code_editor, icons, sizing_mode="stretch_both")
         if self.render_output:
-            placeholder = pn.Column(
+            placeholder = Column(
                 ParamMethod(self.render, inplace=True),
                 sizing_mode="stretch_width"
             )
-            self._main = pn.Tabs(
+            self._main = Tabs(
                 ("Code", code_col),
                 ("Output", placeholder),
                 styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
@@ -103,7 +111,7 @@ class LumenOutput(Viewer):
         )
         download_pane = download.__panel__()
         download_pane.sizing_mode = 'fixed'
-        controls = pn.Row(
+        controls = Row(
             download_pane,
             styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
         )
@@ -118,16 +126,16 @@ class LumenOutput(Viewer):
             if limited:
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
-                full_data = pn.widgets.Checkbox(
+                full_data = Checkbox(
                     name='Full data', width=100, visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.insert(0, full_data)
-        return pn.Column(controls, table)
+        return Column(controls, table)
 
     @param.depends('spec', 'active')
     async def render(self):
-        yield pn.indicators.LoadingSpinner(
+        yield LoadingSpinner(
             value=True, name="Rendering component...", height=50, width=50
         )
 
@@ -138,7 +146,7 @@ class LumenOutput(Viewer):
             yield self._last_output[self.spec]
             return
         elif self.component is None:
-            yield pn.pane.Alert(
+            yield Alert(
                 "No component to render. Please complete the Config tab.",
                 alert_type="warning",
             )
@@ -157,9 +165,8 @@ class LumenOutput(Viewer):
             self._last_output[self.spec] = output
             yield output
         except Exception as e:
-            import traceback
             traceback.print_exc()
-            yield pn.pane.Alert(
+            yield Alert(
                 f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
                 alert_type="danger",
             )
@@ -191,7 +198,7 @@ class AnalysisOutput(LumenOutput):
                 run_button.param.watch(self._rerun, 'clicks')
                 self._main.insert(1, ('Config', controls))
             else:
-                run_button = pn.widgets.Button(
+                run_button = Button(
                     icon='player-play', name='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0 , 10)
                 )
@@ -221,7 +228,7 @@ class SQLOutput(LumenOutput):
 
     @param.depends('spec', 'active')
     async def render(self):
-        yield pn.indicators.LoadingSpinner(
+        yield LoadingSpinner(
             value=True, name="Executing SQL query...", height=50, width=50
         )
         if self.active != 1:
@@ -234,7 +241,9 @@ class SQLOutput(LumenOutput):
 
         try:
             if self._rendered:
-                pipeline.source = pipeline.source.create_sql_expr_source(tables={pipeline.table: self.spec})
+                pipeline.source = pipeline.source.create_sql_expr_source(
+                    tables={pipeline.table: self.spec}
+                )
             output = await self._render_pipeline(pipeline)
             self._rendered = True
             self._last_output.clear()
@@ -243,7 +252,7 @@ class SQLOutput(LumenOutput):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            yield pn.pane.Alert(
+            yield Alert(
                 f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
                 alert_type="danger",
             )
