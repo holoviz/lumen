@@ -25,7 +25,7 @@ from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
-from .utils import get_schema, retry_llm_output
+from .utils import create_aliases, get_schema, retry_llm_output
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -657,9 +657,7 @@ class Planner(Coordinator):
             for table in src.get_tables():
                 tables[table] = src
 
-        tables_aliases = {
-            re.sub(r'[^a-zA-Z0-9_]', '_', table): table for table in tables
-        }
+        tables_aliases = create_aliases(tables)
         reason_model, plan_model = make_plan_models(agent_names, tuple(tables_aliases))
         planned = False
         unmet_dependencies = set()

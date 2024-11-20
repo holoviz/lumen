@@ -39,8 +39,8 @@ from .models import (
 )
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, report_error, retry_llm_output,
+    clean_sql, create_aliases, describe_data, gather_table_sources, get_data,
+    get_pipeline, get_schema, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -475,9 +475,7 @@ class SQLAgent(LumenBaseAgent):
                     elif len(tables) > FUZZY_TABLE_LENGTH:
                         tables = await self._get_closest_tables(messages, tables)
                     system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
-                    tables_aliases = {
-                        re.sub(r'[^a-zA-Z0-9_]', '_', table): table for table in tables
-                    }
+                    tables_aliases = create_aliases(tables)
                     table_model = make_table_model(tuple(tables_aliases))
                     result = await self.llm.invoke(
                         messages,
