@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from typing import TYPE_CHECKING
 
 import param
 
@@ -30,7 +31,10 @@ from .controls import SourceControls
 from .coordinator import Coordinator, Planner
 from .export import export_notebook
 from .llm import Llm, OpenAI
-from .memory import memory
+from .memory import _Memory, memory
+
+if TYPE_CHECKING:
+    from .views import LumenOutput
 
 DataT = str | Source | Pipeline
 
@@ -313,7 +317,7 @@ class ExplorerUI(UI):
         )
 
         source_map = {}
-        def update_source_map(sources, init=False):
+        def update_source_map(_, __, sources, init=False):
             selected = list(table_select.value)
             deduplicate = len(sources) > 1
             new = {}
@@ -329,7 +333,7 @@ class ExplorerUI(UI):
             source_map.update(new)
             table_select.param.update(options=list(source_map), value=selected)
         memory.on_change('available_sources', update_source_map)
-        update_source_map(memory['available_sources'], init=True)
+        update_source_map(None, None, memory['available_sources'], init=True)
 
         controls = SourceControls(select_existing=False, name='Upload')
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
@@ -362,59 +366,80 @@ class ExplorerUI(UI):
             sizing_mode='stretch_both',
         )
 
+    def _add_exploration(self, title: str, outputs: list[LumenOutput], memory: _Memory):
+        from panel_gwalker import GraphicWalker
+
+        content = []
+        if 'current_sql' in memory:
+            sql = memory["current_sql"]
+            sql_pane = Markdown(
+                f'```sql\n{sql}\n```',
+                margin=0, sizing_mode='stretch_width'
+            )
+            if sql.count('\n') > 10:
+                sql_pane = Column(sql_pane, max_height=250, scroll='y-auto')
+            content.append(sql_pane)
+        pipeline = memory['current_pipeline']
+        content.append(
+            Tabs(
+                ('Overview', GraphicWalker(
+                    pipeline.param.data,
+                    kernel_computation=True,
+                    tab='data',
+                    sizing_mode='stretch_both'
+                )),
+                *((type(out).__name__.replace('Output', ''), ParamMethod(
+                    out.render, inplace=True,
+                    sizing_mode='stretch_both'
+                )) for out in outputs), active=len(outputs), dynamic=True
+            )
+        )
+        self._titles.append(title)
+        self._contexts.append(memory)
+        self._conversations.append(self._coordinator.interface.objects)
+        self._explorations.append((title, Column(*content, name=title)))
+        self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
+        self._explorations.active = len(self._explorations)-1
+        self._output.active = 1
+
     def _wrap_callback(self, callback):
         async def wrapper(contents: list | str, user: str, instance: ChatInterface):
             if not self._explorations:
                 prev_memory = memory
             else:
                 prev_memory = self._contexts[self._explorations.active]
+            index = self._explorations.active if len(self._explorations) else -1
             local_memory = prev_memory.clone()
-            prev_outputs = local_memory.get('outputs', [])
             prev_pipeline = local_memory.get('current_pipeline')
             local_memory['outputs'] = outputs = []
-            with self._coordinator.param.update(memory=local_memory):
-                await callback(contents, user, instance)
-            if not outputs:
-                prev_memory.update(local_memory)
-                return
 
-            from panel_gwalker import GraphicWalker
-
-            title = local_memory['current_plan']
-            pipeline = local_memory['current_pipeline']
-            new = prev_pipeline is not pipeline
-            content = []
-            if 'current_sql' in local_memory:
-                content.append(Markdown(
-                    f'```sql\n{local_memory["current_sql"]}\n```',
-                    margin=0
-                ))
-            if not new:
-                outputs = prev_outputs + outputs
-            content.append(
-                Tabs(
-                    ('Overview', GraphicWalker(
-                        pipeline.param.data,
-                        kernel_computation=True,
-                        tab='data',
-                        sizing_mode='stretch_both'
-                    )),
-                    *((type(out).__name__.replace('Output', ''), ParamMethod(
-                        out.render, inplace=True,
-                        sizing_mode='stretch_both'
-                    )) for out in outputs), active=len(outputs), dynamic=True
-                )
-            )
-            if new:
-                self._conversations.append(self._coordinator.interface.objects)
-                self._explorations.append((title, Column(*content, name=title)))
-                self._contexts.append(local_memory)
-                self._titles.append(title)
-                self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
-                self._explorations.active = len(self._explorations)-1
-                self._output.active = 1
-            else:
-                tab = self._explorations.active
-                title = self._titles[tab]
-                self._explorations[tab] = Column(*content, name=title)
+            def render_output(attr, old, new):
+                nonlocal index
+                added = [out for out in new if out not in old]
+                title = local_memory['current_plan']
+                pipeline = local_memory['current_pipeline']
+                new_data = prev_pipeline is not pipeline
+                if old or not new_data:
+                    exploration = self._explorations[index]
+                    if isinstance(exploration[0], Markdown):
+                        sql = memory["current_sql"]
+                        exploration[0].object = f'```sql\n{sql}\n```'
+                    exploration += [
+                        (type(out).__name__.replace('Output', ''), ParamMethod(
+                            out.render, inplace=True,
+                            sizing_mode='stretch_both'
+                        )) for out in added
+                    ]
+                else:
+                    index += 1
+                    self._add_exploration(title, new, local_memory)
+                outputs[:] = new
+            local_memory.on_change('outputs', render_output)
+            try:
+                with self._coordinator.param.update(memory=local_memory):
+                    await callback(contents, user, instance)
+            finally:
+                local_memory.remove_on_change('outputs', render_output)
+                if not outputs:
+                    prev_memory.update(local_memory)
         return wrapper

@@ -364,7 +364,10 @@ class LumenBaseAgent(Agent):
             component=component, render_output=render_output, **kwargs
         )
         if 'outputs' in self._memory:
-            self._memory['outputs'].append(out)
+            # We have to create a new list to trigger an event
+            # since inplace updates will not trigger updates
+            # and won't allow diffing between old and new values
+            self._memory['outputs'] = self._memory['outputs']+[out]
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
