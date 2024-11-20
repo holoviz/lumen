@@ -1,26 +1,20 @@
 import json
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 import duckdb
 import numpy as np
+import param
 
 from .embeddings import Embeddings, NumpyEmbeddings
 
 
-class VectorStore(ABC):
+class VectorStore(param.Parameterized):
     """Abstract base class for a vector store."""
 
-    def __init__(self, embeddings: Embeddings | None = None):
-        """
-        Initialize the VectorStore with optional embeddings.
-
-        Args:
-            embeddings: An instance of Embeddings. If None, defaults to NumpyEmbeddings.
-        """
-        if embeddings is None:
-            embeddings = NumpyEmbeddings()
-        self.embeddings = embeddings
+    embeddings = param.ClassSelector(
+        class_=Embeddings, default=NumpyEmbeddings(), doc="Embeddings object for text processing."
+    )
 
     @abstractmethod
     def add(self, items: list[dict]) -> list[int]:
@@ -87,14 +81,8 @@ class VectorStore(ABC):
 class NumpyVectorStore(VectorStore):
     """Vector store implementation using NumPy for in-memory storage."""
 
-    def __init__(self, embeddings: Embeddings | None = None):
-        """
-        Initialize the NumpyVectorStore with optional embeddings.
-
-        Args:
-            embeddings: An instance of Embeddings. If None, defaults to NumpyEmbeddings.
-        """
-        super().__init__(embeddings)
+    def __init__(self, **params):
+        super().__init__(**params)
         self.vectors = np.empty((0, 1536), dtype=np.float32)
         self.texts: list[str] = []
         self.metadata: list[dict] = []
@@ -294,16 +282,11 @@ class NumpyVectorStore(VectorStore):
 class DuckDBVectorStore(VectorStore):
     """Vector store implementation using DuckDB for persistent storage."""
 
-    def __init__(self, embeddings: Embeddings | None = None, db_path: str = ":memory:"):
-        """
-        Initialize the DuckDBVectorStore with optional embeddings and database path.
+    uri = param.String(doc="The URI of the DuckDB database")
 
-        Args:
-            embeddings: An instance of Embeddings. If None, defaults to NumpyEmbeddings.
-            db_path: Path to the DuckDB database file.
-        """
-        super().__init__(embeddings)
-        self.connection = duckdb.connect(database=db_path)
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.connection = duckdb.connect(database=self.uri)
         self._setup_database()
 
     def _setup_database(self) -> None:
