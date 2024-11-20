@@ -57,6 +57,10 @@ class AzureOpenAIEmbeddings(Embeddings):
 
     azure_endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
+    model = param.String(
+        default="text-embedding-3-small", doc="The OpenAI model to use."
+    )
+
     def __init__(self, **params):
         super().__init__(**params)
         from openai import AsyncAzureOpenAI
