@@ -52,6 +52,25 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def filter_by(
+        self,
+        filters: dict,
+        limit: int | None = None,
+        offset: int = 0
+    ) -> list[dict]:
+        """
+        Filter items by metadata without using embeddings similarity.
+
+        Args:
+            filters: Dictionary of metadata key-value pairs to filter by.
+            limit: Maximum number of results to return. If None, returns all matches.
+            offset: Number of results to skip (for pagination).
+
+        Returns:
+            List of results with 'id', 'text', and 'metadata'.
+        """
+
+    @abstractmethod
     def delete(self, ids: list[int]) -> None:
         """
         Delete items from the vector store by their IDs.
@@ -194,6 +213,51 @@ class NumpyVectorStore(VectorStore):
                 )
                 if len(results) >= top_k:
                     break
+
+        return results
+
+    def filter_by(
+        self,
+        filters: dict,
+        limit: int | None = None,
+        offset: int = 0
+    ) -> list[dict]:
+        """
+        Filter items by metadata without using embeddings similarity.
+
+        Args:
+            filters: Dictionary of metadata key-value pairs to filter by.
+            limit: Maximum number of results to return. If None, returns all matches.
+            offset: Number of results to skip (for pagination).
+
+        Returns:
+            List of results with 'id', 'text', and 'metadata'.
+        """
+        if not self.metadata:
+            return []
+
+        # Create mask for matching items
+        mask = np.ones(len(self.metadata), dtype=bool)
+        for key, value in filters.items():
+            mask &= np.array([item.get(key) == value for item in self.metadata])
+
+        # Get matching indices
+        matching_indices = np.where(mask)[0]
+
+        # Apply offset and limit
+        if offset:
+            matching_indices = matching_indices[offset:]
+        if limit is not None:
+            matching_indices = matching_indices[:limit]
+
+        # Build results
+        results = []
+        for idx in matching_indices:
+            results.append({
+                "id": self.ids[idx],
+                "text": self.texts[idx],
+                "metadata": self.metadata[idx]
+            })
 
         return results
 
@@ -347,6 +411,57 @@ class DuckDBVectorStore(VectorStore):
                 "text": row[1],
                 "metadata": json.loads(row[2]),
                 "similarity": row[3],
+            }
+            for row in result
+        ]
+
+    def filter_by(
+        self,
+        filters: dict,
+        limit: int | None = None,
+        offset: int = 0
+    ) -> list[dict]:
+        """
+        Filter items by metadata without using embeddings similarity.
+
+        Args:
+            filters: Dictionary of metadata key-value pairs to filter by.
+            limit: Maximum number of results to return. If None, returns all matches.
+            offset: Number of results to skip (for pagination).
+
+        Returns:
+            List of results with 'id', 'text', and 'metadata'.
+        """
+        base_query = """
+            SELECT id, text, metadata
+            FROM documents
+            WHERE 1=1
+        """
+        params = []
+
+        # Add filters to query
+        for key, value in filters.items():
+            base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
+            params.append(str(value))
+
+        # Add offset and limit
+        if offset:
+            base_query += " OFFSET ?"
+            params.append(offset)
+
+        if limit is not None:
+            base_query += " LIMIT ?"
+            params.append(limit)
+
+        base_query += ";"
+
+        result = self.connection.execute(base_query, params).fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "text": row[1],
+                "metadata": json.loads(row[2])
             }
             for row in result
         ]
