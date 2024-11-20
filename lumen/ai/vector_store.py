@@ -16,6 +16,10 @@ class VectorStore(param.Parameterized):
         class_=Embeddings, default=NumpyEmbeddings(), doc="Embeddings object for text processing."
     )
 
+    vocab_size = param.Integer(
+        default=1536, doc="The size of the embeddings vector. Must match the embeddings model."
+    )
+
     @abstractmethod
     def add(self, items: list[dict]) -> list[int]:
         """
@@ -83,7 +87,7 @@ class NumpyVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.vectors = np.empty((0, 1536), dtype=np.float32)
+        self.vectors = np.empty((0, self.vocab_size), dtype=np.float32)
         self.texts: list[str] = []
         self.metadata: list[dict] = []
         self.ids: list[int] = []
@@ -103,7 +107,7 @@ class NumpyVectorStore(VectorStore):
         Calculate cosine similarity between the query vector and all stored vectors.
 
         Args:
-            query_vector: Query embedding of shape (1536,).
+            query_vector: Query embedding of shape (vocab_size,).
 
         Returns:
             Array of similarity scores.
@@ -272,7 +276,7 @@ class NumpyVectorStore(VectorStore):
 
     def clear(self) -> None:
         """Clear all items from the vector store."""
-        self.vectors = np.empty((0, 1536), dtype=np.float32)
+        self.vectors = np.empty((0, self.vocab_size), dtype=np.float32)
         self.texts = []
         self.metadata = []
         self.ids = []
@@ -301,7 +305,7 @@ class DuckDBVectorStore(VectorStore):
             CREATE TABLE IF NOT EXISTS documents (
                 id BIGINT DEFAULT NEXTVAL('documents_id_seq') PRIMARY KEY,
                 text VARCHAR,
-                embedding FLOAT[1536],
+                embedding FLOAT[vocab_size],
                 metadata JSON
             );
             """
@@ -365,7 +369,7 @@ class DuckDBVectorStore(VectorStore):
 
         base_query = """
             SELECT id, text, metadata,
-                   1 - array_distance(embedding, ?::FLOAT[1536], 'cosine') AS similarity
+                   1 - array_distance(embedding, ?::FLOAT[vocab_size], 'cosine') AS similarity
             FROM documents
             WHERE 1=1
         """
@@ -377,7 +381,7 @@ class DuckDBVectorStore(VectorStore):
                 base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
                 params.append(str(value))
 
-        base_query += " AND 1 - array_distance(embedding, ?::FLOAT[1536], 'cosine') >= ?"
+        base_query += " AND 1 - array_distance(embedding, ?::FLOAT[vocab_size], 'cosine') >= ?"
         params.extend([query_embedding, threshold])
 
         base_query += """
