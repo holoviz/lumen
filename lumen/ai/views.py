@@ -34,6 +34,8 @@ class LumenOutput(Viewer):
 
     spec = param.String(allow_None=True)
 
+    title = param.String(allow_None=True)
+
     language = "yaml"
 
     def __init__(self, **params):

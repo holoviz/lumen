@@ -27,6 +27,7 @@ Checklist
 - If it's a date column (excluding individual year/month/day integers) date, cast to date using appropriate syntax, e.g.
 CAST or TO_DATE
 - Use only `{{ dialect }}` syntax
+- Try to pretty print the SQL output with newlines and indentation.
 {% if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'

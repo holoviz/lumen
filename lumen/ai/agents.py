@@ -358,10 +358,11 @@ class LumenBaseAgent(Agent):
         component: Component,
         message: pn.chat.ChatMessage = None,
         render_output: bool = False,
+        title: str | None = None,
         **kwargs
     ):
         out = self._output_type(
-            component=component, render_output=render_output, **kwargs
+            component=component, render_output=render_output, title=title, **kwargs
         )
         if 'outputs' in self._memory:
             # We have to create a new list to trigger an event
@@ -727,7 +728,7 @@ class SQLAgent(LumenBaseAgent):
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['current_pipeline']
-        self._render_lumen(pipeline, spec=sql_query, render_output=render_output)
+        self._render_lumen(pipeline, spec=sql_query, render_output=render_output, title=step_title)
         return pipeline
 
 
@@ -791,7 +792,7 @@ class BaseViewAgent(LumenBaseAgent):
         print(f"{self.name} settled on spec: {spec!r}.")
         self._memory["current_view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, render_output=render_output)
+        self._render_lumen(view, render_output=render_output, title=step_title)
         return view
 
 
@@ -982,6 +983,7 @@ class AnalysisAgent(LumenBaseAgent):
                 view,
                 analysis=analysis,
                 pipeline=pipeline,
-                render_output=render_output
+                render_output=render_output,
+                title=step_title
             )
         return view

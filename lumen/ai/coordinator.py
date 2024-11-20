@@ -675,7 +675,7 @@ class Planner(Coordinator):
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                 else:
                     planned = True
-            self._memory['current_plan'] = plan.title
+            self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
