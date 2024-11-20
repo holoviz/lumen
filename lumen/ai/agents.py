@@ -460,6 +460,8 @@ class SQLAgent(LumenBaseAgent):
         available_sources = self._memory["available_sources"]
         tables_to_source, tables_schema_str = await gather_table_sources(available_sources)
         tables = tuple(tables_to_source)
+
+        table = None
         if messages and messages[-1]["content"].startswith("Show the table: '"):
             # Handle the case where explicitly requested a table
             table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
@@ -477,6 +479,7 @@ class SQLAgent(LumenBaseAgent):
                     tables_aliases = {
                         re.sub(r'[^a-zA-Z0-9_]', '_', table): table for table in tables
                     }
+                    print(tables_aliases, list(tables_aliases), "TABLES...")
                     table_model = make_table_model(list(tables_aliases))
                     result = await self.llm.invoke(
                         messages,
