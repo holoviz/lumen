@@ -22,6 +22,10 @@ class _Memory(SessionCache):
         super().__setitem__(key, new)
         self._trigger_update(key, old, new)
 
+    def cleanup(self):
+        self._callbacks.clear()
+        self._rx.clear()
+
     def on_change(self, key, callback):
         self._callbacks[key].append(callback)
 

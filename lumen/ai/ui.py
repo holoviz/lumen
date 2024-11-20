@@ -117,6 +117,13 @@ class UI(Viewer):
         )
         self._resolve_data(data)
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
+        if state.curdoc and state.curdoc.session_context:
+            state.on_session_destroyed(self._destroy)
+
+    def _destroy(self, session_context):
+        """
+        Cleanup on session destroy
+        """
 
     def _export_notebook(self):
         nb = export_notebook(self._coordinator.interface.objects, preamble=self.notebook_preamble)
@@ -278,6 +285,13 @@ class ExplorerUI(UI):
         )
         self._output.param.watch(self._update_conversation, 'active')
 
+    def _destroy(self, session_context):
+        """
+        Cleanup on session destroy
+        """
+        for c in self._contexts:
+            c.cleanup()
+
     def _update_conversation(self, event):
         if event.new:
             active = self._explorations.active
@@ -292,12 +306,13 @@ class ExplorerUI(UI):
         self._coordinator.interface.objects = conversation
 
     def _cleanup_explorations(self, event):
-        if len(event.new) >= len(event.old):
+        if len(event.new) <= len(event.old):
             return
         for i, (old, new) in enumerate(zip(event.old, event.new)):
             if old is not new:
                 self._contexts.pop(i)
                 self._conversations.pop(i)
+                break
 
     def _set_context(self, event):
         if event.new == len(self._conversations):
@@ -449,7 +464,6 @@ class ExplorerUI(UI):
                     await callback(contents, user, instance)
             finally:
                 local_memory.remove_on_change('plan', render_plan)
-                local_memory.remove_on_change('outputs', render_output)
                 if not outputs:
                     prev_memory.update(local_memory)
         return wrapper
