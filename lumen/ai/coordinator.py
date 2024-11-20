@@ -660,7 +660,7 @@ class Planner(Coordinator):
         tables_aliases = {
             re.sub(r'[^a-zA-Z0-9_]', '_', table): table for table in tables
         }
-        reason_model, plan_model = make_plan_models(agent_names, list(tables_aliases))
+        reason_model, plan_model = make_plan_models(agent_names, tuple(tables_aliases))
         planned = False
         unmet_dependencies = set()
         schemas = {}
