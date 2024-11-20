@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import re
 import time
 
 from functools import wraps
@@ -323,3 +324,12 @@ async def gather_table_sources(available_sources: list[Source]) -> tuple[dict[st
             else:
                 tables_schema_str += f"### {table}\n"
     return tables_to_source, tables_schema_str
+
+
+def create_aliases(names: list[str]) -> dict[str, str]:
+    """
+    Replaces non-alphanumeric characters with underscore `_`.
+    """
+    return {
+        re.sub(r'[^a-zA-Z0-9_]', '_', name): name for name in names
+    }
