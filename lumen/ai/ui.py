@@ -311,9 +311,12 @@ class ExplorerUI(UI):
     def _table_explorer(self):
         from panel_gwalker import GraphicWalker
 
-        table_select = MultiChoice(sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=3)
+        table_select = MultiChoice(
+            sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=5
+        )
         load_button = Button(
-            name='Load table(s)', icon='table-plus', button_type='primary', align='center'
+            name='Load table(s)', icon='table-plus', button_type='primary', align='center',
+            disabled=table_select.param.value.rx().rx.not_()
         )
 
         source_map = {}
