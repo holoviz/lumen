@@ -111,7 +111,7 @@ class UI(Viewer):
                 )
                 for label, e in self.export_functions.items()
             ),
-            styles={'position': 'absolute', 'right': '20px', 'top': '-5px', 'z-index': '999'},
+            styles={'position': 'relative', 'right': '20px', 'top': '-5px'},
             sizing_mode='stretch_width',
             visible=False
         )
