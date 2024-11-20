@@ -203,6 +203,7 @@ class Coordinator(Viewer, Actor):
             if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
 
+        memory = self._memory
         async def use_suggestion(event):
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
@@ -219,10 +220,11 @@ class Coordinator(Viewer, Actor):
                         print("No analysis agent found.")
                         return
                     messages = [{'role': 'user', 'content': contents}]
-                    await agent.respond(
-                        messages, render_output=self.render_output, agents=self.agents
-                    )
-                    await self._add_analysis_suggestions()
+                    with agent.param.update(memory=memory):
+                        await agent.respond(
+                            messages, render_output=self.render_output, agents=self.agents
+                        )
+                        await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
 
