@@ -63,9 +63,9 @@ class AzureOpenAIEmbeddings(Embeddings):
 
     def __init__(self, **params):
         super().__init__(**params)
-        from openai import AsyncAzureOpenAI
+        from openai import AzureOpenAI
 
-        self.client = AsyncAzureOpenAI(
+        self.client = AzureOpenAI(
             api_key=self.api_key,
             api_version=self.api_version,
             azure_endpoint=self.azure_endpoint,
