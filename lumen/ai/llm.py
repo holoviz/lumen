@@ -221,16 +221,10 @@ class Llama(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
-            "model_file": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
-            "chat_format": "mistral-instruct",
-            "n_ctx": 32768,
-        },
-        "sql": {
-            "repo": "TheBloke/sqlcoder2-GGUF",
-            "model_file": "sqlcoder2.Q5_K_M.gguf",
-            "chat_format": "chatml",
-            "n_ctx": 8192,
+            "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            "chat_format": "qwen",
+            "n_ctx": 131072,
         },
     })
 
