@@ -341,7 +341,7 @@ class AzureOpenAI(Llm):
 
     azure_endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
-    mode = param.Selector(default=Mode.FUNCTIONS)
+    mode = param.Selector(default=Mode.TOOLS)
 
     temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
 

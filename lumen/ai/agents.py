@@ -336,13 +336,17 @@ class LumenBaseAgent(Agent):
         component: Component,
         message: pn.chat.ChatMessage = None,
         render_output: bool = False,
+        title: str | None = None,
         **kwargs
     ):
         out = self._output_type(
-            component=component, render_output=render_output, **kwargs
+            component=component, render_output=render_output, title=title, **kwargs
         )
         if 'outputs' in self._memory:
-            self._memory['outputs'].append(out)
+            # We have to create a new list to trigger an event
+            # since inplace updates will not trigger updates
+            # and won't allow diffing between old and new values
+            self._memory['outputs'] = self._memory['outputs']+[out]
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
 
@@ -454,6 +458,7 @@ class SQLAgent(LumenBaseAgent):
                         system=system_prompt,
                         response_model=table_model,
                         allow_partial=False,
+                        max_retries=3,
                     )
                     table = result.relevant_table
                     step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
@@ -701,7 +706,7 @@ class SQLAgent(LumenBaseAgent):
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['current_pipeline']
-        self._render_lumen(pipeline, spec=sql_query, render_output=render_output)
+        self._render_lumen(pipeline, spec=sql_query, render_output=render_output, title=step_title)
         return pipeline
 
 
@@ -765,7 +770,7 @@ class BaseViewAgent(LumenBaseAgent):
         print(f"{self.name} settled on spec: {spec!r}.")
         self._memory["current_view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, render_output=render_output)
+        self._render_lumen(view, render_output=render_output, title=step_title)
         return view
 
 
@@ -956,6 +961,7 @@ class AnalysisAgent(LumenBaseAgent):
                 view,
                 analysis=analysis,
                 pipeline=pipeline,
-                render_output=render_output
+                render_output=render_output,
+                title=step_title
             )
         return view

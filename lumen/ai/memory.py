@@ -14,12 +14,23 @@ class _Memory(SessionCache):
         self._callbacks = defaultdict(list)
         self._rx = {}
 
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        self._trigger_update(key, value)
+    def __setitem__(self, key, new):
+        if key in self:
+            old = self[key]
+        else:
+            old = None
+        super().__setitem__(key, new)
+        self._trigger_update(key, old, new)
+
+    def cleanup(self):
+        self._callbacks.clear()
+        self._rx.clear()
 
     def on_change(self, key, callback):
         self._callbacks[key].append(callback)
+
+    def remove_on_change(self, key, callback):
+        self._callbacks[key].remove(callback)
 
     def rx(self, key):
         if key in self._rx:
@@ -28,13 +39,13 @@ class _Memory(SessionCache):
         return rxp
 
     def trigger(self, key):
-        self._trigger_update(key, self[key])
+        self._trigger_update(key, self[key], self[key])
 
-    def _trigger_update(self, key, value):
+    def _trigger_update(self, key, old, new):
         for cb in self._callbacks[key]:
-            cb(value)
+            cb(key, old, new)
         if key in self._rx:
-            self._rx[key].rx.value = value
+            self._rx[key].rx.value = new
 
 
 memory = _Memory()

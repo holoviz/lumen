@@ -209,6 +209,7 @@ class Coordinator(Viewer, Actor):
             if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
 
+        memory = self._memory
         async def use_suggestion(event):
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
@@ -225,10 +226,11 @@ class Coordinator(Viewer, Actor):
                         print("No analysis agent found.")
                         return
                     messages = [{'role': 'user', 'content': contents}]
-                    await agent.respond(
-                        messages, render_output=self.render_output, agents=self.agents
-                    )
-                    await self._add_analysis_suggestions()
+                    with agent.param.update(memory=memory):
+                        await agent.respond(
+                            messages, render_output=self.render_output, agents=self.agents
+                        )
+                        await self._add_analysis_suggestions()
                 else:
                     self.interface.send(contents)
 
@@ -598,6 +600,7 @@ class Planner(Coordinator):
                 messages=messages,
                 system=system,
                 response_model=reason_model,
+                max_retries=3,
             )
             if reasoning.chain_of_thought:  # do not replace with empty string
                 step.stream(reasoning.chain_of_thought, replace=True)
@@ -680,7 +683,7 @@ class Planner(Coordinator):
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                 else:
                     planned = True
-            self._memory['current_plan'] = plan.title
+            self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
