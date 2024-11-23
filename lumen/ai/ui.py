@@ -327,11 +327,11 @@ class ExplorerUI(UI):
         table_select = MultiChoice(
             sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=5
         )
-        load_button = Button(
-            name='Load table(s)', icon='table-plus', button_type='primary', align='center',
+        explore_button = Button(
+            name='Explore table(s)', icon='table-plus', button_type='primary', align='center',
             disabled=table_select.param.value.rx().rx.not_()
         )
-        input_row = Row(table_select, load_button)
+        input_row = Row(table_select, explore_button)
 
         source_map = {}
         def update_source_map(_, __, sources, init=False):
@@ -353,7 +353,7 @@ class ExplorerUI(UI):
         memory.on_change('available_sources', update_source_map)
         update_source_map(None, None, memory['available_sources'], init=True)
 
-        def load_table_if_single(event):
+        def explore_table_if_single(event):
             """
             If only one table is uploaded, help the user load it
             without requiring them to click twice. This step
@@ -361,19 +361,17 @@ class ExplorerUI(UI):
             i.e. does not trigger with uploads through the SourceAgent
             """
             if len(table_select.options) == 1:
-                load_button.param.trigger("value")
+                explore_button.param.trigger("value")
 
         controls = SourceControls(select_existing=False, name='Upload')
-        controls.param.watch(load_table_if_single, "add")
+        controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
-        @param.depends(table_select, load_button, watch=True)
-        def get_explorers(tables, load):
-            if not load:
-                return
-            with load_button.param.update(loading=True):
+        @param.depends(explore_button, watch=True)
+        def get_explorers(load):
+            with explore_button.param.update(loading=True):
                 explorers = []
-                for table in tables:
+                for table in table_select.value:
                     source = source_map[table]
                     if len(memory['available_sources']) > 1:
                         _, table = table.rsplit(' : ', 1)
