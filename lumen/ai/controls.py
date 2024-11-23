@@ -215,7 +215,6 @@ class SourceControls(Viewer):
             self._memory.trigger("available_sources")
         else:
             self._memory["available_sources"] = [duckdb_source]
-        print(self._memory["available_sources"])
         self._last_table = table
 
     @param.depends("add", watch=True)
