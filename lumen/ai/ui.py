@@ -331,6 +331,7 @@ class ExplorerUI(UI):
             name='Load table(s)', icon='table-plus', button_type='primary', align='center',
             disabled=table_select.param.value.rx().rx.not_()
         )
+        input_row = Row(table_select, load_button)
 
         source_map = {}
         def update_source_map(_, __, sources, init=False):
@@ -348,6 +349,11 @@ class ExplorerUI(UI):
             source_map.clear()
             source_map.update(new)
             table_select.param.update(options=list(source_map), value=selected)
+            input_row.visible = bool(source_map)
+            if len(table_select.options) == 1:
+                # if only one table is available, help the user load it without having them click twice
+                load_button.param.trigger("value")
+                table_select.value = []
         memory.on_change('available_sources', update_source_map)
         update_source_map(None, None, memory['available_sources'], init=True)
 
@@ -356,6 +362,7 @@ class ExplorerUI(UI):
 
         @param.depends(table_select, load_button, watch=True)
         def get_explorers(tables, load):
+            print(load)
             if not load:
                 return
             with load_button.param.update(loading=True):
@@ -377,8 +384,8 @@ class ExplorerUI(UI):
 
         return Column(
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
-            Row(table_select, load_button),
             tabs,
+            input_row,
             sizing_mode='stretch_both',
         )
 
