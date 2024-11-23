@@ -453,7 +453,19 @@ class ExplorerUI(UI):
                 if any(step.expert == 'SQLAgent' for step in plan.steps):
                     self._add_exploration(plan.title, local_memory)
                     index += 1
+
+            def sync_available_sources_memory(_, __, sources):
+                """
+                For cases when the user uploads a dataset through SourceAgent
+                this will update the available_sources in the global memory
+                so that the overview explorer can access it
+                """
+                memory["available_sources"] += [
+                    source for source in sources if source not in memory["available_sources"]
+                ]
+
             local_memory.on_change('plan', render_plan)
+            local_memory.on_change('available_sources', sync_available_sources_memory)
 
             def render_output(_, old, new):
                 added = [out for out in new if out not in old]
