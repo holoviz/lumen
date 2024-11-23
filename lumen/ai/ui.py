@@ -328,7 +328,7 @@ class ExplorerUI(UI):
             sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=5
         )
         explore_button = Button(
-            name='Explore table(s)', icon='table-plus', button_type='primary', align='center',
+            name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
             disabled=table_select.param.value.rx().rx.not_()
         )
         input_row = Row(table_select, explore_button)
@@ -380,7 +380,7 @@ class ExplorerUI(UI):
                     )
                     walker = GraphicWalker(
                         pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                        kernel_computation=True, name=table, tab='data'
+                        kernel_computation=True, name=f"View {table}", tab='data'
                     )
                     explorers.append(walker)
 
