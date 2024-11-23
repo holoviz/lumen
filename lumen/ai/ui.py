@@ -166,10 +166,6 @@ class UI(Viewer):
                 name='Provided'
             )
             sources.append(source)
-        if not sources:
-            raise ValueError(
-                'Must provide at least one data source.'
-            )
         memory['available_sources'] = sources
         if sources:
             memory['current_source'] = sources[0]
