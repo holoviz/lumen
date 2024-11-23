@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import param
 import yaml
 
-from panel import Card, bind
+from panel import Card, bind, state
 from panel.chat import ChatInterface, ChatStep
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML
@@ -97,6 +97,9 @@ class Coordinator(Viewer, Actor):
         logs_filename: str = "",
         **params,
     ):
+        def on_busy(event):
+            self.interface.disabled = event.new
+
         def on_message(message, instance):
             def update_on_reaction(reactions):
                 self._logs.update_status(
@@ -142,6 +145,8 @@ class Coordinator(Viewer, Actor):
         if logs_filename is not None:
             self._logs = ChatLogs(filename=logs_filename)
             interface.post_hook = on_message
+
+        state.param.watch(on_busy, "busy", onlychanged=True)
 
         llm = llm or self.llm
         instantiated = []
