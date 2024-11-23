@@ -362,7 +362,6 @@ class ExplorerUI(UI):
 
         @param.depends(table_select, load_button, watch=True)
         def get_explorers(tables, load):
-            print(load)
             if not load:
                 return
 
