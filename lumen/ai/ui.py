@@ -37,7 +37,7 @@ from .memory import _Memory, memory
 if TYPE_CHECKING:
     from .views import LumenOutput
 
-DataT = str | Source | Pipeline
+DataT = str | Path, Source | Pipeline
 
 
 class UI(Viewer):
