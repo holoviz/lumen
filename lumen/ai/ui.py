@@ -350,14 +350,22 @@ class ExplorerUI(UI):
             source_map.update(new)
             table_select.param.update(options=list(source_map), value=selected)
             input_row.visible = bool(source_map)
-            if len(table_select.options) == 1:
-                # if only one table is available, help the user load it without having them click twice
-                load_button.param.trigger("value")
-                table_select.value = []
         memory.on_change('available_sources', update_source_map)
         update_source_map(None, None, memory['available_sources'], init=True)
 
+        def load_table_if_single(event):
+            """
+            If only one table is uploaded, help the user load it
+            without requiring them to click twice. This step
+            only triggers when the Upload in the Overview tab is used,
+            i.e. does not trigger with uploads through the SourceAgent
+            """
+            if len(table_select.options) == 1:
+                load_button.param.trigger("value")
+                table_select.value = []
+
         controls = SourceControls(select_existing=False, name='Upload')
+        controls.param.watch(load_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
         @param.depends(table_select, load_button, watch=True)
