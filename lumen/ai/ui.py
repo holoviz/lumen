@@ -362,7 +362,6 @@ class ExplorerUI(UI):
             """
             if len(table_select.options) == 1:
                 load_button.param.trigger("value")
-                table_select.value = []
 
         controls = SourceControls(select_existing=False, name='Upload')
         controls.param.watch(load_table_if_single, "add")
@@ -388,6 +387,7 @@ class ExplorerUI(UI):
                     explorers.append(walker)
 
                 tabs.objects = explorers + [controls]
+                table_select.value = []
 
         return Column(
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
