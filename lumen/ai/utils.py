@@ -172,15 +172,20 @@ async def get_schema(
     for field, spec in schema.items():
         if "enum" not in spec:
             continue
-        elif not include_enum:
-            spec.pop("enum")
-        elif "limit" in get_kwargs and len(spec["enum"]) > get_kwargs["limit"]:
-            spec["enum"].append("...")
 
-    if count and include_count:
-        spec["count"] = count
+        limit = get_kwargs.get("limit")
+        if not include_enum:
+            spec.pop("enum")
+        elif limit and len(spec["enum"]) > limit:
+            spec["enum"].append("...")
+        elif limit and spec["enum"][0] is None:
+            spec["enum"] = [f"(unknown; truncated to {get_kwargs['limit']} rows)"]
 
     schema = format_schema(schema)
+
+    if count and include_count:
+        schema["count"] = count
+
     return schema
 
 
