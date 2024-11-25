@@ -16,20 +16,24 @@ class NumpyEmbeddings(Embeddings):
 
     vocab_size = param.Integer(default=1536, doc="The size of the vocabulary.")
 
+    def get_char_ngrams(self, text, n=3):
+        text = re.sub(r"\W+", "", text.lower())
+        return [text[i : i + n] for i in range(len(text) - n + 1)]
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
         for text in texts:
-            text = text.lower().replace('_', ' ')
-            words = re.findall(r'\w+', text)
+            ngrams = self.get_char_ngrams(text)
             vector = np.zeros(self.vocab_size)
-            for word in words:
-                index = hash(word) % self.vocab_size
+            for ngram in ngrams:
+                index = hash(ngram) % self.vocab_size
                 vector[index] += 1
             norm = np.linalg.norm(vector)
             if norm > 0:
                 vector = vector / norm
             embeddings.append(vector.tolist())
         return embeddings
+
 
 class OpenAIEmbeddings(Embeddings):
 
