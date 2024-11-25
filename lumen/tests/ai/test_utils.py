@@ -205,8 +205,7 @@ class TestGetSchema:
             "count": 1000,
         }
         schema = await get_schema(mock_source, include_count=True)
-        assert "count" in schema["field1"]
-        assert schema["field1"]["count"] == 1000
+        assert schema["count"] == 1000
 
     async def test_no_count(self):
         mock_source = MagicMock()
