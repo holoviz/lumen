@@ -1,3 +1,5 @@
+import re
+
 from abc import abstractmethod
 
 import numpy as np
@@ -17,7 +19,8 @@ class NumpyEmbeddings(Embeddings):
     def embed(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
         for text in texts:
-            words = text.lower().split()
+            text = text.lower().replace('_', ' ')
+            words = re.findall(r'\w+', text)
             vector = np.zeros(self.vocab_size)
             for word in words:
                 index = hash(word) % self.vocab_size
@@ -27,7 +30,6 @@ class NumpyEmbeddings(Embeddings):
                 vector = vector / norm
             embeddings.append(vector.tolist())
         return embeddings
-
 
 class OpenAIEmbeddings(Embeddings):
 
