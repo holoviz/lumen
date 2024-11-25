@@ -431,7 +431,7 @@ class Coordinator(Viewer, Actor):
             if isinstance(self.llm, Llama):
                 with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
-                    step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs["model_file"]}`")
+                    step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     self.llm.get_client("default")  # caches the model for future use
 
             messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
