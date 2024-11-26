@@ -61,10 +61,10 @@ class AzureOpenAIEmbeddings(Embeddings):
 
     api_version = param.String(doc="The Azure AI Studio API version.")
 
-    azure_endpoint = param.String(doc="The Azure AI Studio endpoint.")
+    provider_endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
     model = param.String(
-        default="text-embedding-3-small", doc="The OpenAI model to use."
+        default="text-embedding-3-large", doc="The OpenAI model to use."
     )
 
     def __init__(self, **params):
