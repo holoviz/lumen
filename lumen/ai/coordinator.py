@@ -6,7 +6,6 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import param
-import yaml
 
 from panel import Card, bind
 from panel.chat import ChatInterface, ChatStep
@@ -314,9 +313,14 @@ class Coordinator(Viewer, Actor):
 
         sql = self._memory.get("current_sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = self._render_prompt(
-            "check_validity", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
+        context = dict(
+            table=table,
+            spec=spec,
+            sql=sql,
+            analyses=analyses_names,
         )
+        context = self._add_embeddings(messages, context)
+        system = self._render_prompt("check_validity", **context)
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
                 messages=messages,
