@@ -369,6 +369,8 @@ class ExplorerUI(UI):
 
         @param.depends(explore_button, watch=True)
         def get_explorers(load):
+            if not load:
+                return
             with explore_button.param.update(loading=True):
                 explorers = []
                 for table in table_select.value:
