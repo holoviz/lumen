@@ -278,7 +278,7 @@ class ChatAgent(Agent):
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
         It can talk about the data, if available.
-        If there is only one table available, use this instead of TableListAgent.
+        Use this instead of TableListAgent if there is only one table available.
         """)
 
     prompt_templates = param.Dict(
