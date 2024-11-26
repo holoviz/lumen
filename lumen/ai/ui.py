@@ -360,22 +360,24 @@ class ExplorerUI(UI):
         def get_explorers(tables, load):
             if not load:
                 return
-            load_button.loading = True
-            explorers = []
-            for table in tables:
-                source = source_map[table]
-                if len(memory['available_sources']) > 1:
-                    _, table = table.rsplit(' : ', 1)
-                pipeline = Pipeline(
-                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
-                )
-                walker = GraphicWalker(
-                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                    kernel_computation=True, name=table, tab='data'
-                )
-                explorers.append(walker)
-            tabs.objects = explorers + [controls]
-            load_button.loading = False
+
+            with self._coordinator.interface.param.update(loading=True):
+                load_button.loading = True
+                explorers = []
+                for table in tables:
+                    source = source_map[table]
+                    if len(memory['available_sources']) > 1:
+                        _, table = table.rsplit(' : ', 1)
+                    pipeline = Pipeline(
+                        source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
+                    )
+                    walker = GraphicWalker(
+                        pipeline.param.data, sizing_mode='stretch_both', min_height=800,
+                        kernel_computation=True, name=table, tab='data'
+                    )
+                    explorers.append(walker)
+                tabs.objects = explorers + [controls]
+                load_button.loading = False
 
         return Column(
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
