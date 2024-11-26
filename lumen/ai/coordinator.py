@@ -425,26 +425,33 @@ class Coordinator(Viewer, Actor):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        invalidation_assessment = await self._invalidate_memory(messages[-2:])
-        context_length = 3
-        if invalidation_assessment:
-            messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
-            context_length += 1
-        agents = {agent.name[:-5]: agent for agent in self.agents}
-        execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
-        if execution_graph is None:
-            msg = (
-                "Assistant could not settle on a plan of action to perform the requested query. "
-                "Please restate your request."
-            )
-            self.interface.stream(msg, user='Lumen')
-            return msg
-        for node in execution_graph:
-            await self._execute_graph_node(node, messages[-context_length:])
-        if "current_pipeline" in self._memory:
-            await self._add_analysis_suggestions()
-        print("\033[92mDONE\033[0m", "\n\n")
+        with self.interface.param.update(loading=True):
+            if isinstance(self.llm, Llama):
+                with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
+                    default_kwargs = self.llm.model_kwargs["default"]
+                    step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
+                    self.llm.get_client("default")  # caches the model for future use
+
+            messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
+            invalidation_assessment = await self._invalidate_memory(messages[-2:])
+            context_length = 3
+            if invalidation_assessment:
+                messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
+                context_length += 1
+            agents = {agent.name[:-5]: agent for agent in self.agents}
+            execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
+            if execution_graph is None:
+                msg = (
+                    "Assistant could not settle on a plan of action to perform the requested query. "
+                    "Please restate your request."
+                )
+                self.interface.stream(msg, user='Lumen')
+                return msg
+            for node in execution_graph:
+                await self._execute_graph_node(node, messages[-context_length:])
+            if "current_pipeline" in self._memory:
+                await self._add_analysis_suggestions()
+            print("\033[92mDONE\033[0m", "\n\n")
 
 
 class DependencyResolver(Coordinator):

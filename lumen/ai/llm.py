@@ -221,14 +221,10 @@ class Llama(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
-            "model_file": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
-            "chat_format": "mistral-instruct",
-        },
-        "sql": {
-            "repo": "TheBloke/sqlcoder2-GGUF",
-            "model_file": "sqlcoder2.Q5_K_M.gguf",
-            "chat_format": "chatml",
+            "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            "chat_format": "qwen",
+            "n_ctx": 131072,
         },
     })
 
@@ -246,10 +242,12 @@ class Llama(Llm):
         repo = model_kwargs["repo"]
         model_file = model_kwargs["model_file"]
         chat_format = model_kwargs["chat_format"]
+        n_ctx = model_kwargs["n_ctx"]
+        model_path = hf_hub_download(repo, model_file)
         llm = Llama(
-            model_path=hf_hub_download(repo, model_file),
+            model_path=model_path,
             n_gpu_layers=-1,
-            n_ctx=8192,
+            n_ctx=n_ctx,
             seed=128,
             chat_format=chat_format,
             logits_all=False,
@@ -261,7 +259,7 @@ class Llama(Llm):
         # patch works with/without response_model
         client_callable = patch(
             create=raw_client,
-            mode=Mode.JSON_SCHEMA,  # (2)!
+            mode=Mode.JSON_SCHEMA,
         )
         pn.state.cache[model_key] = client_callable
         return client_callable
