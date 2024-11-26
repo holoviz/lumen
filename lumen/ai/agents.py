@@ -94,7 +94,8 @@ class Agent(Viewer, Actor):
 
     def __init__(self, **params):
         def _exception_handler(exception):
-            if str(exception) in self.interface.serialize()[-1]["content"]:
+            messages = self.interface.serialize()
+            if messages and str(exception) in messages[-1]["content"]:
                 return
 
             import traceback

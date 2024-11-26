@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import param
@@ -142,7 +143,8 @@ class UI(Viewer):
                 sources.append(src)
             elif isinstance(src, Pipeline):
                 mirrors[src.name] = src
-            elif isinstance(src, str):
+            elif isinstance(src, (str, Path)):
+                src = str(src)
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet')):
@@ -361,8 +363,7 @@ class ExplorerUI(UI):
             if not load:
                 return
 
-            with self._coordinator.interface.param.update(loading=True):
-                load_button.loading = True
+            with load_button.param.update(loading=True), self._coordinator.interface.param.update(loading=True):
                 explorers = []
                 for table in tables:
                     source = source_map[table]
@@ -377,7 +378,6 @@ class ExplorerUI(UI):
                     )
                     explorers.append(walker)
                 tabs.objects = explorers + [controls]
-                load_button.loading = False
 
         return Column(
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
