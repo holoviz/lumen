@@ -36,6 +36,7 @@ from .memory import _Memory, memory
 
 if TYPE_CHECKING:
     from .views import LumenOutput
+from .vector_store import NumpyVectorStore, VectorStore
 
 DataT = str | Path | Source | Pipeline
 
@@ -68,6 +69,9 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
+    vector_store = param.ClassSelector(class_=VectorStore, default=NumpyVectorStore(), doc="""
+        Vector store object which is queried to provide additional context before responding.""")
+
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
@@ -92,7 +96,8 @@ class UI(Viewer):
             agents.append(AnalysisAgent(analyses=self.analyses))
         self._coordinator = self.coordinator(
             agents=agents,
-            llm=self.llm
+            llm=self.llm,
+            vector_store=self.vector_store
         )
         self._notebook_export = FileDownload(
             icon="notebook",
