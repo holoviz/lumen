@@ -613,7 +613,7 @@ class Planner(Coordinator):
             role=user_msg['role'],
             content=(
                 f"<user query>{user_msg['content']}</user query>"
-                "{reasoning.chain_of_thought}"
+                f"{reasoning.chain_of_thought}"
             )
         )
         messages = messages[:-1] + [new_msg]
