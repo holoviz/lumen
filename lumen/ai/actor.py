@@ -30,6 +30,17 @@ class Actor(param.Parameterized):
         The paths to the prompt's jinja2 templates.""",
     )
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        def update_vector_store_table_list(_, __, sources, init=False):
+            for src in sources:
+                for table in src.get_tables():
+                    metadata = {"category": "table_list", "table": table}
+                    if not init and self.vector_store.filter_by(filters=metadata):
+                            continue
+                    self.vector_store.add([{"text": table, "metadata": metadata}])
+        memory.on_change('available_sources', update_vector_store_table_list)
+
     def _add_embeddings(self, messages: list[Message], context: dict[str, Any]) -> Any:
         for message in messages:
             if message["role"] == "user":
