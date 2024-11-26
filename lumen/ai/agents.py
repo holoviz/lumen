@@ -277,7 +277,7 @@ class ChatAgent(Agent):
         statistics about the data, and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
-        If data is available, it can also talk about the data itself.
+        It can talk about the data, if available.
         If there is only one table available, use this instead of TableListAgent.
         """)
 
