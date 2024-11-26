@@ -327,10 +327,11 @@ class ExplorerUI(UI):
         table_select = MultiChoice(
             sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=5
         )
-        load_button = Button(
-            name='Load table(s)', icon='table-plus', button_type='primary', align='center',
+        explore_button = Button(
+            name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
             disabled=table_select.param.value.rx().rx.not_()
         )
+        input_row = Row(table_select, explore_button)
 
         source_map = {}
         def update_source_map(_, __, sources, init=False):
@@ -348,19 +349,31 @@ class ExplorerUI(UI):
             source_map.clear()
             source_map.update(new)
             table_select.param.update(options=list(source_map), value=selected)
+            input_row.visible = bool(source_map)
         memory.on_change('available_sources', update_source_map)
         update_source_map(None, None, memory['available_sources'], init=True)
 
+        def explore_table_if_single(event):
+            """
+            If only one table is uploaded, help the user load it
+            without requiring them to click twice. This step
+            only triggers when the Upload in the Overview tab is used,
+            i.e. does not trigger with uploads through the SourceAgent
+            """
+            if len(table_select.options) == 1:
+                explore_button.param.trigger("value")
+
         controls = SourceControls(select_existing=False, name='Upload')
+        controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
-        @param.depends(table_select, load_button, watch=True)
-        def get_explorers(tables, load):
+        @param.depends(explore_button, watch=True)
+        def get_explorers(load):
             if not load:
                 return
-            with load_button.param.update(loading=True):
+            with explore_button.param.update(loading=True):
                 explorers = []
-                for table in tables:
+                for table in table_select.value:
                     source = source_map[table]
                     if len(memory['available_sources']) > 1:
                         _, table = table.rsplit(' : ', 1)
@@ -369,16 +382,17 @@ class ExplorerUI(UI):
                     )
                     walker = GraphicWalker(
                         pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                        kernel_computation=True, name=table, tab='data'
+                        kernel_computation=True, name=f"View {table}", tab='data'
                     )
                     explorers.append(walker)
 
                 tabs.objects = explorers + [controls]
+                table_select.value = []
 
         return Column(
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
-            Row(table_select, load_button),
             tabs,
+            input_row,
             sizing_mode='stretch_both',
         )
 
@@ -447,7 +461,19 @@ class ExplorerUI(UI):
                 if any(step.expert == 'SQLAgent' for step in plan.steps):
                     self._add_exploration(plan.title, local_memory)
                     index += 1
+
+            def sync_available_sources_memory(_, __, sources):
+                """
+                For cases when the user uploads a dataset through SourceAgent
+                this will update the available_sources in the global memory
+                so that the overview explorer can access it
+                """
+                memory["available_sources"] += [
+                    source for source in sources if source not in memory["available_sources"]
+                ]
+
             local_memory.on_change('plan', render_plan)
+            local_memory.on_change('available_sources', sync_available_sources_memory)
 
             def render_output(_, old, new):
                 added = [out for out in new if out not in old]

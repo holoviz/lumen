@@ -17,7 +17,7 @@ from .memory import _Memory, memory
 class TableControls(Viewer):
 
     filename = param.String(default="", doc="Filename")
-    table = param.String(default="", doc="Table name")
+    table = param.String(default="", doc="What to name the uploaded file when querying it as a table")
     extension = param.String(default="", doc="File extension")
     sheet = param.Selector(default=None, objects=[], doc="Sheet")
 
@@ -35,7 +35,7 @@ class TableControls(Viewer):
         super().__init__(**params)
         self.file = file
         self._name_input = TextInput.from_param(
-            self.param.table, name="Table name"
+            self.param.table, name="Table alias",
         )
         self._sheet_select = Select.from_param(
             self.param.sheet, name="Sheet", visible=False
@@ -71,7 +71,7 @@ class TableControls(Viewer):
 
 class SourceControls(Viewer):
 
-    add = param.Event(doc="Add tables")
+    add = param.Event(doc="Use table(s)")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
@@ -121,7 +121,7 @@ class SourceControls(Viewer):
 
         self._add_button = Button.from_param(
             self.param.add,
-            name="Use tables",
+            name="Use table(s)",
             icon="table-plus",
             visible=False,
             button_type="success",
