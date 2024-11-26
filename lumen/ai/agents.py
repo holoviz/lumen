@@ -278,7 +278,9 @@ class ChatAgent(Agent):
         statistics about the data, and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
-        If data is available, it can also talk about the data itself.""")
+        It can talk about the data, if available.
+        Use this instead of TableListAgent if there is only one table available.
+        """)
 
     prompt_templates = param.Dict(
         default={
