@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import param
@@ -36,7 +37,7 @@ from .memory import _Memory, memory
 if TYPE_CHECKING:
     from .views import LumenOutput
 
-DataT = str | Source | Pipeline
+DataT = str | Path | Source | Pipeline
 
 
 class UI(Viewer):
@@ -142,7 +143,8 @@ class UI(Viewer):
                 sources.append(src)
             elif isinstance(src, Pipeline):
                 mirrors[src.name] = src
-            elif isinstance(src, str):
+            elif isinstance(src, (str, Path)):
+                src = str(src)
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet')):
@@ -164,10 +166,6 @@ class UI(Viewer):
                 name='Provided'
             )
             sources.append(source)
-        if not sources:
-            raise ValueError(
-                'Must provide at least one data source.'
-            )
         memory['available_sources'] = sources
         if sources:
             memory['current_source'] = sources[0]
@@ -360,22 +358,22 @@ class ExplorerUI(UI):
         def get_explorers(tables, load):
             if not load:
                 return
-            load_button.loading = True
-            explorers = []
-            for table in tables:
-                source = source_map[table]
-                if len(memory['available_sources']) > 1:
-                    _, table = table.rsplit(' : ', 1)
-                pipeline = Pipeline(
-                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
-                )
-                walker = GraphicWalker(
-                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                    kernel_computation=True, name=table, tab='data'
-                )
-                explorers.append(walker)
-            tabs.objects = explorers + [controls]
-            load_button.loading = False
+            with load_button.param.update(loading=True):
+                explorers = []
+                for table in tables:
+                    source = source_map[table]
+                    if len(memory['available_sources']) > 1:
+                        _, table = table.rsplit(' : ', 1)
+                    pipeline = Pipeline(
+                        source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
+                    )
+                    walker = GraphicWalker(
+                        pipeline.param.data, sizing_mode='stretch_both', min_height=800,
+                        kernel_computation=True, name=table, tab='data'
+                    )
+                    explorers.append(walker)
+
+                tabs.objects = explorers + [controls]
 
         return Column(
             Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
