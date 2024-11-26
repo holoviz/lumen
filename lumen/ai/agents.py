@@ -324,7 +324,7 @@ class ChatDetailsAgent(ChatAgent):
         and continuing the conversation. Does not provide overviews;
         only details, meaning, relationships, and trends of the data.""")
 
-    requires = param.List(default=["current_source", "current_table"], readonly=True)
+    requires = param.List(default=["current_source", "current_table", "current_data"], readonly=True)
 
     prompt_templates = param.Dict(
         default={
@@ -449,7 +449,7 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+    provides = param.List(default=["current_table", "current_sql", "current_pipeline", "current_data"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
