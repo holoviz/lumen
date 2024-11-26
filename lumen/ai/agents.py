@@ -133,13 +133,6 @@ class Agent(Viewer, Actor):
         return self.interface
 
     async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
-        table_list = self.vector_store.filter_by({"category": "table_list"})
-        if not table_list:
-            # TODO: this is because sometimes, onload happens after Coordinator.__init__... find a better way
-            for src in self._memory['available_sources']:
-                for table in src.get_tables():
-                    self.vector_store.add([{"text": table, "metadata": {"category": "table_list"}}])
-
         results = self.vector_store.query(messages[-1]["content"], top_k=n, filters={"category": "table_list"})
         closest_tables = [result["text"] for result in results if result["similarity"] > 0.3]
         if len(closest_tables) == 0:
