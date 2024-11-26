@@ -74,7 +74,7 @@ class AzureOpenAIEmbeddings(Embeddings):
         self.client = AzureOpenAI(
             api_key=self.api_key,
             api_version=self.api_version,
-            azure_endpoint=self.azure_endpoint,
+            azure_endpoint=self.provider_endpoint,
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
