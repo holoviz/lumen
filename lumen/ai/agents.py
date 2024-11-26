@@ -324,7 +324,7 @@ class ChatDetailsAgent(ChatAgent):
         and continuing the conversation. Does not provide overviews;
         only details, meaning, relationships, and trends of the data.""")
 
-    requires = param.List(default=["current_source", "current_table", "current_data"], readonly=True)
+    requires = param.List(default=["current_source", "current_table"], readonly=True)
 
     prompt_templates = param.Dict(
         default={
@@ -334,6 +334,11 @@ class ChatDetailsAgent(ChatAgent):
     )
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
+        if "current_data" not in self._memory:
+            pipeline = self._memory["current_pipeline"]
+            df = await get_data(pipeline)
+            self._memory["current_data"] = await describe_data(df)
+
         topic_system_prompt = self._render_prompt("topic")
         topic = (await self.llm.invoke(
             messages,
@@ -449,7 +454,7 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline", "current_data"], readonly=True)
+    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
