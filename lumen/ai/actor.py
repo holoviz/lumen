@@ -47,14 +47,14 @@ class Actor(param.Parameterized):
                 break
         content = message["content"]
 
-        # any embeddings across without filters with higher threshold
-        # TODO: maybe make this filter for unspecified? but I definitely don't want table_list in this.
-        embeddings = self.vector_store.query(content, top_k=3, threshold=0.1, filters={"category": "table"})
-        if "current_table" in memory:
+        if "current_table" in memory and self.vector_store.filter_by(filters={"table": memory["current_table"]}):
             # specific table embeddings, with lower threshold
-            embeddings += self.vector_store.query(
+            embeddings = self.vector_store.query(
                 content, top_k=3, filters={"table": memory["current_table"]}, threshold=0.05
             )
+        else:
+            embeddings = self.vector_store.query(
+                content, top_k=3, threshold=0.1, filters={"category": "table"})
         context["embeddings"] = embeddings
         return context
 
