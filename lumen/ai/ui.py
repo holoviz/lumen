@@ -24,7 +24,7 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
 from .agents import (
-    AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
+    AnalysisAgent, AnalystAgent, ChatAgent, SourceAgent, SQLAgent,
     TableListAgent, VegaLiteAgent,
 )
 from .components import SplitJS
@@ -59,7 +59,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent, VegaLiteAgent
+        TableListAgent, ChatAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent
     ], doc="""List of default agents which will always be added.""")
 
     export_functions = param.Dict(default={}, doc="""
@@ -163,7 +163,7 @@ class UI(Viewer):
             source = DuckDBSource(
                 tables=tables, mirrors=mirrors,
                 uri=':memory:', initializers=initializers,
-                name='Provided'
+                name='ProvidedSource00000'
             )
             sources.append(source)
         memory['available_sources'] = sources
