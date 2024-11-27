@@ -365,7 +365,7 @@ class Coordinator(Viewer, Actor):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
+    async def _execute_graph_node(self, node: ExecutionNode, context_length: int):
         subagent = node.agent
         instruction = node.instruction
         title = node.title.capitalize()
@@ -381,7 +381,8 @@ class Coordinator(Viewer, Actor):
 
         with self.interface.add_step(title=f"Querying {agent_name} agent...", steps_layout=steps_layout) as step:
             step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
-            custom_messages = messages.copy()
+            # build upon previous replies
+            messages = self.interface.serialize(custom_serializer=self._serialize)[-context_length:-1]
             if isinstance(subagent, SQLAgent):
                 custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
                 if custom_agent:
@@ -390,13 +391,14 @@ class Coordinator(Viewer, Actor):
                         f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
-                    custom_messages.append({"role": "user", "content": custom_message})
+                    messages.append({"role": "user", "content": custom_message})
             if instruction:
-                custom_messages.append({"role": "user", "content": instruction})
+                messages.append({"role": "user", "content": instruction})
 
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
             with subagent.param.update(memory=self.memory, steps_layout=steps_layout):
-                await subagent.respond(custom_messages, step_title=title, render_output=render_output, **respond_kwargs)
+                print(messages)
+                await subagent.respond(messages, step_title=title, render_output=render_output, **respond_kwargs)
             step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
             step.success_title = f"{agent_name} agent successfully responded"
 
@@ -447,8 +449,8 @@ class Coordinator(Viewer, Actor):
                 )
                 self.interface.stream(msg, user='Lumen')
                 return msg
-            for node in execution_graph:
-                await self._execute_graph_node(node, messages[-context_length:])
+            for i, node in enumerate(execution_graph):
+                await self._execute_graph_node(node, 3 + i)
             if "current_pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             print("\033[92mDONE\033[0m", "\n\n")
@@ -559,7 +561,7 @@ class Planner(Coordinator):
         for table in requested:
             if table in provided or table in cache:
                 continue
-            cache[table] = await get_schema(tables[table], table, limit=3)
+            cache[table] = await get_schema(tables[table], table, limit=1000)
         schema_info = ''
         for table in requested:
             if table in provided:

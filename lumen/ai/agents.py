@@ -327,7 +327,7 @@ class ChatDetailsAgent(ChatAgent):
         and continuing the conversation. Does not provide overviews;
         only details, meaning, relationships, and trends of the data.""")
 
-    requires = param.List(default=["current_source", "current_table", "current_pipeline"], readonly=True)
+    requires = param.List(default=["current_source", "current_table", "current_pipeline", "current_sql"], readonly=True)
 
     prompt_templates = param.Dict(
         default={
