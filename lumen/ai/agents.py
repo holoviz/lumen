@@ -337,15 +337,6 @@ class AnalystAgent(ChatAgent):
         }
     )
 
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        if "current_data" not in self._memory:
-            pipeline = self._memory["current_pipeline"]
-            df = await get_data(pipeline)
-            self._memory["current_data"] = await describe_data(df)
-        system_prompt = self._render_prompt("main")
-        print(system_prompt)
-        return system_prompt
-
 
 class LumenBaseAgent(Agent):
 
