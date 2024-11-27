@@ -448,6 +448,7 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
+                print(node.agent)
                 await self._execute_graph_node(node, messages[-context_length:])
             if "current_pipeline" in self._memory:
                 await self._add_analysis_suggestions()
@@ -621,7 +622,6 @@ class Planner(Coordinator):
         return plan
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
-        table_provided = False
         execution_graph = []
         unmet_dependencies = set()
         for step in plan.steps[::-1]:
@@ -640,19 +640,6 @@ class Planner(Coordinator):
                     render_output=step.render_output
                 )
             )
-            if "current_table" in unmet_dependencies:
-                unmet_dependencies.remove('current_table')
-                if not table_provided:
-                    execution_graph.append(
-                        ExecutionNode(
-                            agent=agents['SQLAgent'],
-                            provides=['current_table'],
-                            instruction='Load the table',
-                            title='Loading table',
-                            render_output=False
-                        )
-                    )
-                table_provided = True
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
