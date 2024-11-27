@@ -7,8 +7,8 @@ You are an agent responsible for writing a SQL query that will perform the data 
 {% block context %}
 {% for table, details in tables_sql_schemas.items() %}
 
-The data for table '{{ table }}' follows the following JSON schema:
-```json
+The data for table '{{ table }}' follows the following YAML schema:
+```yaml
 {{ details.schema }}
 ```
 {% endfor %}
