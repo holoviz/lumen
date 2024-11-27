@@ -312,7 +312,7 @@ class ChatAgent(Agent):
             self._memory["current_table"] = table = self._memory.get(
                 "current_table", tables[0]
             )
-            schema = await get_schema(self._memory["current_source"], table)
+            schema = await get_schema(self._memory["current_source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
         system_prompt = self._render_prompt("main", **context)
