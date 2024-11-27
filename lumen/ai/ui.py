@@ -163,7 +163,7 @@ class UI(Viewer):
             source = DuckDBSource(
                 tables=tables, mirrors=mirrors,
                 uri=':memory:', initializers=initializers,
-                name='Provided'
+                name='ProvidedSource00000'
             )
             sources.append(source)
         memory['available_sources'] = sources
