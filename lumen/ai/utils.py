@@ -178,7 +178,7 @@ async def get_schema(
             spec.pop("enum")
         elif limit and len(spec["enum"]) > limit:
             spec["enum"].append("...")
-        elif limit and spec["enum"][0] is None:
+        elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [f"(unknown; truncated to {get_kwargs['limit']} rows)"]
 
     schema = format_schema(schema)

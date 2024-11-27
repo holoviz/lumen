@@ -719,7 +719,7 @@ class SQLAgent(LumenBaseAgent):
                 table_name = source.tables[table_name]
 
             table_schemas[table_name] = {
-                "schema": yaml.dump(table_schema),
+                "schema": table_schema,
                 "sql": source.get_sql_expr(source_table)
             }
 

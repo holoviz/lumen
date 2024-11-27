@@ -559,7 +559,7 @@ class Planner(Coordinator):
         for table in requested:
             if table in provided or table in cache:
                 continue
-            cache[table] = await get_schema(tables[table], table, limit=3)
+            cache[table] = await get_schema(tables[table], table, limit=1000)
         schema_info = ''
         for table in requested:
             if table in provided:

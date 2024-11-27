@@ -7,8 +7,8 @@ You are an agent responsible for writing a SQL query that will perform the data 
 {% block context %}
 {% for table, details in tables_sql_schemas.items() %}
 
-The data for table '{{ table }}' follows the following YAML schema:
-```yaml
+The data for table '{{ table }}' follows the following JSON schema:
+```json
 {{ details.schema }}
 ```
 {% endfor %}
@@ -26,8 +26,12 @@ Checklist
 - Quote column names to ensure they do not clash with valid identifiers.
 - If it's a date column (excluding individual year/month/day integers) date, cast to date using appropriate syntax, e.g.
 CAST or TO_DATE
-- Use only `{{ dialect }}` syntax
+- Use only `{{ dialect }}` SQL syntax
 - Try to pretty print the SQL output with newlines and indentation.
+- Specify data types explicitly to avoid type mismatches.
+- Handle NULL values using functions like COALESCE or IS NULL.
+- Use parameterized queries to prevent SQL injection attacks.
+- Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts.
 {% if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'
@@ -39,4 +43,48 @@ identifiers.
 {% if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif %}
+{% endblock %}
+
+{%- block examples %}
+Examples:
+
+If the query is "Who won the most medals total?"...
+
+- GOOD:
+```sql
+SELECT
+    athlete_full_name,
+    COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*G', 1) AS INTEGER), 0) AS gold_medals,
+    COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*S', 1) AS INTEGER), 0) AS silver_medals,
+    COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*B', 1) AS INTEGER), 0) AS bronze_medals,
+    (
+        COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*G', 1) AS INTEGER), 0) +
+        COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*S', 1) AS INTEGER), 0) +
+        COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*B', 1) AS INTEGER), 0)
+    ) AS total_medals
+FROM read_csv('olympic_athletes.csv')
+ORDER BY total_medals DESC
+LIMI5 1;
+```
+
+- BAD:
+```sql
+SELECT
+    athlete_full_name,
+    COUNT(athlete_medals) AS total_medals
+FROM olympic_athletes
+```
+
+If the query is "Top 5 athletes with the most gold medals"...
+
+- GOOD:
+```sql
+SELECT
+    athlete_full_name,
+    COALESCE(TRY_CAST(regexp_extract(regexp_replace(athlete_medals, '[\n│]+', ' '), '(\d+)\s*G', 1) AS INTEGER), 0) AS gold_medals,
+FROM read_csv('olympic_athletes.csv')
+ORDER BY gold_medals DESC
+LIMIT 5;
+```
+
 {% endblock %}
