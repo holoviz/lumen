@@ -325,7 +325,8 @@ class ExplorerUI(UI):
         from panel_gwalker import GraphicWalker
 
         table_select = MultiChoice(
-            sizing_mode='stretch_width', max_height=200, margin=(5, 0), max_items=5
+            placeholder="Select table(s)", sizing_mode='stretch_width',
+            max_height=200, margin=(5, 0), max_items=5
         )
         explore_button = Button(
             name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
