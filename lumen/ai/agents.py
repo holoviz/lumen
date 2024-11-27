@@ -630,12 +630,9 @@ class SQLAgent(LumenBaseAgent):
         else:
             available_tables = self._memory['current_source'].get_tables()
 
-        print(available_tables)
-
         find_joins_prompt = self._render_prompt(
             "find_joins", available_tables=available_tables
         )
-        print(find_joins_prompt)
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
@@ -652,7 +649,6 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source = {}
         for source_table in tables_to_join:
             available_sources = self._memory["available_sources"]
-            print(multi_source, source_table)
             if multi_source:
                 try:
                     _, a_source_name, a_table = source_table.split("//", maxsplit=2)
