@@ -19,14 +19,14 @@ except ImportError:
 
 def test_render_template_with_valid_template():
     assert (
-        render_template(PROMPTS_DIR / "AnalystAgent" / "topic.jinja2", {}).strip()
+        render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {}).strip()
         == "What is the topic of the table?"
     )
 
 
 def test_render_template_with_override():
     assert (
-        render_template(PROMPTS_DIR / "AnalystAgent" / "topic.jinja2", {"context": "Its Lumen"}).strip()
+        render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen"}).strip()
         == "What is the topic of the table?\n\n\nIts Lumen"
     )
 

@@ -28,12 +28,12 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
-def render_template(template_path: Path, prompt_overrides: dict, **context):
+def render_template(template_path: Path, prompt_overrides: dict, prompts_dir: Path = PROMPTS_DIR, **context):
     try:
-        template_path = template_path.relative_to(PROMPTS_DIR).as_posix()
+        template_path = template_path.relative_to(prompts_dir).as_posix()
     except ValueError:
         pass
-    fs_loader = FileSystemLoader(PROMPTS_DIR)
+    fs_loader = FileSystemLoader(prompts_dir)
 
     if prompt_overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
