@@ -25,6 +25,7 @@ class Actor(param.Parameterized):
             prompt_overrides=self.prompt_overrides.get(prompt_name, {}),
             **context
         )
+        print(prompt)
         return prompt
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
