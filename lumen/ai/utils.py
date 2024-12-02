@@ -126,6 +126,8 @@ def format_schema(schema):
                 spec["type"] = "str"
             elif spec["type"] == "integer":
                 spec["type"] = "int"
+            elif spec["type"] == "number":
+                spec["type"] = "num"
             elif spec["type"] == "boolean":
                 spec["type"] = "bool"
         formatted[field] = spec
