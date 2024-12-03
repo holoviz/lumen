@@ -39,9 +39,9 @@ class ConfigDict(dict):
 
 class SessionCache:
 
-    _session_contexts: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
-
-    _global_context = {}
+    def __init__(self):
+        self._session_contexts = WeakKeyDictionary()
+        self._global_context = {}
 
     @property
     def _curcontext(self):
@@ -58,7 +58,9 @@ class SessionCache:
         return key in self._curcontext or key in self._global_context
 
     def __getitem__(self, key):
-        return self._curcontext[key]
+        if key in self._curcontext:
+            return self._curcontext[key]
+        return self._global_context[key]
 
     def __setitem__(self, key, value):
         self._curcontext[key] = value
@@ -74,6 +76,15 @@ class SessionCache:
 
     def pop(self, key, default=None):
         return self._curcontext.pop(key, default)
+
+    def update(self, updates):
+        self._curcontext.update(updates)
+
+    def clone(self):
+        new = type(self)()
+        new._global_context = self._global_context.copy()
+        new._session_contexts = self._session_contexts.copy()
+        return new
 
 
 _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).items()}

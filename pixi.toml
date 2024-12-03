@@ -51,6 +51,7 @@ pytest-github-actions-annotate-failures = "*"
 pytest-rerunfailures = "*"
 pytest-xdist = "*"
 pytest-asyncio = "*"
+dask = "<=2024.10" # Temporary workaround for pyarrow string issue in tests
 
 [feature.test-core.tasks]
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
@@ -61,6 +62,7 @@ fastparquet = "*"
 matplotlib-base = ">=3.4" # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
 msgpack-python = "*"
 toolz = "*"
+dask = "<=2024.10" # Temporary workaround for pyarrow string issue in tests
 # sql
 intake-sql = "*"
 python-duckdb = "*"
@@ -91,7 +93,7 @@ pydantic_extra_types = "*"
 # huggingface_hub = "*"
 #
 # [feature.ai-llama.dependencies]
-# llama-cpp-python = "*"
+# llama-cpp-python = ">=0.3.0"
 
 # =============================================
 # =================== DOCS ====================

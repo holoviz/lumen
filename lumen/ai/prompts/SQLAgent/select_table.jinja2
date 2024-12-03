@@ -1,0 +1,11 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Select the most appropriate table to use in the SQL query to answer the user's question.
+{% endblock %}
+
+{% block context %}
+Here are the table schemas:
+
+{{ tables_schema_str }}
+{% endblock %}

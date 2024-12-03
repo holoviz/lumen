@@ -1,0 +1,8 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate the plot the user requested as a vega-lite specification.
+
+- The data will be provided separately. Never provide a data field.
+- Ensure you use the column names verbatim.
+{% endblock %}

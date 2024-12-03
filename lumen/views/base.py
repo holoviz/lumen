@@ -362,7 +362,7 @@ class View(MultiTypeComponent, Viewer):
                 value = new_value
             if view_type._is_list_component_key(p):
                 value = [View.from_spec(v) for v in value]
-            if isinstance(parameter, param.ObjectSelector) and parameter.names:
+            if isinstance(parameter, (param.Selector, param.ObjectSelector)) and parameter.names: # ObjectSelector is deprecated
                 try:
                     value = parameter.names.get(value, value)
                 except Exception:
@@ -944,7 +944,7 @@ class DownloadView(View):
     icon = param.String(default='file-spreadsheet', doc="""
       Icon to show on the button.""")
 
-    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+    format = param.Selector(default=None, objects=DOWNLOAD_FORMATS, doc="""
       The format to download the data in.""")
 
     kwargs = param.Dict(default={}, doc="""
@@ -1018,10 +1018,10 @@ class PerspectiveView(View):
     sort = param.List(default=None, doc="""
         How to sort. For example[["x","desc"]]""")
 
-    plugin = param.ObjectSelector(default=_PerspectivePlugin.GRID.value, objects=_PerspectivePlugin.options(), doc="""
+    plugin = param.Selector(default=_PerspectivePlugin.GRID.value, objects=_PerspectivePlugin.options(), doc="""
         The name of a plugin to display the data. For example hypergrid or d3_xy_scatter.""")
 
-    theme = param.ObjectSelector(default='material', objects=_PERSPECTIVE_THEMES, doc="""
+    theme = param.Selector(default='material', objects=_PERSPECTIVE_THEMES, doc="""
         The style of the PerspectiveViewer. For example material-dark""")
 
     view_type = 'perspective'

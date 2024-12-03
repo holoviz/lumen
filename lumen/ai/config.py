@@ -10,6 +10,7 @@ class LlmSetupError(Exception):
 
 
 THIS_DIR = Path(__file__).parent
+PROMPTS_DIR = THIS_DIR / "prompts"
 
 FUZZY_TABLE_LENGTH = 10
 
@@ -37,4 +38,4 @@ UNRECOVERABLE_ERRORS = (
     RecursionError,
 )
 
-pn.chat.ChatStep.min_width = 350
+pn.chat.ChatStep.min_width = 450

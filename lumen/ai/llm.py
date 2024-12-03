@@ -4,6 +4,9 @@ import os
 
 from functools import partial
 from types import SimpleNamespace
+from typing import (
+    TYPE_CHECKING, Any, Literal, TypedDict,
+)
 
 import instructor
 import panel as pn
@@ -15,28 +18,49 @@ from pydantic import BaseModel
 
 from .interceptor import Interceptor
 
+if TYPE_CHECKING:
+    MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
+
+
+class Message(TypedDict):
+    role: Literal["system", "user", "assistant"]
+    content: str
+    name: str | None
+
+
+BASE_MODES = [Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS, Mode.TOOLS]
+
 
 class Llm(param.Parameterized):
+    """
+    Baseclass for LLM implementations.
 
-    mode = param.Selector(
-        default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS]
-    )
+    An LLM implementation wraps a local or cloud based LLM provider
+    with instructor to enable support for correctly validating Pydantic
+    models.
+    """
 
-    use_logfire = param.Boolean(default=False)
+    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES, doc="""
+        The calling mode used by instructor to guide the LLM towards generating
+        outputs matching the schema.""")
 
-    interceptor = param.ClassSelector(default=None, class_=Interceptor)
+    interceptor = param.ClassSelector(default=None, class_=Interceptor, doc="""
+        Intercepter instance to intercept LLM calls, e.g. for logging.""")
 
-    # Allows defining a dictionary of default models.
-    model_kwargs = param.Dict(default={})
+    model_kwargs = param.Dict(default={}, doc="""
+        LLM model definitions indexed by type. Supported types include
+        'default', 'reasoning' and 'sql'. Agents may pick which model to
+        invoke for different reasons.""")
 
+    # Whether the LLM supports streaming of any kind
+    _supports_stream = True
+
+    # Whether the LLM supports streaming of Pydantic model output
     _supports_model_stream = True
 
     __abstract = True
 
-    def __init__(self, **params):
-        super().__init__(**params)
-
-    def _get_model_kwargs(self, model_key):
+    def _get_model_kwargs(self, model_key: MODEL_TYPE) -> dict[str, Any]:
         if model_key in self.model_kwargs:
             model_kwargs = self.model_kwargs.get(model_key)
         else:
@@ -44,23 +68,50 @@ class Llm(param.Parameterized):
         return dict(model_kwargs)
 
     @property
-    def _client_kwargs(self):
+    def _client_kwargs(self) -> dict[str, Any]:
         return {}
 
-    def _add_system_message(self, messages, system, input_kwargs):
+    def _add_system_message(
+        self,
+        messages: list[Message],
+        system: str,
+        input_kwargs: dict[str, Any]
+    ) -> tuple[list[Message], dict[str, Any]]:
         if system:
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_key: str = "default",
+        model_key: MODEL_TYPE = "default",
         **input_kwargs,
     ) -> BaseModel:
+        """
+        Invokes the LLM and returns its response.
+
+        Arguments
+        ---------
+        messages: list[Message]
+            A list of messages to feed to the LLM.
+        system: str
+            A system message to provide to the LLM.
+        response_model: BaseModel | None
+            A Pydantic model that the LLM should materialize.
+        allow_partial: bool
+            Whether to allow the LLM to only partially fill
+            the provided response_model.
+        model: Literal['default' | 'reasoning' | 'sql']
+            The model as listed in the model_kwargs parameter
+            to invoke to answer the query.
+
+        Returns
+        -------
+        The completed response_model.
+        """
         system = system.strip().replace("\n\n", "\n")
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
@@ -80,21 +131,43 @@ class Llm(param.Parameterized):
         return output
 
     @classmethod
-    def _get_delta(cls, chunk):
+    def _get_delta(cls, chunk) -> str:
         if chunk.choices:
             return chunk.choices[0].delta.content or ""
         return ""
 
     async def stream(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         field: str | None = None,
         model_key: str = "default",
         **kwargs,
     ):
-        if response_model and not self._supports_model_stream:
+        """
+        Invokes the LLM and streams its response.
+
+        Arguments
+        ---------
+        messages: list[Message]
+            A list of messages to feed to the LLM.
+        system: str
+            A system message to provide to the LLM.
+        response_model: BaseModel | None
+            A Pydantic model that the LLM should materialize.
+        field: str
+            The field in the response_model to stream.
+        model: Literal['default' | 'reasoning' | 'sql']
+            The model as listed in the model_kwargs parameter
+            to invoke to answer the query.
+
+        Yields
+        ------
+        The string or response_model field.
+        """
+        if ((response_model and not self._supports_model_stream) or
+            not self._supports_stream):
             yield await self.invoke(
                 messages,
                 system=system,
@@ -131,12 +204,16 @@ class Llm(param.Parameterized):
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
 
-    async def run_client(self, model_key, messages, **kwargs):
+    async def run_client(self, model_key: MODEL_TYPE, messages: list[Message], **kwargs):
         client = self.get_client(model_key, **kwargs)
         return await client(messages=messages, **kwargs)
 
 
 class Llama(Llm):
+    """
+    A LLM implementation using Llama.cpp Python wrapper together
+    with huggingface_hub to fetch the models.
+    """
 
     chat_format = param.String(constant=True)
 
@@ -144,22 +221,18 @@ class Llama(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
-            "model_file": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
-            "chat_format": "mistral-instruct",
-        },
-        "sql": {
-            "repo": "TheBloke/sqlcoder2-GGUF",
-            "model_file": "sqlcoder2.Q5_K_M.gguf",
-            "chat_format": "chatml",
+            "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            "chat_format": "qwen",
+            "n_ctx": 131072,
         },
     })
 
     @property
-    def _client_kwargs(self):
+    def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
         if client_callable := pn.state.cache.get(model_key):
             return client_callable
         from huggingface_hub import hf_hub_download
@@ -169,10 +242,12 @@ class Llama(Llm):
         repo = model_kwargs["repo"]
         model_file = model_kwargs["model_file"]
         chat_format = model_kwargs["chat_format"]
+        n_ctx = model_kwargs["n_ctx"]
+        model_path = hf_hub_download(repo, model_file)
         llm = Llama(
-            model_path=hf_hub_download(repo, model_file),
+            model_path=model_path,
             n_gpu_layers=-1,
-            n_ctx=8192,
+            n_ctx=n_ctx,
             seed=128,
             chat_format=chat_format,
             logits_all=False,
@@ -184,38 +259,44 @@ class Llama(Llm):
         # patch works with/without response_model
         client_callable = patch(
             create=raw_client,
-            mode=Mode.JSON_SCHEMA,  # (2)!
+            mode=Mode.JSON_SCHEMA,
         )
         pn.state.cache[model_key] = client_callable
         return client_callable
 
-    async def run_client(self, model_key, messages, **kwargs):
+    async def run_client(self, model_key: MODEL_TYPE, messages: list[Message], **kwargs):
         client = self.get_client(model_key, **kwargs)
-        return await client(messages=messages, **kwargs)
+        return client(messages=messages, **kwargs)
 
 
 class OpenAI(Llm):
+    """
+    An LLM implementation using the OpenAI cloud.
+    """
 
-    api_key = param.String()
+    api_key = param.String(doc="The OpenAI API key.")
 
-    base_url = param.String()
+    base_url = param.String(doc="The OpenAI base.")
 
-    mode = param.Selector(default=Mode.FUNCTIONS)
+    mode = param.Selector(default=Mode.TOOLS)
 
     temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
 
-    organization = param.String()
+    organization = param.String(doc="The OpenAI organization to charge.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4o-mini"},
-        "reasoning": {"model": "gpt-4-turbo-preview"},
+        "reasoning": {"model": "gpt-4o"},
     })
+
+    use_logfire = param.Boolean(default=False, doc="""
+        Whether to log LLM calls and responses to logfire.""")
 
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -246,15 +327,19 @@ class OpenAI(Llm):
             logfire.instrument_openai(llm)
         return client_callable
 
+
 class AzureOpenAI(Llm):
+    """
+    A LLM implementation that uses the Azure OpenAI integration.
+    """
 
-    api_key = param.String()
+    api_key = param.String(doc="The Azure API key.")
 
-    api_version = param.String()
+    api_version = param.String(doc="The Azure AI Studio API version.")
 
-    azure_endpoint = param.String()
+    azure_endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
-    mode = param.Selector(default=Mode.FUNCTIONS)
+    mode = param.Selector(default=Mode.TOOLS)
 
     temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
 
@@ -289,21 +374,12 @@ class AzureOpenAI(Llm):
         return client_callable
 
 
-class AILauncher(OpenAI):
-
-    base_url = param.String(default="http://localhost:8080/v1")
-
-    mode = param.Selector(default=Mode.JSON_SCHEMA)
-
-    model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-3.5-turbo"},
-        "reasoning": {"model": "gpt-4-turbo-preview"},
-    })
-
-
 class MistralAI(Llm):
+    """
+    A LLM implementation that calls Mistral AI.
+    """
 
-    api_key = param.String(default=os.getenv("MISTRAL_API_KEY"))
+    api_key = param.String(default=os.getenv("MISTRAL_API_KEY"), doc="The Mistral AI API key.")
 
     mode = param.Selector(default=Mode.MISTRAL_TOOLS, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
 
@@ -352,7 +428,7 @@ class MistralAI(Llm):
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
@@ -377,10 +453,13 @@ class MistralAI(Llm):
 
 
 class AzureMistralAI(MistralAI):
+    """
+    A LLM implementation that calls Mistral AI models on Azure.
+    """
 
-    api_key = param.String(default=os.getenv("AZURE_API_KEY"))
+    api_key = param.String(default=os.getenv("AZURE_API_KEY"), doc="The Azure API key")
 
-    azure_endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"))
+    azure_endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure endpoint to invoke.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
@@ -417,10 +496,13 @@ class AzureMistralAI(MistralAI):
 
 
 class AnthropicAI(Llm):
+    """
+    A LLM implementation that calls Anthropic models such as Claude.
+    """
 
-    api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"))
+    api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"), doc="The Anthropic API key.")
 
-    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=[Mode.JSON_SCHEMA, Mode.TOOLS])
+    mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
@@ -435,7 +517,7 @@ class AnthropicAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
 
@@ -453,23 +535,23 @@ class AnthropicAI(Llm):
             return partial(llm.messages.create, model=model)
 
     @classmethod
-    def _get_delta(cls, chunk):
+    def _get_delta(cls, chunk: Any) -> str:
         if hasattr(chunk, 'delta'):
             if hasattr(chunk.delta, "text"):
                 return chunk.delta.text
         return ""
 
-    def _add_system_message(self, messages, system, input_kwargs):
+    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         input_kwargs["system"] = system
         return messages, input_kwargs
 
     async def invoke(
         self,
-        messages: list | str,
+        messages: list[Message],
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_key: str = "default",
+        model_key: MODEL_TYPE = "default",
         **input_kwargs,
     ) -> BaseModel:
         if isinstance(messages, str):

@@ -82,7 +82,9 @@ class DuckDBSource(BaseSQLSource):
             for init in self.initializers:
                 self._connection.execute(init)
         for table, mirror in self.mirrors.items():
-            if isinstance(mirror, tuple):
+            if isinstance(mirror, pd.DataFrame):
+                df = mirror
+            elif isinstance(mirror, tuple):
                 source, src_table = mirror
                 df = source.get(src_table)
             else:
@@ -243,7 +245,10 @@ class DuckDBSource(BaseSQLSource):
             table = self.tables[table]
         if '(' not in table and ')' not in table:
             table = f'"{table}"'
-        if 'select ' in table.lower():
+
+        # search if the so-called "table" already contains SELECT ... FROM
+        # if so, we don't need to wrap it in a SELECT * FROM
+        if re.search(r"(?i)\bselect\b[\s\S]+?\bfrom\b", table):
             sql_expr = table
         else:
             sql_expr = self.sql_expr.format(table=table)

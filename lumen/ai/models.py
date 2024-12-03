@@ -13,19 +13,6 @@ class FuzzyTable(BaseModel):
     keywords: list[str] = Field(description="The most likely keywords related to a table name that the user might be referring to.")
 
 
-class DataRequired(BaseModel):
-
-    chain_of_thought: str = Field(
-        description="""
-        Thoughts on whether the user's query requires data loaded for insights;
-        if the user wants to explore a dataset, it's required.
-        If only finding a dataset, it's not required.
-        """
-    )
-
-    data_required: bool = Field(description="Whether the user wants to load a specific dataset; if only searching for one, it's not required.")
-
-
 class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(
@@ -35,7 +22,7 @@ class JoinRequired(BaseModel):
         """
     )
 
-    join_required: bool = Field(description="Whether a table join is required to answer the user's query.")
+    requires_joins: bool = Field(description="Whether a table join is required to answer the user's query.")
 
 
 class TableJoins(BaseModel):
@@ -46,7 +33,7 @@ class TableJoins(BaseModel):
         """
     )
 
-    tables: list[str] = Field(
+    tables_to_join: list[str] = Field(
         description=(
             "List of tables that need to be joined to answer the user's query. "
             "Use table names verbatim; e.g. if table is `read_csv('table.csv')` "
@@ -68,7 +55,8 @@ class Sql(BaseModel):
 
     expr_slug: str = Field(
         description="""
-        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it.
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
+        e.g. top_5_athletes_gold_medals
         """
     )
 
@@ -99,21 +87,23 @@ class Topic(BaseModel):
 
 class VegaLiteSpec(BaseModel):
 
-    json_spec: str = Field(description="A vega-lite JSON specification WITHOUT the data field, which will be added automatically.")
+    json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
 
 
 def make_plan_models(agent_names: list[str], tables: list[str]):
     step = create_model(
         "Step",
         expert=(Literal[agent_names], FieldInfo(description="The name of the expert to assign a task to.")),
-        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task."))
+        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task, and whether rendering is required.")),
+        title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
+        render_output=(bool, FieldInfo(description="Whether the output of the expert should be rendered. If the user wants to see the table, and the expert is SQL, then this should be `True`.")),
     )
     extras = {}
     if tables:
         extras['tables'] = (
             list[Literal[tuple(tables)]],
             FieldInfo(
-                description="A list of tables you want to inspect before coming up with a plan."
+                description="A list of tables to load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
             )
         )
     reasoning = create_model(
@@ -128,6 +118,9 @@ def make_plan_models(agent_names: list[str], tables: list[str]):
     )
     plan = create_model(
         "Plan",
+        title=(
+            str, FieldInfo(description="A title that describes this plan in a few words")
+        ),
         steps=(
             list[step],
             FieldInfo(
@@ -156,3 +149,16 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
             FieldInfo(default=..., description=description)
         ),
     )
+
+
+def make_table_model(tables):
+    table_model = create_model(
+        "Table",
+        chain_of_thought=(str, FieldInfo(
+            description="A concise, one sentence decision-tree-style analysis on choosing a table."
+        )),
+        relevant_table=(Literal[tuple(tables)], FieldInfo(
+            description="The most relevant table based on the user query; if none are relevant, select the first. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
+        ))
+    )
+    return table_model

@@ -30,7 +30,7 @@ class Download(MultiTypeComponent, Viewer):
       File extension is added automatic based on the format.
       If filename is not defined, it will be the name of the orignal table of the view.""")
 
-    format = param.ObjectSelector(default=None, objects=DOWNLOAD_FORMATS, doc="""
+    format = param.Selector(default=None, objects=DOWNLOAD_FORMATS, doc="""
       The format to download the data in.""")
 
     hide = param.Boolean(default=False, doc="""

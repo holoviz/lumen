@@ -1,66 +1,51 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
-from weakref import WeakKeyDictionary
+from collections import defaultdict
 
-import panel as pn
+import param
 
-from panel import state
-from panel.viewable import Viewer
-
-from ..base import Component
 from ..config import SessionCache
 
-if TYPE_CHECKING:
-    from bokeh.document import Document
 
+class _Memory(SessionCache):
 
-class _Memory(SessionCache, Viewer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._callbacks = defaultdict(list)
+        self._rx = {}
 
-    _views: ClassVar[WeakKeyDictionary[Document, Any]] = WeakKeyDictionary()
-
-    _global_view = None
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        if state.curdoc in self._views or (state.curdoc is None and self._global_view is not None):
-            self._update_view(key, value)
-
-    def _render_item(self, key, item):
-        if isinstance(item, Component):
-            item = item.to_spec()
-            if 'password' in item:
-                item['password'] = '•'*len(item['password'])
-        if isinstance(item, str):
-            item = f'```yaml\n{item}\n```'
-        return pn.panel(item, name=key, sizing_mode='stretch_width', styles={'overflow': 'scroll'})
-
-    def _render_memories(self):
-        return pn.Accordion(*(
-            self._render_item(name, item)
-            for name, item in self._curcontext.items()
-        ), sizing_mode='stretch_width', active=list(range(len(self._curcontext))))
-
-    def _update_view(self, key, value):
-        view = self._views[state.curdoc] if state.curdoc else self._global_view
-        accordion = view[0]
-        new_item = self._render_item(key, value)
-        i = 0
-        for i, item in enumerate(accordion):
-            if item.name == key:
-                accordion[i] = new_item
-                break
+    def __setitem__(self, key, new):
+        if key in self:
+            old = self[key]
         else:
-            accordion.append(new_item)
-            accordion.active = accordion.active + [i+1]
+            old = None
+        super().__setitem__(key, new)
+        self._trigger_update(key, old, new)
 
-    def __panel__(self):
-        view = pn.Column(self._render_memories())
-        if state.curdoc is None:
-            self._global_view = view
-        else:
-            self._views[state.curdoc] = view
-        return view
+    def cleanup(self):
+        self._callbacks.clear()
+        self._rx.clear()
+
+    def on_change(self, key, callback):
+        self._callbacks[key].append(callback)
+
+    def remove_on_change(self, key, callback):
+        self._callbacks[key].remove(callback)
+
+    def rx(self, key):
+        if key in self._rx:
+            return self._rx[key]
+        self._rx[key] = rxp = param.rx(self[key])
+        return rxp
+
+    def trigger(self, key):
+        self._trigger_update(key, self[key], self[key])
+
+    def _trigger_update(self, key, old, new):
+        for cb in self._callbacks[key]:
+            cb(key, old, new)
+        if key in self._rx:
+            self._rx[key].rx.value = new
 
 
 memory = _Memory()

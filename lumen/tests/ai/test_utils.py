@@ -1,4 +1,3 @@
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import jinja2
@@ -9,6 +8,7 @@ import pytest
 from panel.chat import ChatStep
 
 try:
+    from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.utils import (
         UNRECOVERABLE_ERRORS, clean_sql, describe_data, format_schema,
         get_schema, render_template, report_error, retry_llm_output,
@@ -18,17 +18,22 @@ except ImportError:
 
 
 def test_render_template_with_valid_template():
-    template_content = "Hello {{ name }}!"
-    with patch.object(Path, "read_text", return_value=template_content):
-        result = render_template("test_template.txt", name="World")
-        assert result == "Hello World!"
+    assert (
+        render_template(PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2", {}).strip()
+        == "What is the topic of the table?"
+    )
 
 
-def test_render_template_missing_key():
-    template_content = "Hello {{ name }}!"
-    with patch.object(Path, "read_text", return_value=template_content):
-        with pytest.raises(jinja2.exceptions.UndefinedError):
-            render_template("test_template.txt")
+def test_render_template_with_override():
+    assert (
+        render_template(PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2", {"context": "Its Lumen"}).strip()
+        == "What is the topic of the table?\n\n\nIts Lumen"
+    )
+
+
+def test_render_template_with_missing_variable():
+    with pytest.raises(jinja2.exceptions.UndefinedError):
+        render_template(PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2", {})
 
 
 class TestRetryLLMOutput:
@@ -200,8 +205,7 @@ class TestGetSchema:
             "count": 1000,
         }
         schema = await get_schema(mock_source, include_count=True)
-        assert "count" in schema["field1"]
-        assert schema["field1"]["count"] == 1000
+        assert schema["count"] == 1000
 
     async def test_no_count(self):
         mock_source = MagicMock()
@@ -226,63 +230,56 @@ class TestGetSchema:
         mock_source.get_schema.assert_called_with("test_table", limit=50)
         assert "field1" in schema
 
+
 class TestDescribeData:
 
     async def test_describe_numeric_data(self):
-        df = pd.DataFrame({
-            "col1": np.arange(0, 100000),
-            "col2": np.arange(0, 100000)
-        })
+        df = pd.DataFrame({"col1": np.arange(0, 100000), "col2": np.arange(0, 100000)})
         result = await describe_data(df)
         assert "col1" in result["stats"]
         assert "col2" in result["stats"]
-        assert result["stats"]["col1"]["nulls"] == '0'
-        assert result["stats"]["col2"]["nulls"] == '0'
+        assert result["stats"]["col1"]["nulls"] == "0"
+        assert result["stats"]["col2"]["nulls"] == "0"
 
     async def test_describe_with_nulls(self):
-        df = pd.DataFrame({
-            "col1": np.arange(0, 100000),
-            "col2": np.arange(0, 100000)
-        })
+        df = pd.DataFrame({"col1": np.arange(0, 100000), "col2": np.arange(0, 100000)})
         df.loc[:5000, "col1"] = np.nan
         df.loc[:5000, "col2"] = np.nan
         result = await describe_data(df)
-        assert result["stats"]["col1"]["nulls"] != '0'
-        assert result["stats"]["col2"]["nulls"] != '0'
+        assert result["stats"]["col1"]["nulls"] != "0"
+        assert result["stats"]["col2"]["nulls"] != "0"
 
     async def test_describe_string_data(self):
-        df = pd.DataFrame({
-            "col1": ["apple", "banana", "cherry", "date", "elderberry"] * 2000,
-            "col2": ["a", "b", "c", "d", "e"] * 2000
-        })
+        df = pd.DataFrame(
+            {
+                "col1": ["apple", "banana", "cherry", "date", "elderberry"] * 2000,
+                "col2": ["a", "b", "c", "d", "e"] * 2000,
+            }
+        )
         result = await describe_data(df)
         assert result["stats"]["col1"]["nunique"] == 5
         assert result["stats"]["col2"]["lengths"]["max"] == 1
         assert result["stats"]["col1"]["lengths"]["max"] == 10
 
     async def test_describe_datetime_data(self):
-        df = pd.DataFrame({
-            "col1": pd.date_range("2018-08-18", periods=10000),
-            "col2": pd.date_range("2018-08-18", periods=10000),
-        })
+        df = pd.DataFrame(
+            {
+                "col1": pd.date_range("2018-08-18", periods=10000),
+                "col2": pd.date_range("2018-08-18", periods=10000),
+            }
+        )
         result = await describe_data(df)
         assert "col1" in result["stats"]
         assert "col2" in result["stats"]
 
     async def test_describe_large_data(self):
-        df = pd.DataFrame({
-            "col1": range(6000),
-            "col2": range(6000, 12000)
-        })
+        df = pd.DataFrame({"col1": range(6000), "col2": range(6000, 12000)})
         result = await describe_data(df)
         assert result["summary"]["is_summarized"] is True
         assert len(df.sample(5000)) == 5000  # Should summarize to 5000 rows
 
     async def test_describe_small_data(self):
-        df = pd.DataFrame({
-            "col1": [1, 2],
-            "col2": [3, 4]
-        })
+        df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
         result = await describe_data(df)
         assert result.equals(df)
 
