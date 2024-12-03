@@ -448,7 +448,6 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
-                print(node.agent)
                 await self._execute_graph_node(node, messages[-context_length:])
             if "current_pipeline" in self._memory:
                 await self._add_analysis_suggestions()
