@@ -68,10 +68,8 @@ class LumenAIServe(Serve):
             help="LLM provider (auto-detected from environment variables if not specified)",
         )
         group.add_argument("--api-key", help="API key for the LLM provider")
+        group.add_argument("--endpoint", help="Custom endpoint for the LLM provider")
         group.add_argument("--temperature", type=float, help="Temperature for the LLM")
-        group.add_argument(
-            "--provider-endpoint", help="Custom endpoint for the LLM provider"
-        )
         group.add_argument("--agents", nargs="+", help="Additional agents to include")
         group.add_argument(
             "--model-kwargs",
@@ -83,8 +81,8 @@ class LumenAIServe(Serve):
         """Override invoke to handle both sets of arguments"""
         provider = args.provider
         api_key = args.api_key
+        endpoint = args.endpoint
         temperature = args.temperature
-        provider_endpoint = args.provider_endpoint
         agents = args.agents
 
         if not provider:
@@ -124,7 +122,7 @@ class LumenAIServe(Serve):
                 provider=provider,
                 api_key=api_key,
                 temperature=temperature,
-                provider_endpoint=provider_endpoint,
+                endpoint=endpoint,
                 agents=agents,
                 model_kwargs=model_kwargs,
             )
@@ -150,7 +148,7 @@ class AIHandler(CodeHandler):
         provider: str | None = None,
         api_key: str | None = None,
         temperature: float | None = None,
-        provider_endpoint: str | None = None,
+        endpoint: str | None = None,
         agents: list[str] | None = None,
         model_kwargs: dict | None = None,
         **kwargs,
@@ -160,7 +158,7 @@ class AIHandler(CodeHandler):
             provider=provider,
             api_key=api_key,
             temperature=temperature,
-            provider_endpoint=provider_endpoint,
+            endpoint=endpoint,
             agents=agents,
             model_kwargs=model_kwargs,
         )
@@ -178,7 +176,7 @@ class AIHandler(CodeHandler):
             "tables": [repr(t) for t in tables],
             "provider": config.get("provider"),
             "api_key": config.get("api_key"),
-            "provider_endpoint": config.get("provider_endpoint"),
+            "endpoint": config.get("endpoint"),
             "agents": config.get("agents"),
             "temperature": config.get("temperature"),
             "model_kwargs": config.get('model_kwargs') or {},
