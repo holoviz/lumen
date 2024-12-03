@@ -20,8 +20,16 @@ from lumen.ai.config import THIS_DIR
 from ..ai import agents as lumen_agents  # Aliased here
 from ..ai.utils import render_template
 
-VALID_EXTENSIONS = [".parq", ".parquet", ".csv", ".json"]
 CMD_DIR = THIS_DIR / ".." / "command"
+
+LLM_PROVIDERS = {
+    'openai': 'OpenAI',
+    'anthropic': 'Anthropic',
+    'mistral': 'MistralAI',
+    'azure-openai': 'AzureOpenAI',
+    'azure-mistral': 'AzureMistralAI',
+    'llama': 'Llama'
+}
 
 
 class LLMConfig:
@@ -43,14 +51,6 @@ class LLMConfig:
                 return provider
         return None
 
-    @classmethod
-    def get_api_key(cls, provider: str) -> str | None:
-        """Get API key for specified provider"""
-        env_var = cls.PROVIDER_ENV_VARS.get(provider)
-        if env_var:
-            return os.environ.get(env_var)
-        return None
-
 
 class LumenAIServe(Serve):
     """Extended Serve command that handles both Panel/Bokeh and Lumen AI arguments"""
@@ -68,7 +68,7 @@ class LumenAIServe(Serve):
             help="LLM provider (auto-detected from environment variables if not specified)",
         )
         group.add_argument("--api-key", help="API key for the LLM provider")
-        group.add_argument("--endpoint", help="Custom endpoint for the LLM provider")
+        group.add_argument("--provider-endpoint", help="Custom endpoint for the LLM provider")
         group.add_argument("--temperature", type=float, help="Temperature for the LLM")
         group.add_argument("--agents", nargs="+", help="Additional agents to include")
         group.add_argument(
@@ -81,15 +81,12 @@ class LumenAIServe(Serve):
         """Override invoke to handle both sets of arguments"""
         provider = args.provider
         api_key = args.api_key
-        endpoint = args.endpoint
+        endpoint = args.provider_endpoint
         temperature = args.temperature
         agents = args.agents
 
         if not provider:
             provider = LLMConfig.detect_provider()
-
-        if not api_key and provider:
-            api_key = LLMConfig.get_api_key(provider)
 
         model_kwargs = None
         if args.model_kwargs:
@@ -166,15 +163,9 @@ class AIHandler(CodeHandler):
 
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
-        tables = [
-            table
-            for table in tables
-            if any(table.endswith(ext) for ext in VALID_EXTENSIONS)
-        ]
-
         context = {
+            "llm_provider": LLM_PROVIDERS[config['provider']],
             "tables": [repr(t) for t in tables],
-            "provider": config.get("provider"),
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
             "agents": config.get("agents"),

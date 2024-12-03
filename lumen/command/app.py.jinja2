@@ -1,61 +1,43 @@
-{%- set provider_classes = {
-    'openai': 'OpenAI',
-    'anthropic': 'Anthropic',
-    'mistral': 'MistralAI',
-    'azure-openai': 'AzureOpenAI',
-    'azure-mistral': 'AzureMistralAI',
-    'llama': 'Llama'
-} -%}
 import lumen.ai as lmai
-from lumen.sources.duckdb import DuckDBSource
 
 {# Import specified agents #}
-{% if agents is defined -%}
+{%- if agents is defined -%}
 {% for agent in agents %}
 from lumen.ai.agents import {{ agent }}
 {%- endfor %}
 {%- endif %}
 
-{% macro llm_init(provider_class, api_key=None, model_kwargs=None) -%}
+{%- macro llm_init(llm_provider, api_key=None, model_kwargs=None) -%}
 {%- set args = [] -%}
 {%- if api_key is defined and api_key -%}
-    {%- set args = args + ["api_key='" ~ api_key ~ "'"] -%}
+  {%- set args = args + ["api_key='" ~ api_key ~ "'"] -%}
+{%- endif -%}
+{%- if provider_endpoint is defined %}
+  {%- set args = args + ["endpoint='" ~ provider_endpoint ~ "'"] -%}
 {%- endif -%}
 {%- if model_kwargs is defined and model_kwargs -%}
-    {%- set args = args + ["model_kwargs=" ~ model_kwargs] -%}
+  {%- set args = args + ["model_kwargs=" ~ model_kwargs] -%}
 {%- endif -%}
+{% if temperature is defined %}
+  {%- set args = args + ["temperature=" ~ temperature] -%}
+{%- endif -%}
+llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
+{%- endmacro -%}
 
-llm = lmai.llm.{{ provider_class }}(
-    {{ args | join(', ') }}
-)
-{%- endmacro %}
-
-{% if provider is defined and provider in provider_classes -%}
-{% set provider_class = provider_classes[provider] -%}
-{{ llm_init(provider_class, api_key=api_key, model_kwargs=model_kwargs) }}
-{%- if provider_endpoint is defined -%}
-    llm.endpoint = '{{ provider_endpoint }}'
-{%- endif %}
-{%- endif %}
-
-cs = lmai.memory["current_source"] = DuckDBSource(
-    tables=[{{ tables | join(', ') }}],
-    uri=":memory:",
-    initializers=["INSTALL httpfs;", "LOAD httpfs;"]
-)
+{%- if llm_provider is defined %}
+{{ llm_init(llm_provider, api_key=api_key, model_kwargs=model_kwargs) }}
+{% endif %}
 
 {# Initialize an empty list to collect assistant arguments #}
-{%- set assistant_args = [] -%}
-{%- if provider is defined -%}
-    {%- set assistant_args = assistant_args + ['llm=llm'] -%}
+{%- set assistant_args = tables -%}
+{%- if llm_provider is defined -%}
+  {%- set assistant_args = assistant_args + ['llm=llm'] -%}
 {%- endif -%}
 {%- if agents is defined -%}
-    {%- set agents_list = agents | join(', ') -%}
-    {%- set assistant_args = assistant_args + ['agents=[{}]'.format(agents_list)] -%}
-{%- endif %}
+  {%- set agents_list = agents | join(', ') -%}
+  {%- set assistant_args = assistant_args + ['agents=[{}]'.format(agents_list)] -%}
+{%- endif -%}
 
-assistant = lmai.ExplorerUI(
+lmai.ExplorerUI(
     {{ assistant_args | join(',\n    ') }}
-)
-
-assistant.servable("Lumen.ai")
+).servable("Lumen.ai")
