@@ -7,7 +7,7 @@ from lumen.ai.agents import {{ agent }}
 {%- endfor %}
 {%- endif %}
 
-{%- macro llm_init(llm_provider, api_key=None, model_kwargs=None) -%}
+{%- if llm_provider is defined %}
 {%- set args = [] -%}
 {%- if api_key is defined and api_key -%}
   {%- set args = args + ["api_key='" ~ api_key ~ "'"] -%}
@@ -22,10 +22,6 @@ from lumen.ai.agents import {{ agent }}
   {%- set args = args + ["temperature=" ~ temperature] -%}
 {%- endif -%}
 llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
-{%- endmacro -%}
-
-{%- if llm_provider is defined %}
-{{ llm_init(llm_provider, api_key=api_key, model_kwargs=model_kwargs) }}
 {% endif %}
 
 {# Initialize an empty list to collect assistant arguments #}
