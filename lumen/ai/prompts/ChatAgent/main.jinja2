@@ -13,10 +13,10 @@ Available tables:
 {% elif schema %}
 {{ table }} with schema: {{ schema }}
 {% endif %}
-{% if 'current_data' in memory %}
+{% if 'data' in memory %}
 Here's a summary of the dataset the user just asked about:
 ```
-{{ memory['current_data'] }}
+{{ memory['data'] }}
 ```
 {% endif %}
 {% endblock %}
