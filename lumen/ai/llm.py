@@ -113,6 +113,7 @@ class Llm(param.Parameterized):
         The completed response_model.
         """
         system = system.strip().replace("\n\n", "\n")
+
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
