@@ -38,6 +38,7 @@ class SplitJS(JSComponent):
     export function render({ model, view }) {
       const splitDiv = document.createElement('div');
       splitDiv.className = 'split';
+      splitDiv.style.visibility = 'hidden';
 
       const split0 = document.createElement('div');
       const split1 = document.createElement('div');
@@ -51,6 +52,10 @@ class SplitJS(JSComponent):
           view.invalidate_layout();
         },
       });
+
+      model.on("after_layout", () => {
+        setTimeout(() => { splitDiv.style.visibility = 'visible'; }, 100);
+      })
 
       split0.append(model.get_child("left"));
       split1.append(model.get_child("right"));
