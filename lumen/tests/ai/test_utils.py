@@ -19,7 +19,7 @@ except ImportError:
 
 def test_render_template_with_valid_template():
     assert (
-        render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {}).strip()
+        render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2").strip()
         == "What is the topic of the table?"
     )
 
@@ -33,7 +33,7 @@ def test_render_template_with_override():
 
 def test_render_template_with_missing_variable():
     with pytest.raises(jinja2.exceptions.UndefinedError):
-        render_template(PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2", {})
+        render_template(PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2")
 
 
 class TestRetryLLMOutput:
