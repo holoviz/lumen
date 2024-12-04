@@ -277,7 +277,7 @@ class OpenAI(Llm):
 
     api_key = param.String(doc="The OpenAI API key.")
 
-    base_url = param.String(doc="The OpenAI base.")
+    endpoint = param.String(doc="The OpenAI API endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -302,8 +302,8 @@ class OpenAI(Llm):
 
         model_kwargs = self._get_model_kwargs(model_key)
         model = model_kwargs.pop("model")
-        if self.base_url:
-            model_kwargs["base_url"] = self.base_url
+        if self.endpoint:
+            model_kwargs["base_url"] = self.endpoint
         if self.api_key:
             model_kwargs["api_key"] = self.api_key
         if self.organization:
@@ -338,7 +338,7 @@ class AzureOpenAI(Llm):
 
     api_version = param.String(doc="The Azure AI Studio API version.")
 
-    azure_endpoint = param.String(doc="The Azure AI Studio endpoint.")
+    endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -357,8 +357,8 @@ class AzureOpenAI(Llm):
             model_kwargs["api_version"] = self.api_version
         if self.api_key:
             model_kwargs["api_key"] = self.api_key
-        if self.azure_endpoint:
-            model_kwargs["azure_endpoint"] = self.azure_endpoint
+        if self.endpoint:
+            model_kwargs["azure_endpoint"] = self.endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
 
         if self.interceptor:
@@ -460,7 +460,7 @@ class AzureMistralAI(MistralAI):
 
     api_key = param.String(default=os.getenv("AZURE_API_KEY"), doc="The Azure API key")
 
-    azure_endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure endpoint to invoke.")
+    endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure API endpoint to invoke.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
@@ -475,7 +475,7 @@ class AzureMistralAI(MistralAI):
 
         model_kwargs = self._get_model_kwargs(model_key)
         model_kwargs["api_key"] = self.api_key
-        model_kwargs["azure_endpoint"] = self.azure_endpoint
+        model_kwargs["azure_endpoint"] = self.endpoint
         model = model_kwargs.pop("model")
         llm = MistralAzure(**model_kwargs)
 
