@@ -512,6 +512,7 @@ class SQLAgent(LumenBaseAgent):
                     )
                 }
             ]
+        print(errors)
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(messages, system=system, response_model=Sql)
@@ -678,7 +679,8 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        schema = await get_schema(source, table, include_min_max=False)
+        # include min max for more context for data cleaning
+        schema = await get_schema(source, table, include_min_max=True)
         join_required = await self._check_requires_joins(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
@@ -690,7 +692,7 @@ class SQLAgent(LumenBaseAgent):
             if source_table == table:
                 table_schema = schema
             else:
-                table_schema = await get_schema(source, source_table, include_min_max=False)
+                table_schema = await get_schema(source, source_table, include_min_max=True)
 
             # Look up underlying table name
             table_name = source_table
@@ -703,7 +705,7 @@ class SQLAgent(LumenBaseAgent):
 
             table_schemas[table_name] = {
                 "schema": yaml.dump(table_schema),
-                "sql": source.get_sql_expr(source_table)
+                "sql": source.get_sql_expr(source_table),
             }
 
         dialect = source.dialect

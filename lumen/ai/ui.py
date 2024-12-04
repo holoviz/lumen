@@ -23,6 +23,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
+from ..util import log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, SourceAgent, SQLAgent,
     TableListAgent, VegaLiteAgent,
@@ -79,6 +80,9 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
+    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+        The log level to use.""")
+
     __abstract = True
 
     def __init__(
@@ -87,6 +91,8 @@ class UI(Viewer):
         **params
     ):
         super().__init__(**params)
+        log.setLevel(self.log_level)
+
         agents = self.default_agents + self.agents
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
@@ -163,7 +169,7 @@ class UI(Viewer):
             source = DuckDBSource(
                 tables=tables, mirrors=mirrors,
                 uri=':memory:', initializers=initializers,
-                name='Provided'
+                name='ProvidedSource00000'
             )
             sources.append(source)
         memory['available_sources'] = sources

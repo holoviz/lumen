@@ -4,7 +4,7 @@ from typing import Any
 import param
 
 from .llm import Message
-from .utils import render_template
+from .utils import log_debug, render_template
 
 
 class Actor(param.Parameterized):
@@ -25,6 +25,7 @@ class Actor(param.Parameterized):
             overrides=self.prompt_overrides.get(prompt_name, {}),
             **context
         )
+        log_debug(f"\033[92mRendered prompt\033[0m '{prompt_name}':\n{prompt}")
         return prompt
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:

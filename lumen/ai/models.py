@@ -55,7 +55,8 @@ class Sql(BaseModel):
 
     expr_slug: str = Field(
         description="""
-        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it.
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
+        e.g. top_5_athletes_gold_medals
         """
     )
 
