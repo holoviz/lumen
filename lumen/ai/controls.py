@@ -106,7 +106,7 @@ class SourceControls(Viewer):
 
         if self.select_existing:
             nested_sources_tables = {
-                source.name: source.get_tables() for source in self._memory["available_sources"]
+                source.name: source.get_tables() for source in self._memory["sources"]
             }
             first_table = {k: nested_sources_tables[k][0] for k in list(nested_sources_tables)[:1]}
             self._select_table = NestedSelect(
@@ -208,13 +208,13 @@ class SourceControls(Viewer):
         else:
             df_rel.to_view(table)
         duckdb_source.tables[table] = sql_expr
-        self._memory["current_source"] = duckdb_source
-        self._memory["current_table"] = table
-        if "available_sources" in self._memory:
-            self._memory["available_sources"].append(duckdb_source)
-            self._memory.trigger("available_sources")
+        self._memory["source"] = duckdb_source
+        self._memory["table"] = table
+        if "sources" in self._memory:
+            self._memory["sources"].append(duckdb_source)
+            self._memory.trigger("sources")
         else:
-            self._memory["available_sources"] = [duckdb_source]
+            self._memory["sources"] = [duckdb_source]
         self._last_table = table
 
     @param.depends("add", watch=True)
@@ -229,7 +229,7 @@ class SourceControls(Viewer):
                     self._add_table(duckdb_source, table_controls.file, table_controls)
 
                 if self.replace_controls:
-                    src = self._memory["current_source"]
+                    src = self._memory["source"]
                     self.tables_tabs[:] = [
                         (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
                         for t in src.get_tables()
@@ -239,9 +239,9 @@ class SourceControls(Viewer):
             elif self.select_existing and self._input_tabs.active == 1:
                 table = self._select_table.value["table"]
                 duckdb_source.tables[table] = f"SELECT * FROM {table}"
-                self._memory["current_source"] = duckdb_source
-                self._memory["current_table"] = table
-                self._memory["available_sources"].append(duckdb_source)
+                self._memory["source"] = duckdb_source
+                self._memory["table"] = table
+                self._memory["sources"].append(duckdb_source)
                 self._last_table = table
 
     def __panel__(self):

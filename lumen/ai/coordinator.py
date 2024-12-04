@@ -176,12 +176,12 @@ class Coordinator(Viewer, Actor):
         }
         self._add_suggestions_to_footer(self.suggestions)
 
-        if "current_source" in self._memory and "available_sources" not in self._memory:
-            self._memory["available_sources"] = [self._memory["current_source"]]
-        elif "current_source" not in self._memory and self._memory.get("available_sources"):
-            self._memory["current_source"] = self._memory["available_sources"][0]
-        elif "available_sources" not in self._memory:
-            self._memory["available_sources"] = []
+        if "source" in self._memory and "sources" not in self._memory:
+            self._memory["sources"] = [self._memory["source"]]
+        elif "source" not in self._memory and self._memory.get("sources"):
+            self._memory["source"] = self._memory["sources"][0]
+        elif "sources" not in self._memory:
+            self._memory["sources"] = []
 
     @property
     def _memory(self):
@@ -274,8 +274,8 @@ class Coordinator(Viewer, Actor):
         return message
 
     async def _add_analysis_suggestions(self):
-        pipeline = self._memory['current_pipeline']
-        current_analysis = self._memory.get("current_analysis")
+        pipeline = self._memory["pipeline"]
+        current_analysis = self._memory.get("analysis")
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
         applicable_analyses = []
         for analysis in self._analyses:
@@ -290,15 +290,15 @@ class Coordinator(Viewer, Actor):
         )
 
     async def _invalidate_memory(self, messages):
-        table = self._memory.get("current_table")
+        table = self._memory.get("table")
         if not table:
             return
 
-        source = self._memory.get("current_source")
+        source = self._memory.get("source")
         if table not in source:
-            sources = [src for src in self._memory.get('available_sources', []) if table in src]
+            sources = [src for src in self._memory.get('sources', []) if table in src]
             if sources:
-                self._memory['current_source'] = source = sources[0]
+                self._memory["source"] = source = sources[0]
             else:
                 raise KeyError(f'Table {table} could not be found in available sources.')
 
@@ -308,7 +308,7 @@ class Coordinator(Viewer, Actor):
             # If the selected table cannot be fetched we should invalidate it
             spec = None
 
-        sql = self._memory.get("current_sql")
+        sql = self._memory.get("sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
         system = self._render_prompt(
             "check_validity", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
@@ -324,16 +324,16 @@ class Coordinator(Viewer, Actor):
 
         if output and output.is_invalid:
             if output.is_invalid == "table":
-                self._memory.pop("current_table", None)
-                self._memory.pop("current_data", None)
-                self._memory.pop("current_sql", None)
-                self._memory.pop("current_pipeline", None)
+                self._memory.pop("table", None)
+                self._memory.pop("data", None)
+                self._memory.pop("sql", None)
+                self._memory.pop("pipeline", None)
                 self._memory.pop("closest_tables", None)
                 print("\033[91mInvalidated from memory.\033[0m")
             elif output.is_invalid == "sql":
-                self._memory.pop("current_sql", None)
-                self._memory.pop("current_data", None)
-                self._memory.pop("current_pipeline", None)
+                self._memory.pop("sql", None)
+                self._memory.pop("data", None)
+                self._memory.pop("pipeline", None)
                 print("\033[91mInvalidated SQL from memory.\033[0m")
             return output.correct_assessment
 
@@ -451,7 +451,7 @@ class Coordinator(Viewer, Actor):
                 return msg
             for node in execution_graph:
                 await self._execute_graph_node(node, messages[-context_length:])
-            if "current_pipeline" in self._memory:
+            if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             print("\033[92mDONE\033[0m", "\n\n")
 
@@ -585,8 +585,8 @@ class Planner(Coordinator):
         info = ''
         reasoning = None
         requested, provided = [], []
-        if 'current_table' in self._memory:
-            requested.append(self._memory['current_table'])
+        if "table" in self._memory:
+            requested.append(self._memory["table"])
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         while reasoning is None or requested:
@@ -633,7 +633,7 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            if "current_table" in unmet_dependencies and not table_provided:
+            if "table" in unmet_dependencies and not table_provided:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
                     expert='SQLAgent', instruction='Load the table', title='Loading table', render_output=False
@@ -641,7 +641,7 @@ class Planner(Coordinator):
                 execution_graph.append(
                     ExecutionNode(
                         agent=agents['SQLAgent'],
-                        provides=['current_table'],
+                        provides=['table'],
                         instruction=sql_step.instruction,
                         title=sql_step.title,
                         render_output=False
@@ -666,7 +666,7 @@ class Planner(Coordinator):
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
         agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
         tables = {}
-        for src in self._memory['available_sources']:
+        for src in self._memory['sources']:
             for table in src.get_tables():
                 tables[table] = src
 
