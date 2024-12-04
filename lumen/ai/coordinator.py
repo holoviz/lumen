@@ -621,15 +621,33 @@ class Planner(Coordinator):
         return plan
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
+        table_provided = False
         execution_graph = []
+        provided = set(self._memory)
         unmet_dependencies = set()
-        for step in plan.steps[::-1]:
+        steps = []
+        for step in plan.steps:
             subagent = agents[step.expert]
             requires = set(await subagent.requirements(messages))
-            unmet_dependencies = {
-                dep for dep in (unmet_dependencies | requires)
-                if dep not in subagent.provides and dep not in self._memory
-            }
+            provided |= set(subagent.provides)
+            unmet_dependencies = (unmet_dependencies | requires) - provided
+            if "current_table" in unmet_dependencies and not table_provided:
+                provided |= set(agents['SQLAgent'].provides)
+                sql_step = type(step)(
+                    expert='SQLAgent', instruction='Load the table', title='Loading table', render_output=False
+                )
+                execution_graph.append(
+                    ExecutionNode(
+                        agent=agents['SQLAgent'],
+                        provides=['current_table'],
+                        instruction=sql_step.instruction,
+                        title=sql_step.title,
+                        render_output=False
+                    )
+                )
+                steps.append(sql_step)
+                table_provided = True
+                unmet_dependencies -= provided
             execution_graph.append(
                 ExecutionNode(
                     agent=subagent,
@@ -639,6 +657,8 @@ class Planner(Coordinator):
                     render_output=step.render_output
                 )
             )
+            steps.append(step)
+        plan.steps = steps
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
@@ -675,4 +695,4 @@ class Planner(Coordinator):
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
             istep.success_title = "Successfully came up with a plan"
-        return execution_graph[::-1]
+        return execution_graph

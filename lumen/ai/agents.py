@@ -442,7 +442,7 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+    provides = param.List(default=["current_table", "current_sql", "current_pipeline", "current_data"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -578,9 +578,7 @@ class SQLAgent(LumenBaseAgent):
             report_error(e, step)
             raise e
 
-        if len(df) > 0:
-            self._memory["current_data"] = await describe_data(df)
-
+        self._memory["current_data"] = await describe_data(df)
         self._memory["available_sources"].append(sql_expr_source)
         self._memory["current_source"] = sql_expr_source
         self._memory["current_pipeline"] = pipeline
