@@ -7,6 +7,7 @@ import time
 
 from functools import wraps
 from pathlib import Path
+from shutil import get_terminal_size
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
 
+from ..util import log
 from .config import PROMPTS_DIR, UNRECOVERABLE_ERRORS
 
 if TYPE_CHECKING:
@@ -325,3 +327,17 @@ async def gather_table_sources(available_sources: list[Source]) -> tuple[dict[st
             else:
                 tables_schema_str += f"### {table}\n"
     return tables_to_source, tables_schema_str
+
+
+def log_debug(msg: str, sep: bool = True, offset: int = 24):
+    """
+    Log a debug message with a separator line above and below.
+    """
+    terminal_cols, _ = get_terminal_size()
+    terminal_cols -= offset  # Account for the timestamp and log level
+    delimiter = "*" * terminal_cols
+    if sep:
+        log.debug(f"\033[95m{delimiter}\033[0m")
+    log.debug(msg)
+    if sep:
+        log.debug(f"\033[90m{delimiter}\033[0m")
