@@ -33,7 +33,7 @@ from .embeddings import NumpyEmbeddings
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .models import (
-    JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec, make_table_model,
+    JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
 )
 from .translate import param_to_pydantic
 from .utils import (
