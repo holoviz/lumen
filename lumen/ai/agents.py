@@ -34,8 +34,7 @@ from .embeddings import Embeddings
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .models import (
-    FuzzyTable, JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec,
-    make_table_model,
+    FuzzyTable, JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
 )
 from .translate import param_to_pydantic
 from .utils import (
@@ -280,6 +279,7 @@ class ChatAgent(Agent):
         Is capable of providing suggestions to get started or comment on interesting tidbits.
         It can talk about the data, if available.
         Use this instead of TableListAgent if there is only one table available.
+        Usually not used concurrently with SQLAgent, unlike AnalystAgent.
         """)
 
     prompt_templates = param.Dict(
@@ -319,38 +319,23 @@ class ChatAgent(Agent):
         return system_prompt
 
 
-class ChatDetailsAgent(ChatAgent):
+class AnalystAgent(ChatAgent):
 
     purpose = param.String(default="""
-        Responsible for chatting and providing info about details about the table values,
-        e.g. what should be noted about the data values, valuable, applicable insights about the data,
-        and continuing the conversation. Does not provide overviews;
-        only details, meaning, relationships, and trends of the data.""")
+        Responsible for analyzing results from SQLAgent and
+        providing clear, concise, and actionable insights.
+        Focuses on breaking down complex data findings into understandable points for
+        high-level decision-making. Emphasizes detailed interpretation, trends, and
+        relationships within the data, while avoiding general overviews or
+        superficial descriptions.""")
 
-    requires = param.List(default=["current_source", "current_table", "current_pipeline"], readonly=True)
+    requires = param.List(default=["current_source", "current_table", "current_pipeline", "current_sql"], readonly=True)
 
     prompt_templates = param.Dict(
         default={
-            "main": PROMPTS_DIR / "ChatDetailsAgent" / "main.jinja2",
-            "topic": PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2",
+            "main": PROMPTS_DIR / "AnalystAgent" / "main.jinja2",
         }
     )
-
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        if "current_data" not in self._memory:
-            pipeline = self._memory["current_pipeline"]
-            df = await get_data(pipeline)
-            self._memory["current_data"] = await describe_data(df)
-
-        topic_system_prompt = self._render_prompt("topic")
-        topic = (await self.llm.invoke(
-            messages,
-            system=topic_system_prompt,
-            response_model=Topic,
-            allow_partial=False,
-        )).result
-        system_prompt = self._render_prompt("main", topic=topic)
-        return system_prompt
 
 
 class LumenBaseAgent(Agent):
@@ -457,7 +442,7 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+    provides = param.List(default=["current_table", "current_sql", "current_pipeline", "current_data"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -594,9 +579,7 @@ class SQLAgent(LumenBaseAgent):
             report_error(e, step)
             raise e
 
-        if len(df) > 0:
-            self._memory["current_data"] = await describe_data(df)
-
+        self._memory["current_data"] = await describe_data(df)
         self._memory["available_sources"].append(sql_expr_source)
         self._memory["current_source"] = sql_expr_source
         self._memory["current_pipeline"] = pipeline

@@ -30,18 +30,18 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
-def render_template(template_path: Path, prompt_overrides: dict, relative_to: Path = PROMPTS_DIR, **context):
+def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     try:
         template_path = template_path.relative_to(relative_to).as_posix()
     except ValueError:
         pass
     fs_loader = FileSystemLoader(relative_to)
 
-    if prompt_overrides:
+    if overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
             f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
-            for key, value in prompt_overrides.items()
+            for key, value in overrides.items()
         )
         # Create the dynamic template content by extending the base template and adding blocks
         dynamic_template_content = dedent(

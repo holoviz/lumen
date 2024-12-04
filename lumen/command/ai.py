@@ -175,7 +175,7 @@ class AIHandler(CodeHandler):
         context = {k: v for k, v in context.items() if v is not None}
 
         source = render_template(
-            CMD_DIR / "app.py.jinja2", {}, relative_to=CMD_DIR, **context
+            CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
         return source
 
