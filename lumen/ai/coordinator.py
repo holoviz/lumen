@@ -247,6 +247,7 @@ class Coordinator(Viewer, Actor):
                     button_style="outline",
                     on_click=use_suggestion,
                     margin=5,
+                    disabled=self.interface.param.loading
                 )
                 for suggestion in suggestions
             ],
@@ -259,6 +260,7 @@ class Coordinator(Viewer, Actor):
                 button_type="primary",
                 on_click=run_demo,
                 margin=5,
+                disabled=self.interface.param.loading
             ))
         disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
         for b in suggestion_buttons:

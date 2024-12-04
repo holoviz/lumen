@@ -378,7 +378,7 @@ class ExplorerUI(UI):
         def get_explorers(load):
             if not load:
                 return
-            with explore_button.param.update(loading=True):
+            with explore_button.param.update(loading=True), self._coordinator.interface.param.update(loading=True):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
