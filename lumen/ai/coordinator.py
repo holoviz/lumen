@@ -252,6 +252,7 @@ class Coordinator(Viewer, Actor):
                     button_style="outline",
                     on_click=use_suggestion,
                     margin=5,
+                    disabled=self.interface.param.loading
                 )
                 for suggestion in suggestions
             ],
@@ -264,6 +265,7 @@ class Coordinator(Viewer, Actor):
                 button_type="primary",
                 on_click=run_demo,
                 margin=5,
+                disabled=self.interface.param.loading
             ))
         disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
         for b in suggestion_buttons:
@@ -435,26 +437,33 @@ class Coordinator(Viewer, Actor):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-        invalidation_assessment = await self._invalidate_memory(messages[-2:])
-        context_length = 3
-        if invalidation_assessment:
-            messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
-            context_length += 1
-        agents = {agent.name[:-5]: agent for agent in self.agents}
-        execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
-        if execution_graph is None:
-            msg = (
-                "Assistant could not settle on a plan of action to perform the requested query. "
-                "Please restate your request."
-            )
-            self.interface.stream(msg, user='Lumen')
-            return msg
-        for node in execution_graph:
-            await self._execute_graph_node(node, messages[-context_length:])
-        if "current_pipeline" in self._memory:
-            await self._add_analysis_suggestions()
-        print("\033[92mDONE\033[0m", "\n\n")
+        with self.interface.param.update(loading=True):
+            if isinstance(self.llm, Llama):
+                with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
+                    default_kwargs = self.llm.model_kwargs["default"]
+                    step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
+                    self.llm.get_client("default")  # caches the model for future use
+
+            messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
+            invalidation_assessment = await self._invalidate_memory(messages[-2:])
+            context_length = 3
+            if invalidation_assessment:
+                messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
+                context_length += 1
+            agents = {agent.name[:-5]: agent for agent in self.agents}
+            execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
+            if execution_graph is None:
+                msg = (
+                    "Assistant could not settle on a plan of action to perform the requested query. "
+                    "Please restate your request."
+                )
+                self.interface.stream(msg, user='Lumen')
+                return msg
+            for node in execution_graph:
+                await self._execute_graph_node(node, messages[-context_length:])
+            if "current_pipeline" in self._memory:
+                await self._add_analysis_suggestions()
+            print("\033[92mDONE\033[0m", "\n\n")
 
 
 class DependencyResolver(Coordinator):
@@ -562,7 +571,7 @@ class Planner(Coordinator):
         for table in requested:
             if table in provided or table in cache:
                 continue
-            cache[table] = await get_schema(tables[table], table, limit=3)
+            cache[table] = await get_schema(tables[table], table, limit=1000)
         schema_info = ''
         for table in requested:
             if table in provided:
@@ -616,7 +625,7 @@ class Planner(Coordinator):
             role=user_msg['role'],
             content=(
                 f"<user query>{user_msg['content']}</user query>"
-                "{reasoning.chain_of_thought}"
+                f"{reasoning.chain_of_thought}"
             )
         )
         messages = messages[:-1] + [new_msg]
@@ -626,14 +635,31 @@ class Planner(Coordinator):
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
         table_provided = False
         execution_graph = []
+        provided = set(self._memory)
         unmet_dependencies = set()
-        for step in plan.steps[::-1]:
+        steps = []
+        for step in plan.steps:
             subagent = agents[step.expert]
             requires = set(await subagent.requirements(messages))
-            unmet_dependencies = {
-                dep for dep in (unmet_dependencies | requires)
-                if dep not in subagent.provides and dep not in self._memory
-            }
+            provided |= set(subagent.provides)
+            unmet_dependencies = (unmet_dependencies | requires) - provided
+            if "current_table" in unmet_dependencies and not table_provided:
+                provided |= set(agents['SQLAgent'].provides)
+                sql_step = type(step)(
+                    expert='SQLAgent', instruction='Load the table', title='Loading table', render_output=False
+                )
+                execution_graph.append(
+                    ExecutionNode(
+                        agent=agents['SQLAgent'],
+                        provides=['current_table'],
+                        instruction=sql_step.instruction,
+                        title=sql_step.title,
+                        render_output=False
+                    )
+                )
+                steps.append(sql_step)
+                table_provided = True
+                unmet_dependencies -= provided
             execution_graph.append(
                 ExecutionNode(
                     agent=subagent,
@@ -643,19 +669,8 @@ class Planner(Coordinator):
                     render_output=step.render_output
                 )
             )
-            if "current_table" in unmet_dependencies:
-                unmet_dependencies.remove('current_table')
-                if not table_provided:
-                    execution_graph.append(
-                        ExecutionNode(
-                            agent=agents['SQLAgent'],
-                            provides=['current_table'],
-                            instruction='Load the table',
-                            title='Loading table',
-                            render_output=False
-                        )
-                    )
-                table_provided = True
+            steps.append(step)
+        plan.steps = steps
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
@@ -692,4 +707,4 @@ class Planner(Coordinator):
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
             istep.success_title = "Successfully came up with a plan"
-        return execution_graph[::-1]
+        return execution_graph

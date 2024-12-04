@@ -48,7 +48,8 @@ class Sql(BaseModel):
 
     expr_slug: str = Field(
         description="""
-        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it.
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
+        e.g. top_5_athletes_gold_medals
         """
     )
 
@@ -70,11 +71,6 @@ class Validity(BaseModel):
     is_invalid: Literal["table", "sql"] | None = Field(
         description="Whether the `table` or `sql` is invalid or no longer relevant depending on correct assessment. None if valid."
     )
-
-
-class Topic(BaseModel):
-
-    result: str = Field(description="A word or up-to-three-words phrase that describes the topic of the table.")
 
 
 class VegaLiteSpec(BaseModel):
@@ -149,7 +145,7 @@ def make_table_model(tables):
         chain_of_thought=(str, FieldInfo(
             description="A concise, one sentence decision-tree-style analysis on choosing a table."
         )),
-        relevant_table=(Literal[tables], FieldInfo(
+        relevant_table=(Literal[tuple(tables)], FieldInfo(
             description="The most relevant table based on the user query; if none are relevant, select the first. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
         ))
     )

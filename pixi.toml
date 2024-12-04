@@ -93,7 +93,7 @@ pydantic_extra_types = "*"
 # huggingface_hub = "*"
 #
 # [feature.ai-llama.dependencies]
-# llama-cpp-python = "*"
+# llama-cpp-python = ">=0.3.0"
 
 # =============================================
 # =================== DOCS ====================

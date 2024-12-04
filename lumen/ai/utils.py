@@ -7,6 +7,7 @@ import time
 
 from functools import wraps
 from pathlib import Path
+from shutil import get_terminal_size
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
@@ -22,24 +23,25 @@ from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
 
+from ..util import log
 from .config import PROMPTS_DIR, UNRECOVERABLE_ERRORS
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
-def render_template(template_path: Path, prompt_overrides: dict, **context):
+def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     try:
-        template_path = template_path.relative_to(PROMPTS_DIR).as_posix()
+        template_path = template_path.relative_to(relative_to).as_posix()
     except ValueError:
         pass
-    fs_loader = FileSystemLoader(PROMPTS_DIR)
+    fs_loader = FileSystemLoader(relative_to)
 
-    if prompt_overrides:
+    if overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
             f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
-            for key, value in prompt_overrides.items()
+            for key, value in overrides.items()
         )
         # Create the dynamic template content by extending the base template and adding blocks
         dynamic_template_content = dedent(
@@ -126,6 +128,8 @@ def format_schema(schema):
                 spec["type"] = "str"
             elif spec["type"] == "integer":
                 spec["type"] = "int"
+            elif spec["type"] == "number":
+                spec["type"] = "num"
             elif spec["type"] == "boolean":
                 spec["type"] = "bool"
         formatted[field] = spec
@@ -172,15 +176,20 @@ async def get_schema(
     for field, spec in schema.items():
         if "enum" not in spec:
             continue
-        elif not include_enum:
-            spec.pop("enum")
-        elif "limit" in get_kwargs and len(spec["enum"]) > get_kwargs["limit"]:
-            spec["enum"].append("...")
 
-    if count and include_count:
-        spec["count"] = count
+        limit = get_kwargs.get("limit")
+        if not include_enum:
+            spec.pop("enum")
+        elif limit and len(spec["enum"]) > limit:
+            spec["enum"].append("...")
+        elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
+            spec["enum"] = [f"(unknown; truncated to {get_kwargs['limit']} rows)"]
 
     schema = format_schema(schema)
+
+    if count and include_count:
+        schema["count"] = count
+
     return schema
 
 
@@ -318,3 +327,17 @@ async def gather_table_sources(available_sources: list[Source]) -> tuple[dict[st
             else:
                 tables_schema_str += f"### {table}\n"
     return tables_to_source, tables_schema_str
+
+
+def log_debug(msg: str, sep: bool = True, offset: int = 24):
+    """
+    Log a debug message with a separator line above and below.
+    """
+    terminal_cols, _ = get_terminal_size()
+    terminal_cols -= offset  # Account for the timestamp and log level
+    delimiter = "*" * terminal_cols
+    if sep:
+        log.debug(f"\033[95m{delimiter}\033[0m")
+    log.debug(msg)
+    if sep:
+        log.debug(f"\033[90m{delimiter}\033[0m")

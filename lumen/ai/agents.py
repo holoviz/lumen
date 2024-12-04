@@ -89,7 +89,8 @@ class Agent(Viewer, Actor):
 
     def __init__(self, **params):
         def _exception_handler(exception):
-            if str(exception) in self.interface.serialize()[-1]["content"]:
+            messages = self.interface.serialize()
+            if messages and str(exception) in messages[-1]["content"]:
                 return
 
             import traceback
@@ -246,7 +247,10 @@ class ChatAgent(Agent):
         statistics about the data, and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
-        If data is available, it can also talk about the data itself.""")
+        It can talk about the data, if available.
+        Use this instead of TableListAgent if there is only one table available.
+        Usually not used concurrently with SQLAgent, unlike AnalystAgent.
+        """)
 
     prompt_templates = param.Dict(
         default={
@@ -278,7 +282,7 @@ class ChatAgent(Agent):
             self._memory["current_table"] = table = self._memory.get(
                 "current_table", tables[0]
             )
-            schema = await get_schema(self._memory["current_source"], table)
+            schema = await get_schema(self._memory["current_source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
         context = self._add_embeddings(messages, context)
@@ -286,34 +290,23 @@ class ChatAgent(Agent):
         return system_prompt
 
 
-class ChatDetailsAgent(ChatAgent):
+class AnalystAgent(ChatAgent):
 
     purpose = param.String(default="""
-        Responsible for chatting and providing info about details about the table values,
-        e.g. what should be noted about the data values, valuable, applicable insights about the data,
-        and continuing the conversation. Does not provide overviews;
-        only details, meaning, relationships, and trends of the data.""")
+        Responsible for analyzing results from SQLAgent and
+        providing clear, concise, and actionable insights.
+        Focuses on breaking down complex data findings into understandable points for
+        high-level decision-making. Emphasizes detailed interpretation, trends, and
+        relationships within the data, while avoiding general overviews or
+        superficial descriptions.""")
 
-    requires = param.List(default=["current_source", "current_table"], readonly=True)
+    requires = param.List(default=["current_source", "current_table", "current_pipeline", "current_sql"], readonly=True)
 
     prompt_templates = param.Dict(
         default={
-            "main": PROMPTS_DIR / "ChatDetailsAgent" / "main.jinja2",
-            "topic": PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2",
+            "main": PROMPTS_DIR / "AnalystAgent" / "main.jinja2",
         }
     )
-
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        topic_system_prompt = self._render_prompt("topic")
-        context["topic"] = (await self.llm.invoke(
-            messages,
-            system=topic_system_prompt,
-            response_model=Topic,
-            allow_partial=False,
-        )).result
-        context = self._add_embeddings(messages, context)
-        system_prompt = self._render_prompt("main", **context)
-        return system_prompt
 
 
 class LumenBaseAgent(Agent):
@@ -420,7 +413,7 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["current_source"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+    provides = param.List(default=["current_table", "current_sql", "current_pipeline", "current_data"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -490,6 +483,7 @@ class SQLAgent(LumenBaseAgent):
                     )
                 }
             ]
+        print(errors)
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(messages, system=system, response_model=Sql)
@@ -556,9 +550,7 @@ class SQLAgent(LumenBaseAgent):
             report_error(e, step)
             raise e
 
-        if len(df) > 0:
-            self._memory["current_data"] = await describe_data(df)
-
+        self._memory["current_data"] = await describe_data(df)
         self._memory["available_sources"].append(sql_expr_source)
         self._memory["current_source"] = sql_expr_source
         self._memory["current_pipeline"] = pipeline
@@ -658,7 +650,8 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        schema = await get_schema(source, table, include_min_max=False)
+        # include min max for more context for data cleaning
+        schema = await get_schema(source, table, include_min_max=True)
         join_required = await self._check_requires_joins(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
@@ -670,7 +663,7 @@ class SQLAgent(LumenBaseAgent):
             if source_table == table:
                 table_schema = schema
             else:
-                table_schema = await get_schema(source, source_table, include_min_max=False)
+                table_schema = await get_schema(source, source_table, include_min_max=True)
 
             # Look up underlying table name
             table_name = source_table
@@ -683,7 +676,7 @@ class SQLAgent(LumenBaseAgent):
 
             table_schemas[table_name] = {
                 "schema": yaml.dump(table_schema),
-                "sql": source.get_sql_expr(source_table)
+                "sql": source.get_sql_expr(source_table),
             }
 
         dialect = source.dialect
