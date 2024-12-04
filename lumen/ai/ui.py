@@ -302,14 +302,16 @@ class ExplorerUI(UI):
             c.cleanup()
 
     def _update_conversation(self, event):
+        active = self._explorations.active
         if event.new:
-            active = self._explorations.active
             if active < len(self._conversations):
                 conversation = self._conversations[active]
             else:
                 conversation = list(self._coordinator.interface.objects)
             self._exports.visible = True
         else:
+            if len(self._explorations):
+                self._conversations[active] = list(self._coordinator.interface.objects)
             self._exports.visible = False
             conversation = self._root_conversation
         self._coordinator.interface.objects = conversation
@@ -321,9 +323,11 @@ class ExplorerUI(UI):
             if old is not new:
                 self._contexts.pop(i)
                 self._conversations.pop(i)
+                self._titles.pop(i)
                 break
 
     def _set_context(self, event):
+        self._conversations[event.old] = list(self._coordinator.interface.objects)
         if event.new == len(self._conversations):
             return
         self._coordinator.interface.objects = self._conversations[event.new]
