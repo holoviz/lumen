@@ -62,7 +62,7 @@ class Actor(param.Parameterized):
         context["memory"] = self._memory
         prompt = render_template(
             self.prompt_templates[prompt_name],
-            prompt_overrides=self.prompt_overrides.get(prompt_name, {}),
+            overrides=self.prompt_overrides.get(prompt_name, {}),
             **context,
         )
         log_debug(f"\033[92mRendered prompt\033[0m '{prompt_name}':\n{prompt}")
