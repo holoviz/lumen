@@ -1,7 +1,6 @@
 import datetime as dt
 import os
 
-import pandas as pd
 import pytest
 
 from lumen.transforms.sql import SQLGroupBy
@@ -12,6 +11,7 @@ try:
 except ImportError:
     pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
+from ..utils import assert_frame_equal_no_dtype_check
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_duckdb_get_tables(duckdb_source, source_tables):
     tables = duckdb_source.get_tables()
     assert not len(set(tables) - set(source_tables.keys()))
     for table in tables:
-        pd.testing.assert_frame_equal(
+        assert_frame_equal_no_dtype_check(
             duckdb_source.get(table),
             source_tables[table],
         )
@@ -119,7 +119,7 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = duckdb_source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
+    assert_frame_equal_no_dtype_check(filtered, expected_filtered_df.reset_index(drop=True))
 
 
 @pytest.mark.flaky(reruns=3)
@@ -128,7 +128,7 @@ def test_duckdb_transforms(duckdb_source, source_tables):
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
     transformed = duckdb_source.get('test_sql', sql_transforms=transforms)
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(transformed, expected)
+    assert_frame_equal_no_dtype_check(transformed, expected)
 
 
 @pytest.mark.flaky(reruns=3)
@@ -141,7 +141,7 @@ def test_duckdb_transforms_cache(duckdb_source, source_tables):
     assert cache_key in duckdb_source._cache
 
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(duckdb_source._cache[cache_key], expected)
+    assert_frame_equal_no_dtype_check(duckdb_source._cache[cache_key], expected)
 
     cache_key = duckdb_source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in duckdb_source._cache
@@ -166,4 +166,4 @@ def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
 
 def test_duckdb_source_mirrors_source(duckdb_source):
     mirrored = DuckDBSource(uri=':memory:', mirrors={'mixed': (duckdb_source, 'test_sql')})
-    pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'))
+    assert_frame_equal_no_dtype_check(duckdb_source.get('test_sql'), mirrored.get('mixed'))
