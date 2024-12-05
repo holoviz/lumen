@@ -1,8 +1,11 @@
 from abc import abstractmethod
 from pathlib import Path
+from types import FunctionType
 from typing import Any
 
 import param
+
+from pydantic import BaseModel
 
 from .llm import Message
 from .utils import log_debug, render_template, warn_on_unused_variables
@@ -20,13 +23,30 @@ class Actor(param.Parameterized):
         A dict of the prompt name, like 'main' as key nesting another dict
         with keys like 'template', 'model', and/or 'model_factory'.""")
 
+    def _get_model(self, prompt_name: str, **context) -> type[BaseModel]:
+        if prompt_name in self.prompts and "model" in self.prompts[prompt_name]:
+            prompt_spec = self.prompts[prompt_name]
+        else:
+            prompt_spec = self.param.prompts.default[prompt_name]
+        if "model" not in prompt_spec:
+            raise KeyError(f"Prompt {prompt_name!r} does not provide a model.")
+        model_spec = prompt_spec["model"]
+        if isinstance(model_spec, FunctionType):
+            model = model_spec(**context)
+        else:
+            model = model_spec
+        return model
+
     def _render_prompt(self, prompt_name: str, **context) -> str:
         if prompt_name in self.prompts and "template" in self.prompts[prompt_name]:
-            prompt_template = self.prompts[prompt_name]["template"]
+            prompt_spec = self.prompts[prompt_name]
         else:
-            prompt_template = self.param["prompts"].default[prompt_name]["template"]
-        overrides = self.template_overrides.get(prompt_name, {})
+            prompt_spec = self.param.prompts.default[prompt_name]
+        if "template" not in prompt_spec:
+            raise KeyError(f"Prompt {prompt_name!r} does not provide a prompt template.")
+        prompt_template = prompt_spec["template"]
 
+        overrides = self.template_overrides.get(prompt_name, {})
         prompt_label = f"\033[92m{self.name[:-5]}.prompts['{prompt_name}']['template']\033[0m"
         context["memory"] = self._memory
         if isinstance(prompt_template, str) and not Path(prompt_template).exists():

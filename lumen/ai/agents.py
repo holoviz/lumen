@@ -190,17 +190,6 @@ class Agent(Viewer, Actor):
         self.interface.pop(-1)
         return tables
 
-    def _get_model(self, prompt_name: str, **context) -> type[BaseModel]:
-        prompt_spec = self.prompts[prompt_name]
-        if 'model' not in prompt_spec:
-            raise KeyError(f"Prompt {prompt_name!r} does not provide a model.")
-        model_spec = prompt_spec['model']
-        if issubclass(model_spec, BaseModel):
-            model = model_spec
-        else:
-            model = model_spec(**context)
-        return model
-
     # Public API
 
     @classmethod
