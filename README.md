@@ -51,7 +51,6 @@ The core strengths of Lumen include:
 - **Scalability**: Lumen is designed with performance in mind and supports scalable Dask DataFrames out of the box, letting you scale to datasets larger than memory or even scale out to a cluster.
 - **Security**: Lumen ships with a wide range of OAuth providers out of the box, making it a breeze to add authentication to your applications.
 
-
 ## Getting started
 
 Lumen works with Python 3 and above on Linux, Windows, or Mac. The recommended way to install Lumen is using the [`conda`](https://conda.pydata.org/docs/) command provided by [Anaconda](https://docs.continuum.io/anaconda/install) or [`Miniconda`](https://conda.pydata.org/miniconda.html):

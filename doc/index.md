@@ -1,68 +1,35 @@
 # Welcome to Lumen!
 
+
+The Lumen project consists of two main pieces:
+
+- **Lumen Core**: A framework for visual analytics, making it possible to build complex data processing pipelines, plots and entire dashboards using a declarative specification.
+- **Lumen AI**: An extensible Agent based "chat-with-data" framework.
+
+Together these pieces make it possible to perform complex data analysis using natural language, and then export the results, continue the analysis in a notebook or assemble the results into a dashboard using a drag-and-drop interface.
+
+### Lumen AI
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./_static/ai-diagram-dark.png">
+  <img src="./_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
+</picture>
+
+Lumen AI provides a framework for chatting with data. It interfaces with the Lumen data sources providing the ability to connect with your database or data lake and unlock insights without writing code.
+
+- Generate complex SQL queries to analyze the data
+- Generate charts & powerful data tables or entire dashboards.
+- Automatically summarize the key results and insights.
+- Define custom analyses to generate deep insights tailored to your domain.
+
+### Lumen Core
+
 <img src="./_static/diagram.png" width="100%">
-
-::::{grid} 2 2 6 6
-:gutter: 1
-
-:::{grid-item-card} Bike Sharing
-:link: gallery/bikes
-:link-type: doc
-
-```{image} ./_static/bikes.png
-```
-:::
-
-:::{grid-item-card} NYC Taxi
-:link: gallery/nyc_taxi
-:link-type: doc
-
-```{image} ./_static/nyc_taxi.png
-```
-:::
-
-:::{grid-item-card} Penguins
-:link: gallery/penguins
-:link-type: doc
-
-```{image} ./_static/penguins.png
-```
-:::
-
-:::{grid-item-card} Windturbines
-:link: gallery/windturbines
-:link-type: doc
-
-```{image} ./_static/windturbines.png
-```
-:::
-
-:::{grid-item-card} Seattle Weather
-:link: gallery/seattle
-:link-type: doc
-
-```{image} ./_static/seattle.png
-```
-:::
-
-:::{grid-item-card} Earthquakes
-:link: gallery/earthquakes
-:link-type: doc
-
-```{image} ./_static/earthquakes.png
-```
-:::
-
-::::
-
-The Lumen project provides a framework for visual analytics, which allows users to build data-driven dashboards using a simple, yet highly expressive, declarative specification.
-
-If you've used commerical BI tools you will know the pain of ensuring that the data is in the format required by the visualization components. When data is managed by different teams this means coordinating between teams and pushing the transformation into your database or data lake. Lumen aims to provide an highly extensible system around data intake, data processing and visualization that allows you to quickly iterate to gain insights in your data.
 
 The power of Lumen comes from the ability to leverage the powerful data intake, data processing and data visualization libraries available in the PyData ecosystem.
 
-- **Data Intake**: A flexible system for declaring data sources with strong integration with [Intake](https://intake.readthedocs.io/en/latest/), allows Lumen to query data from a wide range of sources including many file formats such as CSV or Parquet but also SQL and many others.
-- **Data Processing**: Internally Lumen stores data as DataFrame objects, allowing users to leverage familiar APIs for filtering and transforming data using [Pandas](https://pandas.pydata.org/) while also providing the ability to scale these transformations out to a cluster thanks to [Dask](https://dask.org/) but also allows you to dynamically generate SQL queries to push the computation into your database.
+- **Data Intake**: A flexible system for declaring data sources with strong integration with SQL, DuckDB and familiar Python DataFrame libraries. This allows Lumen to query data from a wide range of sources including many file formats such as CSV or Parquet but also SQL and many others and apply transformations where the data lives.
+- **Data Proccessing**: Internally Lumen allows manipulating data in SQL or in Python as DataFrame objects. This allows Lumen to perform data transformations where the data lives (using SQL), while also providing the flexibility of familiar APIs for filtering and transforming data using [Pandas](https://pandas.pydata.org/) or scaling these transformations out to a cluster thanks to [Dask](https://dask.org/).
 - **Data Visualization**: Since Lumen is built on [Panel](https://panel.holoviz.org) all the most popular plotting libraries and many other components such as powerful datagrids and BI indicators are supported.
 
 The core strengths of Lumen include:
@@ -72,8 +39,6 @@ The core strengths of Lumen include:
 - **Scalability**: Lumen is designed with performance in mind and supports scalable Dask DataFrames out of the box, letting you scale to datasets larger than memory or even scale out to a cluster.
 - **Security**: Lumen ships with a wide range of OAuth providers out of the box, making it a breeze to add authentication to your applications.
 
-Build reusable components to drive your visual analytics that can be reused even by team members who are not Python experts.
-
 ::::{grid} 1 2 2 4
 :gutter: 1 1 1 2
 
@@ -82,6 +47,13 @@ Build reusable components to drive your visual analytics that can be reused even
 :link-type: doc
 
 Install Lumen in a few easy steps
+:::
+
+:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a dashboard
+:link: getting_started/lumen_ai
+:link-type: doc
+
+How to explore your data with Lumen AI.
 :::
 
 :::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a dashboard

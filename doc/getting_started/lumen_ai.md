@@ -2,28 +2,6 @@
 
 Powered by state-of-the-art large language models (LLMs), Lumen AI lets users chat with their tabular datasets, allowing users to explore and analyze their data without the need for complex programming or technical expertise.
 
-## Quickstart
-
-To use Lumen AI, you need to install additional dependencies in addition to the core dependencies. You can do this by running:
-
-```bash
-pip install 'lumen[ai]'
-```
-
-If you want to use a specific LLM provider, you can specify the provider name as a hyphenated suffix:
-
-```bash
-pip install 'lumen[ai-openai]'
-pip install 'lumen[ai-mistralai]'
-pip install 'lumen[ai-anthropic]'
-```
-
-For models that run locally on your machine and offline (after downloading and caching):
-
-```bash
-pip install 'lumen[ai-llama]'
-```
-
 ### Python Script
 
 To get started with Lumen AI, copy and paste the following into a file, like `app.py`:
