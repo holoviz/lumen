@@ -190,6 +190,17 @@ class Agent(Viewer, Actor):
         self.interface.pop(-1)
         return tables
 
+    def _get_model(self, prompt_name: str, **context) -> type[BaseModel]:
+        prompt_spec = self.prompts[prompt_name]
+        if 'model' not in prompt_spec:
+            raise KeyError(f"Prompt {prompt_name!r} does not provide a model.")
+        model_spec = prompt_spec['model']
+        if issubclass(model_spec, BaseModel):
+            model = model_spec
+        else:
+            model = model_spec(**context)
+        return model
+
     # Public API
 
     @classmethod
@@ -285,10 +296,7 @@ class ChatAgent(Agent):
         }
     )
 
-
-
     requires = param.List(default=["source"], readonly=True)
-
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
         source = self._memory.get("source")
@@ -431,16 +439,28 @@ class SQLAgent(LumenBaseAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"template": PROMPTS_DIR / "SQLAgent" / "main.jinja2", "model": Sql},
-            "select_table": {"template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2", "model_factory": make_table_model},
-            "require_joins": {"template": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2", "model": JoinRequired},
-            "find_joins": {"template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2", "model": TableJoins},
+            "main": {
+                "model": Sql,
+                "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2"
+            },
+            "select_table": {
+                "model": make_table_model,
+                "template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2"
+            },
+            "require_joins": {
+                "model": JoinRequired,
+                "template": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2"
+            },
+            "find_joins": {
+                "model": TableJoins,
+                "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
+            },
         }
     )
 
-    requires = param.List(default=["source"], readonly=True)
-
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
+
+    requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -465,7 +485,7 @@ class SQLAgent(LumenBaseAgent):
                     elif len(tables) > FUZZY_TABLE_LENGTH:
                         tables = await self._get_closest_tables(messages, tables)
                     system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
-                    table_model = self.prompts["main"]["model_factory"](tables)
+                    table_model = self._get_model("select_table", tables=tables)
                     result = await self.llm.invoke(
                         messages,
                         system=system_prompt,
@@ -513,7 +533,7 @@ class SQLAgent(LumenBaseAgent):
         log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(messages, system=system, response_model=self.prompts["main"]["model"])
+            response = self.llm.stream(messages, system=system, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
                 step_message = output.chain_of_thought
@@ -600,7 +620,7 @@ class SQLAgent(LumenBaseAgent):
             response = self.llm.stream(
                 messages[-1:],
                 system=join_prompt,
-                response_model=self.prompts["join_required"]["model"],
+                response_model=self._get_model("require_joins"),
             )
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
@@ -623,7 +643,7 @@ class SQLAgent(LumenBaseAgent):
             output = await self.llm.invoke(
                 messages,
                 system=find_joins_prompt,
-                response_model=self.prompts["find_joins"]["model"],
+                response_model=self._get_model("find_joins"),
             )
             tables_to_join = output.tables_to_join
             step.stream(
@@ -736,10 +756,6 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    @classmethod
-    def _get_model(cls, schema):
-        raise NotImplementedError()
-
     async def respond(
         self,
         messages: list[Message],
@@ -768,7 +784,7 @@ class BaseViewAgent(LumenBaseAgent):
         output = await self.llm.invoke(
             messages,
             system=system_prompt,
-            response_model=self._get_model(schema),
+            response_model=self._get_model("main", schema=schema),
         )
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
@@ -799,10 +815,9 @@ class hvPlotAgent(BaseViewAgent):
 
     view_type = hvPlotUIView
 
-    @classmethod
-    def _get_model(cls, schema):
+    def _get_model(self, prompt_name: str, schema: dict[str, Any]) -> type[BaseModel]:
         # Find parameters
-        excluded = cls.view_type._internal_params + [
+        excluded = self.view_type._internal_params + [
             "controls",
             "type",
             "source",
@@ -812,10 +827,10 @@ class hvPlotAgent(BaseViewAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema, extra_fields={
+        model = param_to_pydantic(self.view_type, excluded=excluded, schema=schema, extra_fields={
             "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
         })
-        return model[cls.view_type.__name__]
+        return model[self.view_type.__name__]
 
     async def _extract_spec(self, model):
         pipeline = self._memory["pipeline"]
@@ -847,17 +862,15 @@ class VegaLiteAgent(BaseViewAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "main": {
+                "model": VegaLiteSpec,
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
         }
     )
 
     view_type = VegaLiteView
 
     _extensions = ('vega',)
-
-    @classmethod
-    def _get_model(cls, schema):
-        return VegaLiteSpec
 
     async def _extract_spec(self, model: VegaLiteSpec):
         vega_spec = json.loads(model.json_spec)
