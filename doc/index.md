@@ -1,6 +1,5 @@
 # Welcome to Lumen!
 
-
 The Lumen project consists of two main pieces:
 
 - **Lumen Core**: A framework for visual analytics, making it possible to build complex data processing pipelines, plots and entire dashboards using a declarative specification.
@@ -10,10 +9,7 @@ Together these pieces make it possible to perform complex data analysis using na
 
 ### Lumen AI
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./_static/ai-diagram-dark.png">
-  <img src="./_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
-</picture>
+<img src="./_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
 
 Lumen AI provides a framework for chatting with data. It interfaces with the Lumen data sources providing the ability to connect with your database or data lake and unlock insights without writing code.
 
@@ -49,7 +45,7 @@ The core strengths of Lumen include:
 Install Lumen in a few easy steps
 :::
 
-:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a dashboard
+:::{grid-item-card} {octicon}`zap;2em;sd-mr-1` Exploration with Lumen AI
 :link: getting_started/lumen_ai
 :link-type: doc
 

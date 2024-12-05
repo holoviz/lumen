@@ -1,4 +1,4 @@
-# Lumen AI
+# {octicon}`zap;2em;sd-mr-1` Exploring Data with Lumen AI
 
 Powered by state-of-the-art large language models (LLMs), Lumen AI lets users chat with their tabular datasets, allowing users to explore and analyze their data without the need for complex programming or technical expertise.
 
