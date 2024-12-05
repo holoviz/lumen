@@ -82,10 +82,14 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    prompt_templates = param.Dict(default={
-        "main": PROMPTS_DIR / "Coordinator" / "main.jinja2",
-        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-    }, doc="""The paths to the prompt's jinja2 templates.""")
+    prompts = param.Dict(
+        default={
+            "check_validity": {
+                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+                "model": Validity,
+            },
+        }
+    )
 
     __abstract = True
 
@@ -317,7 +321,7 @@ class Coordinator(Viewer, Actor):
             output = await self.llm.invoke(
                 messages=messages,
                 system=system,
-                response_model=Validity,
+                response_model=self._get_model("check_validity"),
             )
             step.stream(output.correct_assessment, replace=True)
             step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
@@ -463,10 +467,18 @@ class DependencyResolver(Coordinator):
     information required for that agent until the answer is available.
     """
 
-    prompt_templates = param.Dict(default={
-        "main": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
-        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-    }, doc="""The paths to the prompt's jinja2 templates.""")
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
+                "model": make_agent_model,
+            },
+            "check_validity": {
+                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+                "model": Validity,
+            },
+        },
+    )
 
     async def _choose_agent(
         self,
@@ -479,7 +491,7 @@ class DependencyResolver(Coordinator):
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies(self._memory)]
         agent_names = tuple(sagent.name[:-5] for sagent in agents)
-        agent_model = make_agent_model(agent_names, primary=primary)
+        agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
@@ -544,10 +556,18 @@ class Planner(Coordinator):
     and then executes it.
     """
 
-    prompt_templates = param.Dict(default={
-        "main": PROMPTS_DIR / "Planner" / "main.jinja2",
-        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-    }, doc="""The paths to the prompt's jinja2 templates.""")
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "Planner" / "main.jinja2",
+                "model": make_plan_models,
+            },
+            "check_validity": {
+                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+                "model": Validity,
+            },
+        }
+    )
 
     @classmethod
     async def _lookup_schemas(
@@ -670,7 +690,7 @@ class Planner(Coordinator):
             for table in src.get_tables():
                 tables[table] = src
 
-        reason_model, plan_model = make_plan_models(agent_names, list(tables))
+        reason_model, plan_model = self._get_model("main", agent_names=agent_names, tables=list(tables))
         planned = False
         unmet_dependencies = set()
         schemas = {}

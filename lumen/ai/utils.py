@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import re
 import time
 
 from functools import wraps
@@ -60,6 +61,26 @@ def render_template(template_path: Path, overrides: dict | None = None, relative
 
     template = env.get_template(template_name)
     return template.render(**context)
+
+
+def warn_on_unused_variables(string, kwargs, prompt_label):
+    used_keys = set()
+
+    for key in kwargs:
+        pattern = r'\b' + re.escape(key) + r'\b'
+        if re.search(pattern, string):
+            used_keys.add(key)
+
+    unused_keys = set(kwargs.keys()) - used_keys
+    if unused_keys:
+        # TODO: reword this concisely... what do you call those variables for formatting?
+        log.warning(
+            f"The prompt template, {prompt_label}, is missing keys, "
+            f"which could mean the LLM is lacking the context provided "
+            f"from these variables: {unused_keys}. If this is unintended, "
+            f"please create a template that contains those keys."
+        )
+
 
 def retry_llm_output(retries=3, sleep=1):
     """
