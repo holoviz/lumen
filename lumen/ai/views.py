@@ -39,6 +39,7 @@ class LumenOutput(Viewer):
     language = "yaml"
 
     def __init__(self, **params):
+        self._last_output = {}
         if 'spec' not in params and 'component' in params and params['component'] is not None:
             component_spec = params['component'].to_spec()
             params['spec'] = yaml.dump(component_spec)
@@ -90,6 +91,9 @@ class LumenOutput(Viewer):
         else:
             self._main = code_col
         self._rendered = False
+        placeholder.objects = [
+            pn.pane.ParamMethod(self._render_component, inplace=True)
+        ]
         self._last_output = {}
 
     async def _render_pipeline(self, pipeline):
