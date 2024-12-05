@@ -39,7 +39,7 @@ from .models import (
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, report_error, retry_llm_output,
+    get_schema, log_debug, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -76,9 +76,6 @@ class Agent(Viewer, Actor):
 
     requires = param.List(default=[], readonly=True, doc="""
         List of context that this Agent requires to be in memory.""")
-
-    response_model = param.ClassSelector(class_=BaseModel, is_instance=False, doc="""
-        A Pydantic model determining the schema of the response.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -230,7 +227,7 @@ class Agent(Viewer, Actor):
         system_prompt = await self._render_main_prompt(messages)
         message = None
         async for output_chunk in self.llm.stream(
-            messages, system=system_prompt, response_model=self.response_model, field="output"
+            messages, system=system_prompt, field="output"
         ):
             message = self.interface.stream(
                 output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
@@ -282,13 +279,11 @@ class ChatAgent(Agent):
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
         """)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "ChatAgent" / "main.jinja2"},
         }
     )
-
-    response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     requires = param.List(default=["current_source"], readonly=True)
 
@@ -331,9 +326,9 @@ class AnalystAgent(ChatAgent):
 
     requires = param.List(default=["current_source", "current_table", "current_pipeline", "current_sql"], readonly=True)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "AnalystAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2"},
         }
     )
 
@@ -372,9 +367,9 @@ class TableListAgent(LumenBaseAgent):
         Renders a list of all availables tables to the user.
         Not useful for gathering information about the tables.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "TableListAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "TableListAgent" / "main.jinja2"},
         }
     )
 
@@ -431,12 +426,12 @@ class SQLAgent(LumenBaseAgent):
         also capable of joining it with other tables. Will generate and
         execute a query in a single step.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
-            "select_table": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
-            "require_joins": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2",
-            "find_joins": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2",
+            "main": {"template": PROMPTS_DIR / "SQLAgent" / "main.jinja2", "model": Sql},
+            "select_table": {"template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2", "model_factory": make_table_model},
+            "require_joins": {"template": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2", "model": JoinRequired},
+            "find_joins": {"template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2", "model": TableJoins},
         }
     )
 
@@ -467,7 +462,7 @@ class SQLAgent(LumenBaseAgent):
                     elif len(tables) > FUZZY_TABLE_LENGTH:
                         tables = await self._get_closest_tables(messages, tables)
                     system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
-                    table_model = make_table_model(tables)
+                    table_model = self.prompts["main"]["model_factory"](tables)
                     result = await self.llm.invoke(
                         messages,
                         system=system_prompt,
@@ -512,10 +507,10 @@ class SQLAgent(LumenBaseAgent):
                     )
                 }
             ]
-        print(errors)
+        log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(messages, system=system, response_model=Sql)
+            response = self.llm.stream(messages, system=system, response_model=self.prompts["main"]["model"])
             sql_query = None
             async for output in response:
                 step_message = output.chain_of_thought
@@ -602,7 +597,7 @@ class SQLAgent(LumenBaseAgent):
             response = self.llm.stream(
                 messages[-1:],
                 system=join_prompt,
-                response_model=JoinRequired,
+                response_model=self.prompts["join_required"]["model"],
             )
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
@@ -627,7 +622,7 @@ class SQLAgent(LumenBaseAgent):
             output = await self.llm.invoke(
                 messages,
                 system=find_joins_prompt,
-                response_model=TableJoins,
+                response_model=self.prompts["find_joins"]["model"],
             )
             tables_to_join = output.tables_to_join
             step.stream(
@@ -731,9 +726,9 @@ class BaseViewAgent(LumenBaseAgent):
 
     provides = param.List(default=["current_plot"], readonly=True)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2"},
         }
     )
 
@@ -795,9 +790,9 @@ class hvPlotAgent(BaseViewAgent):
         Generates a plot of the data given a user prompt.
         If the user asks to plot, visualize or render the data this is your best best.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2"},
         }
     )
 
@@ -849,9 +844,9 @@ class VegaLiteAgent(BaseViewAgent):
         If the user asks to plot, visualize or render the data this is your best best.
         """)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
         }
     )
 
@@ -879,9 +874,9 @@ class AnalysisAgent(LumenBaseAgent):
     purpose = param.String(default="""
         Perform custom analyses on the data.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2"},
         }
     )
 
