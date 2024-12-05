@@ -332,14 +332,14 @@ def report_error(exc: Exception, step: ChatStep):
     step.status = "failed"
 
 
-async def gather_table_sources(available_sources: list[Source]) -> tuple[dict[str, Source], str]:
+async def gather_table_sources(sources: list[Source]) -> tuple[dict[str, Source], str]:
     """
     Get a dictionary of tables to their respective sources
     and a markdown string of the tables and their schemas.
     """
     tables_to_source = {}
     tables_schema_str = "\nHere are the tables\n"
-    for source in available_sources:
+    for source in sources:
         for table in source.get_tables():
             tables_to_source[table] = source
             if isinstance(source, DuckDBSource) and source.ephemeral:

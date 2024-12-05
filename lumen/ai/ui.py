@@ -172,9 +172,9 @@ class UI(Viewer):
                 name='ProvidedSource00000'
             )
             sources.append(source)
-        memory['available_sources'] = sources
+        memory['sources'] = sources
         if sources:
-            memory['current_source'] = sources[0]
+            memory['source'] = sources[0]
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
@@ -361,8 +361,8 @@ class ExplorerUI(UI):
             source_map.update(new)
             table_select.param.update(options=list(source_map), value=selected)
             input_row.visible = bool(source_map)
-        memory.on_change('available_sources', update_source_map)
-        update_source_map(None, None, memory['available_sources'], init=True)
+        memory.on_change('sources', update_source_map)
+        update_source_map(None, None, memory['sources'], init=True)
 
         def explore_table_if_single(event):
             """
@@ -386,7 +386,7 @@ class ExplorerUI(UI):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
-                    if len(memory['available_sources']) > 1:
+                    if len(memory['sources']) > 1:
                         _, table = table.rsplit(' : ', 1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
@@ -418,8 +418,8 @@ class ExplorerUI(UI):
 
     def _add_outputs(self, exploration: Column, outputs: list[LumenOutput], memory: _Memory):
         from panel_gwalker import GraphicWalker
-        if 'current_sql' in memory:
-            sql = memory["current_sql"]
+        if "sql" in memory:
+            sql = memory["sql"]
             sql_pane = Markdown(
                 f'```sql\n{sql}\n```',
                 margin=0, sizing_mode='stretch_width'
@@ -433,7 +433,7 @@ class ExplorerUI(UI):
 
         content = []
         if exploration.loading:
-            pipeline = memory['current_pipeline']
+            pipeline = memory['pipeline']
             content.append(
                 ('Overview', GraphicWalker(
                     pipeline.param.data,
@@ -464,11 +464,11 @@ class ExplorerUI(UI):
                 prev_memory = self._contexts[self._explorations.active]
             index = self._explorations.active if len(self._explorations) else -1
             local_memory = prev_memory.clone()
-            local_memory['outputs'] = outputs = []
+            local_memory["outputs"] = outputs = []
 
             def render_plan(_, old, new):
                 nonlocal index
-                plan = local_memory['plan']
+                plan = local_memory["plan"]
                 if any(step.expert == 'SQLAgent' for step in plan.steps):
                     self._add_exploration(plan.title, local_memory)
                     index += 1
@@ -479,12 +479,12 @@ class ExplorerUI(UI):
                 this will update the available_sources in the global memory
                 so that the overview explorer can access it
                 """
-                memory["available_sources"] += [
-                    source for source in sources if source not in memory["available_sources"]
+                memory["sources"] += [
+                    source for source in sources if source not in memory["sources"]
                 ]
 
             local_memory.on_change('plan', render_plan)
-            local_memory.on_change('available_sources', sync_available_sources_memory)
+            local_memory.on_change('sources', sync_available_sources_memory)
 
             def render_output(_, old, new):
                 added = [out for out in new if out not in old]

@@ -137,7 +137,7 @@ class Agent(Viewer, Actor):
         # TODO: move this out somewhere / remove once embeddings are ready...
         system = (
             f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{self._memory.get('current_table', 'N/A')}`. "
+            f"The current table selected: `{self._memory.get('table', 'N/A')}`. "
         )
         tables = tuple(table.replace('"', "") for table in tables)
 
@@ -148,7 +148,7 @@ class Agent(Viewer, Actor):
             allow_partial=False
         ))
         if not fuzzy_table.required:
-            return [self._memory.get("current_table") or tables[0]]
+            return [self._memory.get("table") or tables[0]]
 
         # make case insensitive, but keep original case to transform back
         if not fuzzy_table.keywords:
@@ -245,7 +245,7 @@ class SourceAgent(Agent):
 
     requires = param.List(default=[], readonly=True)
 
-    provides = param.List(default=["current_source"], readonly=True)
+    provides = param.List(default=["source"], readonly=True)
 
     on_init = param.Boolean(default=True)
 
@@ -285,10 +285,13 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=["current_source"], readonly=True)
+
+
+    requires = param.List(default=["source"], readonly=True)
+
 
     async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        source = self._memory.get("current_source")
+        source = self._memory.get("source")
         if not source:
             raise ValueError("No source found in memory.")
 
@@ -304,10 +307,10 @@ class ChatAgent(Agent):
                 closest_tables = self._memory.get("closest_tables", tables)
             context["closest_tables"] = closest_tables
         else:
-            self._memory["current_table"] = table = self._memory.get(
-                "current_table", tables[0]
+            self._memory["table"] = table = self._memory.get(
+                "table", tables[0]
             )
-            schema = await get_schema(self._memory["current_source"], table, include_count=True, limit=1000)
+            schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
         system_prompt = self._render_prompt("main", **context)
@@ -324,7 +327,7 @@ class AnalystAgent(ChatAgent):
         relationships within the data, while avoiding general overviews or
         superficial descriptions.""")
 
-    requires = param.List(default=["current_source", "current_table", "current_pipeline", "current_sql"], readonly=True)
+    requires = param.List(default=["source", "table", "pipeline", "sql"], readonly=True)
 
     prompts = param.Dict(
         default={
@@ -373,13 +376,13 @@ class TableListAgent(LumenBaseAgent):
         }
     )
 
-    requires = param.List(default=["current_source"], readonly=True)
+    requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('tabulator',)
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
-        source = memory.get("current_source")
+        source = memory.get("source")
         if not source:
             return True  # source not loaded yet; always apply
         return len(source.get_tables()) > 1
@@ -397,7 +400,7 @@ class TableListAgent(LumenBaseAgent):
         step_title: str | None = None
     ) -> Any:
         tables = []
-        for source in self._memory['available_sources']:
+        for source in self._memory["sources"]:
             tables += source.get_tables()
         self._df = pd.DataFrame({"Table": tables})
         table_list = pn.widgets.Tabulator(
@@ -435,9 +438,9 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    requires = param.List(default=["current_source"], readonly=True)
+    requires = param.List(default=["source"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline", "current_data"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -445,8 +448,8 @@ class SQLAgent(LumenBaseAgent):
 
     async def _select_relevant_table(self, messages: list[Message]) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
-        available_sources = self._memory["available_sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(available_sources)
+        sources = self._memory["sources"]
+        tables_to_source, tables_schema_str = await gather_table_sources(sources)
         tables = tuple(tables_to_source)
         if messages and messages[-1]["content"].startswith("Show the table: '"):
             # Handle the case where explicitly requested a table
@@ -479,8 +482,8 @@ class SQLAgent(LumenBaseAgent):
         if table in tables_to_source:
             source = tables_to_source[table]
         else:
-            sources = [src for src in available_sources if table in src]
-            source = sources[0] if sources else self._memory["current_source"]
+            sources = [src for src in sources if table in src]
+            source = sources[0] if sources else self._memory["source"]
 
         return table, source
 
@@ -574,12 +577,12 @@ class SQLAgent(LumenBaseAgent):
             report_error(e, step)
             raise e
 
-        self._memory["current_data"] = await describe_data(df)
-        self._memory["available_sources"].append(sql_expr_source)
-        self._memory["current_source"] = sql_expr_source
-        self._memory["current_pipeline"] = pipeline
-        self._memory["current_table"] = pipeline.table
-        self._memory["current_sql"] = sql_query
+        self._memory["data"] = await describe_data(df)
+        self._memory["sources"].append(sql_expr_source)
+        self._memory["source"] = sql_expr_source
+        self._memory["pipeline"] = pipeline
+        self._memory["table"] = pipeline.table
+        self._memory["sql"] = sql_query
         return sql_query
 
     async def _check_requires_joins(
@@ -606,18 +609,16 @@ class SQLAgent(LumenBaseAgent):
         return requires_joins
 
     async def find_join_tables(self, messages: list):
-        multi_source = len(self._memory['available_sources']) > 1
+        multi_source = len(self._memory['sources']) > 1
         if multi_source:
-            available_tables = [
-                f"//{a_source}//{a_table}" for a_source in self._memory["available_sources"]
+            tables = [
+                f"//{a_source}//{a_table}" for a_source in self._memory["sources"]
                 for a_table in a_source.get_tables()
             ]
         else:
-            available_tables = self._memory['current_source'].get_tables()
+            tables = self._memory['source'].get_tables()
 
-        find_joins_prompt = self._render_prompt(
-            "find_joins", available_tables=available_tables
-        )
+        find_joins_prompt = self._render_prompt("find_joins", tables=tables)
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
@@ -633,20 +634,20 @@ class SQLAgent(LumenBaseAgent):
 
         tables_to_source = {}
         for source_table in tables_to_join:
-            available_sources = self._memory["available_sources"]
+            sources = self._memory["sources"]
             if multi_source:
                 try:
                     _, a_source_name, a_table = source_table.split("//", maxsplit=2)
                 except ValueError:
                     a_source_name, a_table = source_table.split("//", maxsplit=1)
-                for source in available_sources:
+                for source in sources:
                     if source.name == a_source_name:
                         a_source = source
                         break
                 if a_table in tables_to_source:
                     a_table = f"//{a_source_name}//{a_table}"
             else:
-                a_source = next(iter(available_sources))
+                a_source = next(iter(sources))
                 a_table = source_table
 
             tables_to_source[a_table] = a_source
@@ -715,16 +716,16 @@ class SQLAgent(LumenBaseAgent):
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
-        pipeline = self._memory['current_pipeline']
+        pipeline = self._memory['pipeline']
         self._render_lumen(pipeline, spec=sql_query, render_output=render_output, title=step_title)
         return pipeline
 
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["current_pipeline"], readonly=True)
+    requires = param.List(default=["pipeline"], readonly=True)
 
-    provides = param.List(default=["current_plot"], readonly=True)
+    provides = param.List(default=["plot"], readonly=True)
 
     prompts = param.Dict(
         default={
@@ -748,7 +749,7 @@ class BaseViewAgent(LumenBaseAgent):
         """
         Generates a visualization based on user messages and the current data pipeline.
         """
-        pipeline = self._memory.get("current_pipeline")
+        pipeline = self._memory.get("pipeline")
         if not pipeline:
             raise ValueError("No current pipeline found in memory.")
 
@@ -761,7 +762,7 @@ class BaseViewAgent(LumenBaseAgent):
             "main",
             schema=yaml.dump(schema),
             table=pipeline.table,
-            current_view=self._memory.get('current_view'),
+            view=self._memory.get('view'),
             doc=doc,
         )
         output = await self.llm.invoke(
@@ -778,7 +779,7 @@ class BaseViewAgent(LumenBaseAgent):
             ) as step:
                 step.stream(chain_of_thought)
         print(f"{self.name} settled on spec: {spec!r}.")
-        self._memory["current_view"] = dict(spec, type=self.view_type)
+        self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, render_output=render_output, title=step_title)
         return view
@@ -817,7 +818,7 @@ class hvPlotAgent(BaseViewAgent):
         return model[cls.view_type.__name__]
 
     async def _extract_spec(self, model):
-        pipeline = self._memory["current_pipeline"]
+        pipeline = self._memory["pipeline"]
         spec = {
             key: val for key, val in dict(model).items()
             if val is not None
@@ -882,9 +883,9 @@ class AnalysisAgent(LumenBaseAgent):
 
     analyses = param.List([])
 
-    requires = param.List(default=['current_pipeline'])
+    requires = param.List(default=['pipeline'])
 
-    provides = param.List(default=['current_view'])
+    provides = param.List(default=['view'])
 
     _output_type = AnalysisOutput
 
@@ -895,7 +896,7 @@ class AnalysisAgent(LumenBaseAgent):
         step_title: str | None = None,
         agents: list[Agent] | None = None
     ) -> Any:
-        pipeline = self._memory['current_pipeline']
+        pipeline = self._memory['pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
             print("NONE found...")
@@ -917,7 +918,7 @@ class AnalysisAgent(LumenBaseAgent):
                 system_prompt = self._render_prompt(
                     "main",
                     analyses=analyses,
-                    current_data=self._memory.get("current_data"),
+                    data=self._memory.get("data"),
                 )
                 analysis_name = (await self.llm.invoke(
                     messages,
@@ -937,7 +938,7 @@ class AnalysisAgent(LumenBaseAgent):
             data = await get_data(pipeline)
             for field in analysis_callable._field_params:
                 analysis_callable.param[field].objects = list(data.columns)
-            self._memory["current_analysis"] = analysis_callable
+            self._memory["analysis"] = analysis_callable
 
             if analysis_callable.autorun:
                 if asyncio.iscoroutinefunction(analysis_callable.__call__):
@@ -947,14 +948,14 @@ class AnalysisAgent(LumenBaseAgent):
                 spec = view.to_spec()
                 if isinstance(view, View):
                     view_type = view.view_type
-                    self._memory["current_view"] = dict(spec, type=view_type)
+                    self._memory["view"] = dict(spec, type=view_type)
                 elif isinstance(view, Pipeline):
-                    self._memory["current_pipeline"] = view
-                # Ensure current_data reflects processed pipeline
-                if pipeline is not self._memory['current_pipeline']:
-                    pipeline = self._memory['current_pipeline']
+                    self._memory["pipeline"] = view
+                # Ensure data reflects processed pipeline
+                if pipeline is not self._memory['pipeline']:
+                    pipeline = self._memory['pipeline']
                     if len(data) > 0:
-                        self._memory["current_data"] = await describe_data(data)
+                        self._memory["data"] = await describe_data(data)
                 yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
@@ -962,8 +963,8 @@ class AnalysisAgent(LumenBaseAgent):
                 step.success_title = "Configure the analysis"
                 view = None
 
-        analysis = self._memory["current_analysis"]
-        pipeline = self._memory['current_pipeline']
+        analysis = self._memory["analysis"]
+        pipeline = self._memory['pipeline']
         if view is None and analysis.autorun:
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:
