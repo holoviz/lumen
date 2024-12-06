@@ -95,16 +95,18 @@ class Actor(param.Parameterized):
             model = model_spec
         return model
 
+    async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
+        tools_context = ""
+        for tool in self._tools[prompt_name]:
+            with tool.param.update(llm=self.llm, memory=self.memory):
+                tools_context += await tool.respond(messages)
+        return tools_context
+
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
         prompt_template = self._lookup_prompt_key(prompt_name, "template")
         overrides = self.template_overrides.get(prompt_name, {})
         prompt_label = f"\033[92m{self.name[:-5]}.prompts['{prompt_name}']['template']\033[0m"
         context["memory"] = self._memory
-
-        tools = ""
-        for tool in self._tools[prompt_name]:
-            with tool.param.update(llm=self.llm, memory=self.memory):
-                tools += await tool.respond(messages)
 
         if isinstance(prompt_template, str) and not Path(prompt_template).exists():
             # check if all the format_kwargs keys are contained prompt_template
@@ -125,7 +127,6 @@ class Actor(param.Parameterized):
             prompt = render_template(
                 prompt_template,
                 overrides=overrides,
-                tools=tools,
                 **context
             )
         log_debug(f"Below is the rendered prompt from {prompt_label}:\n{prompt}")

@@ -253,17 +253,17 @@ class ChatAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        context = {}
+        context = {"tools": await self._use_tools("main", messages)}
         table = self._memory.get("table")
         if table:
             schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
         elif "closest_tables" in self._memory:
-            schemas = await asyncio.gather(
-                *[get_schema(self._memory["source"], table, include_count=True, limit=1000)
-                  for table in self._memory["closest_tables"]]
-            )
+            schemas = [
+                await get_schema(self._memory["source"], table, include_count=True, limit=1000)
+                for table in self._memory["closest_tables"]
+            ]
             context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
@@ -370,9 +370,8 @@ class TableListAgent(LumenBaseAgent):
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
-
-        if len(tables) <= 5:
-            self._memory["closest_tables"] = tables[:5]
+        # if len(tables) <= 5:
+        #     self._memory["closest_tables"] = tables[:5]
         return table_list
 
 
@@ -429,8 +428,9 @@ class SQLAgent(LumenBaseAgent):
         else:
             with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
                 if len(tables) > 1:
+                    tools_context = await self._use_tools("select_table", messages)
                     system_prompt = await self._render_prompt(
-                        "select_table", messages, tables_schema_str=tables_schema_str
+                        "select_table", messages, tables_schema_str=tables_schema_str, tools=tools_context
                     )
                     if "closest_tables" in self._memory:
                         tables = self._memory["closest_tables"]
