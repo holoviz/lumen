@@ -24,8 +24,8 @@ from lumen.ai.agents import {{ agent }}
 llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
 {% endif %}
 
-{# Initialize an empty list to collect assistant arguments #}
-{%- set assistant_args = tables -%}
+data = [{{ tables | join(', ') }}]
+{% set assistant_args = ['data=data'] -%}
 {%- if llm_provider is defined -%}
   {%- set assistant_args = assistant_args + ['llm=llm'] -%}
 {%- endif -%}
