@@ -139,24 +139,6 @@ def retry_llm_output(retries=3, sleep=1):
     return decorator
 
 
-def format_schema(schema):
-    formatted = {}
-    for field, spec in schema.items():
-        if "enum" in spec and len(spec["enum"]) > 5:
-            spec["enum"] = spec["enum"][:5] + ["..."]
-        if "type" in spec:
-            if spec["type"] == "string":
-                spec["type"] = "str"
-            elif spec["type"] == "integer":
-                spec["type"] = "int"
-            elif spec["type"] == "number":
-                spec["type"] = "num"
-            elif spec["type"] == "boolean":
-                spec["type"] = "bool"
-        formatted[field] = spec
-    return formatted
-
-
 async def get_schema(
     source: Source | Pipeline,
     table: str | None = None,
@@ -195,22 +177,32 @@ async def get_schema(
                 spec.pop("max")
 
     for field, spec in schema.items():
+        if "type" in spec:
+            if spec["type"] == "string":
+                spec["type"] = "str"
+            elif spec["type"] == "integer":
+                spec["type"] = "int"
+            elif spec["type"] == "number":
+                spec["type"] = "num"
+            elif spec["type"] == "boolean":
+                spec["type"] = "bool"
+
         if "enum" not in spec:
             continue
 
         limit = get_kwargs.get("limit")
         if not include_enum:
             spec.pop("enum")
+            continue
         elif limit and len(spec["enum"]) > limit:
             spec["enum"].append("...")
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [f"(unknown; truncated to {get_kwargs['limit']} rows)"]
-
-    schema = format_schema(schema)
+        # truncate each enum to 100 characters
+        spec["enum"] = [enum if enum is None or len(enum) < 100 else f"{enum[:100]} ..." for enum in spec["enum"]]
 
     if count and include_count:
         schema["count"] = count
-
     return schema
 
 
