@@ -48,12 +48,16 @@ class TableLookup(Tool):
         self._memory.on_change('sources', update_vector_store_table_list)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        results = self.vector_store.query(messages[-1]["content"], top_k=self.n)
-        self._memory['closest_tables'] = tables = [
-            result['text'].split("//")[1] for result in results if result["similarity"] > self.min_similarity
+        self._memory["closest_tables"] = closest_tables = [
+            result["text"].split("//")[1] for result in
+            self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=self.min_similarity)
         ]
-        if not tables:
-            return "No relevant tables found."
-        return "The most relevant tables give the user query are:\n" + "\n".join(
-            f"- `{table}`" for table in tables
-        )
+
+        message = "The most relevant tables are:\n"
+        if not closest_tables:
+            self._memory["closest_tables"] = closest_tables = [
+                result["text"].split("//")[1] for result in
+                self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
+            ]
+            message = "No relevant tables found, but here are some other tables:\n"
+        return message + "\n".join(f"- `{table}`" for table in closest_tables)

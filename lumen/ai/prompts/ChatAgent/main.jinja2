@@ -13,8 +13,10 @@ Here's a summary of the dataset the user just asked about:
 {{ memory['data'] }}
 ```
 {% endif %}
-
-{% if schema is defined %}
+{% if closest_tables is defined %}
+Available tables:
+{{ closest_tables }} with schema {}
+{% elif table is defined and schema is defined %}
 {{ table }} with schema: {{ schema }}
 {% endif %}
 {% endblock %}

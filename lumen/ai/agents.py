@@ -188,10 +188,11 @@ class Agent(Viewer, Actor):
 class SourceAgent(Agent):
 
     purpose = param.String(default="""
-        The SourceAgent allows a user to upload new datasets.
+        The SourceAgent allows a user to upload unavailable, new datasets.
 
-        Only use this if the user is requesting to add a dataset or you think
-        additional information is required to solve the user query.
+        Only use this if the user is requesting to add a completely new table
+        or you think additional information is required to solve the user query.
+        Not useful for answering what's available or loading existing datasets.
         """)
 
     requires = param.List(default=[], readonly=True)
@@ -228,6 +229,8 @@ class ChatAgent(Agent):
         It can talk about the data, if available.
 
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
+        Can be used concurrently with TableListAgent to describe available tables
+        and potential ideas for analysis.
         """)
 
     prompts = param.Dict(
@@ -247,6 +250,12 @@ class ChatAgent(Agent):
             schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
+        elif "closest_tables" in self._memory:
+            context["closest_tables"] = self._memory["closest_tables"]
+            context["schemas"] = asyncio.gather(
+                *[get_schema(self._memory["source"], table, include_count=True, limit=1000)
+                  for table in context["closest_tables"]]
+            )
         system_prompt = self._render_prompt("main", **context)
         return system_prompt
 
@@ -303,6 +312,7 @@ class TableListAgent(LumenBaseAgent):
     purpose = param.String(default="""
         Renders a list of all availables tables to the user.
         Not useful for gathering information about the tables.
+        Use with ChatAgent to provide info about the tables.
         """)
 
     prompts = param.Dict(
