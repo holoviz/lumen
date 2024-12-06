@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
 from functools import partial
@@ -206,7 +207,7 @@ class Llm(param.Parameterized):
                     yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_key: MODEL_TYPE, messages: list[Message], **kwargs):
-        client = self.get_client(model_key, **kwargs)
+        client = await self.get_client(model_key, **kwargs)
         return await client(messages=messages, **kwargs)
 
 
@@ -233,28 +234,9 @@ class Llama(Llm):
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
-        if client_callable := pn.state.cache.get(model_key):
-            return client_callable
-        from huggingface_hub import hf_hub_download
-        from llama_cpp import Llama
-
-        model_kwargs = self._get_model_kwargs(model_key)
-        repo = model_kwargs["repo"]
-        model_file = model_kwargs["model_file"]
-        chat_format = model_kwargs["chat_format"]
-        n_ctx = model_kwargs["n_ctx"]
-        model_path = hf_hub_download(repo, model_file)
-        llm = Llama(
-            model_path=model_path,
-            n_gpu_layers=-1,
-            n_ctx=n_ctx,
-            seed=128,
-            chat_format=chat_format,
-            logits_all=False,
-            use_mlock=True,
-            verbose=False
-        )
+    def _cache_model(self, model_key: MODEL_TYPE, **kwargs):
+        from llama_cpp import Llama as LlamaCpp
+        llm = LlamaCpp(**kwargs)
 
         raw_client = llm.create_chat_completion_openai_v1
         # patch works with/without response_model
@@ -265,8 +247,32 @@ class Llama(Llm):
         pn.state.cache[model_key] = client_callable
         return client_callable
 
+    async def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
+        if client_callable := pn.state.cache.get(model_key):
+            return client_callable
+        from huggingface_hub import hf_hub_download
+
+        model_kwargs = self._get_model_kwargs(model_key)
+        repo = model_kwargs["repo"]
+        model_file = model_kwargs["model_file"]
+        chat_format = model_kwargs["chat_format"]
+        n_ctx = model_kwargs["n_ctx"]
+        model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
+        llm_kwargs = dict(
+            model_path=model_path,
+            n_gpu_layers=-1,
+            n_ctx=n_ctx,
+            seed=128,
+            chat_format=chat_format,
+            logits_all=False,
+            use_mlock=True,
+            verbose=False
+        )
+        client_callable = await asyncio.to_thread(self._cache_model, model_key, **llm_kwargs)
+        return client_callable
+
     async def run_client(self, model_key: MODEL_TYPE, messages: list[Message], **kwargs):
-        client = self.get_client(model_key, **kwargs)
+        client = await self.get_client(model_key, **kwargs)
         return client(messages=messages, **kwargs)
 
 
@@ -297,7 +303,7 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -348,7 +354,7 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -397,7 +403,7 @@ class MistralAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         from mistralai import Mistral
 
         model_kwargs = self._get_model_kwargs(model_key)
@@ -466,7 +472,7 @@ class AzureMistralAI(MistralAI):
         "default": {"model": "azureai"},
     })
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
         from mistralai_azure import MistralAzure
 
         async def llm_chat_non_stream_async(*args, **kwargs):
@@ -518,7 +524,7 @@ class AnthropicAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
-    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
 
