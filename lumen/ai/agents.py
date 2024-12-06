@@ -447,7 +447,7 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["pipeline"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
     requires = param.List(default=["source"], readonly=True)
 
