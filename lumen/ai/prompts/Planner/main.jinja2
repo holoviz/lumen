@@ -33,6 +33,6 @@ Here's the choice of experts and their uses:
 {% endfor %}
 
 {% if unmet_dependencies %}
-Note that a previous plan was unsuccessful because it did not satisfy the following required pieces of information: {unmet_dependencies!r}
+Note that a previous plan was unsuccessful because it was missing {{ unmet_dependencies }} so you should ensure that is provided in the next plan!
 {% endif %}
 {% endblock %}

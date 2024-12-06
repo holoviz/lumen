@@ -159,7 +159,7 @@ class Coordinator(Viewer, Actor):
                     f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
                     for analysis in agent.analyses if analysis._callable_by_llm
                 )
-                agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
+                agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
                 agent.interface = interface
                 self._analyses.extend(agent.analyses)
             if agent.llm is None:
@@ -391,7 +391,7 @@ class Coordinator(Viewer, Actor):
             if isinstance(subagent, SQLAgent):
                 custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
                 if custom_agent:
-                    custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
+                    custom_analysis_doc = custom_agent.purpose.replace("Available analyses include:\n", "")
                     custom_message = (
                         f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
