@@ -14,14 +14,58 @@ from .utils import log_debug, render_template, warn_on_unused_variables
 class Actor(param.Parameterized):
 
     template_overrides = param.Dict(default={}, doc="""
-        Overrides the template's 'instructions', 'context', or 'examples' jinja2 blocks.
+        Overrides the template's 'instructions', 'context', 'embeddings', or 'examples' jinja2 blocks.
         Is a nested dictionary with the prompt name (e.g. main) as the key
         and the block names as the inner keys with the new content as the
         values.""")
 
     prompts = param.Dict(default={}, doc="""
         A dict of the prompt name, like 'main' as key nesting another dict
-        with keys like 'template', 'model', and/or 'model_factory'.""")
+        with keys like 'template' and 'model'.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._validate_template_overrides()
+        self._validate_prompts()
+
+    def _validate_template_overrides(self):
+        valid_prompt_names = self.param["prompts"].default.keys()
+        for prompt_name, template_override in self.template_overrides.items():
+            if not isinstance(template_override, dict):
+                raise ValueError(
+                    "`template_overrides` must be a nested dictionary with prompt names as keys, "
+                    "e.g. {'main': {'instructions': 'custom instructions'}}, but got "
+                    f"{self.template_overrides} instead."
+                )
+            if prompt_name not in valid_prompt_names:
+                raise ValueError(
+                    f"Prompt {prompt_name!r} is not a valid prompt name. "
+                    f"Valid prompt names are {valid_prompt_names}."
+                )
+            for block_name in template_override:
+                if block_name not in ["instructions", "context", "embeddings", "examples"]:
+                    raise ValueError(
+                        f"Block {block_name!r} is not a valid block name. "
+                        f"Valid block names are ['instructions', 'context', 'embeddings', 'examples']."
+                    )
+
+    def _validate_prompts(self):
+        for prompt_name in self.prompts:
+            if prompt_name not in self.param.prompts.default:
+                raise ValueError(
+                    f"Prompt {prompt_name!r} is not a valid prompt name. "
+                    f"Valid prompt names are {self.param.prompts.default.keys()}."
+                )
+            if "template" not in self.prompts[prompt_name]:
+                raise ValueError(
+                    f"Prompt {prompt_name!r} does not provide a prompt template."
+                )
+            extra_keys = set(self.prompts[prompt_name].keys()) - {"template", "model"}
+            if extra_keys:
+                raise ValueError(
+                    f"Prompt {prompt_name!r} has unexpected keys {extra_keys}. "
+                    "Valid keys are 'template' and 'model'."
+                )
 
     def _get_model(self, prompt_name: str, **context) -> type[BaseModel]:
         if prompt_name in self.prompts and "model" in self.prompts[prompt_name]:
@@ -65,6 +109,7 @@ class Actor(param.Parameterized):
                     f"please ensure overrides contains the {e} key"
                 ) from e
         else:
+            print(overrides, "OVERRIDES")
             prompt = render_template(
                 prompt_template,
                 overrides=overrides,

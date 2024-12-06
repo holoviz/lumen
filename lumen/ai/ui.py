@@ -93,9 +93,16 @@ class UI(Viewer):
         super().__init__(**params)
         log.setLevel(self.log_level)
 
-        agents = self.default_agents + self.agents
+        agents = self.agents
+        agent_types = {type(agent) for agent in agents}
+        for default_agent in self.default_agents:
+            if default_agent not in agent_types:
+                # only add default agents if they are not already set by the user
+                agents.append(default_agent)
+
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
+
         self._coordinator = self.coordinator(
             agents=agents,
             llm=self.llm
