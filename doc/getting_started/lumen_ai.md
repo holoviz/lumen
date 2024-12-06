@@ -232,6 +232,15 @@ Here's a summary of the dataset the user recently inquired about:
 {% endblock %}
 ```
 
+If you simply want to add a bit of text to the `instructions`, you can specify `{{ super() }}`:
+
+```python
+template_overrides = {
+    "main": {
+        "instructions": "{{ super() }}. Spice it up by speaking like a pirate."
+    },
+}
+
 :::{admonition} Tip
 :class: success
 
