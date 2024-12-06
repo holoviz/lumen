@@ -27,7 +27,7 @@ class Actor(param.Parameterized):
         'template' and optionally a 'model' and 'tools'.""")
 
     template_overrides = param.Dict(default={}, doc="""
-        Overrides the template's 'instructions', 'context', 'tool_context', or 'examples' jinja2 blocks.
+        Overrides the template's 'instructions', 'context', 'tools_context', or 'examples' jinja2 blocks.
         Is a nested dictionary with the prompt name (e.g. main) as the key
         and the block names as the inner keys with the new content as the
         values.""")
@@ -101,10 +101,10 @@ class Actor(param.Parameterized):
         prompt_label = f"\033[92m{self.name[:-5]}.prompts['{prompt_name}']['template']\033[0m"
         context["memory"] = self._memory
 
-        tool_context = ""
+        tools_context = ""
         for tool in self._tools[prompt_name]:
             with tool.param.update(llm=self.llm, memory=self.memory):
-                tool_context += await tool.respond(messages)
+                tools_context += await tool.respond(messages)
 
         if isinstance(prompt_template, str) and not Path(prompt_template).exists():
             # check if all the format_kwargs keys are contained prompt_template
@@ -125,7 +125,7 @@ class Actor(param.Parameterized):
             prompt = render_template(
                 prompt_template,
                 overrides=overrides,
-                tool_context=tool_context,
+                tools_context=tools_context,
                 **context
             )
         log_debug(f"Below is the rendered prompt from {prompt_label}:\n{prompt}")
