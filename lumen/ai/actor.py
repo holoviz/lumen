@@ -109,7 +109,6 @@ class Actor(param.Parameterized):
                     f"please ensure overrides contains the {e} key"
                 ) from e
         else:
-            print(overrides, "OVERRIDES")
             prompt = render_template(
                 prompt_template,
                 overrides=overrides,
