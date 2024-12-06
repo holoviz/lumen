@@ -324,7 +324,7 @@ class AnalystAgent(ChatAgent):
         relationships within the data, while avoiding general overviews or
         superficial descriptions.""")
 
-    requires = param.List(default=["source", "table", "pipeline", "sql"], readonly=True)
+    requires = param.List(default=["source", "pipeline"], readonly=True)
 
     prompts = param.Dict(
         default={
