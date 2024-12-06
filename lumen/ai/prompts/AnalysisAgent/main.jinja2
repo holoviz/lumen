@@ -11,9 +11,9 @@ Available analyses include:
 
 {% block context %}
 Here are the columns of the current data:
-{% if current_data is mapping %}
-{{ current_data.stats.keys() | join(', ') }}
+{% if data is mapping %}
+{{ data.stats.keys() | join(', ') }}
 {% else %}
-{{ current_data.columns | join(', ') }}
+{{ data.columns | join(', ') }}
 {% endif %}
 {% endblock %}

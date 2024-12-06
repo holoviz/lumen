@@ -3,6 +3,7 @@
 {% block instructions %}
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
 Try not to take the query too literally, but instead focus on the user's intent and the data transformations required.
+Use `SELECT * FROM table` if there is no specific column selection mentioned in the query.
 {% endblock %}
 
 {% block context %}

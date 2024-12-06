@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import re
 import time
 
 from functools import wraps
@@ -60,6 +61,26 @@ def render_template(template_path: Path, overrides: dict | None = None, relative
 
     template = env.get_template(template_name)
     return template.render(**context)
+
+
+def warn_on_unused_variables(string, kwargs, prompt_label):
+    used_keys = set()
+
+    for key in kwargs:
+        pattern = r'\b' + re.escape(key) + r'\b'
+        if re.search(pattern, string):
+            used_keys.add(key)
+
+    unused_keys = set(kwargs.keys()) - used_keys
+    if unused_keys:
+        # TODO: reword this concisely... what do you call those variables for formatting?
+        log.warning(
+            f"The prompt template, {prompt_label}, is missing keys, "
+            f"which could mean the LLM is lacking the context provided "
+            f"from these variables: {unused_keys}. If this is unintended, "
+            f"please create a template that contains those keys."
+        )
+
 
 def retry_llm_output(retries=3, sleep=1):
     """
@@ -311,14 +332,14 @@ def report_error(exc: Exception, step: ChatStep):
     step.status = "failed"
 
 
-async def gather_table_sources(available_sources: list[Source]) -> tuple[dict[str, Source], str]:
+async def gather_table_sources(sources: list[Source]) -> tuple[dict[str, Source], str]:
     """
     Get a dictionary of tables to their respective sources
     and a markdown string of the tables and their schemas.
     """
     tables_to_source = {}
     tables_schema_str = "\nHere are the tables\n"
-    for source in available_sources:
+    for source in sources:
         for table in source.get_tables():
             tables_to_source[table] = source
             if isinstance(source, DuckDBSource) and source.ephemeral:
