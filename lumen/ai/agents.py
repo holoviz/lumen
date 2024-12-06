@@ -370,8 +370,7 @@ class TableListAgent(LumenBaseAgent):
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
-        # if len(tables) <= 5:
-        #     self._memory["closest_tables"] = tables[:5]
+        self._memory["closest_tables"] = tables[:5]
         return table_list
 
 
