@@ -42,12 +42,6 @@ class Actor(param.Parameterized):
                     f"Prompt {prompt_name!r} is not a valid prompt name. "
                     f"Valid prompt names are {valid_prompt_names}."
                 )
-            for block_name in template_override:
-                if block_name not in ["instructions", "context", "embeddings", "examples"]:
-                    raise ValueError(
-                        f"Block {block_name!r} is not a valid block name. "
-                        f"Valid block names are ['instructions', 'context', 'embeddings', 'examples']."
-                    )
 
     def _validate_prompts(self):
         for prompt_name in self.prompts:
