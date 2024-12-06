@@ -165,7 +165,7 @@ class AIHandler(CodeHandler):
         """Build source code with configuration"""
         context = {
             "llm_provider": LLM_PROVIDERS[config['provider']],
-            "tables": ([repr(t) for t in tables]),
+            "tables": [repr(t) for t in tables],
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
             "agents": config.get("agents"),
