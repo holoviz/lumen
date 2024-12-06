@@ -146,14 +146,224 @@ lumen-ai serve --agents TableListAgent chatagent Sql
 Within the CLI, the names of the agents are case insensitive and the suffix `agent` can be dropped, e.g. `ChatAgent` can be specified as `chatagent`, `Chatagent`, and `Chat`.
 :::
 
-### Prompts
-
-Each `Agent` is defined by a system prompt with modular components:
+### Template Prompts
+Every `Actor` (`Agent` and `Coordinator`) operates based on a system prompt structured with modular components:
 
 1. `instructions`
 2. `context`
 3. `embeddings`
 4. `examples`
+
+The base system prompt template follows this format:
+
+```jinja2
+{% block instructions %}
+{% endblock %}
+
+{% block context %}
+{% endblock %}
+
+{% block embeddings %}
+{% endblock %}
+
+{% block examples %}
+{% endblock %}
+```
+
+For example, the `ChatAgent`'s prompt template uses `instructions` and `context`:
+
+```jinja2
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Act as a helpful assistant for high-level data exploration, focusing on available datasets. If data is available, explain the purpose of each column and suggest ways to get started if necessary. Maintain factual accuracy, avoid speculation, and refrain from writing or suggesting code.
+{% endblock %}
+
+{% block context %}
+{% if tables|length > 1 %}
+Available tables:
+{{ closest_tables }}
+{% elif schema %}
+{{ table }} with schema: {{ schema }}
+{% endif %}
+{% if 'data' in memory %}
+Here's a summary of the dataset the user recently inquired about:
+\```
+{{ memory['data'] }}
+\```
+{% endif %}
+{% endblock %}
+```
+
+If you'd like to override the `instructions` you can specify `template_overrides`:
+
+```python
+template_overrides = {
+    "main": {
+        "instructions": "Act like the user's meteorologist, and explain jargon in the format of a weather report."
+    },
+}
+agents = [lmai.agents.ChatAgent(template_overrides=template_overrides)]
+ui = lmai.ExplorerUI(agents=agents)
+```
+
+This will result in the following prompt template:
+
+```jinja2
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Act like the user's meteorologist, and explain jargon in the format of a weather report.
+{% endblock %}
+
+{% block context %}
+{% if tables|length > 1 %}
+Available tables:
+{{ closest_tables }}
+{% elif schema %}
+{{ table }} with schema: {{ schema }}
+{% endif %}
+{% if 'data' in memory %}
+Here's a summary of the dataset the user recently inquired about:
+\```
+{{ memory['data'] }}
+\```
+{% endif %}
+{% endblock %}
+```
+
+:::{admonition} Tip
+:class: success
+
+To debug prompts, you may specify `log_level="DEBUG"` in the `ExplorerUI` class to see the rendered prompts.
+:::
+
+You can also provide `examples`:
+
+```python
+template_overrides = {
+    "main": {
+        "instructions": "Speak like a pirate.",
+        "examples": """
+            Example:
+            '''
+            Yarr, the wind be blowin' from the north at 10 knots.
+            '''
+        """
+    },
+}
+agents = [lmai.agents.ChatAgent(template_overrides=template_overrides)]
+ui = lmai.ExplorerUI(agents=agents)
+```
+
+```jinja2
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Act like the user's meteorologist, and explain jargon in the format of a weather report.
+{% endblock %}
+
+{% block context %}
+{% if tables|length > 1 %}
+Available tables:
+{{ closest_tables }}
+{% elif schema %}
+{{ table }} with schema: {{ schema }}
+{% endif %}
+{% if 'data' in memory %}
+Here's a summary of the dataset the user recently inquired about:
+\```
+{{ memory['data'] }}
+\```
+{% endif %}
+{% endblock %}
+
+{% block examples %}
+Example:
+'''
+Yarr, the wind be blowin' from the north at 10 knots.
+'''
+{% endblock %}
+```
+
+Alternatively, if you'd like to override the entire prompt template, you can specify the `template` key in `prompts` as a string or a valid path to a template:
+
+```python
+prompts = {
+    "main": {
+        "template": """
+            Act like the user's meteorologist, and explain jargon in the format of a weather report.
+
+            Available tables:
+            {closest_tables}
+
+            {table} with schema: {schema}
+        """
+    }
+}
+agents = [lmai.agents.ChatAgent(prompts=prompts)]
+ui = lmai.ExplorerUI(agents=agents)
+```
+
+:::{admonition} Warning
+:class: warning
+
+If you override the prompt template, ensure that the template includes all the necessary parameters. If any parameters are missing, the LLM may lack context and provide irrelevant responses.
+:::
+
+For a listing of prompts, please see the Lumen codebase [here](https://github.com/holoviz/lumen/tree/main/lumen/ai/prompts).
+
+### Model Prompts
+
+Some agents employ structured Pydantic models as their response format so that the code easily use the responses. These models can also be overridden by specifying the `model` key in `prompts`.
+
+For example, the `SQLAgent`'s `main` default model is:
+
+```python
+class Sql(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="""
+        You are a world-class SQL expert, and your fame is on the line so don't mess up.
+        Then, think step by step on how you might approach this problem in an optimal way.
+        If it's simple, just provide one sentence.
+        """
+    )
+
+    expr_slug: str = Field(
+        description="""
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
+        e.g. top_5_athletes_gold_medals
+        """
+    )
+
+    query: str = Field(description="Expertly optimized, valid SQL query to be executed; do NOT add extraneous comments.")
+```
+
+To override the `chain_of_thought` field, you can subclass the `Sql` model:
+
+```python
+from lumen.ai.models import Sql
+
+class CustomSql(Sql):
+    chain_of_thought: str = Field(
+        description="Think through the query like an expert DuckDB user."
+    )
+```
+
+Then, you can specify the `model` key in `prompts`:
+
+```python
+prompts = {
+    "main": {
+        "model": CustomSql
+    }
+}
+agents = [lmai.agents.SQLAgent(prompts=prompts)]
+ui = lmai.ExplorerUI(agents=agents)
+```
+
+Note, the field names in the model must match the original model's field names, or else unexpected fields will not be used.
 
 ## Advanced Customization
 
@@ -182,9 +392,9 @@ from lumen.views import hvPlotView, Table
 
 class WindSpeedDirection(Transform):
 
-    u_component = param.String(doc="Column name of the zonal component")
+    u_component = param.String(default="u", doc="Column name of the zonal component")
 
-    v_component = param.String(doc="Column name of the meridional component")
+    v_component = param.String(default="v", doc="Column name of the meridional component")
 
     def apply(self, df):
         # Calculate wind speed
