@@ -73,6 +73,8 @@ class SourceControls(Viewer):
 
     add = param.Event(doc="Use table(s)")
 
+    cancel = param.Event(doc="Cancel")
+
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
@@ -126,9 +128,18 @@ class SourceControls(Viewer):
             visible=False,
             button_type="success",
         )
+
+        self._cancel_button = Button.from_param(
+            self.param.cancel,
+            name="Cancel",
+            icon="circle-x",
+            visible=True,
+        )
+
         self.menu = Column(
             self._input_tabs if self.select_existing else self._input_tabs[0],
             self._add_button,
+            self._cancel_button,
             self.tables_tabs,
             sizing_mode="stretch_width",
         )

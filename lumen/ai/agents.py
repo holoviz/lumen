@@ -263,6 +263,9 @@ class SourceAgent(Agent):
         self.interface.send(source_controls, respond=False, user="SourceAgent")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
+            if source_controls._cancel_button.clicks > 0:
+                self.interface.undo()
+                return None
         return source_controls
 
 
