@@ -324,7 +324,7 @@ class AnalystAgent(ChatAgent):
         relationships within the data, while avoiding general overviews or
         superficial descriptions.""")
 
-    requires = param.List(default=["source", "table", "pipeline", "sql"], readonly=True)
+    requires = param.List(default=["source", "pipeline"], readonly=True)
 
     prompts = param.Dict(
         default={
@@ -447,7 +447,7 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
+    provides = param.List(default=["pipeline"], readonly=True)
 
     requires = param.List(default=["source"], readonly=True)
 
