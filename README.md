@@ -23,8 +23,8 @@ Together these pieces make it possible to perform complex data analysis using na
 ### Lumen AI
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/holoviz/lumen/ai-docs/doc/_static/ai-diagram-dark.png">
-  <img src="https://raw.githubusercontent.com/holoviz/lumen/ai-docs/doc/_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/ai-diagram-dark.png">
+  <img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
 </picture>
 
 Lumen AI provides a framework for chatting with data. It interfaces with the Lumen data sources providing the ability to connect with your database or data lake and unlock insights without writing code.
