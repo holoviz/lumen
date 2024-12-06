@@ -38,15 +38,22 @@ class TableLookup(Tool):
         if 'vector_store' not in params:
             params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
-        for src in self._memory['sources']:
-            for table in src.get_tables():
-                self.vector_store.add([{"text": table}])
+
+        def update_vector_store_table_list(_, __, sources):
+            for source in sources:
+                for table in source.get_tables():
+                    source_table = f'{source.name}//{table}'
+                    if not self.vector_store.query(source_table, threshold=1):
+                        self.vector_store.add([{"text": source_table}])
+        self._memory.on_change('sources', update_vector_store_table_list)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         results = self.vector_store.query(messages[-1]["content"], top_k=self.n)
         self._memory['closest_tables'] = tables = [
-            result['text'] for result in results if result["similarity"] > self.min_similarity
+            result['text'].split("//")[1] for result in results if result["similarity"] > self.min_similarity
         ]
-        return "The most relevant tables give the user query are: {}" + "\n".join(
-            [f"- `{table}`" for table in tables]
+        if not tables:
+            return "No relevant tables found."
+        return "The most relevant tables give the user query are:\n" + "\n".join(
+            f"- `{table}`" for table in tables
         )

@@ -191,7 +191,8 @@ class SourceAgent(Agent):
         The SourceAgent allows a user to upload new datasets.
 
         Only use this if the user is requesting to add a dataset or you think
-        additional information is required to solve the user query.""")
+        additional information is required to solve the user query.
+        """)
 
     requires = param.List(default=[], readonly=True)
 
@@ -220,12 +221,12 @@ class ChatAgent(Agent):
 
     purpose = param.String(default="""
         Chats and provides info about high level data related topics,
-        e.g. what datasets are available, the columns of the data or
-        statistics about the data, and continuing the conversation.
+        e.g. the columns of the data or statistics about the data,
+        and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
         It can talk about the data, if available.
-        Use this instead of TableListAgent if there is only one table available.
+
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
         """)
 
@@ -239,6 +240,15 @@ class ChatAgent(Agent):
     )
 
     requires = param.List(default=["source"], readonly=True)
+
+    async def _render_main_prompt(self, messages: list[Message], **context):
+        table = self._memory.get("table")
+        if table:
+            schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
+            context["table"] = table
+            context["schema"] = schema
+        system_prompt = self._render_prompt("main", **context)
+        return system_prompt
 
 
 class AnalystAgent(ChatAgent):
@@ -292,7 +302,8 @@ class TableListAgent(LumenBaseAgent):
 
     purpose = param.String(default="""
         Renders a list of all availables tables to the user.
-        Not useful for gathering information about the tables.""")
+        Not useful for gathering information about the tables.
+        """)
 
     prompts = param.Dict(
         default={
@@ -530,6 +541,7 @@ class SQLAgent(LumenBaseAgent):
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
             join_prompt = await self._render_prompt(
                 "require_joins",
+                messages,
                 schema=yaml.dump(schema),
                 table=table
             )
