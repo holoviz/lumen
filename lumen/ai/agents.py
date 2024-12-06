@@ -140,6 +140,16 @@ class Agent(Viewer, Actor):
         self.interface.pop(-1)
         return tables
 
+    async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
+        message = None
+        async for output_chunk in self.llm.stream(
+            messages, system=system_prompt, field="output"
+        ):
+            message = self.interface.stream(
+                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+            )
+        return message
+
     # Public API
 
     @classmethod
@@ -156,7 +166,7 @@ class Agent(Viewer, Actor):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Provides a response to the user query.
@@ -175,14 +185,7 @@ class Agent(Viewer, Actor):
             the step currently being processed.
         """
         system_prompt = await self._render_prompt("main", messages)
-        message = None
-        async for output_chunk in self.llm.stream(
-            messages, system=system_prompt, field="output"
-        ):
-            message = self.interface.stream(
-                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
-            )
-        return message
+        return await self._stream(messages, system_prompt)
 
 
 class SourceAgent(Agent):
@@ -207,7 +210,7 @@ class SourceAgent(Agent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         source_controls = SourceControls(
             multiple=True, replace_controls=True, select_existing=False, memory=self.memory
@@ -244,20 +247,26 @@ class ChatAgent(Agent):
 
     requires = param.List(default=["source"], readonly=True)
 
-    async def _render_main_prompt(self, messages: list[Message], **context):
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        context = {}
         table = self._memory.get("table")
         if table:
             schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
         elif "closest_tables" in self._memory:
-            context["closest_tables"] = self._memory["closest_tables"]
-            context["schemas"] = asyncio.gather(
+            schemas = await asyncio.gather(
                 *[get_schema(self._memory["source"], table, include_count=True, limit=1000)
-                  for table in context["closest_tables"]]
+                  for table in self._memory["closest_tables"]]
             )
-        system_prompt = self._render_prompt("main", **context)
-        return system_prompt
+            context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
+        system_prompt = await self._render_prompt("main", messages, **context)
+        return await self._stream(messages, system_prompt)
 
 
 class AnalystAgent(ChatAgent):
@@ -342,7 +351,7 @@ class TableListAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         tables = []
         for source in self._memory["sources"]:
@@ -361,6 +370,9 @@ class TableListAgent(LumenBaseAgent):
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
+
+        if len(tables) <= 5:
+            self._memory["closest_tables"] = tables[:5]
         return table_list
 
 
@@ -615,7 +627,7 @@ class SQLAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Steps:
@@ -699,7 +711,7 @@ class BaseViewAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Generates a visualization based on user messages and the current data pipeline.
@@ -847,7 +859,7 @@ class AnalysisAgent(LumenBaseAgent):
         messages: list[Message],
         render_output: bool = False,
         step_title: str | None = None,
-        agents: list[Agent] | None = None
+        agents: list[Agent] | None = None,
     ) -> Any:
         pipeline = self._memory['pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}

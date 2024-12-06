@@ -55,9 +55,9 @@ class TableLookup(Tool):
 
         message = "The most relevant tables are:\n"
         if not closest_tables:
-            self._memory["closest_tables"] = closest_tables = [
+            tables = [
                 result["text"].split("//")[1] for result in
                 self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
             ]
             message = "No relevant tables found, but here are some other tables:\n"
-        return message + "\n".join(f"- `{table}`" for table in closest_tables)
+        return message + "\n".join(f"- `{table}`" for table in tables)
