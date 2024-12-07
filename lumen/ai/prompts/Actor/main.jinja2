@@ -4,7 +4,10 @@
 {% block context %}
 {% endblock %}
 
-{% block embeddings %}
+{% block tools %}
+{% if tools is defined %}
+{{ tools }}
+{% endif %}
 {% endblock %}
 
 {% block examples %}

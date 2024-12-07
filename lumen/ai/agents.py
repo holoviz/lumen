@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import re
 
@@ -28,14 +27,14 @@ from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import VegaLiteView, View, hvPlotUIView
 from .actor import Actor
-from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
+from .config import PROMPTS_DIR
 from .controls import SourceControls
-from .embeddings import Embeddings
 from .llm import Llm, Message
-from .memory import _Memory, memory
+from .memory import _Memory
 from .models import (
-    FuzzyTable, JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
+    JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
 )
+from .tools import TableLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
@@ -54,19 +53,11 @@ class Agent(Viewer, Actor):
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
 
-    embeddings = param.ClassSelector(class_=Embeddings, doc="""
-        Embeddings object which is queried to provide additional context
-        before asking the LLM to respond.""")
-
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface to report progress to.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
-
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
 
     steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
@@ -124,49 +115,8 @@ class Agent(Viewer, Actor):
         """
         return pn.Column() if not self.steps_layout else self.steps_layout
 
-    @property
-    def _memory(self):
-        return memory if self.memory is None else self.memory
-
     def __panel__(self):
         return self.interface
-
-    async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
-        # this does not work well, but for now keeping this,
-        # and will be removed once embeddings are ready
-        # TODO: move this out somewhere / remove once embeddings are ready...
-        system = (
-            f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{self._memory.get('table', 'N/A')}`. "
-        )
-        tables = tuple(table.replace('"', "") for table in tables)
-
-        fuzzy_table = (await self.llm.invoke(
-            messages,
-            system=system,
-            response_model=FuzzyTable,
-            allow_partial=False
-        ))
-        if not fuzzy_table.required:
-            return [self._memory.get("table") or tables[0]]
-
-        # make case insensitive, but keep original case to transform back
-        if not fuzzy_table.keywords:
-            return tables[:n]
-
-        table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
-        tables_lower = {table.lower(): table for table in tables}
-
-        # get closest matches
-        closest_tables = set()
-        for keyword in table_keywords:
-            closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
-        closest_tables = [tables_lower[table] for table in closest_tables]
-        if len(closest_tables) == 0:
-            # if no tables are found, ask the user to select ones and load it
-            tables = await self._select_table(tables)
-        self._memory["closest_tables"] = tables
-        return tuple(tables)
 
     async def _select_table(self, tables):
         input_widget = pn.widgets.AutocompleteInput(
@@ -190,6 +140,16 @@ class Agent(Viewer, Actor):
         self.interface.pop(-1)
         return tables
 
+    async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
+        message = None
+        async for output_chunk in self.llm.stream(
+            messages, system=system_prompt, field="output"
+        ):
+            message = self.interface.stream(
+                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+            )
+        return message
+
     # Public API
 
     @classmethod
@@ -206,7 +166,7 @@ class Agent(Viewer, Actor):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Provides a response to the user query.
@@ -224,24 +184,19 @@ class Agent(Viewer, Actor):
             If the Agent response is part of a longer query this describes
             the step currently being processed.
         """
-        system_prompt = await self._render_main_prompt(messages)
-        message = None
-        async for output_chunk in self.llm.stream(
-            messages, system=system_prompt, field="output"
-        ):
-            message = self.interface.stream(
-                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
-            )
-        return message
+        system_prompt = await self._render_prompt("main", messages)
+        return await self._stream(messages, system_prompt)
 
 
 class SourceAgent(Agent):
 
     purpose = param.String(default="""
-        The SourceAgent allows a user to upload new datasets.
+        The SourceAgent allows a user to upload unavailable, new datasets.
 
-        Only use this if the user is requesting to add a dataset or you think
-        additional information is required to solve the user query.""")
+        Only use this if the user is requesting to add a completely new table
+        or you think additional information is required to solve the user query.
+        Not useful for answering what's available or loading existing datasets.
+        """)
 
     requires = param.List(default=[], readonly=True)
 
@@ -255,7 +210,7 @@ class SourceAgent(Agent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         source_controls = SourceControls(
             multiple=True, replace_controls=True, select_existing=False, memory=self.memory
@@ -270,48 +225,48 @@ class ChatAgent(Agent):
 
     purpose = param.String(default="""
         Chats and provides info about high level data related topics,
-        e.g. what datasets are available, the columns of the data or
-        statistics about the data, and continuing the conversation.
+        e.g. the columns of the data or statistics about the data,
+        and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
         It can talk about the data, if available.
-        Use this instead of TableListAgent if there is only one table available.
+
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
+        Can be used concurrently with TableListAgent to describe available tables
+        and potential ideas for analysis.
         """)
 
     prompts = param.Dict(
         default={
-            "main": {"template": PROMPTS_DIR / "ChatAgent" / "main.jinja2"},
+            "main": {
+                "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+                "tools": [TableLookup]
+            },
         }
     )
 
     requires = param.List(default=["source"], readonly=True)
 
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        source = self._memory.get("source")
-        if not source:
-            raise ValueError("No source found in memory.")
-
-        tables = source.get_tables()
-        context = {"tables": tables}
-        if len(tables) > 1:
-            if (
-                len(tables) > FUZZY_TABLE_LENGTH
-                and "closest_tables" not in self._memory
-            ):
-                closest_tables = await self._get_closest_tables(messages, tables, n=5)
-            else:
-                closest_tables = self._memory.get("closest_tables", tables)
-            context["closest_tables"] = closest_tables
-        else:
-            self._memory["table"] = table = self._memory.get(
-                "table", tables[0]
-            )
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        context = {"tools": await self._use_tools("main", messages)}
+        table = self._memory.get("table")
+        if table:
             schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
-        system_prompt = self._render_prompt("main", **context)
-        return system_prompt
+        elif "closest_tables" in self._memory:
+            schemas = [
+                await get_schema(self._memory["source"], table, include_count=True, limit=1000)
+                for table in self._memory["closest_tables"]
+            ]
+            context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
+        system_prompt = await self._render_prompt("main", messages, **context)
+        return await self._stream(messages, system_prompt)
 
 
 class AnalystAgent(ChatAgent):
@@ -365,7 +320,9 @@ class TableListAgent(LumenBaseAgent):
 
     purpose = param.String(default="""
         Renders a list of all availables tables to the user.
-        Not useful for gathering information about the tables.""")
+        Not useful for gathering information about the tables.
+        Use with ChatAgent to provide info about the tables.
+        """)
 
     prompts = param.Dict(
         default={
@@ -394,7 +351,7 @@ class TableListAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         tables = []
         for source in self._memory["sources"]:
@@ -413,6 +370,7 @@ class TableListAgent(LumenBaseAgent):
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
+        self._memory["closest_tables"] = tables[:5]
         return table_list
 
 
@@ -434,7 +392,8 @@ class SQLAgent(LumenBaseAgent):
             },
             "select_table": {
                 "model": make_table_model,
-                "template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2"
+                "template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
+                "tools": [TableLookup]
             },
             "require_joins": {
                 "model": JoinRequired,
@@ -468,12 +427,11 @@ class SQLAgent(LumenBaseAgent):
         else:
             with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
                 if len(tables) > 1:
-                    closest_tables = self._memory.pop("closest_tables", [])
-                    if closest_tables:
-                        tables = closest_tables
-                    elif len(tables) > FUZZY_TABLE_LENGTH:
-                        tables = await self._get_closest_tables(messages, tables)
-                    system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
+                    system_prompt = await self._render_prompt(
+                        "select_table", messages, tables_schema_str=tables_schema_str
+                    )
+                    if "closest_tables" in self._memory:
+                        tables = self._memory["closest_tables"]
                     table_model = self._get_model("select_table", tables=tables)
                     result = await self.llm.invoke(
                         messages,
@@ -601,8 +559,9 @@ class SQLAgent(LumenBaseAgent):
         table: str
     ):
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
-            join_prompt = self._render_prompt(
+            join_prompt = await self._render_prompt(
                 "require_joins",
+                messages,
                 schema=yaml.dump(schema),
                 table=table
             )
@@ -617,7 +576,7 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if requires_joins else 'No join required'
         return requires_joins
 
-    async def find_join_tables(self, messages: list):
+    async def find_join_tables(self, messages: list[Message]):
         multi_source = len(self._memory['sources']) > 1
         if multi_source:
             tables = [
@@ -627,7 +586,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = self._memory['source'].get_tables()
 
-        find_joins_prompt = self._render_prompt("find_joins", tables=tables)
+        find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables)
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
@@ -666,7 +625,7 @@ class SQLAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Steps:
@@ -714,7 +673,8 @@ class SQLAgent(LumenBaseAgent):
             }
 
         dialect = source.dialect
-        system_prompt = await self._render_main_prompt(
+        system_prompt = await self._render_prompt(
+            "main",
             messages,
             tables_sql_schemas=table_schemas,
             dialect=dialect,
@@ -749,7 +709,7 @@ class BaseViewAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Generates a visualization based on user messages and the current data pipeline.
@@ -762,9 +722,10 @@ class BaseViewAgent(LumenBaseAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        system_prompt = self._render_prompt(
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.purpose else self.view_type.__name__
+        system_prompt = await self._render_prompt(
             "main",
+            messages,
             schema=yaml.dump(schema),
             table=pipeline.table,
             view=self._memory.get('view'),
@@ -874,6 +835,8 @@ class VegaLiteAgent(BaseViewAgent):
 
 class AnalysisAgent(LumenBaseAgent):
 
+    analyses = param.List([])
+
     purpose = param.String(default="""
         Perform custom analyses on the data.""")
 
@@ -883,11 +846,9 @@ class AnalysisAgent(LumenBaseAgent):
         }
     )
 
-    analyses = param.List([])
+    provides = param.List(default=['view'])
 
     requires = param.List(default=['pipeline'])
-
-    provides = param.List(default=['view'])
 
     _output_type = AnalysisOutput
 
@@ -896,7 +857,7 @@ class AnalysisAgent(LumenBaseAgent):
         messages: list[Message],
         render_output: bool = False,
         step_title: str | None = None,
-        agents: list[Agent] | None = None
+        agents: list[Agent] | None = None,
     ) -> Any:
         pipeline = self._memory['pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
@@ -917,8 +878,9 @@ class AnalysisAgent(LumenBaseAgent):
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
-                system_prompt = self._render_prompt(
+                system_prompt = await self._render_prompt(
                     "main",
+                    messages,
                     analyses=analyses,
                     data=self._memory.get("data"),
                 )

@@ -23,7 +23,6 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
-from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
 from .utils import get_schema, retry_llm_output
 
@@ -66,15 +65,8 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=Llama(), doc="""
-        LLM used by the assistant to plan the execution.""")
-
     logs_filename = param.String(default=None, doc="""
         Log file to write to.""")
-
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -187,10 +179,6 @@ class Coordinator(Viewer, Actor):
         elif "sources" not in self._memory:
             self._memory["sources"] = []
 
-    @property
-    def _memory(self):
-        return memory if self.memory is None else self.memory
-
     def __panel__(self):
         return self.interface
 
@@ -293,7 +281,7 @@ class Coordinator(Viewer, Actor):
             num_objects=len(self.interface.objects),
         )
 
-    async def _invalidate_memory(self, messages):
+    async def _invalidate_memory(self, messages: list[Message]):
         table = self._memory.get("table")
         if not table:
             return
@@ -314,8 +302,8 @@ class Coordinator(Viewer, Actor):
 
         sql = self._memory.get("sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = self._render_prompt(
-            "check_validity", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
+        system = await self._render_prompt(
+            "check_validity", messages, table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
         )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             output = await self.llm.invoke(
@@ -496,8 +484,8 @@ class DependencyResolver(Coordinator):
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_model(agent=agent_names[0], chain_of_thought='')
-        system = await self._render_main_prompt(
-            messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
+        system = await self._render_prompt(
+            "main", messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
         )
         return await self._fill_model(messages, system, agent_model)
 
@@ -612,7 +600,8 @@ class Planner(Coordinator):
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
-            system = await self._render_main_prompt(
+            system = await self._render_prompt(
+                "main",
                 messages,
                 agents=list(agents.values()),
                 unmet_dependencies=unmet_dependencies,

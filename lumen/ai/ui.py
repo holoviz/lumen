@@ -103,6 +103,7 @@ class UI(Viewer):
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
 
+        self._resolve_data(data)
         self._coordinator = self.coordinator(
             agents=agents,
             llm=self.llm
@@ -129,7 +130,6 @@ class UI(Viewer):
             sizing_mode='stretch_width',
             visible=False
         )
-        self._resolve_data(data)
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -168,7 +168,7 @@ class UI(Viewer):
                     table = f"read_json_auto('{src}')"
                 else:
                     raise ValueError(
-                        "Could not determine how to load {} file."
+                        f"Could not determine how to load {src} file."
                     )
                 tables[src] = table
         if tables or mirrors:
@@ -360,8 +360,8 @@ class ExplorerUI(UI):
                 source_tables = source.get_tables()
                 for t in source_tables:
                     if deduplicate:
-                        t = f'{source.name} : {t}'
-                    if t.rsplit(' : ', 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
+                        t = f'{source.name}//{t}'
+                    if t.rsplit('//', 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
                         selected.append(t)
                     new[t] = source
             source_map.clear()
