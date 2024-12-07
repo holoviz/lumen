@@ -427,9 +427,8 @@ class SQLAgent(LumenBaseAgent):
         else:
             with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
                 if len(tables) > 1:
-                    tools_context = await self._use_tools("select_table", messages)
                     system_prompt = await self._render_prompt(
-                        "select_table", messages, tables_schema_str=tables_schema_str, tools=tools_context
+                        "select_table", messages, tables_schema_str=tables_schema_str
                     )
                     if "closest_tables" in self._memory:
                         tables = self._memory["closest_tables"]

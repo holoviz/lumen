@@ -16,6 +16,12 @@ class Tool(Actor):
     context or respond to a question.
     """
 
+    provides = param.List(default=[], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
+
+    requires = param.List(default=[], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
 
 class TableLookup(Tool):
     """
@@ -30,6 +36,12 @@ class TableLookup(Tool):
     n = param.Integer(default=3, bounds=(0, None), doc="""
         The number of table results to return.""")
 
+    requires = param.List(default=["sources"], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
+    provides = param.List(default=["closest_tables"], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
+
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
         before responding.""")
@@ -38,14 +50,14 @@ class TableLookup(Tool):
         if 'vector_store' not in params:
             params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
+        self._memory.on_change('sources', self._update_vector_store_table_list)
 
-        def update_vector_store_table_list(_, __, sources):
-            for source in sources:
-                for table in source.get_tables():
-                    source_table = f'{source.name}//{table}'
-                    if not self.vector_store.query(source_table, threshold=1):
-                        self.vector_store.add([{"text": source_table}])
-        self._memory.on_change('sources', update_vector_store_table_list)
+    def _update_vector_store_table_list(self, _, __, sources):
+        for source in sources:
+            for table in source.get_tables():
+                source_table = f'{source.name}//{table}'
+                if not self.vector_store.query(source_table, threshold=1):
+                    self.vector_store.add([{"text": source_table}])
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["closest_tables"] = closest_tables = [
