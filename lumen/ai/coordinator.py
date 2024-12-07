@@ -715,7 +715,7 @@ class Planner(Coordinator):
                 else:
                     planned = True
                 if attempts > 5:
-                    raise ValueError(f"Could not find a suitable plan for {messages[-1]["content"]!r}")
+                    raise ValueError(f"Could not find a suitable plan for {messages[-1]['content']!r}")
             self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
