@@ -684,6 +684,7 @@ class Planner(Coordinator):
         unmet_dependencies = set()
         schemas = {}
         execution_graph = []
+        attempts = 0
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
                 try:
@@ -699,8 +700,11 @@ class Planner(Coordinator):
                 execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
+                    attempts += 1
                 else:
                     planned = True
+                if attempts > 5:
+                    raise ValueError(f"Could not find a suitable plan for {messages[-1]['content']!r}")
             self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
