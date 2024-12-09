@@ -130,9 +130,9 @@ class FunctionTool(Tool):
             )
         arguments = dict(kwargs, **{k: self._memory[k] for k in self.requires})
         if param.parameterized.iscoroutinefunction(self.function):
-            result = await self.function(**kwargs)
+            result = await self.function(**arguments)
         else:
-            result = self.function(**kwargs)
+            result = self.function(**arguments)
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result
