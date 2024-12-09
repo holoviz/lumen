@@ -398,7 +398,7 @@ class ExplorerUI(UI):
                 for table in table_select.value:
                     source = source_map[table]
                     if len(memory['sources']) > 1:
-                        _, table = table.rsplit(' : ', 1)
+                        _, table = table.rsplit('//', 1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )
