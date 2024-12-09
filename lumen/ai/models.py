@@ -78,10 +78,10 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
 
 
-def make_plan_models(agent_names: list[str], tables: list[str]):
+def make_plan_models(experts_or_tools: list[str], tables: list[str]):
     step = create_model(
         "Step",
-        expert=(Literal[agent_names], FieldInfo(description="The name of the expert to assign a task to.")),
+        expert_or_tool=(Literal[tuple(experts_or_tools)], FieldInfo(description="The name of the expert or tool to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
         render_output=(bool, FieldInfo(description="Whether the output of the expert should be rendered. If the user wants to see the table, and the expert is SQL, then this should be `True`.")),
@@ -132,7 +132,7 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
                 description="Describe what this agent should do."
             ),
         ),
-        agent=(
+        agent_or_tool=(
             Literal[tuple(agent_names)],
             FieldInfo(default=..., description=description)
         ),

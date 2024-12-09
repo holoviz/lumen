@@ -39,7 +39,7 @@ class Actor(param.Parameterized):
         self._tools = {}
         for prompt_name in self.prompts:
             self._tools[prompt_name] = [
-                tool if isinstance(tool, Actor) else tool()
+                tool if isinstance(tool, Actor) else tool(llm=self.llm)
                 for tool in self._lookup_prompt_key(prompt_name, "tools")
             ]
 
@@ -99,7 +99,7 @@ class Actor(param.Parameterized):
         tools_context = ""
         for tool in self._tools[prompt_name]:
             if all(requirement in self._memory for requirement in tool.requires):
-                with tool.param.update(llm=self.llm, memory=self.memory):
+                with tool.param.update(memory=self.memory):
                     tools_context += await tool.respond(messages)
         return tools_context
 
@@ -107,10 +107,10 @@ class Actor(param.Parameterized):
         prompt_template = self._lookup_prompt_key(prompt_name, "template")
         overrides = self.template_overrides.get(prompt_name, {})
         context["memory"] = self._memory
-        if "tools" not in context:
-            context["tools"] = await self._use_tools(prompt_name, messages)
+        if "tool_context" not in context:
+            context["tool_context"] = await self._use_tools(prompt_name, messages)
 
-        prompt_label = f"\033[92m{self.name[:-5]}.prompts['{prompt_name}']['template']\033[0m"
+        prompt_label = f"\033[92m{self.name}.prompts['{prompt_name}']['template']\033[0m"
         if isinstance(prompt_template, str) and not Path(prompt_template).exists():
             # check if all the format_kwargs keys are contained in prompt_template
             # e.g. the key, "memory", is not used in "string template".format(memory=memory)
@@ -140,3 +140,25 @@ class Actor(param.Parameterized):
         """
         Responds to the provided messages.
         """
+
+
+class ContextProvider(param.Parameterized):
+    """
+    ContextProvider describes the interface an Actor has to define
+    to be invokable by other Actors, including its purpose so other
+    actors can decide when to use it and the context values it
+    requires and provides.
+    """
+
+    provides = param.List(default=[], readonly=True, doc="""
+        List of context values it provides to current working memory.""")
+
+    purpose = param.String(default="", doc="""
+        Describes the purpose of this actor for consumption of
+        other actors that might invoke it.""")
+
+    requires = param.List(default=[], readonly=True, doc="""
+        List of context values it requires to be in memory.""")
+
+    async def requirements(self, messages: list[Message]) -> list[str]:
+        return self.requires
