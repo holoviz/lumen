@@ -374,7 +374,6 @@ class Coordinator(Viewer, Actor):
         title = node.title.capitalize()
         render_output = node.render_output and self.render_output
         agent_name = type(subagent).name.replace('Agent', '')
-        self._memory["context"] = ""
 
         # attach the new steps to the existing steps--used when there is intermediate Lumen output
         steps_layout = None
@@ -440,6 +439,7 @@ class Coordinator(Viewer, Actor):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        self._memory["context"] = ""
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, Llama):
                 with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
