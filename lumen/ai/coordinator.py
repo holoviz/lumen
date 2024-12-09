@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from .actor import Actor
 from .agents import (
-    Agent, AnalysisAgent, AnalystAgent, ChatAgent, SQLAgent,
+    Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
@@ -665,7 +665,7 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            if "table" in unmet_dependencies and not table_provided:
+            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
                     expert_or_tool='SQLAgent',
@@ -696,7 +696,7 @@ class Planner(Coordinator):
             )
             steps.append(step)
         last_node = execution_graph[-1]
-        if isinstance(last_node.agent_or_tool, Tool):
+        if isinstance(last_node.agent_or_tool, Tool) and 'AnalystAgent' in agents:
             summarize_step = type(step)(
                 expert_or_tool='AnalystAgent',
                 instruction='Summarize the results.',
@@ -706,7 +706,7 @@ class Planner(Coordinator):
             steps.append(summarize_step)
             execution_graph.append(
                 ExecutionNode(
-                    agent_or_tool=AnalystAgent,
+                    agent_or_tool=agents['AnalystAgent'],
                     provides=[],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
