@@ -5,7 +5,7 @@
 {% endblock %}
 
 {% block tools %}
-{%- if 'context' in memory -%}
+{%- if 'tool_context' in memory -%}
 {#- Context from Coordinator.tools -#}
 {{ memory["tool_context"] }}
 {%- endif -%}
