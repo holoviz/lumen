@@ -32,16 +32,13 @@ CAST or TO_DATE
 - Use only `{{ dialect }}` SQL syntax
 - Try to pretty print the SQL output with newlines and indentation.
 - Specify data types explicitly to avoid type mismatches.
-- Exclude NULL values early in the query using WHERE clauses to ensure only relevant data is processed, unless NULLs are required.
+- Handle NULL values using functions like COALESCE or IS NULL.
 - Extract specific data patterns using precise functions to capture only the required numeric values while removing all whitespace if needed, like `(\d+)`.
 - Use parameterized queries to prevent SQL injection attacks.
 - Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts.
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
-- Aggregate values as needed (e.g., summing metrics) and use ORDER BY clauses to establish meaningful rankings.
-- Break down data metrics into separate columns or categories to improve precision and support accurate calculations.
 - Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT to focus on the most relevant results.
-- Be sure to study the data schema and understand common pitfalls that newbie data analysts might fall for, but you would not.
 {% if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'
