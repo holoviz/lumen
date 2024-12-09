@@ -107,8 +107,8 @@ class Actor(param.Parameterized):
         prompt_template = self._lookup_prompt_key(prompt_name, "template")
         overrides = self.template_overrides.get(prompt_name, {})
         context["memory"] = self._memory
-        if "tools" not in context:
-            context["tools"] = await self._use_tools(prompt_name, messages)
+        if "tool_context" not in context:
+            context["tool_context"] = await self._use_tools(prompt_name, messages)
 
         prompt_label = f"\033[92m{self.name}.prompts['{prompt_name}']['template']\033[0m"
         if isinstance(prompt_template, str) and not Path(prompt_template).exists():

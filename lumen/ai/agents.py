@@ -242,7 +242,7 @@ class ChatAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        context = {"tools": await self._use_tools("main", messages)}
+        context = {"tool_context": await self._use_tools("main", messages)}
         table = self._memory.get("table")
         if table:
             schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)

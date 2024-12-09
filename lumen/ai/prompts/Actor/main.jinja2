@@ -5,8 +5,8 @@
 {% endblock %}
 
 {% block tools %}
-{%- if tools is defined -%}
-{{ tools }}
+{%- if tool_context is defined -%}
+{{ tool_context }}
 {% endif -%}
 {%- if 'context' in memory -%}
 {{ memory["context"] }}
