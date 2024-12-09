@@ -1,39 +1,19 @@
 # Welcome to Lumen!
 
-The Lumen project consists of two main pieces:
-
-- **Lumen Core**: A framework for visual analytics, making it possible to build complex data processing pipelines, plots and entire dashboards using a declarative specification.
-- **Lumen AI**: An extensible Agent based "chat-with-data" framework.
-
-Together these pieces make it possible to perform complex data analysis using natural language, and then export the results, continue the analysis in a notebook or assemble the results into a dashboard using a drag-and-drop interface.
-
-### Lumen AI
-
 <img src="./_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
 
-Lumen AI provides a framework for chatting with data. It interfaces with the Lumen data sources providing the ability to connect with your database or data lake and unlock insights without writing code.
+Lumen is a fully open-source and extensible agent based framework for chatting with data and for retrieval augmented generation (RAG). The declarative nature of Lumen's data model make it possible for LLMs to easily generate entire data transformation pipelines, visualizations and other many other types of output. Once generated the data pipelines and visual output can be easily serialized, making it possible to share them, to continue the analysis in a notebook and/or build entire dashboards.
 
-- Generate complex SQL queries to analyze the data
-- Generate charts & powerful data tables or entire dashboards.
-- Automatically summarize the key results and insights.
-- Define custom analyses to generate deep insights tailored to your domain.
+- **Generate SQL**: Generate data pipelines on top of local or remote files, SQL databases or your data lake.
+- **Provide context and embeddings**: Give Lumen access to your documents to give the LLM the context it needs.
+- **Visualize your data**: Generate everything from charts to powerful data tables or entire **dashboards** using natural language.
+- **Inspect, validate and edit results**: All LLM outputs can easily be inspected for mistakes, refined, and manually edited if needed.
+- **Summarize results and key insights**: Have the LLM summarize key results and extract important insights.
+- **Custom analyses, agents and tools**: Extend Lumen custom agents, tools, and analyses to generate deep insights tailored to your domain.
 
-### Lumen Core
+Lumen sets itself apart from other agent based frameworks in that it focuses on being fully open and extensible. With powerful internal primitives for expressing complex data transformations the LLM can gain insights into your datasets out-of-the box and can be further tailored with custom agents, analyses and tools to empower even non-programmers to perform complex analyses without having to code. The customization makes it possible to generate any type of output, allow the user and the LLM to perform analyses tailored to your domain and look up additional information and context easily. Since Lumen is built on [Panel](https://panel.holoviz.org) it can render almost any type of output with little to no effort, ensuring that even the most esoteric usecase is easily possible.
 
-<img src="./_static/diagram.png" width="100%">
-
-The power of Lumen comes from the ability to leverage the powerful data intake, data processing and data visualization libraries available in the PyData ecosystem.
-
-- **Data Intake**: A flexible system for declaring data sources with strong integration with SQL, DuckDB and familiar Python DataFrame libraries. This allows Lumen to query data from a wide range of sources including many file formats such as CSV or Parquet but also SQL and many others and apply transformations where the data lives.
-- **Data Proccessing**: Internally Lumen allows manipulating data in SQL or in Python as DataFrame objects. This allows Lumen to perform data transformations where the data lives (using SQL), while also providing the flexibility of familiar APIs for filtering and transforming data using [Pandas](https://pandas.pydata.org/) or scaling these transformations out to a cluster thanks to [Dask](https://dask.org/).
-- **Data Visualization**: Since Lumen is built on [Panel](https://panel.holoviz.org) all the most popular plotting libraries and many other components such as powerful datagrids and BI indicators are supported.
-
-The core strengths of Lumen include:
-
-- **Flexibility**: The design of Lumen allows flexibly combining data intake, data processing and data visualization into a simple declarative pipeline.
-- **Extensibility**: Every part of Lumen is designed to be extended letting you define custom Source, Filter, Transform and View components.
-- **Scalability**: Lumen is designed with performance in mind and supports scalable Dask DataFrames out of the box, letting you scale to datasets larger than memory or even scale out to a cluster.
-- **Security**: Lumen ships with a wide range of OAuth providers out of the box, making it a breeze to add authentication to your applications.
+The declarative Lumen data model further sets it apart from other tools, making it easy for LLMs to populate custom components and making it easy for the user to share the results. Entire multi-step data transformation pipelines be they in SQL or Python can easily be captured and used to drive custom visualizations, interactive tables and more. Once generated the declarative nature of the Lumen specification allows them to be shared, reproducing them in a notebook or composing them through a drag-and-drop interface into a dashboard.
 
 ::::{grid} 1 2 2 4
 :gutter: 1 1 1 2
