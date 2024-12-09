@@ -26,7 +26,7 @@ from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import VegaLiteView, View, hvPlotUIView
-from .actor import Actor
+from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR
 from .controls import SourceControls
 from .llm import Llm, Message
@@ -43,11 +43,18 @@ from .utils import (
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
-class Agent(Viewer, Actor):
+class Agent(Viewer, Actor, ContextProvider):
     """
-    An Agent in Panel is responsible for handling a specific type of
-    query. Each agent consists of an LLM and optionally a set of
-    embeddings.
+    Agents are actors responsible for taking a user query and
+    performing a particular task and responding by adding context to
+    the current memory and creating outputs.
+
+    Each Agent can require certain context that is needed to perform
+    the task and should declare any context it itself provides.
+
+    Agents have access to an LLM and the current memory and can
+    solve tasks by executing a series of prompts or by rendering
+    contents such as forms or widgets to gather user input.
     """
 
     debug = param.Boolean(default=False, doc="""
@@ -61,12 +68,6 @@ class Agent(Viewer, Actor):
 
     steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
-
-    provides = param.List(default=[], readonly=True, doc="""
-        List of context values this Agent provides to current working memory.""")
-
-    requires = param.List(default=[], readonly=True, doc="""
-        List of context that this Agent requires to be in memory.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -118,28 +119,6 @@ class Agent(Viewer, Actor):
     def __panel__(self):
         return self.interface
 
-    async def _select_table(self, tables):
-        input_widget = pn.widgets.AutocompleteInput(
-            placeholder="Start typing parts of the table name",
-            case_sensitive=False,
-            options=list(tables),
-            search_strategy="includes",
-            min_characters=1,
-        )
-        self.interface.send(
-            pn.chat.ChatMessage(
-                "No tables were found based on the user query. Please select the table you are looking for.",
-                footer_objects=[input_widget],
-                user="Assistant",
-            ),
-            respond=False
-        )
-        while not input_widget.value:
-            await asyncio.sleep(0.05)
-        tables = [input_widget.value]
-        self.interface.pop(-1)
-        return tables
-
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
         async for output_chunk in self.llm.stream(
@@ -189,6 +168,10 @@ class Agent(Viewer, Actor):
 
 
 class SourceAgent(Agent):
+    """
+    SourceAgent renders a form that allows a user to upload or
+    provide a URI to one or more datasets.
+    """
 
     purpose = param.String(default="""
         The SourceAgent allows a user to upload unavailable, new datasets.
@@ -225,6 +208,10 @@ class SourceAgent(Agent):
 
 
 class ChatAgent(Agent):
+    """
+    ChatAgent provides general information about available data
+    and other topics  to the user.
+    """
 
     purpose = param.String(default="""
         Chats and provides info about high level data related topics,
@@ -236,8 +223,7 @@ class ChatAgent(Agent):
 
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
         Can be used concurrently with TableListAgent to describe available tables
-        and potential ideas for analysis.
-        """)
+        and potential ideas for analysis.""")
 
     prompts = param.Dict(
         default={
@@ -806,12 +792,9 @@ class hvPlotAgent(BaseViewAgent):
 
 class VegaLiteAgent(BaseViewAgent):
 
-    purpose = param.String(
-        default="""
+    purpose = param.String(default="""
         Generates a vega-lite specification of the plot the user requested.
-
-        If the user asks to plot, visualize or render the data this is your best best.
-        """)
+        If the user asks to plot, visualize or render the data this is your best best.""")
 
     prompts = param.Dict(
         default={

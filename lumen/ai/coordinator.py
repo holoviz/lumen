@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
+from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
@@ -24,6 +25,7 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .models import Validity, make_agent_model, make_plan_models
+from .tools import FunctionTool, Tool
 from .utils import get_schema, retry_llm_output
 
 if TYPE_CHECKING:
@@ -37,7 +39,7 @@ class ExecutionNode(param.Parameterized):
     Defines a node in an execution graph.
     """
 
-    agent = param.ClassSelector(class_=Agent)
+    agent_or_tool = param.ClassSelector(class_=(Agent, Tool))
 
     provides = param.ClassSelector(class_=(set, list), default=set())
 
@@ -73,6 +75,8 @@ class Coordinator(Viewer, Actor):
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
+
+    tools = param.List(default=[])
 
     prompts = param.Dict(
         default={
@@ -161,6 +165,11 @@ class Coordinator(Viewer, Actor):
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+        for tool in self.tools:
+            self._tools["__main__"] = [
+                tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
+                for tool in self.tools
+            ]
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False,
@@ -360,11 +369,12 @@ class Coordinator(Viewer, Actor):
         return out
 
     async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
-        subagent = node.agent
+        subagent = node.agent_or_tool
         instruction = node.instruction
         title = node.title.capitalize()
         render_output = node.render_output and self.render_output
         agent_name = type(subagent).name.replace('Agent', '')
+        self._memory["context"] = ""
 
         # attach the new steps to the existing steps--used when there is intermediate Lumen output
         steps_layout = None
@@ -386,12 +396,23 @@ class Coordinator(Viewer, Actor):
                     )
                     custom_messages.append({"role": "user", "content": custom_message})
             if instruction:
-                custom_messages.append({"role": "user", "content": instruction})
+                custom_messages.append({"role": "assistant", "content": instruction})
 
+            shared_ctx = {"memory": self.memory}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
-            with subagent.param.update(memory=self.memory, steps_layout=steps_layout):
-                await subagent.respond(custom_messages, step_title=title, render_output=render_output, **respond_kwargs)
-            step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
+            if isinstance(subagent, Agent):
+                shared_ctx["steps_layout"] = steps_layout
+            with subagent.param.update(**shared_ctx):
+                result = await subagent.respond(
+                    custom_messages,
+                    step_title=title,
+                    render_output=render_output,
+                    **respond_kwargs
+                )
+            step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
+            if isinstance(subagent, Tool) and result:
+                self._memory['context'] += '\n\n'+result
+                step.stream('\n\n'+result)
             step.success_title = f"{agent_name} agent successfully responded"
 
     def _serialize(self, obj, exclude_passwords=True):
@@ -477,8 +498,8 @@ class DependencyResolver(Coordinator):
     ):
         if agents is None:
             agents = self.agents
-        agents = [agent for agent in agents if await agent.applies(self._memory)]
-        agent_names = tuple(sagent.name[:-5] for sagent in agents)
+        agents = [agent for agent in agents if await agent.applies(self._memory)]+self._tools["__main__"]
+        agent_names = tuple(sagent.name[:-5] if isinstance(sagent, Agent) else sagent.name for sagent in agents)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -504,8 +525,8 @@ class DependencyResolver(Coordinator):
                     else:
                         raise e
                 step.stream(output.chain_of_thought, replace=True)
-                step.success_title = f"Selected {output.agent}"
-                agent = agents[output.agent]
+                step.success_title = f"Selected {output.agent_or_tool}"
+                agent = agents[output.agent_or_tool]
 
         if agent is None:
             return []
@@ -524,17 +545,17 @@ class DependencyResolver(Coordinator):
                     if any(ur in agent.provides for ur in unmet_dependencies)
                 ]
                 output = await self._choose_agent(messages, subagents, unmet_dependencies)
-                if output.agent is None:
+                if output.agent_or_tool is None:
                     continue
-                subagent = agents[output.agent]
+                subagent = agents[output.agent_or_tool]
                 execution_graph.append(
                     ExecutionNode(
-                        agent=subagent,
+                        agent_or_tool=subagent,
                         provides=unmet_dependencies,
                         instruction=output.chain_of_thought,
                     )
                 )
-                step.success_title = f"Solved a dependency with {output.agent}"
+                step.success_title = f"Solved a dependency with {output.agent_or_tool}"
         return execution_graph[::-1] + [ExecutionNode(agent=agent)]
 
 
@@ -589,9 +610,9 @@ class Planner(Coordinator):
         step: ChatStep,
         schemas: dict[str, dict] | None = None
     ) -> BaseModel:
-        user_msg = messages[-1]
         info = ''
         reasoning = None
+        tools = self._tools["__main__"]
         requested, provided = [], []
         if "table" in self._memory:
             requested.append(self._memory["table"])
@@ -604,6 +625,7 @@ class Planner(Coordinator):
                 "main",
                 messages,
                 agents=list(agents.values()),
+                tools=tools,
                 unmet_dependencies=unmet_dependencies,
                 table_info=info,
                 tables=available
@@ -621,31 +643,35 @@ class Planner(Coordinator):
                 if t and t not in provided
             ]
         new_msg = dict(
-            role=user_msg['role'],
-            content=(
-                f"<user query>{user_msg['content']}</user query>"
-                f"{reasoning.chain_of_thought}"
-            )
+            role='assistant',
+            content=reasoning.chain_of_thought
         )
-        messages = messages[:-1] + [new_msg]
-        plan = await self._fill_model(messages, system, plan_model)
-        return plan
+        messages = messages + [new_msg]
+        return await self._fill_model(messages, system, plan_model)
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
         table_provided = False
         execution_graph = []
         provided = set(self._memory)
         unmet_dependencies = set()
+        tools = {tool.name: tool for tool in self._tools["__main__"]}
         steps = []
         for step in plan.steps:
-            subagent = agents[step.expert]
+            key = step.expert_or_tool
+            if key in agents:
+                subagent = agents[key]
+            elif key in tools:
+                subagent = tools[key]
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
             if "table" in unmet_dependencies and not table_provided:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
-                    expert='SQLAgent', instruction='Load the table', title='Loading table', render_output=False
+                    expert='SQLAgent',
+                    instruction='Load the table',
+                    title='Loading table',
+                    render_output=False
                 )
                 execution_graph.append(
                     ExecutionNode(
@@ -661,7 +687,7 @@ class Planner(Coordinator):
                 unmet_dependencies -= provided
             execution_graph.append(
                 ExecutionNode(
-                    agent=subagent,
+                    agent_or_tool=subagent,
                     provides=subagent.provides,
                     instruction=step.instruction,
                     title=step.title,
@@ -673,13 +699,18 @@ class Planner(Coordinator):
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
-        agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
+        tool_names = [tool.name for tool in self._tools["__main__"]]
+        agent_names = [sagent.name[:-5] for sagent in agents.values()]+tool_names
         tables = {}
         for src in self._memory['sources']:
             for table in src.get_tables():
                 tables[table] = src
 
-        reason_model, plan_model = self._get_model("main", agent_names=agent_names, tables=list(tables))
+        reason_model, plan_model = self._get_model(
+            "main",
+            experts_or_tools=agent_names+tool_names,
+            tables=list(tables)
+        )
         planned = False
         unmet_dependencies = set()
         schemas = {}
@@ -708,6 +739,6 @@ class Planner(Coordinator):
             self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
-                istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
+                istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
             istep.success_title = "Successfully came up with a plan"
         return execution_graph

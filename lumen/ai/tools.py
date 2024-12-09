@@ -4,23 +4,20 @@ from typing import Any
 
 import param
 
-from .actor import Actor
+from .actor import Actor, ContextProvider
+from .config import PROMPTS_DIR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
+from .translate import function_to_model
 from .vector_store import NumpyVectorStore, VectorStore
 
 
-class Tool(Actor):
+class Tool(Actor, ContextProvider):
     """
     A Tool can be invoked by another Actor to provide additional
-    context or respond to a question.
+    context or respond to a question. Unlike an Agent they never
+    interact with or on behalf of a user directly.
     """
-
-    provides = param.List(default=[], readonly=True, doc="""
-        List of context values this Tool provides to current working memory.""")
-
-    requires = param.List(default=[], readonly=True, doc="""
-        List of context that this Tool requires to be run.""")
 
 
 class TableLookup(Tool):
@@ -73,3 +70,44 @@ class TableLookup(Tool):
             ]
             message = "No relevant tables found, but here are some other tables:\n"
         return message + "\n".join(f"- `{table}`" for table in closest_tables)
+
+
+class FunctionTool(Tool):
+
+    formatter = param.Parameter(default="{function}({args}) result: {output}")
+
+    function = param.Callable(default=None, doc="""
+        The function to call.""")
+
+    provides = param.List(default=[])
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "FunctionTool" / "main.jinja2"
+            },
+        }
+    )
+
+    def __init__(self, function, **params):
+        super().__init__(
+            function=function,
+            name=function.__name__,
+            purpose=f"Invokes the function with the following docstring: {function.__doc__}." if function.__doc__ else "",
+            **params
+        )
+
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        model = function_to_model(self.function, skipped=list(self._memory))
+        prompt = await self._render_prompt("main", messages)
+        kwargs = await self.llm.invoke(
+            messages,
+            system=prompt,
+            response_model=model,
+            allow_partial=False,
+            max_retries=3,
+        )
+        result = self.function(**dict(kwargs))
+        if self.provides:
+            self._memory.update({result[key] for key in self.provides})
+        return f"{self.function.__name__} result: **{result}**"

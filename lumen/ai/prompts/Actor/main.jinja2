@@ -5,9 +5,12 @@
 {% endblock %}
 
 {% block tools %}
-{% if tools is defined %}
+{%- if tools is defined -%}
 {{ tools }}
-{% endif %}
+{% endif -%}
+{%- if 'context' in memory -%}
+{{ memory["context"] }}
+{%- endif -%}
 {% endblock %}
 
 {% block examples %}

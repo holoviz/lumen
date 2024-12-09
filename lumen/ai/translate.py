@@ -1,16 +1,26 @@
+from __future__ import annotations
+
 import datetime
 import inspect
 import warnings
 
 from collections.abc import Callable
+from inspect import Signature, signature
+from types import FunctionType
 from typing import (
     Any, Literal, TypeVar, Union,
 )
 
 import param
 
+from _griffe.docstrings.parsers import infer_docstring_style
+from _griffe.enumerations import DocstringSectionKind
+from _griffe.models import Docstring
 from pydantic import BaseModel, ConfigDict, create_model
+from pydantic._internal import _typing_extra
 from pydantic.fields import FieldInfo, PydanticUndefined
+from pydantic.json_schema import SkipJsonSchema
+from pydantic_core import core_schema
 from pydantic_extra_types.color import Color
 
 DATE_TYPE = datetime.datetime | datetime.date
@@ -258,3 +268,42 @@ def pydantic_to_param(model: BaseModel) -> param.Parameterized:
 
     parameterized = model.__parameterized__(**kwargs)
     return parameterized
+
+def doc_descriptions(func: FunctionType, sig: Signature) -> tuple[str, dict[str, str]]:
+    doc = func.__doc__
+    if doc is None:
+        return '', {}
+
+    parser, _ = infer_docstring_style(doc, default='numpy')
+    docstring = Docstring(doc, lineno=1, parser=parser, parent=sig)
+    sections = docstring.parse()
+    params = {}
+    if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
+        params = {p.name: p.description for p in parameters.value}
+
+    main_desc = ''
+    if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
+        main_desc = main.value
+
+    return main_desc, params
+
+def function_to_model(function: FunctionType, skipped=None) -> type[BaseModel]:
+    skipped = skipped or []
+    sig = signature(function)
+    type_hints = _typing_extra.get_function_type_hints(function)
+    fields: dict[str, core_schema.TypedDictField] = {}
+    description, field_descriptions = doc_descriptions(function, sig)
+    for index, (name, p) in enumerate(sig.parameters.items()):
+        if p.annotation is sig.empty:
+            annotation = Any
+        else:
+            annotation = type_hints[name]
+        field_name = p.name
+        field_info = FieldInfo.from_annotation(annotation)
+        if field_info.description is None:
+            field_info.description = field_descriptions.get(field_name)
+        if name in skipped:
+            annotation = SkipJsonSchema[annotation | None]
+        fields[field_name] = (annotation, field_info)
+    model = create_model(function.__name__, __doc__=description, **fields)
+    return model

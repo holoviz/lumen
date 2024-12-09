@@ -69,6 +69,9 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
+    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+        The log level to use.""")
+
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
@@ -80,8 +83,8 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
-    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
-        The log level to use.""")
+    tools = param.List(default=[], doc="""
+       List of Tools that can be invoked by the coordinator.""")
 
     __abstract = True
 
@@ -106,7 +109,8 @@ class UI(Viewer):
         self._resolve_data(data)
         self._coordinator = self.coordinator(
             agents=agents,
-            llm=self.llm
+            llm=self.llm,
+            tools=self.tools,
         )
         self._notebook_export = FileDownload(
             icon="notebook",
@@ -476,7 +480,7 @@ class ExplorerUI(UI):
             def render_plan(_, old, new):
                 nonlocal index
                 plan = local_memory["plan"]
-                if any(step.expert == 'SQLAgent' for step in plan.steps):
+                if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
                     self._add_exploration(plan.title, local_memory)
                     index += 1
 
