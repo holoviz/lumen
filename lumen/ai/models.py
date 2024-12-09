@@ -38,7 +38,7 @@ class TableJoins(BaseModel):
 
 class Sql(BaseModel):
 
-    chain_of_thought: list[str] = Field(
+    chain_of_thought: str = Field(
         description="""
         You are a world-class SQL expert, and your fame is on the line so don't mess up.
         If it's simple, just provide one step. However, if applicable, be sure to carefully

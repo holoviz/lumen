@@ -475,7 +475,7 @@ class SQLAgent(LumenBaseAgent):
             response = self.llm.stream(messages, system=system, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
-                step_message = "\n- ".join(output.chain_of_thought or [])
+                step_message = output.chain_of_thought
                 if output.query:
                     sql_query = clean_sql(output.query)
                     step_message += f"\n```sql\n{sql_query}\n```"
