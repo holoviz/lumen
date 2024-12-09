@@ -1,3 +1,10 @@
+import pytest
+
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.")
+
 from lumen.ai.translate import doc_descriptions, function_to_model
 
 
