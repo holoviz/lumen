@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from .actor import Actor
 from .agents import (
-    Agent, AnalysisAgent, ChatAgent, SQLAgent,
+    Agent, AnalysisAgent, AnalystAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
@@ -668,14 +668,14 @@ class Planner(Coordinator):
             if "table" in unmet_dependencies and not table_provided:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
-                    expert='SQLAgent',
+                    expert_or_tool='SQLAgent',
                     instruction='Load the table',
                     title='Loading table',
                     render_output=False
                 )
                 execution_graph.append(
                     ExecutionNode(
-                        agent=agents['SQLAgent'],
+                        agent_or_tool=agents['SQLAgent'],
                         provides=['table'],
                         instruction=sql_step.instruction,
                         title=sql_step.title,
@@ -695,6 +695,24 @@ class Planner(Coordinator):
                 )
             )
             steps.append(step)
+        last_node = execution_graph[-1]
+        if isinstance(last_node.agent_or_tool, Tool):
+            summarize_step = type(step)(
+                expert_or_tool='AnalystAgent',
+                instruction='Summarize the results.',
+                title='Summarizing results',
+                render_output=False
+            )
+            steps.append(summarize_step)
+            execution_graph.append(
+                ExecutionNode(
+                    agent_or_tool=AnalystAgent,
+                    provides=[],
+                    instruction=summarize_step.instruction,
+                    title=summarize_step.title,
+                    render_output=summarize_step.render_output
+                )
+            )
         plan.steps = steps
         return execution_graph, unmet_dependencies
 
