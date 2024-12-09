@@ -453,14 +453,17 @@ class SQLAgent(LumenBaseAgent):
         errors=None
     ):
         if errors:
-            last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
+            last_query = self.interface.serialize()[-1]["content"]
+            sql_code_match = re.search(r'(?s)```sql\s*(.*?)```', last_query, re.DOTALL)
+            if sql_code_match:
+                last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
             messages += [
                 {
                     "role": "user",
                     "content": (
                         f"Your last query `{last_query}` did not work as intended, "
-                        f"expertly revise, and please do not repeat these issues:\n{errors}\n\n"
+                        f"expertly revise these errors:\n```python\n{errors}\n```\n\n"
                         f"If the error is `syntax error at or near \")\"`, double check you used "
                         "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
                     )
@@ -469,10 +472,11 @@ class SQLAgent(LumenBaseAgent):
         log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
+            print(messages, "MESSAGES...")
             response = self.llm.stream(messages, system=system, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
-                step_message = output.chain_of_thought
+                step_message = "\n- ".join(output.chain_of_thought or [])
                 if output.query:
                     sql_query = clean_sql(output.query)
                     step_message += f"\n```sql\n{sql_query}\n```"
