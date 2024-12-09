@@ -409,7 +409,7 @@ class Coordinator(Viewer, Actor):
                 )
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             if isinstance(subagent, Tool) and result:
-                self._memory['context'] += '\n\n'+result
+                self._memory["tool_context"] += '\n\n'+result
                 step.stream('\n\n'+result)
             step.success_title = f"{agent_name} agent successfully responded"
 
@@ -438,7 +438,7 @@ class Coordinator(Viewer, Actor):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        self._memory["context"] = ""
+        self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, Llama):
                 with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
@@ -705,9 +705,13 @@ class Planner(Coordinator):
             )
             steps.append(step)
         last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool) and 'AnalystAgent' in agents:
+        if isinstance(last_node.actor, Tool):
+            if "AnalysisAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
+                expert = "AnalysisAgent"
+            else:
+                expert = "ChatAgent"
             summarize_step = type(step)(
-                expert_or_tool='AnalystAgent',
+                expert_or_tool=expert,
                 instruction='Summarize the results.',
                 title='Summarizing results',
                 render_output=False
@@ -715,7 +719,7 @@ class Planner(Coordinator):
             steps.append(summarize_step)
             execution_graph.append(
                 ExecutionNode(
-                    actor=agents['AnalystAgent'],
+                    actor=agents[expert],
                     provides=[],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
