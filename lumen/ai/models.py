@@ -38,11 +38,13 @@ class TableJoins(BaseModel):
 
 class Sql(BaseModel):
 
-    chain_of_thought: str = Field(
+    chain_of_thought: list[str] = Field(
         description="""
         You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        Then, think step by step on how you might approach this problem in an optimal way.
-        If it's simple, just provide one sentence.
+        If it's simple, just provide one step. However, if applicable, be sure to carefully
+        study the schema, discuss the values in the columns, and whether you need to
+        wrangle the data before you can use it, before finally writing a correct and valid
+        SQL query that fully answers the user's query.
         """
     )
 
@@ -53,7 +55,9 @@ class Sql(BaseModel):
         """
     )
 
-    query: str = Field(description="Expertly optimized, valid SQL query to be executed; do NOT add extraneous comments.")
+    query: str = Field(description="""
+        Correct, valid SQL query that answers the user's query and is based on
+        the chain of thought; do NOT add extraneous comments.""")
 
 
 class Validity(BaseModel):
