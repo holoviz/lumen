@@ -73,13 +73,29 @@ class TableLookup(Tool):
 
 
 class FunctionTool(Tool):
+    """
+    FunctionTool wraps arbitrary functions and makes them available as a tool
+    for an LLM to call. It inspects the arguments of the function and generates
+    a pydantic Model that the LLM will populate.
 
-    formatter = param.Parameter(default="{function}({args}) result: {output}")
+    The function may also consume information in memory, e.g. the current
+    table or pipeline by declaring the requires parameter.
+
+    The function may also return context to add to the current working memory
+    by returning a dictionary and declaring the `provides` parameter. Any
+    keys listed in the provides parameter will be copied into working memory.
+    """
+
+    formatter = param.Parameter(default="{function}({args}) returned: {returns}")
 
     function = param.Callable(default=None, doc="""
         The function to call.""")
 
-    provides = param.List(default=[])
+    provides = param.List(default=[], readonly=False, constant=True, doc="""
+        List of context values it provides to current working memory.""")
+
+    requires = param.List(default=[], readonly=False, constant=True, doc="""
+        List of context values it requires to be in memory.""")
 
     prompts = param.Dict(
         default={
@@ -90,24 +106,35 @@ class FunctionTool(Tool):
     )
 
     def __init__(self, function, **params):
+        model = function_to_model(function, skipped=self.requires)
         super().__init__(
             function=function,
             name=function.__name__,
-            purpose=f"Invokes the function with the following docstring: {function.__doc__}." if function.__doc__ else "",
+            purpose=model.__doc__ or "",
             **params
         )
+        self._model = model
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        model = function_to_model(self.function, skipped=list(self._memory))
         prompt = await self._render_prompt("main", messages)
-        kwargs = await self.llm.invoke(
-            messages,
-            system=prompt,
-            response_model=model,
-            allow_partial=False,
-            max_retries=3,
-        )
-        result = self.function(**dict(kwargs))
+        kwargs = {}
+        if any(field not in self.requires for field in self._model.model_fields):
+            kwargs = await self.llm.invoke(
+                messages,
+                system=prompt,
+                response_model=self._model,
+                allow_partial=False,
+                max_retries=3,
+            )
+        arguments = dict(kwargs, **{k: self._memory[k] for k in self.requires})
+        result = self.function(**arguments)
         if self.provides:
-            self._memory.update({result[key] for key in self.provides})
-        return f"{self.function.__name__} result: **{result}**"
+            if len(self.provides) == 1 and not isinstance(result, dict):
+                self._memory[self.provides[0]] = result
+            else:
+                self._memory.update({result[key] for key in self.provides})
+        return self.formatter.format(
+            function=self.function.__name__,
+            args=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
+            returns=result
+        )
