@@ -191,11 +191,12 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
+        truncate_limit = min(limit, 100)
         if not include_enum:
             spec.pop("enum")
             continue
-        elif limit and len(spec["enum"]) > limit:
-            spec["enum"].append("...")
+        elif limit and len(spec["enum"]) > truncate_limit:
+            spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [f"(unknown; truncated to {get_kwargs['limit']} rows)"]
         # truncate each enum to 100 characters
@@ -352,5 +353,6 @@ def log_debug(msg: str, sep: bool = True, offset: int = 24):
     if sep:
         log.debug(f"\033[95m{delimiter}\033[0m")
     log.debug(msg)
+    log.debug(f"Length of message is {len(msg)}")
     if sep:
         log.debug(f"\033[90m{delimiter}\033[0m")
