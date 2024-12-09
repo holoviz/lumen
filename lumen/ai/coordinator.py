@@ -706,8 +706,8 @@ class Planner(Coordinator):
             steps.append(step)
         last_node = execution_graph[-1]
         if isinstance(last_node.actor, Tool):
-            if "AnalysisAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
-                expert = "AnalysisAgent"
+            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
+                expert = "AnalystAgent"
             else:
                 expert = "ChatAgent"
             summarize_step = type(step)(
