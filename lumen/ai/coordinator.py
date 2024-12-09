@@ -39,7 +39,7 @@ class ExecutionNode(param.Parameterized):
     Defines a node in an execution graph.
     """
 
-    agent_or_tool = param.ClassSelector(class_=(Agent, Tool))
+    actor = param.ClassSelector(class_=Actor)
 
     provides = param.ClassSelector(class_=(set, list), default=set())
 
@@ -369,7 +369,7 @@ class Coordinator(Viewer, Actor):
         return out
 
     async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
-        subagent = node.agent_or_tool
+        subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
         render_output = node.render_output and self.render_output
@@ -525,8 +525,8 @@ class DependencyResolver(Coordinator):
                     else:
                         raise e
                 step.stream(output.chain_of_thought, replace=True)
-                step.success_title = f"Selected {output.agent_or_tool}"
-                agent = agents[output.agent_or_tool]
+                step.success_title = f"Selected {output.actor}"
+                agent = agents[output.actor]
 
         if agent is None:
             return []
@@ -545,17 +545,17 @@ class DependencyResolver(Coordinator):
                     if any(ur in agent.provides for ur in unmet_dependencies)
                 ]
                 output = await self._choose_agent(messages, subagents, unmet_dependencies)
-                if output.agent_or_tool is None:
+                if output.actor is None:
                     continue
-                subagent = agents[output.agent_or_tool]
+                subagent = agents[output.actor]
                 execution_graph.append(
                     ExecutionNode(
-                        agent_or_tool=subagent,
+                        actor=subagent,
                         provides=unmet_dependencies,
                         instruction=output.chain_of_thought,
                     )
                 )
-                step.success_title = f"Solved a dependency with {output.agent_or_tool}"
+                step.success_title = f"Solved a dependency with {output.actor}"
         return execution_graph[::-1] + [ExecutionNode(agent=agent)]
 
 
@@ -675,7 +675,7 @@ class Planner(Coordinator):
                 )
                 execution_graph.append(
                     ExecutionNode(
-                        agent_or_tool=agents['SQLAgent'],
+                        actor=agents['SQLAgent'],
                         provides=['table'],
                         instruction=sql_step.instruction,
                         title=sql_step.title,
@@ -687,7 +687,7 @@ class Planner(Coordinator):
                 unmet_dependencies -= provided
             execution_graph.append(
                 ExecutionNode(
-                    agent_or_tool=subagent,
+                    actor=subagent,
                     provides=subagent.provides,
                     instruction=step.instruction,
                     title=step.title,
@@ -696,7 +696,7 @@ class Planner(Coordinator):
             )
             steps.append(step)
         last_node = execution_graph[-1]
-        if isinstance(last_node.agent_or_tool, Tool) and 'AnalystAgent' in agents:
+        if isinstance(last_node.actor, Tool) and 'AnalystAgent' in agents:
             summarize_step = type(step)(
                 expert_or_tool='AnalystAgent',
                 instruction='Summarize the results.',
@@ -706,7 +706,7 @@ class Planner(Coordinator):
             steps.append(summarize_step)
             execution_graph.append(
                 ExecutionNode(
-                    agent_or_tool=agents['AnalystAgent'],
+                    actor=agents['AnalystAgent'],
                     provides=[],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
