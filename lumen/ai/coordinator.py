@@ -498,15 +498,17 @@ class DependencyResolver(Coordinator):
     ):
         if agents is None:
             agents = self.agents
-        agents = [agent for agent in agents if await agent.applies(self._memory)]+self._tools["__main__"]
-        agent_names = tuple(sagent.name[:-5] if isinstance(sagent, Agent) else sagent.name for sagent in agents)
+        agents = [agent for agent in agents if await agent.applies(self._memory)]
+        tools = self._tools["__main__"]
+        agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_model(agent=agent_names[0], chain_of_thought='')
         system = await self._render_prompt(
-            "main", messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
+            "main", messages, agents=agents, tools=tools, primary=primary,
+            unmet_dependencies=unmet_dependencies
         )
         return await self._fill_model(messages, system, agent_model)
 
@@ -514,6 +516,7 @@ class DependencyResolver(Coordinator):
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
+            tools = {tool.name: tool for tool in self._tools["__main__"]}
             agent = None
             with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
                 try:
@@ -525,12 +528,16 @@ class DependencyResolver(Coordinator):
                     else:
                         raise e
                 step.stream(output.chain_of_thought, replace=True)
-                step.success_title = f"Selected {output.actor}"
-                agent = agents[output.actor]
+                step.success_title = f"Selected {output.agent_or_tool}"
+                if output.agent_or_tool in tools:
+                    agent = tools[output.agent_or_tool]
+                else:
+                    agent = agents[output.agent_or_tool]
 
         if agent is None:
             return []
 
+        cot = output.chain_of_thought
         subagent = agent
         execution_graph = []
         while (unmet_dependencies := tuple(
@@ -545,9 +552,12 @@ class DependencyResolver(Coordinator):
                     if any(ur in agent.provides for ur in unmet_dependencies)
                 ]
                 output = await self._choose_agent(messages, subagents, unmet_dependencies)
-                if output.actor is None:
+                if output.agent_or_tool is None:
                     continue
-                subagent = agents[output.actor]
+                if output.agent_or_tool in tools:
+                    subagent = tools[output.agent_or_tool]
+                else:
+                    subagent = agents[output.agent_or_tool]
                 execution_graph.append(
                     ExecutionNode(
                         actor=subagent,
@@ -555,8 +565,8 @@ class DependencyResolver(Coordinator):
                         instruction=output.chain_of_thought,
                     )
                 )
-                step.success_title = f"Solved a dependency with {output.actor}"
-        return execution_graph[::-1] + [ExecutionNode(agent=agent)]
+                step.success_title = f"Solved a dependency with {output.agent_or_tool}"
+        return execution_graph[::-1] + [ExecutionNode(actor=agent, instruction=cot)]
 
 
 class Planner(Coordinator):
@@ -718,7 +728,7 @@ class Planner(Coordinator):
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
         tool_names = [tool.name for tool in self._tools["__main__"]]
-        agent_names = [sagent.name[:-5] for sagent in agents.values()]+tool_names
+        agent_names = [sagent.name[:-5] for sagent in agents.values()]
         tables = {}
         for src in self._memory['sources']:
             for table in src.get_tables():

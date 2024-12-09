@@ -86,7 +86,9 @@ class FunctionTool(Tool):
     keys listed in the provides parameter will be copied into working memory.
     """
 
-    formatter = param.Parameter(default="{function}({args}) returned: {returns}")
+    formatter = param.Parameter(default="{function}({arguments}) returned: {output}", doc="""
+        Formats the return value for inclusion in the global context.
+        Accepts the 'function', 'arguments' and 'output' as formatting variables.""")
 
     function = param.Callable(default=None, doc="""
         The function to call.""")
@@ -127,7 +129,10 @@ class FunctionTool(Tool):
                 max_retries=3,
             )
         arguments = dict(kwargs, **{k: self._memory[k] for k in self.requires})
-        result = self.function(**arguments)
+        if param.parameterized.iscoroutinefunction(self.function):
+            result = await self.function(**kwargs)
+        else:
+            result = self.function(**kwargs)
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result
@@ -135,6 +140,6 @@ class FunctionTool(Tool):
                 self._memory.update({result[key] for key in self.provides})
         return self.formatter.format(
             function=self.function.__name__,
-            args=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
-            returns=result
+            arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
+            output=result
         )

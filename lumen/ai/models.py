@@ -132,7 +132,7 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
                 description="Describe what this agent should do."
             ),
         ),
-        agent=(
+        agent_or_tool=(
             Literal[tuple(agent_names)],
             FieldInfo(default=..., description=description)
         ),
