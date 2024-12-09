@@ -472,7 +472,6 @@ class SQLAgent(LumenBaseAgent):
         log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            print(messages, "MESSAGES...")
             response = self.llm.stream(messages, system=system, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
