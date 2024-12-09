@@ -82,7 +82,7 @@ class Coordinator(Viewer, Actor):
         default={
             "check_validity": {
                 "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-                "model": Validity,
+                "response_model": Validity,
             },
         }
     )
@@ -479,11 +479,11 @@ class DependencyResolver(Coordinator):
         default={
             "main": {
                 "template": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
-                "model": make_agent_model,
+                "response_model": make_agent_model,
             },
             "check_validity": {
                 "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-                "model": Validity,
+                "response_model": Validity,
             },
         },
     )
@@ -578,11 +578,11 @@ class Planner(Coordinator):
         default={
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
-                "model": make_plan_models,
+                "response_model": make_plan_models,
             },
             "check_validity": {
                 "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-                "model": Validity,
+                "response_model": Validity,
             },
         }
     )

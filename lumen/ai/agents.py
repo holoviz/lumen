@@ -376,20 +376,20 @@ class SQLAgent(LumenBaseAgent):
     prompts = param.Dict(
         default={
             "main": {
-                "model": Sql,
+                "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2"
             },
             "select_table": {
-                "model": make_table_model,
+                "response_model": make_table_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
                 "tools": [TableLookup]
             },
             "require_joins": {
-                "model": JoinRequired,
+                "response_model": JoinRequired,
                 "template": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2"
             },
             "find_joins": {
-                "model": TableJoins,
+                "response_model": TableJoins,
                 "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
             },
         }
@@ -799,7 +799,7 @@ class VegaLiteAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {
-                "model": VegaLiteSpec,
+                "response_model": VegaLiteSpec,
                 "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
         }
     )
