@@ -121,7 +121,7 @@ class Agent(Viewer, Actor, ContextProvider):
 
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
-        model_spec = self.prompts["main"].get("llm_model", "default")
+        model_spec = self.prompts["main"].get("llm_spec", "default")
         async for output_chunk in self.llm.stream(
             messages, system=system_prompt, model_spec=model_spec, field="output"
         ):
@@ -379,7 +379,7 @@ class SQLAgent(LumenBaseAgent):
             "main": {
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
-                "llm_model": "reasoning",
+                "llm_spec": "reasoning",
             },
             "select_table": {
                 "response_model": make_table_model,
@@ -423,7 +423,7 @@ class SQLAgent(LumenBaseAgent):
                     )
                     if "closest_tables" in self._memory:
                         tables = self._memory["closest_tables"]
-                    model_spec = self.prompts["select_table"].get("llm_model", "default")
+                    model_spec = self.prompts["select_table"].get("llm_spec", "default")
                     table_model = self._get_model("select_table", tables=tables)
                     result = await self.llm.invoke(
                         messages,
@@ -473,7 +473,7 @@ class SQLAgent(LumenBaseAgent):
         log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            model_spec = self.prompts["main"].get("llm_model", "default")
+            model_spec = self.prompts["main"].get("llm_spec", "default")
             response = self.llm.stream(messages, system=system, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
@@ -559,7 +559,7 @@ class SQLAgent(LumenBaseAgent):
                 schema=yaml.dump(schema),
                 table=table
             )
-            model_spec = self.prompts["require_joins"].get("llm_model", "default")
+            model_spec = self.prompts["require_joins"].get("llm_spec", "default")
             response = self.llm.stream(
                 messages[-1:],
                 system=join_prompt,
@@ -583,7 +583,7 @@ class SQLAgent(LumenBaseAgent):
             tables = self._memory['source'].get_tables()
 
         find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables)
-        model_spec = self.prompts["find_joins"].get("llm_model", "default")
+        model_spec = self.prompts["find_joins"].get("llm_spec", "default")
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
@@ -729,7 +729,7 @@ class BaseViewAgent(LumenBaseAgent):
             view=self._memory.get('view'),
             doc=doc,
         )
-        model_spec = self.prompts["main"].get("llm_model", "default")
+        model_spec = self.prompts["main"].get("llm_spec", "default")
         output = await self.llm.invoke(
             messages,
             system=system_prompt,
@@ -881,7 +881,7 @@ class AnalysisAgent(LumenBaseAgent):
                     analyses=analyses,
                     data=self._memory.get("data"),
                 )
-                model_spec = self.prompts["main"].get("llm_model", "default")
+                model_spec = self.prompts["main"].get("llm_spec", "default")
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
