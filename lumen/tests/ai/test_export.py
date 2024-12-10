@@ -26,9 +26,7 @@ TEST_DIR = pathlib.Path(lumen.__file__).parent / "tests"
 
 @pytest.fixture
 def source():
-    root = os.path.dirname(__file__)
-    parent = os.path.dirname(root) + "/sources"
-    return IntakeSource(uri=os.path.join(parent, "catalog.yml"), root=root)
+    return IntakeSource(uri=str(TEST_DIR / 'sources' / 'catalog.yml'), root=TEST_DIR)
 
 
 @pytest.fixture
