@@ -385,7 +385,7 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, clear_uploads=True, multiple=True, name='Upload')
+        controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
         controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
