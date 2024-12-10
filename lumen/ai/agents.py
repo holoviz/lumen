@@ -34,7 +34,7 @@ from .memory import _Memory
 from .models import (
     JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
 )
-from .tools import TableLookup
+from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
@@ -229,12 +229,12 @@ class ChatAgent(Agent):
         default={
             "main": {
                 "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-                "tools": [TableLookup]
+                "tools": [TableLookup, DocumentLookup]
             },
         }
     )
 
-    requires = param.List(default=["source"], readonly=True)
+    requires = param.List(default=[], readonly=True)
 
     async def respond(
         self,
