@@ -65,7 +65,6 @@ class DocumentLookup(VectorLookupTool):
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             if not self.vector_store.query(source["text"], threshold=1):
-                print(source['text'])
                 self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
