@@ -313,11 +313,11 @@ class Coordinator(Viewer, Actor):
             "check_validity", messages, table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
         )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
-            model_key = self.prompts["check_validity"].get("llm_model", "default")
+            model_spec = self.prompts["check_validity"].get("llm_model", "default")
             output = await self.llm.invoke(
                 messages=messages,
                 system=system,
-                model_key=model_key,
+                model_spec=model_spec,
                 response_model=self._get_model("check_validity"),
             )
             step.stream(output.correct_assessment, replace=True)
@@ -348,11 +348,11 @@ class Coordinator(Viewer, Actor):
             errors = '\n'.join(errors)
             messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
 
-        model_key = self.prompts["main"].get("llm_model", "default")
+        model_spec = self.prompts["main"].get("llm_model", "default")
         out = await self.llm.invoke(
             messages=messages,
             system=system,
-            model_key=model_key,
+            model_spec=model_spec,
             response_model=agent_model
         )
         return out
@@ -629,11 +629,11 @@ class Planner(Coordinator):
                 table_info=info,
                 tables=available
             )
-            model_key = self.prompts["main"].get("llm_model", "default")
+            model_spec = self.prompts["main"].get("llm_model", "default")
             reasoning = await self.llm.invoke(
                 messages=messages,
                 system=system,
-                model_key=model_key,
+                model_spec=model_spec,
                 response_model=reason_model,
                 max_retries=3,
             )
