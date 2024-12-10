@@ -65,11 +65,11 @@ class Actor(param.Parameterized):
                     f"Prompt {prompt_name!r} is not a valid prompt name. "
                     f"Valid prompt names are {self.param.prompts.default.keys()}."
                 )
-            extra_keys = set(self.prompts[prompt_name].keys()) - {"template", "model", "tools"}
+            extra_keys = set(self.prompts[prompt_name].keys()) - {"template", "response_model", "tools", "llm_spec"}
             if extra_keys:
                 raise ValueError(
                     f"Prompt {prompt_name!r} has unexpected keys {extra_keys}. "
-                    "Valid keys are 'template', 'model' and 'tools'."
+                    "Valid keys are 'template', 'response_model', 'tools', and 'llm_spec'."
                 )
 
     @property
@@ -88,7 +88,7 @@ class Actor(param.Parameterized):
         return prompt_spec[key]
 
     def _get_model(self, prompt_name: str, **context) -> type[BaseModel]:
-        model_spec = self._lookup_prompt_key(prompt_name, "model")
+        model_spec = self._lookup_prompt_key(prompt_name, "response_model")
         if isinstance(model_spec, FunctionType):
             model = model_spec(**context)
         else:
