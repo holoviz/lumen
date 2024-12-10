@@ -2,6 +2,22 @@
 
 Lumen AI is designed to be highly customizable and composable. Users can easily modify the default behavior of Lumen AI by providing custom data sources, LLM providers, agents, and prompts. This guide will walk users through the basic and advanced customization options available in Lumen AI.
 
+## Data Sources
+
+In a script, users can initialize Lumen AI with specific datasets by injecting `current_source` into `lmai.memory`:
+
+```python
+lmai.memory["current_source"] = DuckDBSource(
+    tables=["path/to/table.csv", "dir/data.parquet"]
+)
+```
+
+:::{admonition} Tip
+:class: success
+
+Lumen AI currently supports CSV, Parquet, JSON, XLSX, GeoJSON, WKT, and ZIP files for tables, and DOC, DOCX, PDF, TXT, MD, and RST files for documents.
+:::
+
 ## Coordinator
 
 Lumen AI is managed by a `Coordinator` that orchestrates the actions of multiple agents to fulfill a user-defined query by generating an execution graph and executing each node along it.
@@ -18,7 +34,7 @@ There are a couple options available:
 
 `Agent`s are the core components of Lumen AI that solve some sub-task in an effort to address the user query. It has certain dependencies that it requires and provides certain context for other `Agent`s to use. It may also request additional context through the use of context tools.
 
-To provide additional agents, pass desired `Agent`s to the `ExplorerUI` class:
+To provide additional agents, pass desired `Agent`s to the `ExplorerUI`:
 
 ```python
 agents = [lmai.agents.hvPlotAgent]
@@ -55,7 +71,7 @@ The following `Agent`s are built-in:
 
 Lumen AI supports multiple Large Language Model (LLM) providers to ensure flexibility and access to the best models available, or specific models that are available to the user.
 
-Users can initialize the LLM provider and pass it to the ExplorerUI class:
+Users can initialize the LLM provider and pass it to the `ExplorerUI`:
 
 ```python
 llm = lmai.llm.OpenAI(model="gpt-4o-mini")
@@ -69,18 +85,57 @@ The following are provided:
 - **Anthropic** requires `anthropic`. The `api_key` defaults to the environment variable `ANTHROPIC_API_KEY` if available and the `model` defaults to `claude-3-5-sonnet-20240620`.
 - **Llama** requires `llama-cpp-python`,and `huggingface_hub`. The `model` defaults to `qwen2.5-coder-7b-instruct-q5_k_m.gguf`.
 
-## Data Sources
+## Tools
 
-In a script, users can initialize Lumen AI with specific datasets by injecting `current_source` into `lmai.memory`:
+`Tool`s are used to provide additional context to the `Agent`s. They can be used to provide additional context to the `Agent`s, or to request additional context from the user.
+
+Users can provide tools to the `ExplorerUI`:
 
 ```python
-lmai.memory["current_source"] = DuckDBSource(
-    tables=["path/to/table.csv", "dir/data.parquet"]
-)
+def duckduckgo_search(queries: list[str]) -> dict:
+    results = {}
+    for query in queries:
+        url = f"https://duckduckgo.com/html/?q={query}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, "html.parser")
+        links = soup.find_all("a", {"class": "result__a"}, href=True)
+
+        results[query] = [
+            {"title": link.get_text(strip=True), "url": link["href"]} for link in links
+        ]
+    return results
+
+tools = [duckduckgo_search]
+ui = lmai.ExplorerUI(tools=tools)
 ```
 
-:::{admonition} Tip
-:class: success
+This will grant the `Coordinator` access to the `duckduckgo_search` function to use at its discretion.
 
-Lumen AI currently supports CSV, Parquet, JSON, XLSX, GeoJSON, WKT, and ZIP files for tables, and DOC, DOCX, PDF, TXT, MD, and RST files for documents.
-:::
+Alternatively, tools can be provided to individual `Agent`s:
+
+```python
+def get_wiki(articles: list[str]) -> str:
+    wiki = wikipediaapi.Wikipedia("lumen-assistant", language="en")
+    out = ""
+    for article in articles:
+        page = wiki.page(article)
+        if page.exists():
+            out += f"{article}:\n{page.summary}\n\n"
+        else:
+            out += f"The article '{article}' does not exist.\n"
+    return out
+
+tools = [get_wiki]
+agents = [lmai.agents.ChatAgent(prompts={"main": {"tools": tools}})]
+```
+
+This will override the default `TableLookup` tool for the `ChatAgent` with the `get_wiki` function.
+
+The following are built-in:
+
+- **DocumentLookup**: provides context to the `Agent`s by looking up information in the document.
+
+- **TableLookup**: provides context to the `Agent`s by looking up information in the table.
+
+- **FunctionTool**: wraps arbitrary functions and makes them available as a tool for an LLM to call.
