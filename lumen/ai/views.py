@@ -196,13 +196,21 @@ class AnalysisOutput(LumenOutput):
             params['active'] = 0
         super().__init__(**params)
         controls = self.analysis.controls()
-        if controls is not None and self.render_output:
+        if controls is not None or not self.analysis.autorun:
+            controls = Column() if controls is None else controls
+            if not self.render_output:
+                self._main = Tabs(
+                    ('Specification', self._main),
+                    styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
+                    active=self.active,
+                    dynamic=True
+                )
             if self.analysis._run_button:
                 run_button = self.analysis._run_button
                 run_button.param.watch(self._rerun, 'clicks')
                 self._main.insert(1, ('Config', controls))
             else:
-                run_button = Button(
+                self.analysis._run_button = run_button = Button(
                     icon='player-play', name='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0 , 10)
                 )

@@ -2,7 +2,7 @@
 
 {% block instructions %}
 {% if primary %}
-Select the agent that will provide the agent with the output they requested.
+Select the agent that will provide the user with the output they requested. You may use tools to perform actions or look up context.
 {% endif %}
 {% endblock %}
 
@@ -13,6 +13,15 @@ Here's the choice of experts and their uses:
   Provides: {{ agent.provides }}
   Description: {{ agent.purpose.strip().split() | join(' ') }}
 {% endfor %}
+{% if tools -%}
+Here's a list of tools:
+{% for tool in tools %}
+- `{{ tool.name }}`
+  Requires: {{ tool.requires }}
+  Provides: {{ tool.provides }}
+  Description: {{ tool.purpose.strip().split() | join(' ') }}
+{% endfor %}
+{%- endif %}
 {% if primary %}
 If the request requires multiple steps, pick the agent that can will perform the final step and provide the user with the output the user asked for, e.g. if the request requires performing some calculation and a plot, pick the plotting agent. The agent you select can request other agents to fill in the blanks.
 {% else %}

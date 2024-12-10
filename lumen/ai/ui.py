@@ -23,8 +23,9 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
+from ..util import log
 from .agents import (
-    AnalysisAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent,
+    AnalysisAgent, AnalystAgent, ChatAgent, SourceAgent, SQLAgent,
     TableListAgent, VegaLiteAgent,
 )
 from .components import SplitJS
@@ -59,7 +60,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, ChatDetailsAgent, SourceAgent, SQLAgent, VegaLiteAgent
+        TableListAgent, ChatAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent
     ], doc="""List of default agents which will always be added.""")
 
     export_functions = param.Dict(default={}, doc="""
@@ -67,6 +68,9 @@ class UI(Viewer):
 
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
+
+    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+        The log level to use.""")
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
@@ -79,6 +83,9 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
+    tools = param.List(default=[], doc="""
+       List of Tools that can be invoked by the coordinator.""")
+
     __abstract = True
 
     def __init__(
@@ -87,12 +94,23 @@ class UI(Viewer):
         **params
     ):
         super().__init__(**params)
-        agents = self.default_agents + self.agents
+        log.setLevel(self.log_level)
+
+        agents = self.agents
+        agent_types = {type(agent) for agent in agents}
+        for default_agent in self.default_agents:
+            if default_agent not in agent_types:
+                # only add default agents if they are not already set by the user
+                agents.append(default_agent)
+
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
+
+        self._resolve_data(data)
         self._coordinator = self.coordinator(
             agents=agents,
-            llm=self.llm
+            llm=self.llm,
+            tools=self.tools,
         )
         self._notebook_export = FileDownload(
             icon="notebook",
@@ -116,7 +134,6 @@ class UI(Viewer):
             sizing_mode='stretch_width',
             visible=False
         )
-        self._resolve_data(data)
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -155,7 +172,7 @@ class UI(Viewer):
                     table = f"read_json_auto('{src}')"
                 else:
                     raise ValueError(
-                        "Could not determine how to load {} file."
+                        f"Could not determine how to load {src} file."
                     )
                 tables[src] = table
         if tables or mirrors:
@@ -166,9 +183,9 @@ class UI(Viewer):
                 name='ProvidedSource00000'
             )
             sources.append(source)
-        memory['available_sources'] = sources
+        memory['sources'] = sources
         if sources:
-            memory['current_source'] = sources[0]
+            memory['source'] = sources[0]
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
@@ -291,14 +308,16 @@ class ExplorerUI(UI):
             c.cleanup()
 
     def _update_conversation(self, event):
+        active = self._explorations.active
         if event.new:
-            active = self._explorations.active
             if active < len(self._conversations):
                 conversation = self._conversations[active]
             else:
                 conversation = list(self._coordinator.interface.objects)
             self._exports.visible = True
         else:
+            if len(self._explorations):
+                self._conversations[active] = list(self._coordinator.interface.objects)
             self._exports.visible = False
             conversation = self._root_conversation
         self._coordinator.interface.objects = conversation
@@ -310,9 +329,11 @@ class ExplorerUI(UI):
             if old is not new:
                 self._contexts.pop(i)
                 self._conversations.pop(i)
+                self._titles.pop(i)
                 break
 
     def _set_context(self, event):
+        self._conversations[event.old] = list(self._coordinator.interface.objects)
         if event.new == len(self._conversations):
             return
         self._coordinator.interface.objects = self._conversations[event.new]
@@ -343,16 +364,16 @@ class ExplorerUI(UI):
                 source_tables = source.get_tables()
                 for t in source_tables:
                     if deduplicate:
-                        t = f'{source.name} : {t}'
-                    if t.rsplit(' : ', 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
+                        t = f'{source.name}//{t}'
+                    if t.rsplit('//', 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
                         selected.append(t)
                     new[t] = source
             source_map.clear()
             source_map.update(new)
             table_select.param.update(options=list(source_map), value=selected)
             input_row.visible = bool(source_map)
-        memory.on_change('available_sources', update_source_map)
-        update_source_map(None, None, memory['available_sources'], init=True)
+        memory.on_change('sources', update_source_map)
+        update_source_map(None, None, memory['sources'], init=True)
 
         def explore_table_if_single(event):
             """
@@ -364,7 +385,7 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, multiple=True, name='Upload')
+        controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
         controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
@@ -372,12 +393,12 @@ class ExplorerUI(UI):
         def get_explorers(load):
             if not load:
                 return
-            with explore_button.param.update(loading=True):
+            with explore_button.param.update(loading=True), self._coordinator.interface.param.update(loading=True):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
-                    if len(memory['available_sources']) > 1:
-                        _, table = table.rsplit(' : ', 1)
+                    if len(memory['sources']) > 1:
+                        _, table = table.rsplit('//', 1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )
@@ -391,7 +412,7 @@ class ExplorerUI(UI):
                 table_select.value = []
 
         return Column(
-            Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
+            Markdown('### Start chatting or select an existing dataset or upload table(s) or document(s).', margin=(5, 0)),
             tabs,
             input_row,
             sizing_mode='stretch_both',
@@ -408,8 +429,8 @@ class ExplorerUI(UI):
 
     def _add_outputs(self, exploration: Column, outputs: list[LumenOutput], memory: _Memory):
         from panel_gwalker import GraphicWalker
-        if 'current_sql' in memory:
-            sql = memory["current_sql"]
+        if "sql" in memory:
+            sql = memory["sql"]
             sql_pane = Markdown(
                 f'```sql\n{sql}\n```',
                 margin=0, sizing_mode='stretch_width'
@@ -423,7 +444,7 @@ class ExplorerUI(UI):
 
         content = []
         if exploration.loading:
-            pipeline = memory['current_pipeline']
+            pipeline = memory['pipeline']
             content.append(
                 ('Overview', GraphicWalker(
                     pipeline.param.data,
@@ -454,12 +475,12 @@ class ExplorerUI(UI):
                 prev_memory = self._contexts[self._explorations.active]
             index = self._explorations.active if len(self._explorations) else -1
             local_memory = prev_memory.clone()
-            local_memory['outputs'] = outputs = []
+            local_memory["outputs"] = outputs = []
 
             def render_plan(_, old, new):
                 nonlocal index
-                plan = local_memory['plan']
-                if any(step.expert == 'SQLAgent' for step in plan.steps):
+                plan = local_memory["plan"]
+                if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
                     self._add_exploration(plan.title, local_memory)
                     index += 1
 
@@ -469,12 +490,12 @@ class ExplorerUI(UI):
                 this will update the available_sources in the global memory
                 so that the overview explorer can access it
                 """
-                memory["available_sources"] += [
-                    source for source in sources if source not in memory["available_sources"]
+                memory["sources"] += [
+                    source for source in sources if source not in memory["sources"]
                 ]
 
             local_memory.on_change('plan', render_plan)
-            local_memory.on_change('available_sources', sync_available_sources_memory)
+            local_memory.on_change('sources', sync_available_sources_memory)
 
             def render_output(_, old, new):
                 added = [out for out in new if out not in old]

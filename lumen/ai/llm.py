@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
 from functools import partial
@@ -60,11 +61,12 @@ class Llm(param.Parameterized):
 
     __abstract = True
 
-    def _get_model_kwargs(self, model_key: MODEL_TYPE) -> dict[str, Any]:
-        if model_key in self.model_kwargs:
-            model_kwargs = self.model_kwargs.get(model_key)
+    def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
+        if model_spec in self.model_kwargs:
+            model_kwargs = self.model_kwargs.get(model_spec)
         else:
             model_kwargs = self.model_kwargs["default"]
+            model_kwargs["model"] = model_spec  # override the default model with user provided model
         return dict(model_kwargs)
 
     @property
@@ -87,7 +89,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_key: MODEL_TYPE = "default",
+        model_spec: MODEL_TYPE | dict = "default",
         **input_kwargs,
     ) -> BaseModel:
         """
@@ -113,6 +115,7 @@ class Llm(param.Parameterized):
         The completed response_model.
         """
         system = system.strip().replace("\n\n", "\n")
+
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
@@ -125,7 +128,7 @@ class Llm(param.Parameterized):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
 
-        output = await self.run_client(model_key, messages, **kwargs)
+        output = await self.run_client(model_spec, messages, **kwargs)
         if output is None or output == "":
             raise ValueError("LLM failed to return valid output.")
         return output
@@ -142,7 +145,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel | None = None,
         field: str | None = None,
-        model_key: str = "default",
+        model_spec: str | dict = "default",
         **kwargs,
     ):
         """
@@ -172,7 +175,7 @@ class Llm(param.Parameterized):
                 messages,
                 system=system,
                 response_model=response_model,
-                model_key=model_key,
+                model_spec=model_spec,
                 **kwargs,
             )
             return
@@ -184,7 +187,7 @@ class Llm(param.Parameterized):
             response_model=response_model,
             stream=True,
             allow_partial=True,
-            model_key=model_key,
+            model_spec=model_spec,
             **kwargs,
         )
         try:
@@ -204,8 +207,8 @@ class Llm(param.Parameterized):
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
 
-    async def run_client(self, model_key: MODEL_TYPE, messages: list[Message], **kwargs):
-        client = self.get_client(model_key, **kwargs)
+    async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
+        client = await self.get_client(model_spec, **kwargs)
         return await client(messages=messages, **kwargs)
 
 
@@ -228,23 +231,53 @@ class Llama(Llm):
         },
     })
 
+    def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        if model_spec in self.model_kwargs:
+            model_kwargs = self.model_kwargs.get(model_spec)
+        else:
+            model_kwargs = self.model_kwargs["default"]
+            repo, model_spec = model_spec.rsplit("/", 1)
+            if ":" in model_spec:
+                model_file, chat_format = model_spec.split(":")
+                model_kwargs["chat_format"] = chat_format
+            else:
+                model_file = model_spec
+            model_kwargs["repo"] = repo
+            model_kwargs["model_file"] = model_file
+        return dict(model_kwargs)
+
     @property
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
-        if client_callable := pn.state.cache.get(model_key):
+    def _cache_model(self, model_spec: MODEL_TYPE | dict, **kwargs):
+        from llama_cpp import Llama as LlamaCpp
+        llm = LlamaCpp(**kwargs)
+
+        raw_client = llm.create_chat_completion_openai_v1
+        # patch works with/without response_model
+        client_callable = patch(
+            create=raw_client,
+            mode=Mode.JSON_SCHEMA,
+        )
+        pn.state.cache[model_spec] = client_callable
+        return client_callable
+
+    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+        if client_callable := pn.state.cache.get(model_spec):
             return client_callable
         from huggingface_hub import hf_hub_download
-        from llama_cpp import Llama
 
-        model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs = self._get_model_kwargs(model_spec)
         repo = model_kwargs["repo"]
         model_file = model_kwargs["model_file"]
         chat_format = model_kwargs["chat_format"]
         n_ctx = model_kwargs["n_ctx"]
-        model_path = hf_hub_download(repo, model_file)
-        llm = Llama(
+        model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
+        llm_kwargs = dict(
             model_path=model_path,
             n_gpu_layers=-1,
             n_ctx=n_ctx,
@@ -254,18 +287,11 @@ class Llama(Llm):
             use_mlock=True,
             verbose=False
         )
-
-        raw_client = llm.create_chat_completion_openai_v1
-        # patch works with/without response_model
-        client_callable = patch(
-            create=raw_client,
-            mode=Mode.JSON_SCHEMA,
-        )
-        pn.state.cache[model_key] = client_callable
+        client_callable = await asyncio.to_thread(self._cache_model, model_spec, **llm_kwargs)
         return client_callable
 
-    async def run_client(self, model_key: MODEL_TYPE, messages: list[Message], **kwargs):
-        client = self.get_client(model_key, **kwargs)
+    async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
+        client = await self.get_client(model_spec, **kwargs)
         return client(messages=messages, **kwargs)
 
 
@@ -276,7 +302,7 @@ class OpenAI(Llm):
 
     api_key = param.String(doc="The OpenAI API key.")
 
-    base_url = param.String(doc="The OpenAI base.")
+    endpoint = param.String(doc="The OpenAI API endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -296,13 +322,13 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
-        model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
-        if self.base_url:
-            model_kwargs["base_url"] = self.base_url
+        if self.endpoint:
+            model_kwargs["base_url"] = self.endpoint
         if self.api_key:
             model_kwargs["api_key"] = self.api_key
         if self.organization:
@@ -337,7 +363,7 @@ class AzureOpenAI(Llm):
 
     api_version = param.String(doc="The Azure AI Studio API version.")
 
-    azure_endpoint = param.String(doc="The Azure AI Studio endpoint.")
+    endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -347,17 +373,17 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
-        model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         if self.api_version:
             model_kwargs["api_version"] = self.api_version
         if self.api_key:
             model_kwargs["api_key"] = self.api_key
-        if self.azure_endpoint:
-            model_kwargs["azure_endpoint"] = self.azure_endpoint
+        if self.endpoint:
+            model_kwargs["azure_endpoint"] = self.endpoint
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
 
         if self.interceptor:
@@ -396,10 +422,10 @@ class MistralAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         from mistralai import Mistral
 
-        model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs = self._get_model_kwargs(model_spec)
         model_kwargs["api_key"] = self.api_key
         model = model_kwargs.pop("model")
         llm = Mistral(**model_kwargs)
@@ -432,7 +458,7 @@ class MistralAI(Llm):
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_key: str = "default",
+        model_spec: str | dict = "default",
         **input_kwargs,
     ) -> BaseModel:
         if isinstance(messages, str):
@@ -447,7 +473,7 @@ class MistralAI(Llm):
             system,
             response_model,
             allow_partial,
-            model_key,
+            model_spec,
             **input_kwargs,
         )
 
@@ -459,22 +485,22 @@ class AzureMistralAI(MistralAI):
 
     api_key = param.String(default=os.getenv("AZURE_API_KEY"), doc="The Azure API key")
 
-    azure_endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure endpoint to invoke.")
+    endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure API endpoint to invoke.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
     })
 
-    def get_client(self, model_key: str, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         from mistralai_azure import MistralAzure
 
         async def llm_chat_non_stream_async(*args, **kwargs):
             response = await llm.chat.complete_async(*args, **kwargs)
             return response.choices[0].message.content
 
-        model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs = self._get_model_kwargs(model_spec)
         model_kwargs["api_key"] = self.api_key
-        model_kwargs["azure_endpoint"] = self.azure_endpoint
+        model_kwargs["azure_endpoint"] = self.endpoint
         model = model_kwargs.pop("model")
         llm = MistralAzure(**model_kwargs)
 
@@ -517,13 +543,13 @@ class AnthropicAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
-    def get_client(self, model_key: MODEL_TYPE, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
 
         from anthropic import AsyncAnthropic
 
-        model_kwargs = self._get_model_kwargs(model_key)
+        model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
 
         llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
@@ -551,7 +577,7 @@ class AnthropicAI(Llm):
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_key: MODEL_TYPE = "default",
+        model_spec: MODEL_TYPE | dict = "default",
         **input_kwargs,
     ) -> BaseModel:
         if isinstance(messages, str):
@@ -574,4 +600,4 @@ class AnthropicAI(Llm):
             if not messages[i]["content"]:
                 messages[i]["content"] = "--"
 
-        return await super().invoke(messages, system, response_model, allow_partial, model_key, **input_kwargs)
+        return await super().invoke(messages, system, response_model, allow_partial, model_spec, **input_kwargs)

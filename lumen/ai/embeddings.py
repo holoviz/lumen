@@ -1,33 +1,83 @@
-from pathlib import Path
+import re
 
-from .config import DEFAULT_EMBEDDINGS_PATH
+from abc import abstractmethod
 
-
-class Embeddings:
-
-    def add_directory(self, data_dir: Path):
-        raise NotImplementedError
-
-    def query(self, query_texts: str) -> list:
-        raise NotImplementedError
+import numpy as np
+import param
 
 
-class ChromaDb(Embeddings):
+class Embeddings(param.Parameterized):
+    @abstractmethod
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for a list of texts."""
 
-    def __init__(self, collection: str, persist_dir: str = DEFAULT_EMBEDDINGS_PATH):
-        import chromadb
-        self.client = chromadb.PersistentClient(path=str(persist_dir / collection))
-        self.collection = self.client.get_or_create_collection(collection)
 
-    def add_directory(self, data_dir: Path, file_type='json'):
-        add_kwargs = {
-            "ids": [],
-            "documents": [],
-        }
-        for i, path in enumerate(data_dir.glob(f"**/*.{file_type}")):
-            add_kwargs["ids"].append(f"{i}")
-            add_kwargs["documents"].append(path.read_text())
-        self.collection.add(**add_kwargs)
+class NumpyEmbeddings(Embeddings):
 
-    def query(self, query_texts: str) -> list:
-        return self.collection.query(query_texts=query_texts)["documents"]
+    vocab_size = param.Integer(default=1536, doc="The size of the vocabulary.")
+
+    def get_char_ngrams(self, text, n=3):
+        text = re.sub(r"\W+", "", text.lower())
+        return [text[i : i + n] for i in range(len(text) - n + 1)]
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        embeddings = []
+        for text in texts:
+            ngrams = self.get_char_ngrams(text)
+            vector = np.zeros(self.vocab_size)
+            for ngram in ngrams:
+                index = hash(ngram) % self.vocab_size
+                vector[index] += 1
+            norm = np.linalg.norm(vector)
+            if norm > 0:
+                vector = vector / norm
+            embeddings.append(vector.tolist())
+        return embeddings
+
+
+class OpenAIEmbeddings(Embeddings):
+
+    api_key = param.String(doc="The OpenAI API key.")
+
+    model = param.String(
+        default="text-embedding-3-small", doc="The OpenAI model to use."
+    )
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        from openai import OpenAI
+
+        self.client = OpenAI(api_key=self.api_key)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        texts = [text.replace("\n", " ") for text in texts]
+        response = self.client.embeddings.create(input=texts, model=self.model)
+        return [r.embedding for r in response.data]
+
+
+class AzureOpenAIEmbeddings(Embeddings):
+
+    api_key = param.String(doc="The Azure API key.")
+
+    api_version = param.String(doc="The Azure AI Studio API version.")
+
+    provider_endpoint = param.String(doc="The Azure AI Studio endpoint.")
+
+    model = param.String(
+        default="text-embedding-3-large", doc="The OpenAI model to use."
+    )
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        from openai import AzureOpenAI
+
+        self.client = AzureOpenAI(
+            api_key=self.api_key,
+            api_version=self.api_version,
+            azure_endpoint=self.provider_endpoint,
+        )
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        texts = [text.replace("\n", " ") for text in texts]
+        response = self.client.embeddings.create(input=texts, model=self.model)
+        return [r.embedding for r in response.data]

@@ -1,16 +1,26 @@
+from __future__ import annotations
+
 import datetime
 import inspect
+import re
 import warnings
 
 from collections.abc import Callable
+from inspect import Signature, signature
+from types import FunctionType
 from typing import (
     Any, Literal, TypeVar, Union,
 )
 
 import param
 
+from _griffe.enumerations import DocstringSectionKind
+from _griffe.models import Docstring
 from pydantic import BaseModel, ConfigDict, create_model
+from pydantic._internal import _typing_extra
 from pydantic.fields import FieldInfo, PydanticUndefined
+from pydantic.json_schema import SkipJsonSchema
+from pydantic_core import core_schema
 from pydantic_extra_types.color import Color
 
 DATE_TYPE = datetime.datetime | datetime.date
@@ -29,7 +39,83 @@ PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.Callable: Callable,
 }
 PandasDataFrame = TypeVar("PandasDataFrame")
+DocstringStyle = Literal['google', 'numpy', 'sphinx']
 
+# See https://github.com/mkdocstrings/griffe/issues/329#issuecomment-2425017804
+_docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
+    (
+        r'\n[ \t]*:{0}([ \t]+\w+)*:([ \t]+.+)?\n',
+        [
+            'param',
+            'parameter',
+            'arg',
+            'argument',
+            'key',
+            'keyword',
+            'type',
+            'var',
+            'ivar',
+            'cvar',
+            'vartype',
+            'returns',
+            'return',
+            'rtype',
+            'raises',
+            'raise',
+            'except',
+            'exception',
+        ],
+        'sphinx',
+    ),
+    (
+        r'\n[ \t]*{0}:([ \t]+.+)?\n[ \t]+.+',
+        [
+            'args',
+            'arguments',
+            'params',
+            'parameters',
+            'keyword args',
+            'keyword arguments',
+            'other args',
+            'other arguments',
+            'other params',
+            'other parameters',
+            'raises',
+            'exceptions',
+            'returns',
+            'yields',
+            'receives',
+            'examples',
+            'attributes',
+            'functions',
+            'methods',
+            'classes',
+            'modules',
+            'warns',
+            'warnings',
+        ],
+        'google',
+    ),
+    (
+        r'\n[ \t]*{0}\n[ \t]*---+\n',
+        [
+            'deprecated',
+            'parameters',
+            'other parameters',
+            'returns',
+            'yields',
+            'receives',
+            'raises',
+            'warns',
+            'attributes',
+            'functions',
+            'methods',
+            'classes',
+            'modules',
+        ],
+        'numpy',
+    ),
+]
 
 class ArbitraryTypesModel(BaseModel):
     """
@@ -64,6 +150,18 @@ def _get_model(type_, created_models: dict[str, BaseModel]) -> Any:
     except TypeError:
         pass
     return type_
+
+
+def _infer_docstring_style(doc: str) -> DocstringStyle:
+    """Simplistic docstring style inference."""
+    for pattern, replacements, style in _docstring_style_patterns:
+        matches = (
+            re.search(pattern.format(replacement), doc, re.IGNORECASE | re.MULTILINE) for replacement in replacements
+        )
+        if any(matches):
+            return style
+    # fallback to google style
+    return 'google'
 
 
 def parameter_to_field(
@@ -174,7 +272,7 @@ def param_to_pydantic(
     if isinstance(excluded, str) and hasattr(parameterized, excluded):
         excluded = getattr(parameterized, excluded)
 
-    parameterized_signature = inspect.signature(parameterized.__init__)
+    parameterized_signature = signature(parameterized.__init__)
     required_args = [
         arg.name
         for arg in parameterized_signature.parameters.values()
@@ -258,3 +356,74 @@ def pydantic_to_param(model: BaseModel) -> param.Parameterized:
 
     parameterized = model.__parameterized__(**kwargs)
     return parameterized
+
+def doc_descriptions(function: FunctionType, sig: Signature | None = None) -> tuple[str, dict[str, str]]:
+    """
+    Parses the docstring and returns the function description and descriptions for each argument.
+
+    Arguments
+    ---------
+    function : FunctionType
+        Function to extract argument descriptions from.
+    sig: inspect.Signature | None
+        Optional Signature of the function
+
+    Returns
+    -------
+    tuple[str, dict[str, str]]
+        Tuple of the main description of the function and dictionary of descriptions per argument
+    """
+    doc = function.__doc__
+    if doc is None:
+        return '', {}
+    if sig is None:
+        sig = signature(function)
+
+    parser = _infer_docstring_style(doc)
+    docstring = Docstring(doc, lineno=1, parser=parser, parent=sig)
+    sections = docstring.parse()
+    params = {}
+    if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
+        params = {p.name: p.description for p in parameters.value}
+
+    main_desc = ''
+    if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
+        main_desc = main.value
+
+    return main_desc, params
+
+def function_to_model(function: FunctionType, skipped: list[str] | None = None) -> type[BaseModel]:
+    """
+    Translates the arguments to a function into a pydantic Model.
+
+    Arguments
+    ---------
+    function : FunctionType
+        The function to translate.
+    skipped : list[str] | None
+        Arguments that will be skipped when exporting the JSON schema.
+
+    Returns
+    -------
+    pydantic.BaseModel
+        The translated model with fields corresponding to the arguments of the function.
+    """
+    skipped = skipped or []
+    sig = signature(function)
+    type_hints = _typing_extra.get_function_type_hints(function)
+    fields: dict[str, core_schema.TypedDictField] = {}
+    description, field_descriptions = doc_descriptions(function, sig)
+    for index, (name, p) in enumerate(sig.parameters.items()):
+        if p.annotation is sig.empty:
+            annotation = Any
+        else:
+            annotation = type_hints[name]
+        field_name = p.name
+        field_info = FieldInfo.from_annotation(annotation)
+        if field_info.description is None:
+            field_info.description = field_descriptions.get(field_name)
+        if name in skipped:
+            annotation = SkipJsonSchema[annotation | None]
+        fields[field_name] = (annotation, field_info)
+    model = create_model(function.__name__, __doc__=description, **fields)
+    return model

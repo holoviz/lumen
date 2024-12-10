@@ -4,7 +4,14 @@
 {% block context %}
 {% endblock %}
 
-{% block embeddings %}
+{% block tools %}
+{%- if 'tool_context' in memory -%}
+{#- Context from Coordinator.tools -#}
+{{ memory["tool_context"] }}
+{%- endif -%}
+{%- if tool_context is defined -%}
+{{ tool_context }}
+{% endif -%}
 {% endblock %}
 
 {% block examples %}

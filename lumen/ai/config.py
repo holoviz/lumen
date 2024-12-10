@@ -12,8 +12,6 @@ class LlmSetupError(Exception):
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
-FUZZY_TABLE_LENGTH = 10
-
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets do you have?",
     "Tell me about the dataset.",

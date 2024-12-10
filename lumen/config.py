@@ -54,6 +54,9 @@ class SessionCache:
         else:
             return self._global_context
 
+    def __iter__(self):
+        return iter(self.keys())
+
     def __contains__(self, key):
         return key in self._curcontext or key in self._global_context
 

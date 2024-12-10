@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
+from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
@@ -23,8 +24,8 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
-from .memory import _Memory, memory
 from .models import Validity, make_agent_model, make_plan_models
+from .tools import FunctionTool, Tool
 from .utils import get_schema, retry_llm_output
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ class ExecutionNode(param.Parameterized):
     Defines a node in an execution graph.
     """
 
-    agent = param.ClassSelector(class_=Agent)
+    actor = param.ClassSelector(class_=Actor)
 
     provides = param.ClassSelector(class_=(set, list), default=set())
 
@@ -66,15 +67,8 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=Llama(), doc="""
-        LLM used by the assistant to plan the execution.""")
-
     logs_filename = param.String(default=None, doc="""
         Log file to write to.""")
-
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -82,10 +76,16 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    prompt_templates = param.Dict(default={
-        "main": PROMPTS_DIR / "Coordinator" / "main.jinja2",
-        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-    }, doc="""The paths to the prompt's jinja2 templates.""")
+    tools = param.List(default=[])
+
+    prompts = param.Dict(
+        default={
+            "check_validity": {
+                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+                "response_model": Validity,
+            },
+        }
+    )
 
     __abstract = True
 
@@ -155,7 +155,7 @@ class Coordinator(Viewer, Actor):
                     f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
                     for analysis in agent.analyses if analysis._callable_by_llm
                 )
-                agent.__doc__ = f"Available analyses include:\n{analyses}\nSelect this agent to perform one of these analyses."
+                agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
                 agent.interface = interface
                 self._analyses.extend(agent.analyses)
             if agent.llm is None:
@@ -165,27 +165,27 @@ class Coordinator(Viewer, Actor):
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+
+        self._tools["__main__"] = [
+            tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
+            for tool in self.tools
+        ]
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False,
         )
         interface.button_properties={
-            "suggest": {"callback": self._create_suggestion, "icon": "wand"},
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
         }
         self._add_suggestions_to_footer(self.suggestions)
 
-        if "current_source" in self._memory and "available_sources" not in self._memory:
-            self._memory["available_sources"] = [self._memory["current_source"]]
-        elif "current_source" not in self._memory and self._memory.get("available_sources"):
-            self._memory["current_source"] = self._memory["available_sources"][0]
-        elif "available_sources" not in self._memory:
-            self._memory["available_sources"] = []
-
-    @property
-    def _memory(self):
-        return memory if self.memory is None else self.memory
+        if "source" in self._memory and "sources" not in self._memory:
+            self._memory["sources"] = [self._memory["source"]]
+        elif "source" not in self._memory and self._memory.get("sources"):
+            self._memory["source"] = self._memory["sources"][0]
+        elif "sources" not in self._memory:
+            self._memory["sources"] = []
 
     def __panel__(self):
         return self.interface
@@ -247,6 +247,7 @@ class Coordinator(Viewer, Actor):
                     button_style="outline",
                     on_click=use_suggestion,
                     margin=5,
+                    disabled=self.interface.param.loading
                 )
                 for suggestion in suggestions
             ],
@@ -259,6 +260,7 @@ class Coordinator(Viewer, Actor):
                 button_type="primary",
                 on_click=run_demo,
                 margin=5,
+                disabled=self.interface.param.loading
             ))
         disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
         for b in suggestion_buttons:
@@ -272,8 +274,8 @@ class Coordinator(Viewer, Actor):
         return message
 
     async def _add_analysis_suggestions(self):
-        pipeline = self._memory['current_pipeline']
-        current_analysis = self._memory.get("current_analysis")
+        pipeline = self._memory["pipeline"]
+        current_analysis = self._memory.get("analysis")
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
         applicable_analyses = []
         for analysis in self._analyses:
@@ -287,16 +289,16 @@ class Coordinator(Viewer, Actor):
             num_objects=len(self.interface.objects),
         )
 
-    async def _invalidate_memory(self, messages):
-        table = self._memory.get("current_table")
+    async def _invalidate_memory(self, messages: list[Message]):
+        table = self._memory.get("table")
         if not table:
             return
 
-        source = self._memory.get("current_source")
+        source = self._memory.get("source")
         if table not in source:
-            sources = [src for src in self._memory.get('available_sources', []) if table in src]
+            sources = [src for src in self._memory.get('sources', []) if table in src]
             if sources:
-                self._memory['current_source'] = source = sources[0]
+                self._memory["source"] = source = sources[0]
             else:
                 raise KeyError(f'Table {table} could not be found in available sources.')
 
@@ -306,47 +308,36 @@ class Coordinator(Viewer, Actor):
             # If the selected table cannot be fetched we should invalidate it
             spec = None
 
-        sql = self._memory.get("current_sql")
+        sql = self._memory.get("sql")
         analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = self._render_prompt(
-            "check_validity", table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
+        system = await self._render_prompt(
+            "check_validity", messages, table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
         )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
+            model_spec = self.prompts["check_validity"].get("llm_spec", "default")
             output = await self.llm.invoke(
                 messages=messages,
                 system=system,
-                response_model=Validity,
+                model_spec=model_spec,
+                response_model=self._get_model("check_validity"),
             )
             step.stream(output.correct_assessment, replace=True)
             step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
 
         if output and output.is_invalid:
             if output.is_invalid == "table":
-                self._memory.pop("current_table", None)
-                self._memory.pop("current_data", None)
-                self._memory.pop("current_sql", None)
-                self._memory.pop("current_pipeline", None)
+                self._memory.pop("table", None)
+                self._memory.pop("data", None)
+                self._memory.pop("sql", None)
+                self._memory.pop("pipeline", None)
                 self._memory.pop("closest_tables", None)
                 print("\033[91mInvalidated from memory.\033[0m")
             elif output.is_invalid == "sql":
-                self._memory.pop("current_sql", None)
-                self._memory.pop("current_data", None)
-                self._memory.pop("current_pipeline", None)
+                self._memory.pop("sql", None)
+                self._memory.pop("data", None)
+                self._memory.pop("pipeline", None)
                 print("\033[91mInvalidated SQL from memory.\033[0m")
             return output.correct_assessment
-
-    async def _create_suggestion(self, instance, event):
-        messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
-        response = self.llm.stream(
-            messages,
-            system="Generate a follow-up question that a user might ask; ask from the user POV",
-        )
-        try:
-            self.interface.disabled = True
-            async for output in response:
-                self.interface.active_widget.value_input = output
-        finally:
-            self.interface.disabled = False
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         print("\033[94mNEW\033[0m" + "-" * 100)
@@ -358,15 +349,17 @@ class Coordinator(Viewer, Actor):
             errors = '\n'.join(errors)
             messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
 
+        model_spec = self.prompts["main"].get("llm_spec", "default")
         out = await self.llm.invoke(
             messages=messages,
             system=system,
+            model_spec=model_spec,
             response_model=agent_model
         )
         return out
 
     async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
-        subagent = node.agent
+        subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
         render_output = node.render_output and self.render_output
@@ -385,19 +378,30 @@ class Coordinator(Viewer, Actor):
             if isinstance(subagent, SQLAgent):
                 custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
                 if custom_agent:
-                    custom_analysis_doc = custom_agent.__doc__.replace("Available analyses include:\n", "")
+                    custom_analysis_doc = custom_agent.purpose.replace("Available analyses include:\n", "")
                     custom_message = (
                         f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
                     custom_messages.append({"role": "user", "content": custom_message})
             if instruction:
-                custom_messages.append({"role": "user", "content": instruction})
+                custom_messages.append({"role": "assistant", "content": instruction})
 
+            shared_ctx = {"memory": self.memory}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
-            with subagent.param.update(memory=self.memory, steps_layout=steps_layout):
-                await subagent.respond(custom_messages, step_title=title, render_output=render_output, **respond_kwargs)
-            step.stream(f"`{agent_name}` agent successfully completed the following task:\n\n- {instruction}", replace=True)
+            if isinstance(subagent, Agent):
+                shared_ctx["steps_layout"] = steps_layout
+            with subagent.param.update(**shared_ctx):
+                result = await subagent.respond(
+                    custom_messages,
+                    step_title=title,
+                    render_output=render_output,
+                    **respond_kwargs
+                )
+            step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
+            if isinstance(subagent, Tool) and result:
+                self._memory["tool_context"] += '\n\n'+result
+                step.stream('\n\n'+result)
             step.success_title = f"{agent_name} agent successfully responded"
 
     def _serialize(self, obj, exclude_passwords=True):
@@ -425,12 +429,13 @@ class Coordinator(Viewer, Actor):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, Llama):
                 with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
                     step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
-                    self.llm.get_client("default")  # caches the model for future use
+                    await self.llm.get_client("default")  # caches the model for future use
 
             messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
             invalidation_assessment = await self._invalidate_memory(messages[-2:])
@@ -449,7 +454,7 @@ class Coordinator(Viewer, Actor):
                 return msg
             for node in execution_graph:
                 await self._execute_graph_node(node, messages[-context_length:])
-            if "current_pipeline" in self._memory:
+            if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             print("\033[92mDONE\033[0m", "\n\n")
 
@@ -461,10 +466,18 @@ class DependencyResolver(Coordinator):
     information required for that agent until the answer is available.
     """
 
-    prompt_templates = param.Dict(default={
-        "main": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
-        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-    }, doc="""The paths to the prompt's jinja2 templates.""")
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
+                "response_model": make_agent_model,
+            },
+            "check_validity": {
+                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+                "response_model": Validity,
+            },
+        },
+    )
 
     async def _choose_agent(
         self,
@@ -476,14 +489,16 @@ class DependencyResolver(Coordinator):
         if agents is None:
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies(self._memory)]
-        agent_names = tuple(sagent.name[:-5] for sagent in agents)
-        agent_model = make_agent_model(agent_names, primary=primary)
+        tools = self._tools["__main__"]
+        agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
+        agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
         if len(agent_names) == 1:
             return agent_model(agent=agent_names[0], chain_of_thought='')
-        system = await self._render_main_prompt(
-            messages, agents=agents, primary=primary, unmet_dependencies=unmet_dependencies
+        system = await self._render_prompt(
+            "main", messages, agents=agents, tools=tools, primary=primary,
+            unmet_dependencies=unmet_dependencies
         )
         return await self._fill_model(messages, system, agent_model)
 
@@ -491,6 +506,7 @@ class DependencyResolver(Coordinator):
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
+            tools = {tool.name: tool for tool in self._tools["__main__"]}
             agent = None
             with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
                 try:
@@ -502,12 +518,16 @@ class DependencyResolver(Coordinator):
                     else:
                         raise e
                 step.stream(output.chain_of_thought, replace=True)
-                step.success_title = f"Selected {output.agent}"
-                agent = agents[output.agent]
+                step.success_title = f"Selected {output.agent_or_tool}"
+                if output.agent_or_tool in tools:
+                    agent = tools[output.agent_or_tool]
+                else:
+                    agent = agents[output.agent_or_tool]
 
         if agent is None:
             return []
 
+        cot = output.chain_of_thought
         subagent = agent
         execution_graph = []
         while (unmet_dependencies := tuple(
@@ -522,18 +542,21 @@ class DependencyResolver(Coordinator):
                     if any(ur in agent.provides for ur in unmet_dependencies)
                 ]
                 output = await self._choose_agent(messages, subagents, unmet_dependencies)
-                if output.agent is None:
+                if output.agent_or_tool is None:
                     continue
-                subagent = agents[output.agent]
+                if output.agent_or_tool in tools:
+                    subagent = tools[output.agent_or_tool]
+                else:
+                    subagent = agents[output.agent_or_tool]
                 execution_graph.append(
                     ExecutionNode(
-                        agent=subagent,
+                        actor=subagent,
                         provides=unmet_dependencies,
                         instruction=output.chain_of_thought,
                     )
                 )
-                step.success_title = f"Solved a dependency with {output.agent}"
-        return execution_graph[::-1] + [ExecutionNode(agent=agent)]
+                step.success_title = f"Solved a dependency with {output.agent_or_tool}"
+        return execution_graph[::-1] + [ExecutionNode(actor=agent, instruction=cot)]
 
 
 class Planner(Coordinator):
@@ -542,10 +565,18 @@ class Planner(Coordinator):
     and then executes it.
     """
 
-    prompt_templates = param.Dict(default={
-        "main": PROMPTS_DIR / "Planner" / "main.jinja2",
-        "check_validity": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-    }, doc="""The paths to the prompt's jinja2 templates.""")
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "Planner" / "main.jinja2",
+                "response_model": make_plan_models,
+            },
+            "check_validity": {
+                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
+                "response_model": Validity,
+            },
+        }
+    )
 
     @classmethod
     async def _lookup_schemas(
@@ -579,27 +610,31 @@ class Planner(Coordinator):
         step: ChatStep,
         schemas: dict[str, dict] | None = None
     ) -> BaseModel:
-        user_msg = messages[-1]
         info = ''
         reasoning = None
+        tools = self._tools["__main__"]
         requested, provided = [], []
-        if 'current_table' in self._memory:
-            requested.append(self._memory['current_table'])
+        if "table" in self._memory:
+            requested.append(self._memory["table"])
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         while reasoning is None or requested:
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
-            system = await self._render_main_prompt(
+            system = await self._render_prompt(
+                "main",
                 messages,
                 agents=list(agents.values()),
+                tools=tools,
                 unmet_dependencies=unmet_dependencies,
                 table_info=info,
                 tables=available
             )
+            model_spec = self.prompts["main"].get("llm_spec", "default")
             reasoning = await self.llm.invoke(
                 messages=messages,
                 system=system,
+                model_spec=model_spec,
                 response_model=reason_model,
                 max_retries=3,
             )
@@ -610,63 +645,101 @@ class Planner(Coordinator):
                 if t and t not in provided
             ]
         new_msg = dict(
-            role=user_msg['role'],
-            content=(
-                f"<user query>{user_msg['content']}</user query>"
-                f"{reasoning.chain_of_thought}"
-            )
+            role='assistant',
+            content=reasoning.chain_of_thought
         )
-        messages = messages[:-1] + [new_msg]
-        plan = await self._fill_model(messages, system, plan_model)
-        return plan
+        messages = messages + [new_msg]
+        return await self._fill_model(messages, system, plan_model)
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
         table_provided = False
         execution_graph = []
+        provided = set(self._memory)
         unmet_dependencies = set()
-        for step in plan.steps[::-1]:
-            subagent = agents[step.expert]
+        tools = {tool.name: tool for tool in self._tools["__main__"]}
+        steps = []
+        for step in plan.steps:
+            key = step.expert_or_tool
+            if key in agents:
+                subagent = agents[key]
+            elif key in tools:
+                subagent = tools[key]
             requires = set(await subagent.requirements(messages))
-            unmet_dependencies = {
-                dep for dep in (unmet_dependencies | requires)
-                if dep not in subagent.provides and dep not in self._memory
-            }
+            provided |= set(subagent.provides)
+            unmet_dependencies = (unmet_dependencies | requires) - provided
+            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents:
+                provided |= set(agents['SQLAgent'].provides)
+                sql_step = type(step)(
+                    expert_or_tool='SQLAgent',
+                    instruction='Load the table',
+                    title='Loading table',
+                    render_output=False
+                )
+                execution_graph.append(
+                    ExecutionNode(
+                        actor=agents['SQLAgent'],
+                        provides=['table'],
+                        instruction=sql_step.instruction,
+                        title=sql_step.title,
+                        render_output=False
+                    )
+                )
+                steps.append(sql_step)
+                table_provided = True
+                unmet_dependencies -= provided
             execution_graph.append(
                 ExecutionNode(
-                    agent=subagent,
+                    actor=subagent,
                     provides=subagent.provides,
                     instruction=step.instruction,
                     title=step.title,
                     render_output=step.render_output
                 )
             )
-            if "current_table" in unmet_dependencies:
-                unmet_dependencies.remove('current_table')
-                if not table_provided:
-                    execution_graph.append(
-                        ExecutionNode(
-                            agent=agents['SQLAgent'],
-                            provides=['current_table'],
-                            instruction='Load the table',
-                            title='Loading table',
-                            render_output=False
-                        )
-                    )
-                table_provided = True
+            steps.append(step)
+        last_node = execution_graph[-1]
+        if isinstance(last_node.actor, Tool):
+            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
+                expert = "AnalystAgent"
+            else:
+                expert = "ChatAgent"
+            summarize_step = type(step)(
+                expert_or_tool=expert,
+                instruction='Summarize the results.',
+                title='Summarizing results',
+                render_output=False
+            )
+            steps.append(summarize_step)
+            execution_graph.append(
+                ExecutionNode(
+                    actor=agents[expert],
+                    provides=[],
+                    instruction=summarize_step.instruction,
+                    title=summarize_step.title,
+                    render_output=summarize_step.render_output
+                )
+            )
+        plan.steps = steps
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
-        agent_names = tuple(sagent.name[:-5] for sagent in agents.values())
+        tool_names = [tool.name for tool in self._tools["__main__"]]
+        agent_names = [sagent.name[:-5] for sagent in agents.values()]
         tables = {}
-        for src in self._memory['available_sources']:
+        for src in self._memory['sources']:
             for table in src.get_tables():
                 tables[table] = src
 
-        reason_model, plan_model = make_plan_models(agent_names, list(tables))
+        reason_model, plan_model = self._get_model(
+            "main",
+            experts_or_tools=agent_names+tool_names,
+            tables=list(tables)
+        )
         planned = False
         unmet_dependencies = set()
         schemas = {}
         execution_graph = []
+        attempts = 0
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
                 try:
@@ -682,11 +755,14 @@ class Planner(Coordinator):
                 execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
+                    attempts += 1
                 else:
                     planned = True
+                if attempts > 5:
+                    raise ValueError(f"Could not find a suitable plan for {messages[-1]['content']!r}")
             self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
-                istep.stream(f"{i+1}. {step.expert}: {step.instruction}\n")
+                istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
             istep.success_title = "Successfully came up with a plan"
-        return execution_graph[::-1]
+        return execution_graph
