@@ -93,6 +93,7 @@ class UI(Viewer):
         data: DataT | list[DataT] | None = None,
         **params
     ):
+        params["log_level"] = params.get("log_level", "INFO").upper()
         super().__init__(**params)
         log.setLevel(self.log_level)
 

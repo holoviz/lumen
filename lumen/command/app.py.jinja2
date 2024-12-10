@@ -35,5 +35,5 @@ data = [{{ tables | join(', ') }}]
 {%- endif -%}
 
 lmai.ExplorerUI(
-    {{ assistant_args | join(',\n    ') }}
+    {{ assistant_args | join(',\n    ') }}, log_level='{{ log_level }}'
 ).servable("Lumen.ai")

@@ -84,6 +84,7 @@ class LumenAIServe(Serve):
         endpoint = args.provider_endpoint
         temperature = args.temperature
         agents = args.agents
+        log_level = args.log_level
 
         if not provider:
             provider = LLMConfig.detect_provider()
@@ -121,6 +122,7 @@ class LumenAIServe(Serve):
                 temperature=temperature,
                 endpoint=endpoint,
                 agents=agents,
+                log_level=log_level,
                 model_kwargs=model_kwargs,
             )
             if handler.failed:
@@ -147,6 +149,7 @@ class AIHandler(CodeHandler):
         temperature: float | None = None,
         endpoint: str | None = None,
         agents: list[str] | None = None,
+        log_level: str | None = None,
         model_kwargs: dict | None = None,
         **kwargs,
     ) -> None:
@@ -157,6 +160,7 @@ class AIHandler(CodeHandler):
             temperature=temperature,
             endpoint=endpoint,
             agents=agents,
+            log_level=log_level,
             model_kwargs=model_kwargs,
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
@@ -169,6 +173,7 @@ class AIHandler(CodeHandler):
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
             "agents": config.get("agents"),
+            "log_level": config.get("log_level", "INFO"),
             "temperature": config.get("temperature"),
             "model_kwargs": config.get('model_kwargs') or {},
         }
