@@ -229,7 +229,7 @@ def test_export_notebook(source):
                 'outputs': [],
                 'source': [
                     'pipeline = lm.Pipeline.from_spec({\n',
-                    '  "source": {\n', '    "uri": "'+str(TEST_DIR)+'/sources/catalog.yml",\n',
+                    '  "source": {\n', '    "uri": "'+str(TEST_DIR)+'/sources/catalog.yml"'.replace('/', os.path.sep)+',\n',
                     '    "type": "intake"\n', '  },\n',
                     '  "table": "test"\n', '})\n',
                     'pipeline'
@@ -243,7 +243,7 @@ def test_export_notebook(source):
                 'source': [
                     'view = lm.View.from_spec({\n',
                     '  "pipeline": {\n', '    "source": {\n',
-                    '      "uri": "'+str(TEST_DIR)+'/sources/catalog.yml",\n',
+                    '      "uri": "'+str(TEST_DIR)+'/sources/catalog.yml"'.replace('/', os.path.sep)+',\n',
                     '      "type": "intake"\n', '    },\n',
                     '    "table": "test"\n', '  },\n',
                     '  "type": "table"\n',
