@@ -65,11 +65,11 @@ class Actor(param.Parameterized):
                     f"Prompt {prompt_name!r} is not a valid prompt name. "
                     f"Valid prompt names are {self.param.prompts.default.keys()}."
                 )
-            extra_keys = set(self.prompts[prompt_name].keys()) - {"template", "response_model", "tools"}
+            extra_keys = set(self.prompts[prompt_name].keys()) - {"template", "response_model", "tools", "llm_key"}
             if extra_keys:
                 raise ValueError(
                     f"Prompt {prompt_name!r} has unexpected keys {extra_keys}. "
-                    "Valid keys are 'template', 'model' and 'tools'."
+                    "Valid keys are 'template', 'response_model', 'tools', and 'llm_key'."
                 )
 
     @property
