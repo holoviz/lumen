@@ -40,7 +40,6 @@ class DocumentLookup(Tool):
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             if not self.vector_store.query(source["text"], threshold=1):
-                print(source)
                 self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
 
     def __init__(self, **params):
@@ -52,7 +51,6 @@ class DocumentLookup(Tool):
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
-        print(query)
         results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"

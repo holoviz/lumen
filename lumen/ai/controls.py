@@ -301,7 +301,6 @@ class SourceControls(Viewer):
             if self._input_tabs.active == 0:
                 for i in range(len(self._upload_tabs)):
                     media_controls = self._media_controls[i]
-                    print(media_controls.extension, DOCUMENT_EXTENSIONS)
                     if media_controls.extension.endswith(TABLE_EXTENSIONS):
                         self._add_table(duckdb_source, media_controls.file_obj, media_controls)
                     elif media_controls.extension.endswith(DOCUMENT_EXTENSIONS):
