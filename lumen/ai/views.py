@@ -76,7 +76,7 @@ class LumenOutput(Viewer):
         code_col = Column(code_editor, icons, sizing_mode="stretch_both")
         if self.render_output:
             placeholder = Column(
-                ParamMethod(self.render, inplace=True),
+                ParamMethod(self.render, inplace=True, lazy=True),
                 sizing_mode="stretch_width"
             )
             self._main = Tabs(
