@@ -287,12 +287,12 @@ class SourceControls(Viewer):
             raise ValueError(f"Unsupported document extension: {extension}")
 
         metadata = f"Filename: {document_controls.filename}\n\n" + document_controls._metadata_input.value
-
-        if "document_sources" not in self._memory:
-            self._memory["document_sources"] = []
-
-        self._memory["document_sources"].append({"text": text, "metadata": metadata})
-        self._memory.trigger("document_sources")
+        document = {"text": text, "metadata": metadata}
+        if "document_sources" in self._memory:
+            self._memory["document_sources"] = [document]
+        else:
+            self._memory["document_sources"].append(document)
+            self._memory.trigger("document_sources")
 
     @param.depends("add", watch=True)
     def add_medias(self):

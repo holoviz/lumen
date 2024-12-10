@@ -100,7 +100,9 @@ class Actor(param.Parameterized):
         for tool in self._tools[prompt_name]:
             if all(requirement in self._memory for requirement in tool.requires):
                 with tool.param.update(memory=self.memory):
-                    tools_context += "\n\n" + await tool.respond(messages)
+                    tool_context = await tool.respond(messages)
+                    if tool_context:
+                        tools_context += f"\n\n{tool_context}"
         return tools_context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
