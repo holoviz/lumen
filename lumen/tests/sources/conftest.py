@@ -1,5 +1,3 @@
-import asyncio
-
 import pandas as pd
 import pytest
 
@@ -21,9 +19,3 @@ def source_tables():
     }
     yield tables
     pd.set_option('mode.string_storage', string)
-
-
-try:
-    asyncio.get_event_loop()
-except (RuntimeError, DeprecationWarning):
-    asyncio.set_event_loop(asyncio.new_event_loop())
