@@ -38,7 +38,19 @@ lumen-ai serve --provider mistral
 
 Note the provider can be auto-detected from standard environment variable names, e.g. `OPENAI_API_KEY`, if the provider option is not specified.
 
-See [Configuring LLM Providers](configuring_lumen_ai#llm-providers) for all the supported providers.
+### Agents
+
+Additional agents can be provided with the `--agents` option:
+
+```bash
+lumen-ai serve --agents TableListAgent chatagent Sql
+```
+
+:::{admonition} Tip
+:class: success
+
+Within the CLI, the names of the agents are case insensitive and the suffix `agent` can be dropped, e.g. `ChatAgent` can be specified as `chatagent`, `Chatagent`, and `Chat`.
+:::
 
 ## Python API
 
