@@ -94,7 +94,6 @@ class UI(Viewer):
         **params
     ):
         params["log_level"] = params.get("log_level", "INFO").upper()
-        print(params)
         super().__init__(**params)
         log.setLevel(self.log_level)
 
