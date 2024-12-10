@@ -14,13 +14,15 @@ from ..sources.duckdb import DuckDBSource
 from .memory import _Memory, memory
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
-DOCUMENT_EXTENSIONS = ("doc", "docx", "pdf", "txt", "md")
+DOCUMENT_EXTENSIONS = ("doc", "docx", "pdf", "txt", "md", "rst")
 
 
 class MediaControls(Viewer):
 
-    filename = param.String(default="", doc="Filename")
     alias = param.String(default="", doc="What to name the uploaded file when querying it")
+
+    filename = param.String(default="", doc="Filename")
+
     extension = param.String(default="", doc="File extension")
 
     _load = param.Event(doc="Load table")
@@ -99,17 +101,17 @@ class SourceControls(Viewer):
 
     cancel = param.Event(doc="Cancel")
 
+    cancellable = param.Boolean(default=True, doc="Show cancel button")
+
+    clear_uploads = param.Boolean(default=False, doc="Clear uploaded file tabs")
+
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
     multiple = param.Boolean(default=False, doc="Allow multiple files")
 
-    cancellable = param.Boolean(default=True, doc="Show cancel button")
-
     replace_controls = param.Boolean(default=False, doc="Replace controls")
-
-    clear_uploads = param.Boolean(default=False, doc="Clear uploaded file tabs")
 
     select_existing = param.Boolean(default=True, doc="Select existing table")
 
@@ -269,7 +271,7 @@ class SourceControls(Viewer):
         document_controls: DocumentControls
     ):
         extension = document_controls.extension.lower()
-        if extension in ("txt", "md"):
+        if extension in ("txt", "md", "rst"):
             file.seek(0)
             text = file.read().decode("utf-8", errors="replace")
         elif extension in ("doc", "docx"):
