@@ -66,6 +66,7 @@ class Llm(param.Parameterized):
             model_kwargs = self.model_kwargs.get(model_key)
         else:
             model_kwargs = self.model_kwargs["default"]
+            model_kwargs["model"] = model_key  # override the default model with user provided model
         return dict(model_kwargs)
 
     @property
@@ -229,6 +230,21 @@ class Llama(Llm):
             "n_ctx": 131072,
         },
     })
+
+    def _get_model_kwargs(self, model_key: MODEL_TYPE) -> dict[str, Any]:
+        if model_key in self.model_kwargs:
+            model_kwargs = self.model_kwargs.get(model_key)
+        else:
+            model_kwargs = self.model_kwargs["default"]
+            repo, model_spec = model_key.rsplit("/", 1)
+            if ":" in model_spec:
+                model_file, chat_format = model_spec.split(":")
+                model_kwargs["chat_format"] = chat_format
+            else:
+                model_file = model_spec
+            model_kwargs["repo"] = repo
+            model_kwargs["model_file"] = model_file
+        return dict(model_kwargs)
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
