@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import os
+import pathlib
 
 import pytest
 
@@ -18,6 +19,8 @@ try:
 except ImportError:
     pytest.skip("Skipping tests that require lumen.ai", allow_module_level=True)
 
+
+TEST_DIR = pathlib.Path(__file__).parent.parent
 
 @pytest.fixture
 def source():
@@ -226,7 +229,7 @@ def test_export_notebook(source):
                 'outputs': [],
                 'source': [
                     'pipeline = lm.Pipeline.from_spec({\n',
-                    '  "source": {\n', '    "uri": "/Users/philippjfr/development/lumen/lumen/tests/sources/catalog.yml",\n',
+                    '  "source": {\n', '    "uri": "'+str(TEST_DIR)+'/sources/catalog.yml",\n',
                     '    "type": "intake"\n', '  },\n',
                     '  "table": "test"\n', '})\n',
                     'pipeline'
@@ -240,7 +243,7 @@ def test_export_notebook(source):
                 'source': [
                     'view = lm.View.from_spec({\n',
                     '  "pipeline": {\n', '    "source": {\n',
-                    '      "uri": "/Users/philippjfr/development/lumen/lumen/tests/sources/catalog.yml",\n',
+                    '      "uri": "'+str(TEST_DIR)+'/sources/catalog.yml",\n',
                     '      "type": "intake"\n', '    },\n',
                     '    "table": "test"\n', '  },\n',
                     '  "type": "table"\n',
