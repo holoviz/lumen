@@ -84,7 +84,7 @@ class LumenAIServe(Serve):
         endpoint = args.provider_endpoint
         temperature = args.temperature
         agents = args.agents
-        log_level = args.log_level
+        log_level = args.log_level or "INFO"
 
         if not provider:
             provider = LLMConfig.detect_provider()
