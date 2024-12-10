@@ -20,6 +20,49 @@ class Tool(Actor, ContextProvider):
     """
 
 
+class DocumentLookup(Tool):
+    """
+    The DocumentLookup tool creates a vector store of all available documents
+    and responds with a list of the most relevant documents given the user query.
+    Always use this for more context.
+    """
+
+    min_similarity = param.Number(default=0.1, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=3, bounds=(0, None), doc="""
+        The number of document results to return.""")
+
+    vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
+        Vector store object which is queried to provide additional context
+        before responding.""")
+
+    def _update_vector_store(self, _, __, sources):
+        for source in sources:
+            if not self.vector_store.query(source["text"], threshold=1):
+                print(source)
+                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
+
+    def __init__(self, **params):
+        if 'vector_store' not in params:
+            params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
+        super().__init__(**params)
+        self._memory.on_change('document_sources', self._update_vector_store)
+        self._update_vector_store(None, None, self._memory.get("document_sources", []))
+
+    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
+        query = messages[-1]["content"]
+        print(query)
+        results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
+        closest_doc_chunks = [
+            f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
+            for result in results
+        ]
+        message = "Please augment your response with the following context:\n"
+        message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
+        return message
+
+
 class TableLookup(Tool):
     """
     The TableLookup tool creates a vector store of all available tables
@@ -47,9 +90,10 @@ class TableLookup(Tool):
         if 'vector_store' not in params:
             params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
-        self._memory.on_change('sources', self._update_vector_store_table_list)
+        self._memory.on_change('sources', self._update_vector_store)
+        self._update_vector_store(None, None, self._memory["sources"])
 
-    def _update_vector_store_table_list(self, _, __, sources):
+    def _update_vector_store(self, _, __, sources):
         for source in sources:
             for table in source.get_tables():
                 source_table = f'{source.name}//{table}'
