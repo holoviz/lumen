@@ -1,35 +1,42 @@
-# {octicon}`zap;2em;sd-mr-1` Exploring Data with Lumen AI
+# {octicon}`zap;2em;sd-mr-1` Configuring Lumen AI
 
-Powered by state-of-the-art large language models (LLMs), Lumen AI lets users chat with their tabular datasets, allowing users to explore and analyze their data without the need for complex programming or technical expertise.
-
-### Python Script
-
-To get started with Lumen AI, copy and paste the following into a file, like `app.py`:
-
-```python
-import lumen.ai as lmai
-
-ui = lmai.ExplorerUI()
-ui.servable()
-```
-
-Then, launch it by calling:
-
-```bash
-panel serve app.py
-```
-
-This will serve the app on `localhost:5006`, where users can upload their datasets interactively and chat about them.
-
-### Command Line Interface
-
-Alternatively, users can also launch the Lumen AI chat interface through the command line interface (CLI) by calling:
-
-```bash
-lumen-ai serve
-```
+Lumen AI is designed to be highly customizable and composable. Users can easily modify the default behavior of Lumen AI by providing custom data sources, LLM providers, agents, and prompts. This guide will walk you through the basic and advanced customization options available in Lumen AI.
 
 ## Features
+
+### Coordinator
+
+Lumen AI is managed by a `Coordinator` that orchestrates the actions of multiple agents to fulfill a user-defined query by generating an execution graph and executing each node along it.
+
+The `Coordinator` is responsible for orchestrating multiple actors towards solving some goal. It can make plans, determine what additional context is needed and ensures that each actor has all the context it needs.
+
+There are a couple options available:
+
+- **`DependencyResolver`** chooses the agent to answer the user's query and then recursively resolves all the information required for that agent until the answer is available.
+
+- **`Planner`** develops a plan to solve the user's query step-by-step and then executes it.
+
+### Agents
+
+`Agent`s are the core components of Lumen AI that solve some sub-task in an effort to address the user query. It has certain dependencies that it requires and provides certain context for other `Agent`s to use. It may also request additional context through the use of context tools.
+
+The following `Agent`s are built-in:
+
+- **`ChatAgent`** provides high-level information about your datasets, including details about available tables, columns, and statistics, and can also provide suggestions on what to explore.
+
+- **`SourceAgent`** helps users upload and import their data sources so that the LLM has access to the desired datasets.
+
+- **`TableListAgent`** provides an overview of all the tables available to the LLM.
+
+- **`SQLAgent`** translates user's natural language queries into SQL queries, returning a table view of the results.
+
+- **`hvPlotAgent`** creates interactive visualizations of the data and query results so users can continue dive into the visuals from various perspectives.
+
+- **`VegaLiteAgent`** generates visualizations ready to export--perfect for presentations and reports.
+
+- **`AnalysisAgent`** allows users to plug in their own custom analyses and views.
+
+In addition to these agents, users also have the flexibility to create their own custom agents, described in [#customization/agents].
 
 ### LLM Providers
 
@@ -41,38 +48,6 @@ The following are provided:
 - **MistralAI** requires `mistralai`. The `api_key` defaults to the environment variable `MISTRAL_API_KEY` if available and the `model` defaults to `mistral-large-latest`.
 - **Anthropic** requires `anthropic`. The `api_key` defaults to the environment variable `ANTHROPIC_API_KEY` if available and the `model` defaults to `claude-3-5-sonnet-20240620`.
 - **Llama** requires `llama-cpp-python`,and `huggingface_hub`. The `model` defaults to `qwen2.5-coder-7b-instruct-q5_k_m.gguf`.
-
-### Agents
-
-Lumen AI is designed to be highly customizable and composable, allowing users to specify which agents to utilize for their tasks.
-
-The following agents are built-in:
-
-- **ChatAgent** provides high-level information about your datasets, including details about available tables, columns, and statistics, and can also provide suggestions on what to explore.
-
-- **SourceAgent** helps users upload and import their data sources so that the LLM has access to the desired datasets.
-
-- **TableListAgent** provides an overview of all the tables available to the LLM.
-
-- **SQLAgent** translates user's natural language queries into SQL queries, returning a table view of the results.
-
-- **hvPlotAgent** creates interactive visualizations of the data and query results so users can continue dive into the visuals from various perspectives.
-
-- **VegaLiteAgent** generates visualizations ready to export--perfect for presentations and reports.
-
-- **AnalysisAgent** allows users to plug in their own custom analyses and views.
-
-In addition to these agents, users also have the flexibility to create their own custom agents, described in [#customization/agents].
-
-### Coordinator
-
-Lumen AI is managed by a `Coordinator` that orchestrates the actions of multiple agents to fulfill a user-defined query by generating an execution graph and executing each node along it.
-
-There are a few options available:
-
-- `DependencyResolver` chooses the agent to answer the user's query and then recursively resolves all the information required for that agent until the answer is available.
-
-- `Planner` develops a plan to solve the user's query step-by-step and then executes it.
 
 ## Basic Customization
 
