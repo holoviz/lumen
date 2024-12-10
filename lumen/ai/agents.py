@@ -457,14 +457,17 @@ class SQLAgent(LumenBaseAgent):
         errors=None
     ):
         if errors:
-            last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
+            last_query = self.interface.serialize()[-1]["content"]
+            sql_code_match = re.search(r'(?s)```sql\s*(.*?)```', last_query, re.DOTALL)
+            if sql_code_match:
+                last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
             messages += [
                 {
                     "role": "user",
                     "content": (
                         f"Your last query `{last_query}` did not work as intended, "
-                        f"expertly revise, and please do not repeat these issues:\n{errors}\n\n"
+                        f"expertly revise these errors:\n```python\n{errors}\n```\n\n"
                         f"If the error is `syntax error at or near \")\"`, double check you used "
                         "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
                     )
