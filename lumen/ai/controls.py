@@ -289,10 +289,10 @@ class SourceControls(Viewer):
         metadata = f"Filename: {document_controls.filename}\n\n" + document_controls._metadata_input.value
         document = {"text": text, "metadata": metadata}
         if "document_sources" in self._memory:
-            self._memory["document_sources"] = [document]
-        else:
             self._memory["document_sources"].append(document)
             self._memory.trigger("document_sources")
+        else:
+            self._memory["document_sources"] = [document]
 
     @param.depends("add", watch=True)
     def add_medias(self):
