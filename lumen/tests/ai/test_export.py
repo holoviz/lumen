@@ -11,7 +11,7 @@ from lumen.sources.intake import IntakeSource
 from lumen.views import Table
 
 try:
-    from lumen.ai.assistant import Assistant
+    from lumen.ai.coordinator import Coordinator
     from lumen.ai.export import (
         LumenOutput, export_notebook, format_markdown, format_output,
         make_preamble,
@@ -182,7 +182,7 @@ async def test_format_output_view(source):
 
 # requires async because internally uses async_executor
 async def test_export_notebook(source):
-    assistant = Assistant()
+    assistant = Coordinator()
     assistant.interface.objecs = [
         ChatMessage(
             object=LumenOutput(component=Pipeline(source=source, table="test")),

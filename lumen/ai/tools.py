@@ -59,8 +59,9 @@ class DocumentLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._memory.on_change('document_sources', self._update_vector_store)
-        self._update_vector_store(None, None, self._memory.get("document_sources", []))
+        self._memory.on_change("document_sources", self._update_vector_store)
+        if "document_sources" in self._memory:
+            self._update_vector_store(None, None, self._memory["document_sources"])
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
@@ -97,7 +98,8 @@ class TableLookup(VectorLookupTool):
     def __init__(self, **params):
         super().__init__(**params)
         self._memory.on_change('sources', self._update_vector_store)
-        self._update_vector_store(None, None, self._memory["sources"])
+        if "sources" in self._memory:
+            self._update_vector_store(None, None, self._memory["sources"])
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
