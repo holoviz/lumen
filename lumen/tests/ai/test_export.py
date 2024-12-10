@@ -182,8 +182,8 @@ async def test_format_output_view(source):
 
 # requires async because internally uses async_executor
 async def test_export_notebook(source):
-    assistant = Coordinator()
-    assistant.interface.objecs = [
+    coordinator = Coordinator()
+    coordinator.interface.objecs = [
         ChatMessage(
             object=LumenOutput(component=Pipeline(source=source, table="test")),
             user="User",
@@ -196,7 +196,7 @@ async def test_export_notebook(source):
         ),
     ]
 
-    cells = json.loads(export_notebook(assistant))
+    cells = json.loads(export_notebook(coordinator.interface))
     cells["cells"][0].pop("source")
     cells["cells"][0].pop("id")
     cells["cells"][1].pop("id")
