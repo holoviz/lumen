@@ -296,39 +296,42 @@ class SourceControls(Viewer):
 
     @param.depends("add", watch=True)
     def add_medias(self):
+        if self._input_tabs.active == 1 and not self.select_existing:
+            return
         with self.menu.param.update(loading=True):
-            duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded')
-            if duckdb_source.tables is None:
-                duckdb_source.tables = {}
-            if self._input_tabs.active == 0:
-                for i in range(len(self._upload_tabs)):
-                    media_controls = self._media_controls[i]
-                    if media_controls.extension.endswith(TABLE_EXTENSIONS):
-                        self._add_table(duckdb_source, media_controls.file_obj, media_controls)
-                    elif media_controls.extension.endswith(DOCUMENT_EXTENSIONS):
-                        self._add_document(media_controls.file_obj, media_controls)
-
-                if self.replace_controls:
-                    src = self._memory["source"]
-                    self.tables_tabs[:] = [
-                        (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
-                        for t in src.get_tables()
-                    ]
-                    self.menu[0].visible = False
-                    self._add_button.visible = False
-
-                if self.clear_uploads:
-                    self._upload_tabs.clear()
-                    self._media_controls.clear()
-                    self._add_button.visible = False
-
-            elif self.select_existing and self._input_tabs.active == 1:
+            if self._input_tabs.active == 1:
+                duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
                 table = self._select_table.value["table"]
                 duckdb_source.tables[table] = f"SELECT * FROM {table}"
                 self._memory["source"] = duckdb_source
                 self._memory["table"] = table
                 self._memory["sources"].append(duckdb_source)
                 self._last_table = table
+                return
+
+            source = None
+            for i in range(len(self._upload_tabs)):
+                media_controls = self._media_controls[i]
+                if media_controls.extension.endswith(TABLE_EXTENSIONS):
+                    if source is None:
+                        source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
+                    self._add_table(source, media_controls.file_obj, media_controls)
+                elif media_controls.extension.endswith(DOCUMENT_EXTENSIONS):
+                    self._add_document(media_controls.file_obj, media_controls)
+
+            if self.replace_controls:
+                src = self._memory["source"]
+                self.tables_tabs[:] = [
+                    (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
+                    for t in src.get_tables()
+                ]
+                self.menu[0].visible = False
+                self._add_button.visible = False
+
+            if self.clear_uploads:
+                self._upload_tabs.clear()
+                self._media_controls.clear()
+                self._add_button.visible = False
 
     def __panel__(self):
         return self.menu
