@@ -6,7 +6,7 @@ Try not to take the query too literally, but instead focus on the user's intent 
 Use `SELECT * FROM table` if there is no specific column selection mentioned in the query.
 {%- endblock -%}
 
-{%- block context -%}
+{% block context -%}
 {%- if tables_sql_schemas -%}
 Here are YAML schemas for currently relevant tables:
 {% for table, details in tables_sql_schemas.items() %}
