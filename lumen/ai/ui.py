@@ -385,7 +385,7 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, multiple=True, name='Upload')
+        controls = SourceControls(select_existing=False, multiple=True, cancellable=False, name='Upload')
         controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
@@ -398,7 +398,7 @@ class ExplorerUI(UI):
                 for table in table_select.value:
                     source = source_map[table]
                     if len(memory['sources']) > 1:
-                        _, table = table.rsplit(' : ', 1)
+                        _, table = table.rsplit('//', 1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )

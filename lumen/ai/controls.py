@@ -81,6 +81,8 @@ class SourceControls(Viewer):
 
     multiple = param.Boolean(default=False, doc="Allow multiple files")
 
+    cancellable = param.Boolean(default=True, doc="Show cancel button")
+
     replace_controls = param.Boolean(default=False, doc="Replace controls")
 
     select_existing = param.Boolean(default=True, doc="Select existing table")
@@ -133,7 +135,7 @@ class SourceControls(Viewer):
             self.param.cancel,
             name="Cancel",
             icon="circle-x",
-            visible=True,
+            visible=self.param.cancellable,
         )
 
         self.menu = Column(
