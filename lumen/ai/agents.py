@@ -121,8 +121,9 @@ class Agent(Viewer, Actor, ContextProvider):
 
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
+        model_key = self.prompts["main"].get("llm_key", "default")
         async for output_chunk in self.llm.stream(
-            messages, system=system_prompt, field="output"
+            messages, system=system_prompt, model_key=model_key, field="output"
         ):
             message = self.interface.stream(
                 output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
@@ -377,7 +378,8 @@ class SQLAgent(LumenBaseAgent):
         default={
             "main": {
                 "response_model": Sql,
-                "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2"
+                "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
+                "llm_key": "reasoning",
             },
             "select_table": {
                 "response_model": make_table_model,
@@ -421,10 +423,12 @@ class SQLAgent(LumenBaseAgent):
                     )
                     if "closest_tables" in self._memory:
                         tables = self._memory["closest_tables"]
+                    model_key = self.prompts["select_table"].get("llm_key", "default")
                     table_model = self._get_model("select_table", tables=tables)
                     result = await self.llm.invoke(
                         messages,
                         system=system_prompt,
+                        model_key=model_key,
                         response_model=table_model,
                         allow_partial=False,
                         max_retries=3,
@@ -469,7 +473,8 @@ class SQLAgent(LumenBaseAgent):
         log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(messages, system=system, response_model=self._get_model("main"))
+            model_key = self.prompts["main"].get("llm_key", "default")
+            response = self.llm.stream(messages, system=system, model_Key=model_key, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
                 step_message = output.chain_of_thought
@@ -554,9 +559,11 @@ class SQLAgent(LumenBaseAgent):
                 schema=yaml.dump(schema),
                 table=table
             )
+            model_key = self.prompts["require_joins"].get("llm_key", "default")
             response = self.llm.stream(
                 messages[-1:],
                 system=join_prompt,
+                model_key=model_key,
                 response_model=self._get_model("require_joins"),
             )
             async for output in response:
@@ -576,10 +583,12 @@ class SQLAgent(LumenBaseAgent):
             tables = self._memory['source'].get_tables()
 
         find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables)
+        model_key = self.prompts["find_joins"].get("llm_key", "default")
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
                 system=find_joins_prompt,
+                model_key=model_key,
                 response_model=self._get_model("find_joins"),
             )
             tables_to_join = output.tables_to_join
@@ -720,9 +729,11 @@ class BaseViewAgent(LumenBaseAgent):
             view=self._memory.get('view'),
             doc=doc,
         )
+        model_key = self.prompts["main"].get("llm_key", "default")
         output = await self.llm.invoke(
             messages,
             system=system_prompt,
+            model_key=model_key,
             response_model=self._get_model("main", schema=schema),
         )
         spec = await self._extract_spec(output)
@@ -870,9 +881,11 @@ class AnalysisAgent(LumenBaseAgent):
                     analyses=analyses,
                     data=self._memory.get("data"),
                 )
+                model_key = self.prompts["main"].get("llm_key", "default")
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
+                    model_key=model_key,
                     response_model=analysis_model,
                     allow_partial=False,
                 )).correct_name

@@ -174,7 +174,6 @@ class Coordinator(Viewer, Actor):
             user="Help", respond=False,
         )
         interface.button_properties={
-            "suggest": {"callback": self._create_suggestion, "icon": "wand"},
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
         }
@@ -314,9 +313,11 @@ class Coordinator(Viewer, Actor):
             "check_validity", messages, table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
         )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
+            model_key = self.prompts["check_validity"].get("llm_key", "default")
             output = await self.llm.invoke(
                 messages=messages,
                 system=system,
+                model_key=model_key,
                 response_model=self._get_model("check_validity"),
             )
             step.stream(output.correct_assessment, replace=True)
@@ -337,19 +338,6 @@ class Coordinator(Viewer, Actor):
                 print("\033[91mInvalidated SQL from memory.\033[0m")
             return output.correct_assessment
 
-    async def _create_suggestion(self, instance, event):
-        messages = self.interface.serialize(custom_serializer=self._serialize)[-3:-1]
-        response = self.llm.stream(
-            messages,
-            system="Generate a follow-up question that a user might ask; ask from the user POV",
-        )
-        try:
-            self.interface.disabled = True
-            async for output in response:
-                self.interface.active_widget.value_input = output
-        finally:
-            self.interface.disabled = False
-
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         print("\033[94mNEW\033[0m" + "-" * 100)
         await self.respond(contents)
@@ -360,9 +348,11 @@ class Coordinator(Viewer, Actor):
             errors = '\n'.join(errors)
             messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
 
+        model_key = self.prompts["main"].get("llm_key", "default")
         out = await self.llm.invoke(
             messages=messages,
             system=system,
+            model_key=model_key,
             response_model=agent_model
         )
         return out
@@ -639,9 +629,11 @@ class Planner(Coordinator):
                 table_info=info,
                 tables=available
             )
+            model_key = self.prompts["main"].get("llm_key", "default")
             reasoning = await self.llm.invoke(
                 messages=messages,
                 system=system,
+                model_key=model_key,
                 response_model=reason_model,
                 max_retries=3,
             )
