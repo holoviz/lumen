@@ -4,14 +4,13 @@ import os
 
 import pytest
 
-from panel.chat import ChatMessage
+from panel.chat import ChatInterface, ChatMessage
 
 from lumen.pipeline import Pipeline
 from lumen.sources.intake import IntakeSource
 from lumen.views import Table
 
 try:
-    from lumen.ai.coordinator import Coordinator
     from lumen.ai.export import (
         LumenOutput, export_notebook, format_markdown, format_output,
         make_preamble,
@@ -179,8 +178,11 @@ def test_format_output_view(source):
 
 
 def test_export_notebook(source):
-    coordinator = Coordinator()
-    coordinator.interface.objecs = [
+    interface = ChatInterface(
+        ChatMessage(
+            object="",
+            user="Help",
+        ),
         ChatMessage(
             object=LumenOutput(component=Pipeline(source=source, table="test")),
             user="User",
@@ -191,12 +193,14 @@ def test_export_notebook(source):
             ),
             user="Bot",
         ),
-    ]
+    )
 
-    cells = json.loads(export_notebook(coordinator.interface))
+    cells = json.loads(export_notebook(interface))
     cells["cells"][0].pop("source")
     cells["cells"][0].pop("id")
     cells["cells"][1].pop("id")
+    cells["cells"][2].pop("id")
+    cells["cells"][3].pop("id")
     assert cells == {
         "cells": [
             {
@@ -215,6 +219,35 @@ def test_export_notebook(source):
                     "pn.extension('tabulator')",
                 ],
             },
+            {
+                'cell_type': 'code',
+                'execution_count': None,
+                'metadata': {},
+                'outputs': [],
+                'source': [
+                    'pipeline = lm.Pipeline.from_spec({\n',
+                    '  "source": {\n', '    "uri": "/Users/philippjfr/development/lumen/lumen/tests/sources/catalog.yml",\n',
+                    '    "type": "intake"\n', '  },\n',
+                    '  "table": "test"\n', '})\n',
+                    'pipeline'
+                ]
+            },
+            {
+                'cell_type': 'code',
+                'execution_count': None,
+                'metadata': {},
+                'outputs': [],
+                'source': [
+                    'view = lm.View.from_spec({\n',
+                    '  "pipeline": {\n', '    "source": {\n',
+                    '      "uri": "/Users/philippjfr/development/lumen/lumen/tests/sources/catalog.yml",\n',
+                    '      "type": "intake"\n', '    },\n',
+                    '    "table": "test"\n', '  },\n',
+                    '  "type": "table"\n',
+                    '})\n',
+                    'view'
+                ]
+            }
         ],
         "metadata": {},
         "nbformat": 4,
