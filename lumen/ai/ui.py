@@ -385,7 +385,7 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, multiple=True, cancellable=False, name='Upload')
+        controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
         controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
 
@@ -412,7 +412,7 @@ class ExplorerUI(UI):
                 table_select.value = []
 
         return Column(
-            Markdown('### Start chatting or select an existing dataset or upload a .csv, .parquet, .xlsx file.', margin=(5, 0)),
+            Markdown('### Start chatting or select an existing dataset or upload table(s) or document(s).', margin=(5, 0)),
             tabs,
             input_row,
             sizing_mode='stretch_both',

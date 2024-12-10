@@ -165,6 +165,7 @@ class Coordinator(Viewer, Actor):
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+
         self._tools["__main__"] = [
             tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
             for tool in self.tools

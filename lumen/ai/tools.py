@@ -20,18 +20,73 @@ class Tool(Actor, ContextProvider):
     """
 
 
-class TableLookup(Tool):
+class VectorLookupTool(Tool):
+    """
+    Baseclass for tools that search a vector database for relevant
+    chunks.
+    """
+
+    min_similarity = param.Number(default=0.1, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=3, bounds=(0, None), doc="""
+        The number of document results to return.""")
+
+    vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
+        Vector store object which is queried to provide additional context
+        before responding.""")
+
+    __abstract = True
+
+    def __init__(self, **params):
+        if 'vector_store' not in params:
+            params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
+        super().__init__(**params)
+
+
+class DocumentLookup(VectorLookupTool):
+    """
+    The DocumentLookup tool creates a vector store of all available documents
+    and responds with a list of the most relevant documents given the user query.
+    Always use this for more context.
+    """
+
+    purpose = param.String(doc="""
+        Looks up relevant""")
+
+    requires = param.List(default=["document_sources"], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._memory.on_change('document_sources', self._update_vector_store)
+        self._update_vector_store(None, None, self._memory.get("document_sources", []))
+
+    def _update_vector_store(self, _, __, sources):
+        for source in sources:
+            if not self.vector_store.query(source["text"], threshold=1):
+                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
+
+    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
+        query = messages[-1]["content"]
+        results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
+        closest_doc_chunks = [
+            f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
+            for result in results
+        ]
+        if not closest_doc_chunks:
+            return ""
+        message = "Please augment your response with the following context:\n"
+        message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
+        return message
+
+
+class TableLookup(VectorLookupTool):
     """
     The TableLookup tool creates a vector store of all available tables
     and responds with a list of the most relevant tables given the user
     query.
     """
-
-    min_similarity = param.Number(default=0.3, doc="""
-        The minimum similarity to include a table.""")
-
-    n = param.Integer(default=3, bounds=(0, None), doc="""
-        The number of table results to return.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -39,17 +94,12 @@ class TableLookup(Tool):
     provides = param.List(default=["closest_tables"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
-    vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
-        Vector store object which is queried to provide additional context
-        before responding.""")
-
     def __init__(self, **params):
-        if 'vector_store' not in params:
-            params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
-        self._memory.on_change('sources', self._update_vector_store_table_list)
+        self._memory.on_change('sources', self._update_vector_store)
+        self._update_vector_store(None, None, self._memory["sources"])
 
-    def _update_vector_store_table_list(self, _, __, sources):
+    def _update_vector_store(self, _, __, sources):
         for source in sources:
             for table in source.get_tables():
                 source_table = f'{source.name}//{table}'
