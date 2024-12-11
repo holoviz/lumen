@@ -1,6 +1,6 @@
 {% extends 'Actor/main.jinja2' %}
 
-{% block instructions %}
+{%- block instructions %}
 You are team lead and have to make a plan to solve how to address the user query step-by-step by assigning subtasks to a set of experts and tools.
 
 Ground Rules:
@@ -10,7 +10,7 @@ Ground Rules:
 {%- if tools %}
 - Tools do not interact with a user, assign an expert to report, summarize or use the results.
 - When looking up information with a tool ensure the expert comes AFTER the tool.
-{%- endif -%}
+{%- endif %}
 
 Agent Rules:
 - The SQLAgent can generate and execute queries in a single step. DO NOT create two separate steps for generating the query and then executing it.
@@ -18,11 +18,10 @@ Agent Rules:
 - The ChatAgent usually can be used alone, but if the query is related to the data tables, please use AnalystAgent instead.
 {% endblock -%}
 
-
-{%- block context -%}
+{% block context -%}
 {%- if 'table' in memory %}- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.{% endif -%}
 
-{%- if table_info -%}
+{%- if table_info %}
 Here are schemas for tables that were recently used (note that these schemas are computed on a subset of data):
 {{ table_info }}
 {%- endif %}
@@ -33,23 +32,23 @@ Additionally the following datasets/tables are available and you may request to 
 {% endfor %}
 {%- endif -%}
 Here's the choice of experts and their uses:
-{% for agent in agents %}
+{%- for agent in agents %}
 - `{{ agent.name[:-5] }}`
   Requires: {{ agent.requires }}
   Provides: {{ agent.provides }}
   Description: {{ agent.purpose.strip().split() | join(' ') }}
-{% endfor %}
-{% if tools -%}
+{%- endfor -%}
+{% if tools %}
 Here's a list of tools:
-{% for tool in tools %}
+{%- for tool in tools %}
 - `{{ tool.name }}`
   Requires: {{ tool.requires }}
   Provides: {{ tool.provides }}
   Description: {{ tool.purpose.strip().split() | join(' ') }}
-{% endfor %}
+{%- endfor -%}
 {%- endif %}
 
-{% if unmet_dependencies %}
+{%- if unmet_dependencies %}
 Here were your failed previous plans:
 {%- for previous_plan in previous_plans %}
 - {{ previous_plan }}
@@ -60,6 +59,5 @@ Please include some of these these experts to provide for the missing requiremen
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] }}`
 {%- endfor %}
-
 {% endif %}
-{% endblock %}
+{%- endblock -%}

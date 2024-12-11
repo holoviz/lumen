@@ -1,10 +1,10 @@
-{% block instructions %}
-{% endblock %}
+{%- block instructions -%}
+{%- endblock -%}
 
-{% block context %}
-{% endblock %}
+{%- block context -%}
+{%- endblock -%}
 
-{% block tools %}
+{% block tools -%}
 {%- if 'tool_context' in memory -%}
 {#- Context from Coordinator.tools -#}
 {{ memory["tool_context"] }}
@@ -12,7 +12,7 @@
 {%- if tool_context is defined -%}
 {{ tool_context }}
 {% endif -%}
-{% endblock %}
+{%- endblock -%}
 
-{% block examples %}
-{% endblock %}
+{%- block examples -%}
+{%- endblock -%}
