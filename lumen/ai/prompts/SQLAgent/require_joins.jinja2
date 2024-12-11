@@ -1,6 +1,6 @@
 {% extends 'Actor/main.jinja2' %}
 
-{% block instructions %}
+{%- block instructions -%}
 Determine whether a table join is required to answer the user's query.
 
 Notes:
@@ -15,4 +15,4 @@ The current table '{{ table }}' follows this YAML schema:
 ```yaml
 {{ schema }}
 ```
-{% endblock %}
+{%- endblock -%}
