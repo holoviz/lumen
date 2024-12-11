@@ -175,7 +175,8 @@ class SourceAgent(Agent):
     """
 
     purpose = param.String(default="""
-        The SourceAgent allows a user to upload unavailable, new datasets.
+        The SourceAgent allows a user to upload unavailable,
+        new datasets, tables, or documents.
 
         Only use this if the user is requesting to add a completely new table
         or you think additional information is required to solve the user query.
