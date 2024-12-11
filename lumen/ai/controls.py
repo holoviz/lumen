@@ -349,7 +349,7 @@ class SourceControls(Viewer):
                 self._add_button.visible = False
 
             self._message_placeholder.param.update(
-                object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} tables, {n_docs} documents).",
+                object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
                 visible=True,
             )
 
