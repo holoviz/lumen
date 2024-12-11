@@ -724,7 +724,7 @@ class BaseViewAgent(LumenBaseAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.purpose else self.view_type.__name__
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system_prompt = await self._render_prompt(
             "main",
             messages,
