@@ -605,6 +605,7 @@ class Planner(Coordinator):
         agents: dict[str, Agent],
         tables: dict[str, Source],
         unmet_dependencies: set[str],
+        previous_plans: list[str],
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
@@ -627,6 +628,8 @@ class Planner(Coordinator):
                 agents=list(agents.values()),
                 tools=tools,
                 unmet_dependencies=unmet_dependencies,
+                candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
+                previous_plans=previous_plans,
                 table_info=info,
                 tables=available
             )
@@ -640,6 +643,7 @@ class Planner(Coordinator):
             )
             if reasoning.chain_of_thought:  # do not replace with empty string
                 step.stream(reasoning.chain_of_thought, replace=True)
+                previous_plans.append(reasoning.chain_of_thought)
             requested = [
                 t for t in getattr(reasoning, 'tables', [])
                 if t and t not in provided
@@ -739,12 +743,13 @@ class Planner(Coordinator):
         unmet_dependencies = set()
         schemas = {}
         execution_graph = []
+        previous_plans = []
         attempts = 0
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
                 try:
                     plan = await self._make_plan(
-                        messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
+                        messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas
                     )
                 except Exception as e:
                     if self.interface.callback_exception not in ('raise', 'verbose'):
