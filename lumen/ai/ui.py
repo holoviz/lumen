@@ -413,7 +413,6 @@ class ExplorerUI(UI):
                 table_select.value = []
 
         return Column(
-            Markdown('### Start chatting or select an existing dataset or upload table(s) or document(s).', margin=(5, 0)),
             tabs,
             input_row,
             sizing_mode='stretch_both',

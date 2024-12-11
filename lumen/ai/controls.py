@@ -5,6 +5,7 @@ import pandas as pd
 import param
 
 from panel.layout import Column, FlexBox, Tabs
+from panel.pane.markup import Markdown
 from panel.viewable import Viewer
 from panel.widgets import (
     Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
@@ -166,11 +167,14 @@ class SourceControls(Viewer):
             visible=self.param.cancellable,
         )
 
+        self._message_placeholder = Markdown(css_classes=["message"] if self.replace_controls else [], visible=False)
+
         self.menu = Column(
             self._input_tabs if self.select_existing else self._input_tabs[0],
             self._add_button,
             self._cancel_button,
             self.tables_tabs,
+            self._message_placeholder,
             sizing_mode="stretch_width",
         )
 
@@ -312,28 +316,40 @@ class SourceControls(Viewer):
                 return
 
             source = None
+            n_tables = 0
+            n_docs = 0
             for i in range(len(self._upload_tabs)):
                 media_controls = self._media_controls[i]
                 if media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
                     self._add_table(source, media_controls.file_obj, media_controls)
+                    n_tables += 1
                 elif media_controls.extension.endswith(DOCUMENT_EXTENSIONS):
                     self._add_document(media_controls.file_obj, media_controls)
+                    n_docs += 1
 
             if self.replace_controls:
-                src = self._memory["source"]
-                self.tables_tabs[:] = [
-                    (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
-                    for t in src.get_tables()
-                ]
+                src = self._memory.get("source")
+                if src:
+                    self.tables_tabs[:] = [
+                        (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
+                        for t in src.get_tables()
+                    ]
                 self.menu[0].visible = False
+                self.menu.height = 100
                 self._add_button.visible = False
+                self._cancel_button.visible = False
 
             if self.clear_uploads:
                 self._upload_tabs.clear()
                 self._media_controls.clear()
                 self._add_button.visible = False
+
+            self._message_placeholder.param.update(
+                object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} tables, {n_docs} documents).",
+                visible=True,
+            )
 
     def __panel__(self):
         return self.menu
