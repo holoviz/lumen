@@ -337,9 +337,11 @@ class SourceControls(Viewer):
                         for t in src.get_tables()
                     ]
                 self.menu[0].visible = False
-                self.menu.height = 100
                 self._add_button.visible = False
                 self._cancel_button.visible = False
+                if n_tables == 0:
+                    self.tables_tabs.visible = False
+                    self.menu.height = 100
 
             if self.clear_uploads:
                 self._upload_tabs.clear()
