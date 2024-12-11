@@ -67,8 +67,8 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    logs_filename = param.String(default=None, doc="""
-        Log file to write to.""")
+    messages_db_path = param.String(default=None, doc="""
+        The path to the log file that will store the messages exchanged with the LLM.""")
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -94,7 +94,7 @@ class Coordinator(Viewer, Actor):
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
-        logs_filename: str = "",
+        messages_db_path: str = "",
         **params,
     ):
         def on_message(message, instance):
@@ -107,13 +107,13 @@ class Coordinator(Viewer, Actor):
 
             bind(update_on_reaction, message.param.reactions, watch=True)
             message_id = id(message)
-            message_index = len(instance) - 1
+            message_index = instance.objects.index(message)
             self._logs.upsert(
                 session_id=self._session_id,
                 message_id=message_id,
                 message_index=message_index,
                 message_user=message.user,
-                message_content=message.object,
+                message_content=message.serialize(),
             )
 
         def on_undo(instance, _):
@@ -138,9 +138,9 @@ class Coordinator(Viewer, Actor):
 
         self._session_id = id(self)
 
-        if logs_filename:
+        if messages_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            self._logs = ChatLogs(filename=logs_filename)
+            self._logs = ChatLogs(filename=messages_db_path)
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
@@ -166,7 +166,7 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, messages_db_path=messages_db_path, **params)
 
         self._tools["__main__"] = [
             tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
@@ -174,7 +174,7 @@ class Coordinator(Viewer, Actor):
         ]
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
-            user="Help", respond=False,
+            user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
         )
         interface.button_properties={
             "undo": {"callback": on_undo},

@@ -72,6 +72,9 @@ class UI(Viewer):
     log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
+    messages_db_path = param.String(default=None, doc="""
+        The path to the log file that will store the messages exchanged with the LLM.""")
+
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
@@ -112,6 +115,7 @@ class UI(Viewer):
             agents=agents,
             llm=self.llm,
             tools=self.tools,
+            messages_db_path=self.messages_db_path
         )
         self._notebook_export = FileDownload(
             icon="notebook",
