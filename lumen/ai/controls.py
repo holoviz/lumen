@@ -341,7 +341,7 @@ class SourceControls(Viewer):
                 self._cancel_button.visible = False
                 if n_tables == 0:
                     self.tables_tabs.visible = False
-                    self.menu.height = 100
+                    self.menu.height = 70
 
             if self.clear_uploads:
                 self._upload_tabs.clear()
