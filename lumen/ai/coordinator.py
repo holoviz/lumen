@@ -135,13 +135,15 @@ class Coordinator(Viewer, Actor):
         else:
             interface.callback = self._chat_invoke
         interface.callback_exception = "verbose"
-        interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
 
-        if logs_filename is not None:
+        if logs_filename:
+            interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
             self._logs = ChatLogs(filename=logs_filename)
             interface.post_hook = on_message
+        else:
+            interface.message_params["show_reaction_icons"] = False
 
         llm = llm or self.llm
         instantiated = []
