@@ -49,6 +49,15 @@ Here's a list of tools:
 {%- endif %}
 
 {%- if unmet_dependencies %}
-Note that a previous plan was unsuccessful because it was missing {{ unmet_dependencies }} so you should ensure that is provided in the next plan!
+Here were your failed previous plans:
+{%- for previous_plan in previous_plans %}
+- {{ previous_plan }}
+{%- endfor %}
+These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}`
+
+Please include some of these these experts to provide for the missing requirements:
+{%- for candidate in candidates %}
+- `{{ candidate.name[:-5] }}`
+{%- endfor %}
 {% endif %}
 {%- endblock -%}
