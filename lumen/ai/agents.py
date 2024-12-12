@@ -781,6 +781,10 @@ class hvPlotAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2"},
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
@@ -832,7 +836,12 @@ class VegaLiteAgent(BaseViewAgent):
         default={
             "main": {
                 "response_model": VegaLiteSpec,
-                "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
