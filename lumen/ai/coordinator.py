@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
+from copy import deepcopy
 from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
@@ -380,7 +381,7 @@ class Coordinator(Viewer, Actor):
                 steps_layout = step_message.object
                 break
 
-        mutated_messages = messages.copy()
+        mutated_messages = deepcopy(messages)
         with self.interface.add_step(title=f"Querying {agent_name} agent...", steps_layout=steps_layout) as step:
             step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
             if isinstance(subagent, SQLAgent):
@@ -392,6 +393,8 @@ class Coordinator(Viewer, Actor):
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
+            if instruction:
+                mutate_user_message(f"-- To do so: {instruction!r}", mutated_messages, suffix=True)
 
             shared_ctx = {"memory": self.memory}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
@@ -454,7 +457,7 @@ class Coordinator(Viewer, Actor):
         user_count = 0
         input_messages = []
         previous_role = None
-        for message in messages:
+        for message in messages[::-1]:
             role = message["role"]
             content = message["content"].strip()
 
@@ -469,7 +472,7 @@ class Coordinator(Viewer, Actor):
                 user_count += 1
                 if user_count >= max_user_messages:
                     break
-        return input_messages
+        return input_messages[::-1]
 
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
@@ -667,6 +670,7 @@ class Planner(Coordinator):
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         while reasoning is None or requested:
+            log_debug(f"Creating plan for \033[91m{requested}\033[0m")
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
             system = await self._render_prompt(
@@ -698,7 +702,7 @@ class Planner(Coordinator):
 
         mutated_messages = mutate_user_message(
             f"Follow this latest plan: {reasoning.chain_of_thought!r} to finish answering: ",
-            messages.copy(),
+            deepcopy(messages),
             suffix=False,
             wrap=True,
         )

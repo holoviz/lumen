@@ -134,6 +134,7 @@ class Actor(param.Parameterized):
                 overrides=overrides,
                 **context
             )
+        prompt = prompt.strip()
         log_debug(f"{prompt_label}:\n\033[90m{prompt}\033[0m", show_length=True)
         return prompt
 
