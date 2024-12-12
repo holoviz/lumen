@@ -63,7 +63,7 @@ class Llm(param.Parameterized):
 
     def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
         if model_spec in self.model_kwargs:
-            model_kwargs = self.model_kwargs.get(model_spec)
+            model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
         else:
             model_kwargs = self.model_kwargs["default"]
             model_kwargs["model"] = model_spec  # override the default model with user provided model
@@ -236,7 +236,7 @@ class Llama(Llm):
             return model_spec
 
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            model_kwargs = self.model_kwargs.get(model_spec)
+            model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
         else:
             model_kwargs = self.model_kwargs["default"]
             repo, model_spec = model_spec.rsplit("/", 1)
