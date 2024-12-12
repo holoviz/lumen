@@ -67,7 +67,7 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    messages_db_path = param.String(default=None, doc="""
+    logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
     render_output = param.Boolean(default=True, doc="""
@@ -94,7 +94,7 @@ class Coordinator(Viewer, Actor):
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
-        messages_db_path: str = "",
+        logs_db_path: str = "",
         **params,
     ):
         def on_message(message, instance):
@@ -138,9 +138,9 @@ class Coordinator(Viewer, Actor):
 
         self._session_id = id(self)
 
-        if messages_db_path:
+        if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            self._logs = ChatLogs(filename=messages_db_path)
+            self._logs = ChatLogs(filename=logs_db_path)
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
@@ -166,7 +166,7 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, messages_db_path=messages_db_path, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
         self._tools["__main__"] = [
             tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
