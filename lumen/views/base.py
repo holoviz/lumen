@@ -685,6 +685,8 @@ class Panel(View):
                 )
                 refs.append(ref)
                 continue
+            elif p in ('design',):
+                continue
 
             if value is obj_type.param[p].default:
                 continue
