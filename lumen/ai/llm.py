@@ -235,7 +235,7 @@ class Llama(Llm):
         if isinstance(model_spec, dict):
             return model_spec
 
-        if model_spec in self.model_kwargs:
+        if model_spec in self.model_kwargs or "/" not in model_spec:
             model_kwargs = self.model_kwargs.get(model_spec)
         else:
             model_kwargs = self.model_kwargs["default"]
