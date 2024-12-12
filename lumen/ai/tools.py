@@ -97,7 +97,7 @@ class TableLookup(VectorLookupTool):
     def __init__(self, **params):
         super().__init__(**params)
         self._memory.on_change('sources', self._update_vector_store)
-        self._update_vector_store(None, None, self._memory["sources"])
+        self._update_vector_store(None, None, self._memory.get("sources", [self._memory.get("source")]))
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
