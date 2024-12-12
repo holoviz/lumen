@@ -32,7 +32,7 @@ from .controls import SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
+    JoinRequired, RetrySpec, Sql, TableJoins, VegaLiteSpec, make_table_model,
 )
 from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
@@ -291,12 +291,20 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         message: pn.chat.ChatMessage = None,
+        user_query: str = "",
         render_output: bool = False,
         title: str | None = None,
         **kwargs
     ):
         out = self._output_type(
-            component=component, render_output=render_output, title=title, **kwargs
+            component=component,
+            render_output=render_output,
+            title=title,
+            llm=self.llm,
+            user_query=user_query,
+            _render_prompt=self._render_prompt,
+            _retry_model=self.prompts["retry_output"]["response_model"],
+            **kwargs
         )
         if 'outputs' in self._memory:
             # We have to create a new list to trigger an event
@@ -380,7 +388,6 @@ class SQLAgent(LumenBaseAgent):
             "main": {
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
-                "llm_spec": "reasoning",
             },
             "select_table": {
                 "response_model": make_table_model,
@@ -394,6 +401,10 @@ class SQLAgent(LumenBaseAgent):
             "find_joins": {
                 "response_model": TableJoins,
                 "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
             },
         }
     )
@@ -688,7 +699,12 @@ class SQLAgent(LumenBaseAgent):
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['pipeline']
-        self._render_lumen(pipeline, spec=sql_query, render_output=render_output, title=step_title)
+
+        for message in messages[:-1]:
+            if message["role"] == "user":
+                user_query = message["content"]
+                break
+        self._render_lumen(pipeline, spec=sql_query, user_query=user_query, render_output=render_output, title=step_title)
         return pipeline
 
 
@@ -701,6 +717,7 @@ class BaseViewAgent(LumenBaseAgent):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2"},
+            "retry_output": {"template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
         }
     )
 
@@ -751,7 +768,12 @@ class BaseViewAgent(LumenBaseAgent):
         print(f"{self.name} settled on spec: {spec!r}.")
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, render_output=render_output, title=step_title)
+
+        for message in messages[:-1]:
+            if message["role"] == "user":
+                user_query = message["content"]
+                break
+        self._render_lumen(view, user_query=user_query, render_output=render_output, title=step_title)
         return view
 
 

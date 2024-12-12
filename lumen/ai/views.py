@@ -13,7 +13,9 @@ from panel.widgets import (
     Button, ButtonIcon, Checkbox, CodeEditor, LoadingSpinner,
 )
 from param.parameterized import discard_events
+from pydantic import BaseModel
 
+from lumen.ai.llm import Llm
 from lumen.ai.utils import get_data
 
 from ..base import Component
@@ -22,6 +24,7 @@ from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Table
+from .controls import RetryControls
 
 
 class LumenOutput(Viewer):
@@ -30,11 +33,19 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
+    llm = param.ClassSelector(class_=Llm, doc="To be used for retrying.")
+
     render_output = param.Boolean(default=True)
 
     spec = param.String(allow_None=True)
 
     title = param.String(allow_None=True)
+
+    user_query = param.String(doc="For context in retry.")
+
+    _render_prompt = param.Callable()
+
+    _retry_model = param.ClassSelector(class_=BaseModel, is_instance=False)
 
     language = "yaml"
 
@@ -72,7 +83,9 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = Row(copy_icon, download_icon)
+        retry_controls = RetryControls()
+        retry_controls.param.watch(self._retry_invoke, "reason")
+        icons = Row(copy_icon, download_icon, retry_controls)
         code_col = Column(code_editor, icons, sizing_mode="stretch_both")
         if self.render_output:
             placeholder = Column(
@@ -91,6 +104,16 @@ class LumenOutput(Viewer):
             self._main = code_col
         self._rendered = False
         self._last_output = {}
+
+    async def _retry_invoke(self, event):
+        reason = event.new
+        messages = [{"role": "user", "content": f"The feedback: {reason!r}"}]
+        system = await self._render_prompt("retry_output", messages=[], user_query=self.user_query, spec=self.spec)
+        with self._main.param.update(loading=True):
+            result = await self.llm.invoke(
+                messages, system=system, response_model=self._retry_model, model_spec="reasoning"
+            )
+            self.spec = result.corrected_spec
 
     async def _render_pipeline(self, pipeline):
         table = Table(

@@ -82,6 +82,18 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
 
 
+
+class RetrySpec(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="Explain why the previous spec failed to address the user query."
+    )
+
+    corrected_spec: str = Field(
+        description="The corrected version of the previous spec that addresses the user query."
+    )
+
+
 def make_plan_models(experts_or_tools: list[str], tables: list[str]):
     step = create_model(
         "Step",
