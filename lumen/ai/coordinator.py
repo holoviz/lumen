@@ -394,7 +394,10 @@ class Coordinator(Viewer, Actor):
                     )
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
-                mutate_user_message(f"-- To do so: {instruction!r}", mutated_messages, suffix=True)
+                mutate_user_message(
+                    f"-- Here's the current instructions from the multi-step plan: {instruction!r}",
+                    mutated_messages, suffix=True, wrap=True
+                )
 
             shared_ctx = {"memory": self.memory}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}

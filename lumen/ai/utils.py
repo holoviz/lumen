@@ -191,7 +191,7 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
-        truncate_limit = min(limit or 10, 10)
+        truncate_limit = min(limit or 5, 5)
         if not include_enum:
             spec.pop("enum")
             continue
