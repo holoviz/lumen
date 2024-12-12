@@ -388,7 +388,7 @@ class Coordinator(Viewer, Actor):
                 if custom_agent:
                     custom_analysis_doc = custom_agent.purpose.replace("Available analyses include:\n", "")
                     custom_message = (
-                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
+                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc!r} "
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
