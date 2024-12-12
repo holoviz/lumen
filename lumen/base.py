@@ -164,6 +164,7 @@ class Component(param.Parameterized):
             op = dict(obj._operation)
             if not isinstance(op['fn'], str):
                 op['fn'] = f"{op['fn'].__module__}.{op['fn'].__name__}"
+            op['args'] = list(op['args'])
         else:
             op = None
         return {
