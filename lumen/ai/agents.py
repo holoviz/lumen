@@ -291,7 +291,7 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         message: pn.chat.ChatMessage = None,
-        user_query: str = "",
+        messages: list | None = None,
         render_output: bool = False,
         title: str | None = None,
         **kwargs
@@ -301,7 +301,7 @@ class LumenBaseAgent(Agent):
             render_output=render_output,
             title=title,
             llm=self.llm,
-            user_query=user_query,
+            messages=messages,
             _render_prompt=self._render_prompt,
             _retry_model=self.prompts["retry_output"]["response_model"],
             **kwargs
@@ -409,7 +409,7 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "base_schema"], readonly=True)
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -658,6 +658,9 @@ class SQLAgent(LumenBaseAgent):
 
         # include min max for more context for data cleaning
         schema = await get_schema(source, table, include_min_max=True)
+        if not source.ephemeral:
+            # store the schema of the original table
+            self._memory["base_schema"] = schema
         join_required = await self._check_requires_joins(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
@@ -700,11 +703,7 @@ class SQLAgent(LumenBaseAgent):
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['pipeline']
 
-        for message in messages[:-1]:
-            if message["role"] == "user":
-                user_query = message["content"]
-                break
-        self._render_lumen(pipeline, spec=sql_query, user_query=user_query, render_output=render_output, title=step_title)
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline
 
 
@@ -769,11 +768,7 @@ class BaseViewAgent(LumenBaseAgent):
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
 
-        for message in messages[:-1]:
-            if message["role"] == "user":
-                user_query = message["content"]
-                break
-        self._render_lumen(view, user_query=user_query, render_output=render_output, title=step_title)
+        self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
 

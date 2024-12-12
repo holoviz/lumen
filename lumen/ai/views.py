@@ -1,4 +1,5 @@
 import asyncio
+import re
 import traceback
 
 import panel as pn
@@ -41,7 +42,7 @@ class LumenOutput(Viewer):
 
     title = param.String(allow_None=True)
 
-    user_query = param.String(doc="For context in retry.")
+    messages = param.List(doc="For context in retry.")
 
     _render_prompt = param.Callable()
 
@@ -107,13 +108,21 @@ class LumenOutput(Viewer):
 
     async def _retry_invoke(self, event):
         reason = event.new
-        messages = [{"role": "user", "content": f"The feedback: {reason!r}"}]
-        system = await self._render_prompt("retry_output", messages=[], user_query=self.user_query, spec=self.spec)
+        messages = self.messages.copy() + [{"role": "user", "content": f"The feedback: {reason!r}"}]
+        for message in messages:
+            if message["role"] == "user":
+                user_query = message["content"]
+                break
+        system = await self._render_prompt("retry_output", messages=self.messages, user_query=user_query, spec=self.spec)
         with self._main.param.update(loading=True):
             result = await self.llm.invoke(
                 messages, system=system, response_model=self._retry_model, model_spec="reasoning"
             )
-            self.spec = result.corrected_spec
+            if "```" in result:
+                spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
+            else:
+                spec = result.corrected_spec
+            self.spec = spec
 
     async def _render_pipeline(self, pipeline):
         table = Table(

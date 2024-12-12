@@ -468,6 +468,10 @@ class MistralAI(Llm):
             # Mistral cannot start with assistant
             messages = messages[1:]
 
+        if messages and messages[-1]["role"] == "assistant":
+            # Nor can it end with assistant
+            messages.append({"role": "user", "content": "--"})
+
         return await super().invoke(
             messages,
             system,
@@ -599,5 +603,9 @@ class AnthropicAI(Llm):
             # ensure no empty messages
             if not messages[i]["content"]:
                 messages[i]["content"] = "--"
+
+        if messages and messages[-1]["role"] == "assistant":
+            # cannot end with assistant
+            messages.append({"role": "user", "content": "--"})
 
         return await super().invoke(messages, system, response_model, allow_partial, model_spec, **input_kwargs)

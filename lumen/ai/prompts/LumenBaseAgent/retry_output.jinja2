@@ -3,11 +3,13 @@ update the spec based on the user's new feedback, and based on
 the user's initial query '{{ user_query }}'.
 
 Here is the original spec to be corrected:
-```yaml
+```
 {{ spec }}
 ```
 
-Here's a summary of the dataset the user just asked about:
-\```
-{{ memory['data'] }}
-\```
+Here's a summary of the dataset the user just asked about; you must reference columns from this dataset in your response:
+```
+{{ memory['base_schema'] }}
+```
+
+Respond in the same format as the original spec.
