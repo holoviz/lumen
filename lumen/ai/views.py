@@ -178,7 +178,7 @@ class LumenOutput(Viewer):
         return self.spec
 
     def __str__(self):
-        return self.spec
+        return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
 class AnalysisOutput(LumenOutput):
@@ -267,3 +267,6 @@ class SQLOutput(LumenOutput):
 
     def __panel__(self):
         return self._main
+
+    def __str__(self):
+        return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"

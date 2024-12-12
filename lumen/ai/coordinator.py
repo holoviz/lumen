@@ -460,13 +460,13 @@ class Coordinator(Viewer, Actor):
         for message in messages[::-1]:
             role = message["role"]
             content = message["content"].strip()
-            if user_count == 0 and role == "assistant":
+            if (user_count == 0 and role == "assistant"):
                 # the first message should be user
                 continue
 
-            # join the next message to the previous one if they are from the same user
             if role == previous_role and input_messages:
-                input_messages[-1]["content"] += f"\n---\n{content}"
+                # remember it's in reverse order
+                input_messages[-1]["content"] = f"{content}\n---\n{input_messages[-1]["content"]}"
             else:
                 input_messages.append({"role": role, "content": content})
 
