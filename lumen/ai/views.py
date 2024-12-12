@@ -17,6 +17,7 @@ from param.parameterized import discard_events
 from pydantic import BaseModel
 
 from lumen.ai.llm import Llm
+from lumen.ai.memory import _Memory
 from lumen.ai.utils import get_data
 
 from ..base import Component
@@ -47,6 +48,8 @@ class LumenOutput(Viewer):
     _render_prompt = param.Callable()
 
     _retry_model = param.ClassSelector(class_=BaseModel, is_instance=False)
+
+    _memory = param.ClassSelector(class_=_Memory, default=None)
 
     language = "yaml"
 
@@ -275,6 +278,10 @@ class SQLOutput(LumenOutput):
             return
 
         pipeline = self.component
+
+        # questionable if this is best way to handle memory
+        # does NOT work if user updates SQL from earlier in the history
+        self._memory["sql"] = self.spec
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
             return

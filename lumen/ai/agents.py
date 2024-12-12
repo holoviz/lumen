@@ -304,6 +304,7 @@ class LumenBaseAgent(Agent):
             messages=messages,
             _render_prompt=self._render_prompt,
             _retry_model=self.prompts["retry_output"]["response_model"],
+            _memory=self._memory,
             **kwargs
         )
         if 'outputs' in self._memory:
