@@ -134,7 +134,7 @@ class Actor(param.Parameterized):
                 overrides=overrides,
                 **context
             )
-        log_debug(f"Below is the rendered prompt from {prompt_label}:\n{prompt}")
+        log_debug(f"{prompt_label}:\n\033[90m{prompt}\033[0m", show_length=True)
         return prompt
 
     @abstractmethod

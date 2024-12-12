@@ -413,7 +413,7 @@ class SQLAgent(LumenBaseAgent):
         tables = tuple(tables_to_source)
         if messages and messages[-1]["content"].startswith("Show the table: '"):
             # Handle the case where explicitly requested a table
-            table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
+            table = re.search(r"Show the table: '([^']+)'", messages[-1]["content"]).group(1)
         elif len(tables) == 1:
             table = tables[0]
         else:
@@ -463,18 +463,12 @@ class SQLAgent(LumenBaseAgent):
             if sql_code_match:
                 last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
-            messages += [
-                {
-                    "role": "user",
-                    "content": (
-                        f"Your last query `{last_query}` did not work as intended, "
-                        f"expertly revise these errors:\n```python\n{errors}\n```\n\n"
-                        f"If the error is `syntax error at or near \")\"`, double check you used "
-                        "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
-                    )
-                }
-            ]
-        log_debug(f"Below are the errors in `_create_valid_sql` retry:\n{errors}")
+            system += (
+                "Your last query did not work as intended, expertly revise these errors:\n"
+                f"```python\n{errors}\n```\n\n"
+                "If the error is `syntax error at or near \")\"`, double check you used "
+                "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
+            )
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", "default")
@@ -681,7 +675,7 @@ class SQLAgent(LumenBaseAgent):
             tables_sql_schemas=table_schemas,
             dialect=dialect,
             join_required=join_required,
-            table=table
+            table=table,
         )
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
@@ -748,7 +742,7 @@ class BaseViewAgent(LumenBaseAgent):
                 steps_layout=self._steps_layout
             ) as step:
                 step.stream(chain_of_thought)
-        print(f"{self.name} settled on spec: {spec!r}.")
+        log_debug(f"{self.name} settled on spec: {spec!r}.")
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, render_output=render_output, title=step_title)
@@ -863,7 +857,7 @@ class AnalysisAgent(LumenBaseAgent):
         pipeline = self._memory['pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
-            print("NONE found...")
+            log_debug("No analyses apply to the current data.")
             return None
 
         # Short cut analysis selection if there's an exact match

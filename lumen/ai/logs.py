@@ -4,6 +4,8 @@ import sqlite3
 
 import param
 
+from lumen.ai.utils import log_debug
+
 
 class ChatLogs(param.Parameterized):
 
@@ -73,7 +75,7 @@ class ChatLogs(param.Parameterized):
                     ),
                 )
             except Exception:
-                print("Failed to insert message")
+                log_debug("Failed to insert message")
                 return
             self.conn.commit()
 

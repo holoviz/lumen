@@ -343,16 +343,43 @@ async def gather_table_sources(sources: list[Source]) -> tuple[dict[str, Source]
     return tables_to_source, tables_schema_str
 
 
-def log_debug(msg: str, sep: bool = True, offset: int = 24):
+def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: bool = False, show_length: bool = False):
     """
     Log a debug message with a separator line above and below.
     """
     terminal_cols, _ = get_terminal_size()
     terminal_cols -= offset  # Account for the timestamp and log level
     delimiter = "*" * terminal_cols
-    if sep:
-        log.debug(f"\033[95m{delimiter}\033[0m")
-    log.debug(msg)
-    log.debug(f"Length of message is {len(msg)}")
-    if sep:
+    if show_sep:
         log.debug(f"\033[90m{delimiter}\033[0m")
+    if prefix:
+        log.debug(prefix)
+
+    if isinstance(msg, list):
+        for m in msg:
+            log.debug(m)
+    else:
+        log.debug(msg)
+    if show_length:
+        log.debug(f"Length is \033[94m{len(msg)}\033[0m")
+    if suffix:
+        log.debug(suffix)
+
+
+def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool = False):
+    """
+    Helper to mutate the last user message in a list of messages. Suffixes the content by default, else prefixes.
+    """
+    for message in messages[::-1]:
+        if message["role"] == "user":
+            user_message = message["content"]
+            if wrap:
+                user_message = f"{user_message!r}"
+
+            if suffix:
+                user_message += " " + content
+            else:
+                user_message = content + user_message
+            message["content"] = user_message
+            break
+    return messages
