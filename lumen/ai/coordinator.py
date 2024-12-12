@@ -449,7 +449,7 @@ class Coordinator(Viewer, Actor):
             obj = obj.value
         return str(obj)
 
-    def _process_messages(self, messages, max_user_messages=1):
+    def _process_messages(self, messages, max_user_messages=2):
         """
         Process messages to group consecutive messages from the same user.
         Limit the number of user messages to `max_user_messages`.
@@ -460,6 +460,9 @@ class Coordinator(Viewer, Actor):
         for message in messages[::-1]:
             role = message["role"]
             content = message["content"].strip()
+            if user_count == 0 and role == "assistant":
+                # the first message should be user
+                continue
 
             # join the next message to the previous one if they are from the same user
             if role == previous_role and input_messages:
@@ -485,13 +488,13 @@ class Coordinator(Viewer, Actor):
                     await self.llm.get_client("default")  # caches the model for future use
 
             messages = self._process_messages(
-                self.interface.serialize(custom_serializer=self._serialize, limit=8),
-                max_user_messages=2
+                self.interface.serialize(custom_serializer=self._serialize, limit=10),
+                max_user_messages=3
             )
 
             invalidation_assessment = await self._invalidate_memory(messages)
             if invalidation_assessment:
-                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages)
+                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages[-3:])
 
             agents = {agent.name[:-5]: agent for agent in self.agents}
             execution_graph = await self._compute_execution_graph(messages, agents)
@@ -503,7 +506,7 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
-                await self._execute_graph_node(node, messages)
+                await self._execute_graph_node(node, messages[-3:])
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
