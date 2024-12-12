@@ -491,7 +491,7 @@ class Coordinator(Viewer, Actor):
 
             invalidation_assessment = await self._invalidate_memory(messages)
             if invalidation_assessment:
-                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}")
+                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages)
 
             agents = {agent.name[:-5]: agent for agent in self.agents}
             execution_graph = await self._compute_execution_graph(messages, agents)
