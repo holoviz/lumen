@@ -14,7 +14,7 @@ import yaml
 from instructor.retry import InstructorRetryException
 from panel.chat import ChatInterface
 from panel.layout import Column
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -25,7 +25,9 @@ from ..sources.base import BaseSQLSource
 from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
-from ..views import VegaLiteView, View, hvPlotUIView
+from ..views import (
+    Panel, VegaLiteView, View, hvPlotUIView,
+)
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR
 from .controls import SourceControls
@@ -906,6 +908,8 @@ class AnalysisAgent(LumenBaseAgent):
                     view = await analysis_callable(pipeline)
                 else:
                     view = await asyncio.to_thread(analysis_callable, pipeline)
+                if isinstance(view, Viewable):
+                    view = Panel(object=view, pipeline=self._memory.get('pipeline'))
                 spec = view.to_spec()
                 if isinstance(view, View):
                     view_type = view.view_type

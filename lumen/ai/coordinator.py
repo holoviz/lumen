@@ -15,10 +15,11 @@ from panel.layout import (
     Card, Column, FlexBox, Tabs,
 )
 from panel.pane import HTML
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 from panel.widgets import Button
 from pydantic import BaseModel
 
+from ..views.base import Panel, View
 from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
@@ -31,6 +32,7 @@ from .tools import FunctionTool, Tool
 from .utils import (
     get_schema, log_debug, mutate_user_message, retry_llm_output,
 )
+from .views import LumenOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -71,8 +73,8 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    logs_filename = param.String(default=None, doc="""
-        Log file to write to.""")
+    logs_db_path = param.String(default=None, doc="""
+        The path to the log file that will store the messages exchanged with the LLM.""")
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -98,7 +100,7 @@ class Coordinator(Viewer, Actor):
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
-        logs_filename: str = "",
+        logs_db_path: str = "",
         **params,
     ):
         def on_message(message, instance):
@@ -111,13 +113,13 @@ class Coordinator(Viewer, Actor):
 
             bind(update_on_reaction, message.param.reactions, watch=True)
             message_id = id(message)
-            message_index = len(instance) - 1
+            message_index = instance.objects.index(message)
             self._logs.upsert(
                 session_id=self._session_id,
                 message_id=message_id,
                 message_index=message_index,
                 message_user=message.user,
-                message_content=message.object,
+                message_content=message.serialize(),
             )
 
         def on_undo(instance, _):
@@ -142,9 +144,9 @@ class Coordinator(Viewer, Actor):
 
         self._session_id = id(self)
 
-        if logs_filename:
+        if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            self._logs = ChatLogs(filename=logs_filename)
+            self._logs = ChatLogs(filename=logs_db_path)
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
@@ -170,7 +172,7 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
         self._tools["__main__"] = [
             tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
@@ -178,7 +180,7 @@ class Coordinator(Viewer, Actor):
         ]
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
-            user="Help", respond=False,
+            user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
         )
         interface.button_properties={
             "undo": {"callback": on_undo},
@@ -404,9 +406,23 @@ class Coordinator(Viewer, Actor):
                 )
                 log_debug(f"\033[96m{agent_name} successfully responded\033[0m", show_sep=False, show_length=False)
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
-            if isinstance(subagent, Tool) and result:
-                self._memory["tool_context"] += '\n\n'+result
-                step.stream('\n\n'+result)
+            if isinstance(subagent, Tool):
+                if isinstance(result, str) and result:
+                    self._memory["tool_context"] += '\n\n'+result
+                    step.stream('\n\n'+result)
+                elif isinstance(result, (View, Viewable)):
+                    if isinstance(result, Viewable):
+                        result = Panel(object=result, pipeline=self._memory.get('pipeline'))
+                    out = LumenOutput(
+                        component=result, render_output=render_output, title=title
+                    )
+                    if 'outputs' in self._memory:
+                        # We have to create a new list to trigger an event
+                        # since inplace updates will not trigger updates
+                        # and won't allow diffing between old and new values
+                        self._memory['outputs'] = self._memory['outputs']+[out]
+                    message_kwargs = dict(value=out, user=subagent.name)
+                    self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
 
     def _serialize(self, obj, exclude_passwords=True):

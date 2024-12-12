@@ -4,6 +4,9 @@ from typing import Any
 
 import param
 
+from panel.viewable import Viewable
+
+from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR
 from .embeddings import NumpyEmbeddings
@@ -188,6 +191,8 @@ class FunctionTool(Tool):
             result = await self.function(**arguments)
         else:
             result = self.function(**arguments)
+        if isinstance(result, (View, Viewable)):
+            return result
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result
