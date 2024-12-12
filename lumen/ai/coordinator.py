@@ -13,10 +13,11 @@ from panel import Card, bind
 from panel.chat import ChatInterface, ChatStep
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane import HTML
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 from panel.widgets import Button
 from pydantic import BaseModel
 
+from ..views.base import Panel, View
 from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
@@ -27,6 +28,7 @@ from .logs import ChatLogs
 from .models import Validity, make_agent_model, make_plan_models
 from .tools import FunctionTool, Tool
 from .utils import get_schema, retry_llm_output
+from .views import LumenOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -401,9 +403,23 @@ class Coordinator(Viewer, Actor):
                     **respond_kwargs
                 )
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
-            if isinstance(subagent, Tool) and result:
-                self._memory["tool_context"] += '\n\n'+result
-                step.stream('\n\n'+result)
+            if isinstance(subagent, Tool):
+                if isinstance(result, str) and result:
+                    self._memory["tool_context"] += '\n\n'+result
+                    step.stream('\n\n'+result)
+                elif isinstance(result, (View, Viewable)):
+                    if isinstance(result, Viewable):
+                        result = Panel(object=result, pipeline=self._memory.get('pipeline'))
+                    out = LumenOutput(
+                        component=result, render_output=render_output, title=title
+                    )
+                    if 'outputs' in self._memory:
+                        # We have to create a new list to trigger an event
+                        # since inplace updates will not trigger updates
+                        # and won't allow diffing between old and new values
+                        self._memory['outputs'] = self._memory['outputs']+[out]
+                    message_kwargs = dict(value=out, user=subagent.name)
+                    self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
 
     def _serialize(self, obj, exclude_passwords=True):
