@@ -25,7 +25,9 @@ from panel.pane.perspective import (
 )
 from panel.param import Param
 from panel.util import classproperty
-from panel.viewable import Viewable, Viewer
+from panel.viewable import (
+    Child, Children, Viewable, Viewer,
+)
 
 from ..base import MultiTypeComponent
 from ..config import _INDICATORS
@@ -287,7 +289,10 @@ class View(MultiTypeComponent, Viewer):
                 "full specification for the View."
             )
         spec = spec.copy()
-        view_type = View._get_type(spec.pop('type', None))
+        type_spec = spec.pop('type', None)
+        view_type = View._get_type(type_spec)
+        if view_type is not cls:
+            return view_type.from_spec(dict(spec, type=type_spec), source=source, filters=filters, pipeline=pipeline)
         resolved_spec, refs = {}, {}
 
         # Resolve pipeline
@@ -333,6 +338,7 @@ class View(MultiTypeComponent, Viewer):
                     _chain_update=True
                 )
             resolved_spec['pipeline'] = pipeline
+        pipeline = resolved_spec['pipeline']
 
         # Resolve View parameters
         for p, value in spec.items():
@@ -342,7 +348,10 @@ class View(MultiTypeComponent, Viewer):
                 resolved_spec[p] = value
                 continue
             parameter = view_type.param[p]
-            if is_ref(value):
+            resolver = f'_resolve_{p}'
+            if hasattr(view_type, resolver):
+                value = getattr(view_type, resolver)(value, pipeline)
+            elif is_ref(value):
                 refs[p] = value
                 value = state.resolve_reference(value)
             if view_type._is_param_function(p):
@@ -589,33 +598,86 @@ class Panel(View):
     ```
     """
 
-    spec = param.Dict()
+    object = Child()
 
     view_type: ClassVar[str] = 'panel'
 
+    _allows_refs: ClassVar[bool] = False
     _requires_source: ClassVar[bool] = False
 
-    def _resolve_spec(self, spec):
+    @classmethod
+    def from_spec(
+        cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> View:
+        if isinstance(spec, dict) and 'spec' in spec:
+            spec['object'] = spec.pop('spec')
+        return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
+
+    @classmethod
+    def _resolve_object(cls, spec, pipeline: Pipeline | None = None):
         if not isinstance(spec, dict) or 'type' not in spec:
             return spec
-        spec = self.spec.copy()
-        ptype = resolve_module_reference(spec.pop('type'), Viewable)
-        params = dict(self.kwargs)
+        if spec['type'] in ('rx', 'param'):
+            return cls._materialize_param_ref(spec, objects={'pipeline': pipeline})
+        spec_type = spec.pop('type')
+        ptype = resolve_module_reference(spec_type, Viewable)
+        params = {}
         for p, v in spec.items():
             if isinstance(v, dict) and 'type' in v:
-                v = self._resolve_spec(v)
+                v = cls._resolve_object(v, pipeline=pipeline)
             elif isinstance(v, list):
-                v = [self._resolve_spec(sv) for sv in v]
+                v = [cls._resolve_object(sv, pipeline=pipeline) for sv in v]
             elif is_ref(v):
                 if v == '$data':
-                    v = self.get_data()
+                    v = pipeline.param.data
                 else:
                     v = state.resolve_reference(v)
+            else:
+                try:
+                    v = ptype.param.deserialize_value(p, v)
+                except Exception:
+                    pass
             params[p] = v
         return ptype(**params)
 
+    def _serialize_object(self, obj):
+        obj_type = type(obj)
+        type_spec = f'{obj_type.__module__}.{obj_type.__name__}'
+        prefs = obj._param__private.refs
+        params = {}
+        for p, pobj in obj.param.objects().items():
+            value = getattr(obj, p)
+            if p in prefs:
+                pref = prefs[p]
+                params[p] = self._serialize_param_ref(
+                    pref, objects={'pipeline': self.pipeline}
+                )
+                continue
+
+            if value is obj_type.param[p].default:
+                continue
+            try:
+                equal = value == obj_type.param[p].default
+            except Exception:
+                equal = False
+            if equal:
+                continue
+            elif isinstance(pobj, Child):
+                value = self._serialize_object(value)
+            elif isinstance(pobj, Children):
+                value = [self._serialize_object(child) for child in value]
+            else:
+                value = obj.param.serialize_value(p)
+            params[p] = value
+        return {'type': type_spec, **params}
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        spec['object'] = self._serialize_object(self.object)
+        return spec
+
     def get_panel(self):
-        return self._resolve_spec(self.spec)
+        return self.object
 
 
 class StringView(View):

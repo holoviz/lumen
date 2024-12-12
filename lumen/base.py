@@ -127,6 +127,78 @@ class Component(param.Parameterized):
         if trigger:
             self.param.trigger(*updates)
 
+    def _serialize_param_ref(self, obj, objects=None):
+        if isinstance(obj, param.Parameter):
+            for key, ref_obj in objects.items():
+                if obj.owner is ref_obj:
+                    spec = {'type': 'param', 'owner': key, 'name': obj.name}
+                    break
+            else:
+                raise ValueError(
+                    f"Parameter {obj.name!r} could not be serialized since "
+                    f"the owning Parameterized {obj.owner!r} could not be found."
+                )
+            return spec
+
+        objects = objects or {}
+        input_obj = None
+        prev = obj._prev
+        if isinstance(prev, param.reactive.rx):
+            prev = self._serialize_param_ref(prev, objects)
+        elif prev is None:
+            prev = obj._fn
+            # Hacky way of checking for rx wrapper around parameter
+            func = getattr(prev, '__bound_function__', None)
+            if (
+                str(func).startswith('<function rx.__new__.<locals>.<lambda>') and
+                isinstance(prev._dinfo['kw']['__arg0'], param.Parameter)
+            ):
+                prev = prev._dinfo['kw']['__arg0']
+            else:
+                raise ValueError("Bound functions and methods cannot be serialized.")
+            prev = self._serialize_param_ref(prev, objects)
+        elif obj._shared_obj:
+            input_obj = obj._shared_obj[0]
+
+        if obj._operation:
+            op = dict(obj._operation)
+            if not isinstance(op['fn'], str):
+                op['fn'] = f"{op['fn'].__module__}.{op['fn'].__name__}"
+        else:
+            op = None
+        return {
+            'type': 'rx',
+            'prev': prev,
+            'input_obj': input_obj,
+            'kwargs': obj._kwargs,
+            'method': obj._method,
+            'operation': op
+        }
+
+    @classmethod
+    def _materialize_param_ref(cls, spec, objects=None):
+        current = spec
+        chain = [current]
+        while isinstance(current, dict) and current.get('prev') is not None:
+            current = current.get('prev')
+            chain.append(current)
+
+        input_spec = chain[-1]
+        if input_spec.get('input_obj') is not None:
+            obj = input_spec['input_obj']
+        elif isinstance(input_spec, dict) and input_spec.get('type') == 'param':
+            obj = objects[input_spec['owner']].param[input_spec['name']]
+            chain = chain[:-1]
+        expr = param.rx(obj)
+        for op_spec in chain[:-1][::-1]:
+            op = op_spec['operation']
+            if '.' in op['fn']:
+                fn = resolve_module_reference(op['fn'])
+                expr = expr._apply_operator(fn, *op['args'], reverse=op['reverse'], **op['kwargs'])
+            else:
+                expr = getattr(expr, op['fn'])(*op['args'], **op['kwargs'])
+        return expr
+
     ##################################################################
     # Validation API
     ##################################################################
