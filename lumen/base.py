@@ -17,6 +17,7 @@ import param  # type: ignore
 
 from panel.io.cache import _container_hash, _hash_funcs
 from panel.util import classproperty
+from panel.widgets.base import WidgetBase
 
 from .state import state
 from .util import (
@@ -128,17 +129,16 @@ class Component(param.Parameterized):
             self.param.trigger(*updates)
 
     def _serialize_param_ref(self, obj, objects=None):
+        if isinstance(obj, WidgetBase):
+            obj = obj.param.value
         if isinstance(obj, param.Parameter):
             for key, ref_obj in objects.items():
                 if obj.owner is ref_obj:
-                    spec = {'type': 'param', 'owner': key, 'name': obj.name}
+                    owner = key
                     break
             else:
-                raise ValueError(
-                    f"Parameter {obj.name!r} could not be serialized since "
-                    f"the owning Parameterized {obj.owner!r} could not be found."
-                )
-            return spec
+                owner = obj.owner.name
+            return {'type': 'param', 'owner': owner, 'name': obj.name}
 
         objects = objects or {}
         input_obj = None
@@ -174,6 +174,23 @@ class Component(param.Parameterized):
             'method': obj._method,
             'operation': op
         }
+
+    @classmethod
+    def _finalize_param_ref(cls, ref, objects=None):
+        if ref['type'] == 'param' and ref['owner'] is None:
+            if ref['owner'] in objects:
+                ref['owner'] = objects[ref['owner']]
+            else:
+                raise ValueError(
+                    f"Parameter {ref['name']!r} could not be serialized since "
+                    f"the owning Parameterized {ref['owner']!r} could not be found."
+                )
+        else:
+            current = ref
+            while isinstance(current, dict) and current.get('prev') is not None:
+                current = current.get('prev')
+                if current['type'] == 'param':
+                    cls._finalize_param_ref(current, objects)
 
     @classmethod
     def _materialize_param_ref(cls, spec, objects=None):

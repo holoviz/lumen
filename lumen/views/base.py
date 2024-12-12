@@ -350,7 +350,7 @@ class View(MultiTypeComponent, Viewer):
             parameter = view_type.param[p]
             resolver = f'_resolve_{p}'
             if hasattr(view_type, resolver):
-                value = getattr(view_type, resolver)(value, pipeline)
+                value = getattr(view_type, resolver)(value, {'pipeline': pipeline})
             elif is_ref(value):
                 refs[p] = value
                 value = state.resolve_reference(value)
@@ -614,22 +614,36 @@ class Panel(View):
         return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
 
     @classmethod
-    def _resolve_object(cls, spec, pipeline: Pipeline | None = None):
+    def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
         if not isinstance(spec, dict) or 'type' not in spec:
             return spec
-        if spec['type'] in ('rx', 'param'):
-            return cls._materialize_param_ref(spec, objects={'pipeline': pipeline})
+        elif spec['type'] in ('rx', 'param'):
+            try:
+                return cls._materialize_param_ref(spec, objects=objects)
+            except KeyError:
+                return None
+
+        if unresolved is None:
+            unresolved = []
         spec_type = spec.pop('type')
         ptype = resolve_module_reference(spec_type, Viewable)
-        params = {}
+        params, refs = {}, {}
         for p, v in spec.items():
             if isinstance(v, dict) and 'type' in v:
-                v = cls._resolve_object(v, pipeline=pipeline)
-            elif isinstance(v, list):
-                v = [cls._resolve_object(sv, pipeline=pipeline) for sv in v]
+                vtype = v['type']
+                v = cls._resolve_object(v, objects=objects, unresolved=unresolved, depth=depth+1)
+                if vtype in ('param', 'rx') and v is None:
+                    refs[p] = spec[p]
+                    continue
+            elif isinstance(v, list) and all(isinstance(o, dict) and 'type' in o for o in v):
+                resolved = []
+                for sv in v:
+                    robj = cls._resolve_object(sv, objects=objects, unresolved=unresolved, depth=depth+1)
+                    resolved.append(robj)
+                v = resolved
             elif is_ref(v):
                 if v == '$data':
-                    v = pipeline.param.data
+                    v = objects['pipeline'].param.data
                 else:
                     v = state.resolve_reference(v)
             else:
@@ -638,10 +652,27 @@ class Panel(View):
                 except Exception:
                     pass
             params[p] = v
-        return ptype(**params)
+        obj = ptype(**params)
+        objects[obj.name] = obj
+        if refs:
+            unresolved.append((obj, refs))
+        if depth == 0:
+            for obj, refs in unresolved:
+                param_refs = {}
+                for p, ref in refs.items():
+                     param_refs[p] = cls._resolve_object(ref, objects=objects, depth=depth+1)
+                obj.param.update(param_refs)
+        return obj
 
-    def _serialize_object(self, obj):
+    def _serialize_object(self, obj, objects=None, refs=None, depth=0):
         obj_type = type(obj)
+        if objects is None:
+            objects = {'pipeline': self.pipeline, obj.name: obj}
+        else:
+            objects[obj.name] = obj
+
+        if refs is None:
+            refs = []
         type_spec = f'{obj_type.__module__}.{obj_type.__name__}'
         prefs = obj._param__private.refs
         params = {}
@@ -649,9 +680,10 @@ class Panel(View):
             value = getattr(obj, p)
             if p in prefs:
                 pref = prefs[p]
-                params[p] = self._serialize_param_ref(
-                    pref, objects={'pipeline': self.pipeline}
+                params[p] = ref = self._serialize_param_ref(
+                    pref, objects=objects
                 )
+                refs.append(ref)
                 continue
 
             if value is obj_type.param[p].default:
@@ -663,12 +695,21 @@ class Panel(View):
             if equal:
                 continue
             elif isinstance(pobj, Child):
-                value = self._serialize_object(value)
+                value = self._serialize_object(value, objects=objects, refs=refs, depth=depth+1)
             elif isinstance(pobj, Children):
-                value = [self._serialize_object(child) for child in value]
+                value = [
+                    self._serialize_object(child, objects=objects, refs=refs, depth=depth+1)
+                    for child in value
+                ]
             else:
                 value = obj.param.serialize_value(p)
             params[p] = value
+
+        if depth != 0:
+            return {'type': type_spec, **params}
+
+        for ref in refs:
+            self._finalize_param_ref(ref, objects)
         return {'type': type_spec, **params}
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
