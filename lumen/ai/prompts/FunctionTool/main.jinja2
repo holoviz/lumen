@@ -1,0 +1,16 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions %}
+You are invoking a function, provide the arguments to the function given the current context.
+{% endblock -%}
+
+{%- block context %}
+{%- if 'table' in memory %}
+The table currently being worked on is: {{ memory.table }}
+{%- endif %}
+{%- if 'data' in memory %}
+Here is a summary of the current data:
+
+{{ memory.data }}
+{%- endif %}
+{% endblock %}

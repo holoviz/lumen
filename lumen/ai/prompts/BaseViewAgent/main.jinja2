@@ -9,10 +9,10 @@ The data to be plotted originates from a table called '{{ table }}' and follows 
 {{ schema }}
 ```
 
-{% if current_view %}
+{% if view %}
 The previous view specification was:
 ```
-{{ current_view }}
+{{ view }}
 ```
 {% endif %}
 {% endblock %}

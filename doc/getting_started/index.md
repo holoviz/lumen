@@ -12,6 +12,20 @@ This _Getting Started_ guide will go through the installation of Lumen, how to b
 Install Lumen in a few easy steps
 :::
 
+:::{grid-item-card} {octicon}`zap;2em;sd-mr-1` Using Lumen AI
+:link: using_lumen_ai
+:link-type: doc
+
+How to explore your data with Lumen AI
+:::
+
+:::{grid-item-card} {octicon}`zap;2em;sd-mr-1` Configuring Lumen AI
+:link: configuring_lumen_ai
+:link-type: doc
+
+Configure Lumen AI to use custom Coordinators, Agents, and LLM providers
+:::
+
 :::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a dashboard
 :link: build_dashboard
 :link-type: doc
@@ -40,6 +54,7 @@ Get an overview of the core concepts of Lumen
 hidden: true
 ---
 installation
+lumen_ai
 build_dashboard
 core_concepts
 pipelines

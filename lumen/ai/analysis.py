@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import panel as pn
 import param
 
-from lumen.ai.utils import get_data
+from panel.viewable import Viewable
 
 from ..base import Component
 from .controls import SourceControls
 from .memory import memory
+from .utils import get_data
 
 
 class Analysis(param.ParameterizedFunction):
@@ -50,7 +53,7 @@ class Analysis(param.ParameterizedFunction):
         if config_options:
             return pn.Param(self.param, parameters=config_options)
 
-    def __call__(self, pipeline) -> Component:
+    def __call__(self, pipeline) -> Component | Viewable:
         return pipeline
 
 
@@ -78,8 +81,8 @@ class Join(Analysis):
         self._run_button = self._source_controls._add_button
         self._source_controls.param.watch(self._update_table_name, "_last_table")
 
-        source = memory.get("current_source")
-        table = memory.get("current_table")
+        source = memory.get("source")
+        table = memory.get("table")
         self._previous_source = source
         self._previous_table = table
         columns = list(source.get_schema(table).keys())
@@ -96,10 +99,10 @@ class Join(Analysis):
         )
         return controls
 
-    async def __call__(self, pipeline) -> Component:
+    async def __call__(self, pipeline):
         if self.table_name:
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
-            content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['current_source']}//{self.table_name}'"
+            content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['source']}//{self.table_name}'"
             if self.index_col:
                 content += f" left join on {self.index_col}"
             else:
@@ -107,5 +110,5 @@ class Join(Analysis):
             if self.context:
                 content += f"\nadditional context:\n{self.context!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])
-            pipeline = memory["current_pipeline"]
+            pipeline = memory["pipeline"]
         return pipeline

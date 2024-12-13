@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import re
 
@@ -15,7 +14,7 @@ import yaml
 from instructor.retry import InstructorRetryException
 from panel.chat import ChatInterface
 from panel.layout import Column
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -26,38 +25,42 @@ from ..sources.base import BaseSQLSource
 from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
-from ..views import VegaLiteView, View, hvPlotUIView
-from .actor import Actor
-from .config import FUZZY_TABLE_LENGTH, PROMPTS_DIR
-from .controls import SourceControls
-from .embeddings import Embeddings
-from .llm import Llm, Message
-from .memory import _Memory, memory
-from .models import (
-    FuzzyTable, JoinRequired, Sql, TableJoins, Topic, VegaLiteSpec,
-    make_table_model,
+from ..views import (
+    Panel, VegaLiteView, View, hvPlotUIView,
 )
+from .actor import Actor, ContextProvider
+from .config import PROMPTS_DIR
+from .controls import SourceControls
+from .llm import Llm, Message
+from .memory import _Memory
+from .models import (
+    JoinRequired, RetrySpec, Sql, TableJoins, VegaLiteSpec, make_table_model,
+)
+from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, report_error, retry_llm_output,
+    get_schema, log_debug, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
-class Agent(Viewer, Actor):
+class Agent(Viewer, Actor, ContextProvider):
     """
-    An Agent in Panel is responsible for handling a specific type of
-    query. Each agent consists of an LLM and optionally a set of
-    embeddings.
+    Agents are actors responsible for taking a user query and
+    performing a particular task and responding by adding context to
+    the current memory and creating outputs.
+
+    Each Agent can require certain context that is needed to perform
+    the task and should declare any context it itself provides.
+
+    Agents have access to an LLM and the current memory and can
+    solve tasks by executing a series of prompts or by rendering
+    contents such as forms or widgets to gather user input.
     """
 
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
-
-    embeddings = param.ClassSelector(class_=Embeddings, doc="""
-        Embeddings object which is queried to provide additional context
-        before asking the LLM to respond.""")
 
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface to report progress to.""")
@@ -65,21 +68,8 @@ class Agent(Viewer, Actor):
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
 
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
-
     steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
-
-    provides = param.List(default=[], readonly=True, doc="""
-        List of context values this Agent provides to current working memory.""")
-
-    requires = param.List(default=[], readonly=True, doc="""
-        List of context that this Agent requires to be in memory.""")
-
-    response_model = param.ClassSelector(class_=BaseModel, is_instance=False, doc="""
-        A Pydantic model determining the schema of the response.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -94,7 +84,8 @@ class Agent(Viewer, Actor):
 
     def __init__(self, **params):
         def _exception_handler(exception):
-            if str(exception) in self.interface.serialize()[-1]["content"]:
+            messages = self.interface.serialize()
+            if messages and str(exception) in messages[-1]["content"]:
                 return
 
             import traceback
@@ -127,71 +118,19 @@ class Agent(Viewer, Actor):
         """
         return pn.Column() if not self.steps_layout else self.steps_layout
 
-    @property
-    def _memory(self):
-        return memory if self.memory is None else self.memory
-
     def __panel__(self):
         return self.interface
 
-    async def _get_closest_tables(self, messages: list[Message], tables: list[str], n: int = 3) -> list[str]:
-        # this does not work well, but for now keeping this,
-        # and will be removed once embeddings are ready
-        # TODO: move this out somewhere / remove once embeddings are ready...
-        system = (
-            f"You are great at extracting keywords based on the user query to find the correct table. "
-            f"The current table selected: `{self._memory.get('current_table', 'N/A')}`. "
-        )
-        tables = tuple(table.replace('"', "") for table in tables)
-
-        fuzzy_table = (await self.llm.invoke(
-            messages,
-            system=system,
-            response_model=FuzzyTable,
-            allow_partial=False
-        ))
-        if not fuzzy_table.required:
-            return [self._memory.get("current_table") or tables[0]]
-
-        # make case insensitive, but keep original case to transform back
-        if not fuzzy_table.keywords:
-            return tables[:n]
-
-        table_keywords = [keyword.lower() for keyword in fuzzy_table.keywords]
-        tables_lower = {table.lower(): table for table in tables}
-
-        # get closest matches
-        closest_tables = set()
-        for keyword in table_keywords:
-            closest_tables |= set(difflib.get_close_matches(keyword, list(tables_lower), n=5, cutoff=0.3))
-        closest_tables = [tables_lower[table] for table in closest_tables]
-        if len(closest_tables) == 0:
-            # if no tables are found, ask the user to select ones and load it
-            tables = await self._select_table(tables)
-        self._memory["closest_tables"] = tables
-        return tuple(tables)
-
-    async def _select_table(self, tables):
-        input_widget = pn.widgets.AutocompleteInput(
-            placeholder="Start typing parts of the table name",
-            case_sensitive=False,
-            options=list(tables),
-            search_strategy="includes",
-            min_characters=1,
-        )
-        self.interface.send(
-            pn.chat.ChatMessage(
-                "No tables were found based on the user query. Please select the table you are looking for.",
-                footer_objects=[input_widget],
-                user="Assistant",
-            ),
-            respond=False
-        )
-        while not input_widget.value:
-            await asyncio.sleep(0.05)
-        tables = [input_widget.value]
-        self.interface.pop(-1)
-        return tables
+    async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
+        message = None
+        model_spec = self.prompts["main"].get("llm_spec", "default")
+        async for output_chunk in self.llm.stream(
+            messages, system=system_prompt, model_spec=model_spec, field="output"
+        ):
+            message = self.interface.stream(
+                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+            )
+        return message
 
     # Public API
 
@@ -209,7 +148,7 @@ class Agent(Viewer, Actor):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Provides a response to the user query.
@@ -227,28 +166,28 @@ class Agent(Viewer, Actor):
             If the Agent response is part of a longer query this describes
             the step currently being processed.
         """
-        system_prompt = await self._render_main_prompt(messages)
-        message = None
-        async for output_chunk in self.llm.stream(
-            messages, system=system_prompt, response_model=self.response_model, field="output"
-        ):
-            message = self.interface.stream(
-                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
-            )
-        return message
+        system_prompt = await self._render_prompt("main", messages)
+        return await self._stream(messages, system_prompt)
 
 
 class SourceAgent(Agent):
+    """
+    SourceAgent renders a form that allows a user to upload or
+    provide a URI to one or more datasets.
+    """
 
     purpose = param.String(default="""
-        The SourceAgent allows a user to upload new datasets.
+        The SourceAgent allows a user to upload unavailable,
+        new datasets, tables, or documents.
 
-        Only use this if the user is requesting to add a dataset or you think
-        additional information is required to solve the user query.""")
+        Only use this if the user is requesting to add a completely new table
+        or you think additional information is required to solve the user query.
+        Not useful for answering what's available or loading existing datasets.
+        """)
 
     requires = param.List(default=[], readonly=True)
 
-    provides = param.List(default=["current_source"], readonly=True)
+    provides = param.List(default=["source"], readonly=True)
 
     on_init = param.Boolean(default=True)
 
@@ -258,7 +197,7 @@ class SourceAgent(Agent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         source_controls = SourceControls(
             multiple=True, replace_controls=True, select_existing=False, memory=self.memory
@@ -266,83 +205,80 @@ class SourceAgent(Agent):
         self.interface.send(source_controls, respond=False, user="SourceAgent")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
+            if source_controls._cancel_button.clicks > 0:
+                self.interface.undo()
+                return None
         return source_controls
 
 
 class ChatAgent(Agent):
+    """
+    ChatAgent provides general information about available data
+    and other topics  to the user.
+    """
 
     purpose = param.String(default="""
         Chats and provides info about high level data related topics,
-        e.g. what datasets are available, the columns of the data or
-        statistics about the data, and continuing the conversation.
+        e.g. the columns of the data or statistics about the data,
+        and continuing the conversation.
 
         Is capable of providing suggestions to get started or comment on interesting tidbits.
-        If data is available, it can also talk about the data itself.""")
+        It can talk about the data, if available.
 
-    prompt_templates = param.Dict(
+        Usually not used concurrently with SQLAgent, unlike AnalystAgent.
+        Can be used concurrently with TableListAgent to describe available tables
+        and potential ideas for analysis.""")
+
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+            "main": {
+                "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
+                "tools": [TableLookup, DocumentLookup]
+            },
         }
     )
 
-    response_model = param.ClassSelector(class_=BaseModel, is_instance=False)
+    requires = param.List(default=[], readonly=True)
 
-    requires = param.List(default=["current_source"], readonly=True)
-
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        source = self._memory.get("current_source")
-        if not source:
-            raise ValueError("No source found in memory.")
-
-        tables = source.get_tables()
-        context = {"tables": tables}
-        if len(tables) > 1:
-            if (
-                len(tables) > FUZZY_TABLE_LENGTH
-                and "closest_tables" not in self._memory
-            ):
-                closest_tables = await self._get_closest_tables(messages, tables, n=5)
-            else:
-                closest_tables = self._memory.get("closest_tables", tables)
-            context["closest_tables"] = closest_tables
-        else:
-            self._memory["current_table"] = table = self._memory.get(
-                "current_table", tables[0]
-            )
-            schema = await get_schema(self._memory["current_source"], table)
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        context = {"tool_context": await self._use_tools("main", messages)}
+        table = self._memory.get("table")
+        if table:
+            schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
-        system_prompt = self._render_prompt("main", **context)
-        return system_prompt
+        elif "closest_tables" in self._memory:
+            schemas = [
+                await get_schema(self._memory["source"], table, include_count=True, limit=1000)
+                for table in self._memory["closest_tables"]
+            ]
+            context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
+        system_prompt = await self._render_prompt("main", messages, **context)
+        return await self._stream(messages, system_prompt)
 
 
-class ChatDetailsAgent(ChatAgent):
+class AnalystAgent(ChatAgent):
 
     purpose = param.String(default="""
-        Responsible for chatting and providing info about details about the table values,
-        e.g. what should be noted about the data values, valuable, applicable insights about the data,
-        and continuing the conversation. Does not provide overviews;
-        only details, meaning, relationships, and trends of the data.""")
+        Responsible for analyzing results from SQLAgent and
+        providing clear, concise, and actionable insights.
+        Focuses on breaking down complex data findings into understandable points for
+        high-level decision-making. Emphasizes detailed interpretation, trends, and
+        relationships within the data, while avoiding general overviews or
+        superficial descriptions.""")
 
-    requires = param.List(default=["current_source", "current_table"], readonly=True)
+    requires = param.List(default=["source", "pipeline"], readonly=True)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "ChatDetailsAgent" / "main.jinja2",
-            "topic": PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2",
+            "main": {"template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2"},
         }
     )
-
-    async def _render_main_prompt(self, messages: list[Message], **context) -> str:
-        topic_system_prompt = self._render_prompt("topic")
-        topic = (await self.llm.invoke(
-            messages,
-            system=topic_system_prompt,
-            response_model=Topic,
-            allow_partial=False,
-        )).result
-        system_prompt = self._render_prompt("main", topic=topic)
-        return system_prompt
 
 
 class LumenBaseAgent(Agent):
@@ -357,12 +293,21 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         message: pn.chat.ChatMessage = None,
+        messages: list | None = None,
         render_output: bool = False,
         title: str | None = None,
         **kwargs
     ):
         out = self._output_type(
-            component=component, render_output=render_output, title=title, **kwargs
+            component=component,
+            render_output=render_output,
+            title=title,
+            llm=self.llm,
+            messages=messages,
+            _render_prompt=self._render_prompt,
+            _retry_model=self.prompts["retry_output"]["response_model"],
+            _memory=self._memory,
+            **kwargs
         )
         if 'outputs' in self._memory:
             # We have to create a new list to trigger an event
@@ -377,21 +322,23 @@ class TableListAgent(LumenBaseAgent):
 
     purpose = param.String(default="""
         Renders a list of all availables tables to the user.
-        Not useful for gathering information about the tables.""")
+        Not useful for gathering information about the tables.
+        Use with ChatAgent to provide info about the tables.
+        """)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "TableListAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "TableListAgent" / "main.jinja2"},
         }
     )
 
-    requires = param.List(default=["current_source"], readonly=True)
+    requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('tabulator',)
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
-        source = memory.get("current_source")
+        source = memory.get("source")
         if not source:
             return True  # source not loaded yet; always apply
         return len(source.get_tables()) > 1
@@ -406,10 +353,10 @@ class TableListAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         tables = []
-        for source in self._memory['available_sources']:
+        for source in self._memory["sources"]:
             tables += source.get_tables()
         self._df = pd.DataFrame({"Table": tables})
         table_list = pn.widgets.Tabulator(
@@ -425,6 +372,7 @@ class TableListAgent(LumenBaseAgent):
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
+        self._memory["closest_tables"] = tables[:5]
         return table_list
 
 
@@ -438,18 +386,35 @@ class SQLAgent(LumenBaseAgent):
         also capable of joining it with other tables. Will generate and
         execute a query in a single step.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
-            "select_table": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
-            "require_joins": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2",
-            "find_joins": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2",
+            "main": {
+                "response_model": Sql,
+                "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
+            },
+            "select_table": {
+                "response_model": make_table_model,
+                "template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
+                "tools": [TableLookup]
+            },
+            "require_joins": {
+                "response_model": JoinRequired,
+                "template": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2"
+            },
+            "find_joins": {
+                "response_model": TableJoins,
+                "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
-    requires = param.List(default=["current_source"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "base_schema"], readonly=True)
 
-    provides = param.List(default=["current_table", "current_sql", "current_pipeline"], readonly=True)
+    requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -457,27 +422,28 @@ class SQLAgent(LumenBaseAgent):
 
     async def _select_relevant_table(self, messages: list[Message]) -> tuple[str, BaseSQLSource]:
         """Select the most relevant table based on the user query."""
-        available_sources = self._memory["available_sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(available_sources)
+        sources = self._memory["sources"]
+        tables_to_source, tables_schema_str = await gather_table_sources(sources)
         tables = tuple(tables_to_source)
         if messages and messages[-1]["content"].startswith("Show the table: '"):
             # Handle the case where explicitly requested a table
-            table = messages[-1]["content"].replace("Show the table: '", "")[:-1]
+            table = re.search(r"Show the table: '([^']+)'", messages[-1]["content"]).group(1)
         elif len(tables) == 1:
             table = tables[0]
         else:
             with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
                 if len(tables) > 1:
-                    closest_tables = self._memory.pop("closest_tables", [])
-                    if closest_tables:
-                        tables = closest_tables
-                    elif len(tables) > FUZZY_TABLE_LENGTH:
-                        tables = await self._get_closest_tables(messages, tables)
-                    system_prompt = self._render_prompt("select_table", tables_schema_str=tables_schema_str)
-                    table_model = make_table_model(tables)
+                    system_prompt = await self._render_prompt(
+                        "select_table", messages, tables_schema_str=tables_schema_str
+                    )
+                    if "closest_tables" in self._memory:
+                        tables = self._memory["closest_tables"]
+                    model_spec = self.prompts["select_table"].get("llm_spec", "default")
+                    table_model = self._get_model("select_table", tables=tables)
                     result = await self.llm.invoke(
                         messages,
                         system=system_prompt,
+                        model_spec=model_spec,
                         response_model=table_model,
                         allow_partial=False,
                         max_retries=3,
@@ -491,8 +457,8 @@ class SQLAgent(LumenBaseAgent):
         if table in tables_to_source:
             source = tables_to_source[table]
         else:
-            sources = [src for src in available_sources if table in src]
-            source = sources[0] if sources else self._memory["current_source"]
+            sources = [src for src in sources if table in src]
+            source = sources[0] if sources else self._memory["source"]
 
         return table, source
 
@@ -506,22 +472,21 @@ class SQLAgent(LumenBaseAgent):
         errors=None
     ):
         if errors:
-            last_query = self.interface.serialize()[-1]["content"].replace("```sql", "").rstrip("```").strip()
+            last_query = self.interface.serialize()[-1]["content"]
+            sql_code_match = re.search(r'(?s)```sql\s*(.*?)```', last_query, re.DOTALL)
+            if sql_code_match:
+                last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
-            messages += [
-                {
-                    "role": "user",
-                    "content": (
-                        f"Your last query `{last_query}` did not work as intended, "
-                        f"expertly revise, and please do not repeat these issues:\n{errors}\n\n"
-                        f"If the error is `syntax error at or near \")\"`, double check you used "
-                        "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
-                    )
-                }
-            ]
+            system += (
+                "Your last query did not work as intended, expertly revise these errors:\n"
+                f"```python\n{errors}\n```\n\n"
+                "If the error is `syntax error at or near \")\"`, double check you used "
+                "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
+            )
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(messages, system=system, response_model=Sql)
+            model_spec = self.prompts["main"].get("llm_spec", "default")
+            response = self.llm.stream(messages, system=system, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             async for output in response:
                 step_message = output.chain_of_thought
@@ -585,14 +550,12 @@ class SQLAgent(LumenBaseAgent):
             report_error(e, step)
             raise e
 
-        if len(df) > 0:
-            self._memory["current_data"] = await describe_data(df)
-
-        self._memory["available_sources"].append(sql_expr_source)
-        self._memory["current_source"] = sql_expr_source
-        self._memory["current_pipeline"] = pipeline
-        self._memory["current_table"] = pipeline.table
-        self._memory["current_sql"] = sql_query
+        self._memory["data"] = await describe_data(df)
+        self._memory["sources"].append(sql_expr_source)
+        self._memory["source"] = sql_expr_source
+        self._memory["pipeline"] = pipeline
+        self._memory["table"] = pipeline.table
+        self._memory["sql"] = sql_query
         return sql_query
 
     async def _check_requires_joins(
@@ -602,15 +565,18 @@ class SQLAgent(LumenBaseAgent):
         table: str
     ):
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
-            join_prompt = self._render_prompt(
+            join_prompt = await self._render_prompt(
                 "require_joins",
+                messages,
                 schema=yaml.dump(schema),
                 table=table
             )
+            model_spec = self.prompts["require_joins"].get("llm_spec", "default")
             response = self.llm.stream(
                 messages[-1:],
                 system=join_prompt,
-                response_model=JoinRequired,
+                model_spec=model_spec,
+                response_model=self._get_model("require_joins"),
             )
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
@@ -618,24 +584,24 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = 'Query requires join' if requires_joins else 'No join required'
         return requires_joins
 
-    async def find_join_tables(self, messages: list):
-        multi_source = len(self._memory['available_sources']) > 1
+    async def find_join_tables(self, messages: list[Message]):
+        multi_source = len(self._memory['sources']) > 1
         if multi_source:
-            available_tables = [
-                f"//{a_source}//{a_table}" for a_source in self._memory["available_sources"]
+            tables = [
+                f"//{a_source}//{a_table}" for a_source in self._memory["sources"]
                 for a_table in a_source.get_tables()
             ]
         else:
-            available_tables = self._memory['current_source'].get_tables()
+            tables = self._memory['source'].get_tables()
 
-        find_joins_prompt = self._render_prompt(
-            "find_joins", available_tables=available_tables
-        )
+        find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables)
+        model_spec = self.prompts["find_joins"].get("llm_spec", "default")
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
                 messages,
                 system=find_joins_prompt,
-                response_model=TableJoins,
+                model_spec=model_spec,
+                response_model=self._get_model("find_joins"),
             )
             tables_to_join = output.tables_to_join
             step.stream(
@@ -646,20 +612,20 @@ class SQLAgent(LumenBaseAgent):
 
         tables_to_source = {}
         for source_table in tables_to_join:
-            available_sources = self._memory["available_sources"]
+            sources = self._memory["sources"]
             if multi_source:
                 try:
                     _, a_source_name, a_table = source_table.split("//", maxsplit=2)
                 except ValueError:
                     a_source_name, a_table = source_table.split("//", maxsplit=1)
-                for source in available_sources:
+                for source in sources:
                     if source.name == a_source_name:
                         a_source = source
                         break
                 if a_table in tables_to_source:
                     a_table = f"//{a_source_name}//{a_table}"
             else:
-                a_source = next(iter(available_sources))
+                a_source = next(iter(sources))
                 a_table = source_table
 
             tables_to_source[a_table] = a_source
@@ -669,7 +635,7 @@ class SQLAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Steps:
@@ -687,7 +653,11 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        schema = await get_schema(source, table, include_min_max=False)
+        # include min max for more context for data cleaning
+        schema = await get_schema(source, table, include_min_max=True)
+        if not source.ephemeral:
+            # store the schema of the original table
+            self._memory["base_schema"] = schema
         join_required = await self._check_requires_joins(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
@@ -699,7 +669,7 @@ class SQLAgent(LumenBaseAgent):
             if source_table == table:
                 table_schema = schema
             else:
-                table_schema = await get_schema(source, source_table, include_min_max=False)
+                table_schema = await get_schema(source, source_table, include_min_max=True)
 
             # Look up underlying table name
             table_name = source_table
@@ -712,55 +682,54 @@ class SQLAgent(LumenBaseAgent):
 
             table_schemas[table_name] = {
                 "schema": yaml.dump(table_schema),
-                "sql": source.get_sql_expr(source_table)
+                "sql": source.get_sql_expr(source_table),
             }
 
         dialect = source.dialect
-        system_prompt = await self._render_main_prompt(
+        system_prompt = await self._render_prompt(
+            "main",
             messages,
             tables_sql_schemas=table_schemas,
             dialect=dialect,
             join_required=join_required,
-            table=table
+            table=table,
         )
         if join_required:
             # Remove source prefixes message, e.g. //<source>//<table>
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
-        pipeline = self._memory['current_pipeline']
-        self._render_lumen(pipeline, spec=sql_query, render_output=render_output, title=step_title)
+        pipeline = self._memory['pipeline']
+
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline
 
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["current_pipeline"], readonly=True)
+    requires = param.List(default=["pipeline"], readonly=True)
 
-    provides = param.List(default=["current_plot"], readonly=True)
+    provides = param.List(default=["plot"], readonly=True)
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2"},
+            "retry_output": {"template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
         }
     )
 
     async def _extract_spec(self, model: BaseModel):
         return dict(model)
 
-    @classmethod
-    def _get_model(cls, schema):
-        raise NotImplementedError()
-
     async def respond(
         self,
         messages: list[Message],
         render_output: bool = False,
-        step_title: str | None = None
+        step_title: str | None = None,
     ) -> Any:
         """
         Generates a visualization based on user messages and the current data pipeline.
         """
-        pipeline = self._memory.get("current_pipeline")
+        pipeline = self._memory.get("pipeline")
         if not pipeline:
             raise ValueError("No current pipeline found in memory.")
 
@@ -769,17 +738,20 @@ class BaseViewAgent(LumenBaseAgent):
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        system_prompt = self._render_prompt(
+        system_prompt = await self._render_prompt(
             "main",
+            messages,
             schema=yaml.dump(schema),
             table=pipeline.table,
-            current_view=self._memory.get('current_view'),
+            view=self._memory.get('view'),
             doc=doc,
         )
+        model_spec = self.prompts["main"].get("llm_spec", "default")
         output = await self.llm.invoke(
             messages,
             system=system_prompt,
-            response_model=self._get_model(schema),
+            model_spec=model_spec,
+            response_model=self._get_model("main", schema=schema),
         )
         spec = await self._extract_spec(output)
         chain_of_thought = spec.pop("chain_of_thought", None)
@@ -789,10 +761,11 @@ class BaseViewAgent(LumenBaseAgent):
                 steps_layout=self._steps_layout
             ) as step:
                 step.stream(chain_of_thought)
-        print(f"{self.name} settled on spec: {spec!r}.")
-        self._memory["current_view"] = dict(spec, type=self.view_type)
+        log_debug(f"{self.name} settled on spec: {spec!r}.")
+        self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, render_output=render_output, title=step_title)
+
+        self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
 
@@ -802,18 +775,21 @@ class hvPlotAgent(BaseViewAgent):
         Generates a plot of the data given a user prompt.
         If the user asks to plot, visualize or render the data this is your best best.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2"},
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
     view_type = hvPlotUIView
 
-    @classmethod
-    def _get_model(cls, schema):
+    def _get_model(self, prompt_name: str, schema: dict[str, Any]) -> type[BaseModel]:
         # Find parameters
-        excluded = cls.view_type._internal_params + [
+        excluded = self.view_type._internal_params + [
             "controls",
             "type",
             "source",
@@ -823,13 +799,13 @@ class hvPlotAgent(BaseViewAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(cls.view_type, excluded=excluded, schema=schema, extra_fields={
+        model = param_to_pydantic(self.view_type, excluded=excluded, schema=schema, extra_fields={
             "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
         })
-        return model[cls.view_type.__name__]
+        return model[self.view_type.__name__]
 
     async def _extract_spec(self, model):
-        pipeline = self._memory["current_pipeline"]
+        pipeline = self._memory["pipeline"]
         spec = {
             key: val for key, val in dict(model).items()
             if val is not None
@@ -849,26 +825,26 @@ class hvPlotAgent(BaseViewAgent):
 
 class VegaLiteAgent(BaseViewAgent):
 
-    purpose = param.String(
-        default="""
+    purpose = param.String(default="""
         Generates a vega-lite specification of the plot the user requested.
+        If the user asks to plot, visualize or render the data this is your best best.""")
 
-        If the user asks to plot, visualize or render the data this is your best best.
-        """)
-
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2",
+            "main": {
+                "response_model": VegaLiteSpec,
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
     view_type = VegaLiteView
 
     _extensions = ('vega',)
-
-    @classmethod
-    def _get_model(cls, schema):
-        return VegaLiteSpec
 
     async def _extract_spec(self, model: VegaLiteSpec):
         vega_spec = json.loads(model.json_spec)
@@ -883,20 +859,20 @@ class VegaLiteAgent(BaseViewAgent):
 
 class AnalysisAgent(LumenBaseAgent):
 
+    analyses = param.List([])
+
     purpose = param.String(default="""
         Perform custom analyses on the data.""")
 
-    prompt_templates = param.Dict(
+    prompts = param.Dict(
         default={
-            "main": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2",
+            "main": {"template": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2"},
         }
     )
 
-    analyses = param.List([])
+    provides = param.List(default=['view'])
 
-    requires = param.List(default=['current_pipeline'])
-
-    provides = param.List(default=['current_view'])
+    requires = param.List(default=['pipeline'])
 
     _output_type = AnalysisOutput
 
@@ -905,12 +881,12 @@ class AnalysisAgent(LumenBaseAgent):
         messages: list[Message],
         render_output: bool = False,
         step_title: str | None = None,
-        agents: list[Agent] | None = None
+        agents: list[Agent] | None = None,
     ) -> Any:
-        pipeline = self._memory['current_pipeline']
+        pipeline = self._memory['pipeline']
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
-            print("NONE found...")
+            log_debug("No analyses apply to the current data.")
             return None
 
         # Short cut analysis selection if there's an exact match
@@ -926,14 +902,17 @@ class AnalysisAgent(LumenBaseAgent):
                     "Analysis",
                     correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
                 )
-                system_prompt = self._render_prompt(
+                system_prompt = await self._render_prompt(
                     "main",
+                    messages,
                     analyses=analyses,
-                    current_data=self._memory.get("current_data"),
+                    data=self._memory.get("data"),
                 )
+                model_spec = self.prompts["main"].get("llm_spec", "default")
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
+                    model_spec=model_spec,
                     response_model=analysis_model,
                     allow_partial=False,
                 )).correct_name
@@ -949,24 +928,26 @@ class AnalysisAgent(LumenBaseAgent):
             data = await get_data(pipeline)
             for field in analysis_callable._field_params:
                 analysis_callable.param[field].objects = list(data.columns)
-            self._memory["current_analysis"] = analysis_callable
+            self._memory["analysis"] = analysis_callable
 
             if analysis_callable.autorun:
                 if asyncio.iscoroutinefunction(analysis_callable.__call__):
                     view = await analysis_callable(pipeline)
                 else:
                     view = await asyncio.to_thread(analysis_callable, pipeline)
+                if isinstance(view, Viewable):
+                    view = Panel(object=view, pipeline=self._memory.get('pipeline'))
                 spec = view.to_spec()
                 if isinstance(view, View):
                     view_type = view.view_type
-                    self._memory["current_view"] = dict(spec, type=view_type)
+                    self._memory["view"] = dict(spec, type=view_type)
                 elif isinstance(view, Pipeline):
-                    self._memory["current_pipeline"] = view
-                # Ensure current_data reflects processed pipeline
-                if pipeline is not self._memory['current_pipeline']:
-                    pipeline = self._memory['current_pipeline']
+                    self._memory["pipeline"] = view
+                # Ensure data reflects processed pipeline
+                if pipeline is not self._memory['pipeline']:
+                    pipeline = self._memory['pipeline']
                     if len(data) > 0:
-                        self._memory["current_data"] = await describe_data(data)
+                        self._memory["data"] = await describe_data(data)
                 yaml_spec = yaml.dump(spec)
                 step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                 step.success_title = "Generated view"
@@ -974,8 +955,8 @@ class AnalysisAgent(LumenBaseAgent):
                 step.success_title = "Configure the analysis"
                 view = None
 
-        analysis = self._memory["current_analysis"]
-        pipeline = self._memory['current_pipeline']
+        analysis = self._memory["analysis"]
+        pipeline = self._memory['pipeline']
         if view is None and analysis.autorun:
             self.interface.stream('Failed to find an analysis that applies to this data')
         else:

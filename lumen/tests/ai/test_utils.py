@@ -19,21 +19,21 @@ except ImportError:
 
 def test_render_template_with_valid_template():
     assert (
-        render_template(PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2", {}).strip()
+        render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}).strip()
         == "What is the topic of the table?"
     )
 
 
 def test_render_template_with_override():
     assert (
-        render_template(PROMPTS_DIR / "ChatDetailsAgent" / "topic.jinja2", {"context": "Its Lumen"}).strip()
+        render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen", "tools": ""}).strip()
         == "What is the topic of the table?\n\n\nIts Lumen"
     )
 
 
 def test_render_template_with_missing_variable():
     with pytest.raises(jinja2.exceptions.UndefinedError):
-        render_template(PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2", {})
+        render_template(PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2")
 
 
 class TestRetryLLMOutput:
@@ -205,8 +205,7 @@ class TestGetSchema:
             "count": 1000,
         }
         schema = await get_schema(mock_source, include_count=True)
-        assert "count" in schema["field1"]
-        assert schema["field1"]["count"] == 1000
+        assert schema["count"] == 1000
 
     async def test_no_count(self):
         mock_source = MagicMock()

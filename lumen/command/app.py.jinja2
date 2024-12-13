@@ -1,0 +1,39 @@
+import lumen.ai as lmai
+
+{# Import specified agents #}
+{%- if agents is defined -%}
+{% for agent in agents %}
+from lumen.ai.agents import {{ agent }}
+{%- endfor %}
+{%- endif %}
+
+{%- if llm_provider is defined %}
+{%- set args = [] -%}
+{%- if api_key is defined and api_key -%}
+  {%- set args = args + ["api_key='" ~ api_key ~ "'"] -%}
+{%- endif -%}
+{%- if provider_endpoint is defined %}
+  {%- set args = args + ["endpoint='" ~ provider_endpoint ~ "'"] -%}
+{%- endif -%}
+{%- if model_kwargs is defined and model_kwargs -%}
+  {%- set args = args + ["model_kwargs=" ~ model_kwargs] -%}
+{%- endif -%}
+{% if temperature is defined %}
+  {%- set args = args + ["temperature=" ~ temperature] -%}
+{%- endif -%}
+llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
+{% endif %}
+
+data = [{{ tables | join(', ') }}]
+{% set assistant_args = ['data=data'] -%}
+{%- if llm_provider is defined -%}
+  {%- set assistant_args = assistant_args + ['llm=llm'] -%}
+{%- endif -%}
+{%- if agents is defined -%}
+  {%- set agents_list = agents | join(', ') -%}
+  {%- set assistant_args = assistant_args + ['agents=[{}]'.format(agents_list)] -%}
+{%- endif -%}
+
+lmai.ExplorerUI(
+    {{ assistant_args | join(',\n    ') }}, log_level='{{ log_level }}'
+).servable("Lumen.ai")

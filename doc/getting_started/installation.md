@@ -35,33 +35,22 @@ pip install lumen
 
 ::::
 
+To use Lumen AI, you need to install additional dependencies in addition to the core dependencies. You can do this by running:
 
-## Optional dependencies
-
-Lumen is very flexible and allows you to use components from various packages. Depending on what type of dashboard components you use, you may need to install additional packages. Error messages will help you determine if you are missing a package. For instance, if you see the following:
-
-``` bash
-Source component specification declared unknown type 'intake'.
+```bash
+pip install 'lumen[ai]'
 ```
 
-install the missing package in the same way you did lumen:
+If you want to use a specific LLM provider, you can specify the provider name as a hyphenated suffix:
 
-::::{tab-set}
-
-:::{tab-item} conda
-:sync: conda
-
-``` bash
-conda install -c pyviz -c conda-forge intake -y
+```bash
+pip install 'lumen[ai-openai]'
+pip install 'lumen[ai-mistralai]'
+pip install 'lumen[ai-anthropic]'
 ```
-:::
 
-:::{tab-item} pip
-:sync: pip
+For models that run locally on your machine and offline (after downloading and caching):
 
-``` bash
-pip install intake
+```bash
+pip install 'lumen[ai-llama]'
 ```
-:::
-
-::::
