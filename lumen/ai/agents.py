@@ -381,13 +381,13 @@ class LumenBaseAgent(Agent):
                     break
             with self.param.update(memory=memory):
                 system = await self._render_prompt(
-                    "retry_output", messages=modified_messages, user_query=user_query, spec=out.spec
+                    "retry_output", messages=modified_messages, user_query=user_query, spec=out.spec,
+                    language=out.language
                 )
             retry_model = self._lookup_prompt_key("retry_output", "response_model")
             with out.param.update(loading=True):
                 result = await self.llm.invoke(
                     messages, system=system, response_model=retry_model, model_spec="reasoning",
-                    language=out.language
                 )
                 if "```" in result:
                     spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
