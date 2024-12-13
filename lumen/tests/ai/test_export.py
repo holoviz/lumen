@@ -23,10 +23,11 @@ except ImportError:
 
 
 TEST_DIR = pathlib.Path(lumen.__file__).parent / "tests"
+CATALOG_URI = str(TEST_DIR / 'sources' / 'catalog.yml')
 
 @pytest.fixture
 def source():
-    return IntakeSource(uri=str(TEST_DIR / 'sources' / 'catalog.yml'), root=TEST_DIR)
+    return IntakeSource(uri=CATALOG_URI, root=TEST_DIR)
 
 
 @pytest.fixture
@@ -128,14 +129,14 @@ def test_format_output_pipeline(source):
     if os.name == "nt":
         uri = uri.replace("\\", "\\\\")
     expected_source = (
-        f"pipeline = lm.Pipeline.from_spec({{\n"
-        f'  "source": {{\n'
-        f'    "uri": "{uri}",\n'
-        f'    "type": "intake"\n'
-        f"  }},\n"
-        f'  "table": "test"\n'
-        f"}})\n"
-        f"pipeline"
+        "pipeline = lm.Pipeline.from_spec({\n"
+        '  "source": {\n'
+        '    "uri": "'+CATALOG_URI.replace('\\\\', '\\')+'",\n'
+        '    "type": "intake"\n'
+        "  },\n"
+        '  "table": "test"\n'
+        "})\n"
+        "pipeline"
     )
 
     assert cells == [
@@ -229,7 +230,7 @@ def test_export_notebook(source):
                 'outputs': [],
                 'source': [
                     'pipeline = lm.Pipeline.from_spec({\n',
-                    '  "source": {\n', '    "uri": "'+str(TEST_DIR / 'sources' / 'catalog.yml')+'",\n',
+                    '  "source": {\n', '    "uri": "'+CATALOG_URI.replace('\\\\', '\\')+'",\n',
                     '    "type": "intake"\n', '  },\n',
                     '  "table": "test"\n', '})\n',
                     'pipeline'
@@ -243,7 +244,7 @@ def test_export_notebook(source):
                 'source': [
                     'view = lm.View.from_spec({\n',
                     '  "pipeline": {\n', '    "source": {\n',
-                    '      "uri": "'+str(TEST_DIR / 'sources' / 'catalog.yml')+'",\n',
+                    '      "uri": "'+CATALOG_URI.replace('\\\\', '\\')+'",\n',
                     '      "type": "intake"\n', '    },\n',
                     '    "table": "test"\n', '  },\n',
                     '  "type": "table"\n',
