@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import asyncio
+
 from pathlib import Path
 
 import panel as pn
@@ -34,6 +38,7 @@ UNRECOVERABLE_ERRORS = (
     ImportError,
     LlmSetupError,
     RecursionError,
+    asyncio.CancelledError
 )
 
 pn.chat.ChatStep.min_width = 450

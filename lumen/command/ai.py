@@ -84,6 +84,7 @@ class LumenAIServe(Serve):
         endpoint = args.provider_endpoint
         temperature = args.temperature
         agents = args.agents
+        log_level = args.log_level
 
         if not provider:
             provider = LLMConfig.detect_provider()
@@ -114,15 +115,17 @@ class LumenAIServe(Serve):
         def build_single_handler_applications(
             paths: list[str], argvs: dict[str, list[str]] | None = None
         ) -> dict[str, Application]:
-            handler = AIHandler(
-                paths,
+            kwargs = dict(
                 provider=provider,
                 api_key=api_key,
                 temperature=temperature,
                 endpoint=endpoint,
                 agents=agents,
+                log_level=log_level,
                 model_kwargs=model_kwargs,
             )
+            kwargs = {k: v for k, v in kwargs.items() if v is not None}
+            handler = AIHandler(paths, **kwargs)
             if handler.failed:
                 raise RuntimeError(
                     f"Error loading {paths}:\n\n{handler.error}\n{handler.error_detail}"
@@ -147,6 +150,7 @@ class AIHandler(CodeHandler):
         temperature: float | None = None,
         endpoint: str | None = None,
         agents: list[str] | None = None,
+        log_level: str = "INFO",
         model_kwargs: dict | None = None,
         **kwargs,
     ) -> None:
@@ -157,6 +161,7 @@ class AIHandler(CodeHandler):
             temperature=temperature,
             endpoint=endpoint,
             agents=agents,
+            log_level=log_level,
             model_kwargs=model_kwargs,
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
@@ -169,6 +174,7 @@ class AIHandler(CodeHandler):
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
             "agents": config.get("agents"),
+            "log_level": config["log_level"],
             "temperature": config.get("temperature"),
             "model_kwargs": config.get('model_kwargs') or {},
         }

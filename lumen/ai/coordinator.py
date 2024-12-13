@@ -3,20 +3,24 @@ from __future__ import annotations
 import asyncio
 import re
 
+from copy import deepcopy
 from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
 import yaml
 
-from panel import Card, bind
+from panel import bind
 from panel.chat import ChatInterface, ChatStep
-from panel.layout import Column, FlexBox, Tabs
+from panel.layout import (
+    Card, Column, FlexBox, Tabs,
+)
 from panel.pane import HTML
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 from panel.widgets import Button
 from pydantic import BaseModel
 
+from ..views.base import Panel, View
 from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
@@ -26,7 +30,10 @@ from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .models import Validity, make_agent_model, make_plan_models
 from .tools import FunctionTool, Tool
-from .utils import get_schema, retry_llm_output
+from .utils import (
+    get_schema, log_debug, mutate_user_message, retry_llm_output,
+)
+from .views import LumenOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -67,8 +74,8 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    logs_filename = param.String(default=None, doc="""
-        Log file to write to.""")
+    logs_db_path = param.String(default=None, doc="""
+        The path to the log file that will store the messages exchanged with the LLM.""")
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -94,7 +101,7 @@ class Coordinator(Viewer, Actor):
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
-        logs_filename: str = "",
+        logs_db_path: str = "",
         **params,
     ):
         def on_message(message, instance):
@@ -107,13 +114,13 @@ class Coordinator(Viewer, Actor):
 
             bind(update_on_reaction, message.param.reactions, watch=True)
             message_id = id(message)
-            message_index = len(instance) - 1
+            message_index = instance.objects.index(message)
             self._logs.upsert(
                 session_id=self._session_id,
                 message_id=message_id,
                 message_index=message_index,
                 message_user=message.user,
-                message_content=message.object,
+                message_content=message.serialize(),
             )
 
         def on_undo(instance, _):
@@ -134,14 +141,15 @@ class Coordinator(Viewer, Actor):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "verbose"
-        interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
 
         self._session_id = id(self)
 
-        if logs_filename is not None:
-            self._logs = ChatLogs(filename=logs_filename)
+        if logs_db_path:
+            interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
+            self._logs = ChatLogs(filename=logs_db_path)
             interface.post_hook = on_message
+        else:
+            interface.message_params["show_reaction_icons"] = False
 
         llm = llm or self.llm
         instantiated = []
@@ -164,7 +172,7 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_filename=logs_filename, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
         self._tools["__main__"] = [
             tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
@@ -172,7 +180,7 @@ class Coordinator(Viewer, Actor):
         ]
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
-            user="Help", respond=False,
+            user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
         )
         interface.button_properties={
             "undo": {"callback": on_undo},
@@ -217,9 +225,9 @@ class Coordinator(Viewer, Actor):
                         if isinstance(agent, AnalysisAgent):
                             break
                     else:
-                        print("No analysis agent found.")
+                        log_debug("No analysis agent found.")
                         return
-                    messages = [{'role': 'user', 'content': contents}]
+                    messages = [{"role": "user", "content": contents}]
                     with agent.param.update(memory=memory):
                         await agent.respond(
                             messages, render_output=self.render_output, agents=self.agents
@@ -331,23 +339,23 @@ class Coordinator(Viewer, Actor):
                 self._memory.pop("sql", None)
                 self._memory.pop("pipeline", None)
                 self._memory.pop("closest_tables", None)
-                print("\033[91mInvalidated from memory.\033[0m")
+                log_debug("\033[91mInvalidated from memory.\033[0m")
             elif output.is_invalid == "sql":
                 self._memory.pop("sql", None)
                 self._memory.pop("data", None)
                 self._memory.pop("pipeline", None)
-                print("\033[91mInvalidated SQL from memory.\033[0m")
+                log_debug("\033[91mInvalidated SQL from memory.\033[0m")
             return output.correct_assessment
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        print("\033[94mNEW\033[0m" + "-" * 100)
+        log_debug("\033[94mNEW\033[0m", show_sep=True)
         await self.respond(contents)
 
     @retry_llm_output()
     async def _fill_model(self, messages, system, agent_model, errors=None):
         if errors:
             errors = '\n'.join(errors)
-            messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
+            system += f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}"
 
         model_spec = self.prompts["main"].get("llm_spec", "default")
         out = await self.llm.invoke(
@@ -358,7 +366,7 @@ class Coordinator(Viewer, Actor):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]) -> bool:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -372,49 +380,74 @@ class Coordinator(Viewer, Actor):
                 steps_layout = step_message.object
                 break
 
+        mutated_messages = deepcopy(messages)
         with self.interface.add_step(title=f"Querying {agent_name} agent...", steps_layout=steps_layout) as step:
             step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
-            custom_messages = messages.copy()
             if isinstance(subagent, SQLAgent):
                 custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
                 if custom_agent:
                     custom_analysis_doc = custom_agent.purpose.replace("Available analyses include:\n", "")
                     custom_message = (
-                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
+                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc!r} "
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
-                    custom_messages.append({"role": "user", "content": custom_message})
+                    mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
-                custom_messages.append({"role": "assistant", "content": instruction})
+                mutate_user_message(
+                    f"-- Here's the current instructions from the multi-step plan: {instruction!r}",
+                    mutated_messages, suffix=True, wrap=True
+                )
 
             shared_ctx = {"memory": self.memory}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
             if isinstance(subagent, Agent):
                 shared_ctx["steps_layout"] = steps_layout
             with subagent.param.update(**shared_ctx):
-                result = await subagent.respond(
-                    custom_messages,
-                    step_title=title,
-                    render_output=render_output,
-                    **respond_kwargs
-                )
-            step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
-            if isinstance(subagent, Tool) and result:
-                self._memory["tool_context"] += '\n\n'+result
-                step.stream('\n\n'+result)
-            step.success_title = f"{agent_name} agent successfully responded"
+                try:
+                    result = await subagent.respond(
+                        mutated_messages,
+                        step_title=title,
+                        render_output=render_output,
+                        **respond_kwargs
+                    )
+                except asyncio.CancelledError as e:
+                    step.failed_title = f"{agent_name} agent was cancelled"
+                    raise e
+                log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
 
-    def _serialize(self, obj, exclude_passwords=True):
-        if isinstance(obj, (Column, Tabs)):
+            unprovided = [p for p in subagent.provides if p not in self._memory]
+            if unprovided:
+                step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
+                raise RuntimeError(f"{agent_name} failed to provide declared context.")
+            step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
+            if isinstance(subagent, Tool):
+                if isinstance(result, str) and result:
+                    self._memory["tool_context"] += '\n\n'+result
+                    step.stream('\n\n'+result)
+                elif isinstance(result, (View, Viewable)):
+                    if isinstance(result, Viewable):
+                        result = Panel(object=result, pipeline=self._memory.get('pipeline'))
+                    out = LumenOutput(
+                        component=result, render_output=render_output, title=title
+                    )
+                    if 'outputs' in self._memory:
+                        # We have to create a new list to trigger an event
+                        # since inplace updates will not trigger updates
+                        # and won't allow diffing between old and new values
+                        self._memory['outputs'] = self._memory['outputs']+[out]
+                    message_kwargs = dict(value=out, user=subagent.name)
+                    self.interface.stream(**message_kwargs)
+            step.success_title = f"{agent_name} agent successfully responded"
+        return step.status == "success"
+
+    def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
+        if isinstance(obj, (Column, Card, Tabs)):
+            string = ""
             for o in obj:
-                if isinstance(obj, ChatStep) and not obj.title.startswith("Selected"):
-                    # only want the chain of thoughts from the selected agent
+                if isinstance(o, ChatStep):
+                    # Drop context from steps; should be irrelevant now
                     continue
-                if hasattr(o, "visible") and o.visible:
-                    break
-            else:
-                return ""
-            string = self._serialize(o)
+                string += self._serialize(o)
             if exclude_passwords:
                 string = re.sub(r"password:.*\n", "", string)
             return string
@@ -428,6 +461,34 @@ class Coordinator(Viewer, Actor):
             obj = obj.value
         return str(obj)
 
+    def _fuse_messages(self, messages: list[Message], max_user_messages: int = 2) -> list[Message]:
+        """
+        Fuse consecutive messages from the same user and limit the
+        the number of user messages to `max_user_messages`.
+        """
+        user_count = 0
+        input_messages = []
+        previous_role = None
+        for message in messages[::-1]:
+            role = message["role"]
+            content = message["content"].strip()
+            if (user_count == 0 and role == "assistant"):
+                # the first message should be user
+                continue
+
+            if role == previous_role and input_messages:
+                # remember it's in reverse order
+                input_messages[-1]["content"] = f"{content}\n---\n{input_messages[-1]['content']}"
+            else:
+                input_messages.append({"role": role, "content": content})
+
+            previous_role = role
+            if role == "user":
+                user_count += 1
+                if user_count >= max_user_messages:
+                    break
+        return input_messages[::-1]
+
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
@@ -437,14 +498,17 @@ class Coordinator(Viewer, Actor):
                     step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     await self.llm.get_client("default")  # caches the model for future use
 
-            messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-            invalidation_assessment = await self._invalidate_memory(messages[-2:])
-            context_length = 3
+            messages = self._fuse_messages(
+                self.interface.serialize(custom_serializer=self._serialize, limit=10),
+                max_user_messages=3
+            )
+
+            invalidation_assessment = await self._invalidate_memory(messages)
             if invalidation_assessment:
-                messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
-                context_length += 1
+                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages[-3:])
+
             agents = {agent.name[:-5]: agent for agent in self.agents}
-            execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
+            execution_graph = await self._compute_execution_graph(messages, agents)
             if execution_graph is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
@@ -453,10 +517,12 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
-                await self._execute_graph_node(node, messages[-context_length:])
+                succeeded = await self._execute_graph_node(node, messages[-3:])
+                if not succeeded:
+                    break
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
-            print("\033[92mDONE\033[0m", "\n\n")
+            log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
 
 
 class DependencyResolver(Coordinator):
@@ -535,7 +601,7 @@ class DependencyResolver(Coordinator):
         )):
             with self.interface.add_step(title="Resolving dependencies...", user="Assistant") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
-                print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
+                log_debug(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [
                     agent
                     for agent in self.agents
@@ -605,6 +671,7 @@ class Planner(Coordinator):
         agents: dict[str, Agent],
         tables: dict[str, Source],
         unmet_dependencies: set[str],
+        previous_plans: list[str],
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
@@ -619,6 +686,7 @@ class Planner(Coordinator):
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         while reasoning is None or requested:
+            log_debug(f"Creating plan for \033[91m{requested}\033[0m")
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
             system = await self._render_prompt(
@@ -627,6 +695,8 @@ class Planner(Coordinator):
                 agents=list(agents.values()),
                 tools=tools,
                 unmet_dependencies=unmet_dependencies,
+                candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
+                previous_plans=previous_plans,
                 table_info=info,
                 tables=available
             )
@@ -640,16 +710,19 @@ class Planner(Coordinator):
             )
             if reasoning.chain_of_thought:  # do not replace with empty string
                 step.stream(reasoning.chain_of_thought, replace=True)
+                previous_plans.append(reasoning.chain_of_thought)
             requested = [
                 t for t in getattr(reasoning, 'tables', [])
                 if t and t not in provided
             ]
-        new_msg = dict(
-            role='assistant',
-            content=reasoning.chain_of_thought
+
+        mutated_messages = mutate_user_message(
+            f"Follow this latest plan: {reasoning.chain_of_thought!r} to finish answering: ",
+            deepcopy(messages),
+            suffix=False,
+            wrap=True,
         )
-        messages = messages + [new_msg]
-        return await self._fill_model(messages, system, plan_model)
+        return await self._fill_model(mutated_messages, system, plan_model)
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
         table_provided = False
@@ -739,19 +812,23 @@ class Planner(Coordinator):
         unmet_dependencies = set()
         schemas = {}
         execution_graph = []
+        previous_plans = []
         attempts = 0
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
+                if attempts > 0:
+                    log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
+                plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, tables, unmet_dependencies, reason_model, plan_model, istep, schemas
+                        messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas
                     )
+                except asyncio.CancelledError as e:
+                    istep.failed_title = 'Planning was cancelled, please try again.'
+                    raise e
                 except Exception as e:
-                    if self.interface.callback_exception not in ('raise', 'verbose'):
-                        istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
-                        istep.stream(str(e), replace=True)
-                    else:
-                        raise e
+                    istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                    raise e
                 execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
@@ -759,7 +836,8 @@ class Planner(Coordinator):
                 else:
                     planned = True
                 if attempts > 5:
-                    raise ValueError(f"Could not find a suitable plan for {messages[-1]['content']!r}")
+                    istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
+                    raise RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
             self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):

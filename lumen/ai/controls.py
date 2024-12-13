@@ -4,10 +4,13 @@ import zipfile
 import pandas as pd
 import param
 
+from panel import Row
 from panel.layout import Column, FlexBox, Tabs
+from panel.pane.markup import Markdown
 from panel.viewable import Viewer
 from panel.widgets import (
     Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
+    ToggleIcon,
 )
 
 from ..sources.duckdb import DuckDBSource
@@ -166,11 +169,14 @@ class SourceControls(Viewer):
             visible=self.param.cancellable,
         )
 
+        self._message_placeholder = Markdown(css_classes=["message"] if self.replace_controls else [], visible=False)
+
         self.menu = Column(
             self._input_tabs if self.select_existing else self._input_tabs[0],
             self._add_button,
             self._cancel_button,
             self.tables_tabs,
+            self._message_placeholder,
             sizing_mode="stretch_width",
         )
 
@@ -312,28 +318,79 @@ class SourceControls(Viewer):
                 return
 
             source = None
+            n_tables = 0
+            n_docs = 0
             for i in range(len(self._upload_tabs)):
                 media_controls = self._media_controls[i]
                 if media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
                     self._add_table(source, media_controls.file_obj, media_controls)
+                    n_tables += 1
                 elif media_controls.extension.endswith(DOCUMENT_EXTENSIONS):
                     self._add_document(media_controls.file_obj, media_controls)
+                    n_docs += 1
 
             if self.replace_controls:
-                src = self._memory["source"]
-                self.tables_tabs[:] = [
-                    (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
-                    for t in src.get_tables()
-                ]
+                src = self._memory.get("source")
+                if src:
+                    self.tables_tabs[:] = [
+                        (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
+                        for t in src.get_tables()
+                    ]
                 self.menu[0].visible = False
                 self._add_button.visible = False
+                self._cancel_button.visible = False
+                if n_tables == 0:
+                    self.tables_tabs.visible = False
+                    self.menu.height = 70
 
             if self.clear_uploads:
                 self._upload_tabs.clear()
                 self._media_controls.clear()
                 self._add_button.visible = False
 
+            self._message_placeholder.param.update(
+                object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
+                visible=True,
+            )
+
     def __panel__(self):
         return self.menu
+
+
+class RetryControls(Viewer):
+
+    active = param.Boolean(False, doc="Click to retry")
+
+    reason = param.String(doc="Reason for retry")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        icon = ToggleIcon.from_param(
+            self.param.active,
+            name=" ",
+            description=None,
+            icon="repeat-once",
+            active_icon="x",
+            margin=5,
+        )
+        self._text_input = TextInput(
+            placeholder="State the issue and press enter to retry",
+            visible=icon.param.value,
+            max_length=200,
+            margin=(5, 0),
+        )
+        row = Row(icon, self._text_input)
+        self._row = row
+
+        self._text_input.param.watch(self._enter_reason, "enter_pressed")
+
+    def _enter_reason(self, _):
+        self.param.update(
+            reason=self._text_input.value,
+            active=False,
+        )
+
+    def __panel__(self):
+        return self._row

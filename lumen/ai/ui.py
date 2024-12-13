@@ -69,8 +69,11 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
-    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+    log_level = param.ObjectSelector(default='DEBUG', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
+
+    logs_db_path = param.String(default=None, doc="""
+        The path to the log file that will store the messages exchanged with the LLM.""")
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
@@ -93,6 +96,7 @@ class UI(Viewer):
         data: DataT | list[DataT] | None = None,
         **params
     ):
+        params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         log.setLevel(self.log_level)
 
@@ -111,7 +115,10 @@ class UI(Viewer):
             agents=agents,
             llm=self.llm,
             tools=self.tools,
+            logs_db_path=self.logs_db_path
         )
+        if self.log_level == "DEBUG":
+            self._coordinator.interface.callback_exception = "verbose"
         self._notebook_export = FileDownload(
             icon="notebook",
             icon_size="1.5em",
@@ -430,9 +437,9 @@ class ExplorerUI(UI):
     def _add_outputs(self, exploration: Column, outputs: list[LumenOutput], memory: _Memory):
         from panel_gwalker import GraphicWalker
         if "sql" in memory:
-            sql = memory["sql"]
+            sql = memory.rx("sql")
             sql_pane = Markdown(
-                f'```sql\n{sql}\n```',
+                param.rx('```sql\n{sql}\n```').format(sql=sql),
                 margin=0, sizing_mode='stretch_width'
             )
             if sql.count('\n') > 10:
