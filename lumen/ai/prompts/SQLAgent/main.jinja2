@@ -36,7 +36,7 @@ CAST or TO_DATE
 - Try to pretty print the SQL output with newlines and indentation.
 - Specify data types explicitly to avoid type mismatches.
 - Handle NULL values using functions like COALESCE or IS NULL.
-- Extract specific data patterns using precise functions to capture only the required numeric values while removing all whitespace if needed, like `(\d+)`.
+- Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, if necessary.
 - Use parameterized queries to prevent SQL injection attacks.
 - Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts.
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.
@@ -58,36 +58,41 @@ identifiers.
 {%- block examples %}
 Examples:
 
-If the query is "Which regions have the highest total sales within a specified date range, and how do they rank?"...
+If the query is "Which five regions have the highest total sales from 2022-02-22?"...
 
 - GOOD:
 ```sql
 WITH sales_summary AS (
     SELECT
         "region",
-        SUM(TRY_CAST("amount" AS DECIMAL(10,2))) AS total_sales
+        SUM(
+            TRY_CAST(
+                REPLACE(
+                    REPLACE("amount", '$', ''),
+                    ',', ''
+                ) AS DECIMAL(10,2)
+            )
+        ) AS total_sales
     FROM read_csv('sales.csv')
-    WHERE "sale_date" >= CAST(? AS DATE)
-      AND "sale_date" < CAST(? AS DATE)
-      AND TRY_CAST("amount" AS DECIMAL(10,2)) IS NOT NULL
+    WHERE "sale_date" >= DATE '2022-02-22'
+      AND TRY_CAST(REPLACE(REPLACE("amount", '$', ''), ',', '') AS DECIMAL(10,2)) IS NOT NULL
       AND "region" IS NOT NULL
     GROUP BY "region"
 )
 SELECT
     "region",
-    total_sales,
-    RANK() OVER (ORDER BY total_sales DESC) AS rank_by_sales
+    total_sales
 FROM sales_summary
 WHERE total_sales > 0
 ORDER BY total_sales DESC
-LIMIT 10;
+LIMIT 5;
 ```
 
 - BAD:
 ```sql
 SELECT region, SUM(amount) AS total_sales
 FROM sales
-WHERE sale_date BETWEEN '2020-01-01' AND '2020-12-31'
+WHERE sale_date >= '2022-02-22'
 GROUP BY region
 ORDER BY total_sales DESC;
 ```

@@ -442,11 +442,13 @@ class ExplorerUI(UI):
             sql = memory.rx("sql")
             sql_pane = Markdown(
                 param.rx('```sql\n{sql}\n```').format(sql=sql),
-                margin=0, sizing_mode='stretch_width'
+                margin=0, sizing_mode='stretch_width', name='SQL'
             )
             if sql.count('\n') > 10:
-                sql_pane = Column(sql_pane, max_height=250, scroll='y-auto')
-            if len(exploration) and isinstance(exploration[0], Markdown):
+                sql_pane = Column(
+                    sql_pane, max_height=250, scroll='y-auto', name='SQL'
+                )
+            if len(exploration) and exploration[0].name == 'SQL':
                 exploration[0] = sql_pane
             else:
                 exploration.insert(0, sql_pane)
