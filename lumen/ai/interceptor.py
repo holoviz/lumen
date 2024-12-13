@@ -12,6 +12,8 @@ import param
 
 from pydantic import BaseModel
 
+from lumen.ai.utils import log_debug
+
 
 class Message(BaseModel):
     role: str
@@ -323,7 +325,7 @@ class OpenAIInterceptor(Interceptor):
             if content:
                 self.store_response(content)
             else:
-                print("Could not intercept a response")
+                log_debug("Could not intercept a response")
 
         async def non_stream_response(*args: Any, **kwargs: Any):
             content = ""
@@ -337,7 +339,7 @@ class OpenAIInterceptor(Interceptor):
             if content:
                 self.store_response(content)
             else:
-                print("Could not intercept a response.")
+                log_debug("Could not intercept a response.")
 
             return response
 

@@ -3,15 +3,18 @@ from __future__ import annotations
 import asyncio
 import re
 
+from copy import deepcopy
 from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
 import yaml
 
-from panel import Card, bind
+from panel import bind
 from panel.chat import ChatInterface, ChatStep
-from panel.layout import Column, FlexBox, Tabs
+from panel.layout import (
+    Card, Column, FlexBox, Tabs,
+)
 from panel.pane import HTML
 from panel.viewable import Viewable, Viewer
 from panel.widgets import Button
@@ -27,7 +30,9 @@ from .llm import Llama, Llm, Message
 from .logs import ChatLogs
 from .models import Validity, make_agent_model, make_plan_models
 from .tools import FunctionTool, Tool
-from .utils import get_schema, retry_llm_output
+from .utils import (
+    get_schema, log_debug, mutate_user_message, retry_llm_output,
+)
 from .views import LumenOutput
 
 if TYPE_CHECKING:
@@ -221,9 +226,9 @@ class Coordinator(Viewer, Actor):
                         if isinstance(agent, AnalysisAgent):
                             break
                     else:
-                        print("No analysis agent found.")
+                        log_debug("No analysis agent found.")
                         return
-                    messages = [{'role': 'user', 'content': contents}]
+                    messages = [{"role": "user", "content": contents}]
                     with agent.param.update(memory=memory):
                         await agent.respond(
                             messages, render_output=self.render_output, agents=self.agents
@@ -335,23 +340,23 @@ class Coordinator(Viewer, Actor):
                 self._memory.pop("sql", None)
                 self._memory.pop("pipeline", None)
                 self._memory.pop("closest_tables", None)
-                print("\033[91mInvalidated from memory.\033[0m")
+                log_debug("\033[91mInvalidated from memory.\033[0m")
             elif output.is_invalid == "sql":
                 self._memory.pop("sql", None)
                 self._memory.pop("data", None)
                 self._memory.pop("pipeline", None)
-                print("\033[91mInvalidated SQL from memory.\033[0m")
+                log_debug("\033[91mInvalidated SQL from memory.\033[0m")
             return output.correct_assessment
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        print("\033[94mNEW\033[0m" + "-" * 100)
+        log_debug("\033[94mNEW\033[0m", show_sep=True)
         await self.respond(contents)
 
     @retry_llm_output()
     async def _fill_model(self, messages, system, agent_model, errors=None):
         if errors:
             errors = '\n'.join(errors)
-            messages += [{"role": "user", "content": f"\nExpertly resolve these issues:\n{errors}"}]
+            system += f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}"
 
         model_spec = self.prompts["main"].get("llm_spec", "default")
         out = await self.llm.invoke(
@@ -376,20 +381,23 @@ class Coordinator(Viewer, Actor):
                 steps_layout = step_message.object
                 break
 
+        mutated_messages = deepcopy(messages)
         with self.interface.add_step(title=f"Querying {agent_name} agent...", steps_layout=steps_layout) as step:
             step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
-            custom_messages = messages.copy()
             if isinstance(subagent, SQLAgent):
                 custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
                 if custom_agent:
                     custom_analysis_doc = custom_agent.purpose.replace("Available analyses include:\n", "")
                     custom_message = (
-                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc} "
+                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc!r} "
                         f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
                     )
-                    custom_messages.append({"role": "user", "content": custom_message})
+                    mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
-                custom_messages.append({"role": "assistant", "content": instruction})
+                mutate_user_message(
+                    f"-- Here's the current instructions from the multi-step plan: {instruction!r}",
+                    mutated_messages, suffix=True, wrap=True
+                )
 
             shared_ctx = {"memory": self.memory}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
@@ -397,11 +405,12 @@ class Coordinator(Viewer, Actor):
                 shared_ctx["steps_layout"] = steps_layout
             with subagent.param.update(**shared_ctx):
                 result = await subagent.respond(
-                    custom_messages,
+                    mutated_messages,
                     step_title=title,
                     render_output=render_output,
                     **respond_kwargs
                 )
+                log_debug(f"\033[96m{agent_name} successfully responded\033[0m", show_sep=False, show_length=False)
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
@@ -422,17 +431,14 @@ class Coordinator(Viewer, Actor):
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
 
-    def _serialize(self, obj, exclude_passwords=True):
-        if isinstance(obj, (Column, Tabs)):
+    def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
+        if isinstance(obj, (Column, Card, Tabs)):
+            string = ""
             for o in obj:
-                if isinstance(obj, ChatStep) and not obj.title.startswith("Selected"):
-                    # only want the chain of thoughts from the selected agent
+                if isinstance(o, ChatStep):
+                    # Drop context from steps; should be irrelevant now
                     continue
-                if hasattr(o, "visible") and o.visible:
-                    break
-            else:
-                return ""
-            string = self._serialize(o)
+                string += self._serialize(o)
             if exclude_passwords:
                 string = re.sub(r"password:.*\n", "", string)
             return string
@@ -446,6 +452,34 @@ class Coordinator(Viewer, Actor):
             obj = obj.value
         return str(obj)
 
+    def _fuse_messages(self, messages: list[Message], max_user_messages: int = 2) -> list[Message]:
+        """
+        Fuse consecutive messages from the same user and limit the
+        the number of user messages to `max_user_messages`.
+        """
+        user_count = 0
+        input_messages = []
+        previous_role = None
+        for message in messages[::-1]:
+            role = message["role"]
+            content = message["content"].strip()
+            if (user_count == 0 and role == "assistant"):
+                # the first message should be user
+                continue
+
+            if role == previous_role and input_messages:
+                # remember it's in reverse order
+                input_messages[-1]["content"] = f"{content}\n---\n{input_messages[-1]['content']}"
+            else:
+                input_messages.append({"role": role, "content": content})
+
+            previous_role = role
+            if role == "user":
+                user_count += 1
+                if user_count >= max_user_messages:
+                    break
+        return input_messages[::-1]
+
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
@@ -455,14 +489,17 @@ class Coordinator(Viewer, Actor):
                     step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     await self.llm.get_client("default")  # caches the model for future use
 
-            messages = self.interface.serialize(custom_serializer=self._serialize)[-4:]
-            invalidation_assessment = await self._invalidate_memory(messages[-2:])
-            context_length = 3
+            messages = self._fuse_messages(
+                self.interface.serialize(custom_serializer=self._serialize, limit=10),
+                max_user_messages=3
+            )
+
+            invalidation_assessment = await self._invalidate_memory(messages)
             if invalidation_assessment:
-                messages.append({"role": "assistant", "content": invalidation_assessment + " so do not choose that table."})
-                context_length += 1
+                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages[-3:])
+
             agents = {agent.name[:-5]: agent for agent in self.agents}
-            execution_graph = await self._compute_execution_graph(messages[-context_length:], agents)
+            execution_graph = await self._compute_execution_graph(messages, agents)
             if execution_graph is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
@@ -471,10 +508,10 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
-                await self._execute_graph_node(node, messages[-context_length:])
+                await self._execute_graph_node(node, messages[-3:])
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
-            print("\033[92mDONE\033[0m", "\n\n")
+            log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
 
 
 class DependencyResolver(Coordinator):
@@ -553,7 +590,7 @@ class DependencyResolver(Coordinator):
         )):
             with self.interface.add_step(title="Resolving dependencies...", user="Assistant") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
-                print(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
+                log_debug(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [
                     agent
                     for agent in self.agents
@@ -638,6 +675,7 @@ class Planner(Coordinator):
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         while reasoning is None or requested:
+            log_debug(f"Creating plan for \033[91m{requested}\033[0m")
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             available = [t for t in tables if t not in provided]
             system = await self._render_prompt(
@@ -666,12 +704,14 @@ class Planner(Coordinator):
                 t for t in getattr(reasoning, 'tables', [])
                 if t and t not in provided
             ]
-        new_msg = dict(
-            role='assistant',
-            content=reasoning.chain_of_thought
+
+        mutated_messages = mutate_user_message(
+            f"Follow this latest plan: {reasoning.chain_of_thought!r} to finish answering: ",
+            deepcopy(messages),
+            suffix=False,
+            wrap=True,
         )
-        messages = messages + [new_msg]
-        return await self._fill_model(messages, system, plan_model)
+        return await self._fill_model(mutated_messages, system, plan_model)
 
     async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
         table_provided = False
@@ -765,6 +805,8 @@ class Planner(Coordinator):
         attempts = 0
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
+                if attempts > 0:
+                    log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
                 try:
                     plan = await self._make_plan(
                         messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas
