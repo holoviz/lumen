@@ -42,7 +42,9 @@ def format_output(msg: ChatMessage):
     output = msg.object
     code = []
     with config.param.update(serializer='csv'):
-        spec = json.dumps(output.component.to_spec(), indent=2).replace('true', 'True').replace('false', 'False')
+        spec = json.dumps(
+            output.component.to_spec(), indent=2, ensure_ascii=False
+        ).replace('true', 'True').replace('false', 'False').replace('null', 'None').replace('\\\\', '\\')
     if isinstance(output.component, Pipeline):
         code.extend([
             f'pipeline = lm.Pipeline.from_spec({spec})',
