@@ -79,8 +79,16 @@ class Actor(param.Parameterized):
     def _lookup_prompt_key(self, prompt_name: str, key: str):
         if prompt_name in self.prompts and key in self.prompts[prompt_name]:
             prompt_spec = self.prompts[prompt_name]
-        else:
+        elif prompt_name in self.param.prompts.default and key in self.param.prompts.default[prompt_name]:
             prompt_spec = self.param.prompts.default[prompt_name]
+        else:
+            for cls in type(self).__mro__:
+                if issubclass(cls, Actor):
+                    if key in cls.param.prompts.default.get(prompt_name, {}):
+                        prompt_spec = cls.param.prompts.default[prompt_name]
+                        break
+            else:
+                prompt_spec = {}
         if key not in prompt_spec:
             if key == "tools":
                 return []
@@ -97,7 +105,7 @@ class Actor(param.Parameterized):
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
-        for tool in self._tools[prompt_name]:
+        for tool in self._tools.get(prompt_name, []):
             if all(requirement in self._memory for requirement in tool.requires):
                 with tool.param.update(memory=self.memory):
                     tool_context = await tool.respond(messages)

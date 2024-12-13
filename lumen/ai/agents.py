@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 
+from functools import partial
 from typing import Any, Literal
 
 import pandas as pd
@@ -280,67 +281,7 @@ class AnalystAgent(ChatAgent):
     )
 
 
-class LumenBaseAgent(Agent):
-
-    user = param.String(default="Lumen")
-
-    _output_type = LumenOutput
-
-    _max_width = None
-
-    def _render_lumen(
-        self,
-        component: Component,
-        message: pn.chat.ChatMessage = None,
-        messages: list | None = None,
-        render_output: bool = False,
-        title: str | None = None,
-        **kwargs
-    ):
-        memory = self._memory
-        async def retry_invoke(event: param.parameterized.Event):
-            reason = event.new
-            modified_messages = messages.copy() + [{"role": "user", "content": f"The feedback: {reason!r}"}]
-            for modified_message in modified_messages:
-                if modified_message["role"] == "user":
-                    user_query = modified_message["content"]
-                    break
-            with self.param.update(memory=memory):
-                system = await self._render_prompt(
-                    "retry_output", messages=modified_messages, user_query=user_query, spec=out.spec
-                )
-            retry_model = self._lookup_prompt_key("retry_output", "response_model")
-            with out.param.update(loading=True):
-                result = await self.llm.invoke(
-                    messages, system=system, response_model=retry_model, model_spec="reasoning"
-                )
-                if "```" in result:
-                    spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
-                else:
-                    spec = result.corrected_spec
-                out.spec = spec
-
-        retry_controls = RetryControls()
-        retry_controls.param.watch(retry_invoke, "reason")
-        out = self._output_type(
-            component=component,
-            footer=[retry_controls],
-            render_output=render_output,
-            title=title,
-            **kwargs
-        )
-        if 'outputs' in self._memory:
-            # We have to create a new list to trigger an event
-            # since inplace updates will not trigger updates
-            # and won't allow diffing between old and new values
-            self._memory['outputs'] = self._memory['outputs']+[out]
-        message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(
-            message=message, **message_kwargs, replace=True, max_width=self._max_width
-        )
-
-
-class TableListAgent(LumenBaseAgent):
+class TableListAgent(Agent):
 
     purpose = param.String(default="""
         Renders a list of all availables tables to the user.
@@ -398,6 +339,82 @@ class TableListAgent(LumenBaseAgent):
         return table_list
 
 
+class LumenBaseAgent(Agent):
+
+    user = param.String(default="Lumen")
+
+    prompts = param.Dict(
+        default={
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
+        }
+    )
+
+    _output_type = LumenOutput
+
+    _max_width = None
+
+    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        """
+        Update the specification in memory.
+        """
+
+    def _render_lumen(
+        self,
+        component: Component,
+        message: pn.chat.ChatMessage = None,
+        messages: list | None = None,
+        render_output: bool = False,
+        title: str | None = None,
+        **kwargs
+    ):
+        memory = self._memory
+
+        async def retry_invoke(event: param.parameterized.Event):
+            reason = event.new
+            modified_messages = messages.copy() + [{"role": "user", "content": f"The feedback: {reason!r}"}]
+            for modified_message in modified_messages:
+                if modified_message["role"] == "user":
+                    user_query = modified_message["content"]
+                    break
+            with self.param.update(memory=memory):
+                system = await self._render_prompt(
+                    "retry_output", messages=modified_messages, user_query=user_query, spec=out.spec
+                )
+            retry_model = self._lookup_prompt_key("retry_output", "response_model")
+            with out.param.update(loading=True):
+                result = await self.llm.invoke(
+                    messages, system=system, response_model=retry_model, model_spec="reasoning"
+                )
+                if "```" in result:
+                    spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
+                else:
+                    spec = result.corrected_spec
+                out.spec = spec
+
+        retry_controls = RetryControls()
+        retry_controls.param.watch(retry_invoke, "reason")
+        out = self._output_type(
+            component=component,
+            footer=[retry_controls],
+            render_output=render_output,
+            title=title,
+            **kwargs
+        )
+        out.param.watch(partial(self._update_spec, self._memory), 'spec')
+        if 'outputs' in self._memory:
+            # We have to create a new list to trigger an event
+            # since inplace updates will not trigger updates
+            # and won't allow diffing between old and new values
+            self._memory['outputs'] = self._memory['outputs']+[out]
+        message_kwargs = dict(value=out, user=self.user)
+        self.interface.stream(
+            message=message, **message_kwargs, replace=True, max_width=self._max_width
+        )
+
+
 class SQLAgent(LumenBaseAgent):
 
     purpose = param.String(default="""
@@ -426,10 +443,6 @@ class SQLAgent(LumenBaseAgent):
             "find_joins": {
                 "response_model": TableJoins,
                 "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
-            },
-            "retry_output": {
-                "response_model": RetrySpec,
-                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
             },
         }
     )
@@ -652,6 +665,9 @@ class SQLAgent(LumenBaseAgent):
             tables_to_source[a_table] = a_source
         return tables_to_source
 
+    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        memory['sql'] = event.new
+
     async def respond(
         self,
         messages: list[Message],
@@ -736,12 +752,14 @@ class BaseViewAgent(LumenBaseAgent):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2"},
-            "retry_output": {"template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
         }
     )
 
-    async def _extract_spec(self, model: BaseModel):
-        return dict(model)
+    async def _extract_spec(self, spec: dict[str, Any]):
+        return dict(spec)
+
+    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        memory['view'] = dict(await self._extract_spec(event.new), type=self.view_type)
 
     async def respond(
         self,
@@ -776,7 +794,7 @@ class BaseViewAgent(LumenBaseAgent):
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
-        spec = await self._extract_spec(output)
+        spec = await self._extract_spec(dict(output))
         chain_of_thought = spec.pop("chain_of_thought", None)
         if chain_of_thought:
             with self.interface.add_step(
@@ -801,10 +819,6 @@ class hvPlotAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2"},
-            "retry_output": {
-                "response_model": RetrySpec,
-                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
-            },
         }
     )
 
@@ -827,10 +841,10 @@ class hvPlotAgent(BaseViewAgent):
         })
         return model[self.view_type.__name__]
 
-    async def _extract_spec(self, model):
+    async def _extract_spec(self, spec: dict[str, Any]):
         pipeline = self._memory["pipeline"]
         spec = {
-            key: val for key, val in dict(model).items()
+            key: val for key, val in spec.items()
             if val is not None
         }
         spec["type"] = "hvplot_ui"
@@ -858,10 +872,6 @@ class VegaLiteAgent(BaseViewAgent):
                 "response_model": VegaLiteSpec,
                 "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
             },
-            "retry_output": {
-                "response_model": RetrySpec,
-                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
-            },
         }
     )
 
@@ -869,8 +879,8 @@ class VegaLiteAgent(BaseViewAgent):
 
     _extensions = ('vega',)
 
-    async def _extract_spec(self, model: VegaLiteSpec):
-        vega_spec = json.loads(model.json_spec)
+    async def _extract_spec(self, spec: dict[str, Any]):
+        vega_spec = json.loads(spec['json_spec'])
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
@@ -898,6 +908,9 @@ class AnalysisAgent(LumenBaseAgent):
     requires = param.List(default=['pipeline'])
 
     _output_type = AnalysisOutput
+
+    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        pass
 
     async def respond(
         self,
