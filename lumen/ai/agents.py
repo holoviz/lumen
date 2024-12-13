@@ -515,7 +515,7 @@ class SQLAgent(LumenBaseAgent):
                     renamed_table = a_table
                 if SOURCE_TABLE_SEPARATOR in renamed_table:
                     # Remove source prefixes from table names
-                    renamed_table = re.sub(r".*?<->", "", renamed_table)
+                    renamed_table = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", renamed_table)
                 sql_query = sql_query.replace(a_table, renamed_table)
                 mirrors[renamed_table] = (a_source, a_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
@@ -696,7 +696,7 @@ class SQLAgent(LumenBaseAgent):
         )
         if join_required:
             # Remove source prefixes message, e.g. SOURCE_TABLE_SEPARATOR<source>SOURCE_TABLE_SEPARATOR<table>
-            messages[-1]["content"] = re.sub(r".*?<->", "", messages[-1]["content"])
+            messages[-1]["content"] = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['pipeline']
 
