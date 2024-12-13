@@ -41,4 +41,6 @@ UNRECOVERABLE_ERRORS = (
     asyncio.CancelledError
 )
 
+SOURCE_TABLE_SEPARATOR = "<->"
+
 pn.chat.ChatStep.min_width = 450

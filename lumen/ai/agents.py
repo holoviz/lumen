@@ -28,7 +28,7 @@ from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import Actor, ContextProvider
-from .config import PROMPTS_DIR
+from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .controls import SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
@@ -513,9 +513,9 @@ class SQLAgent(LumenBaseAgent):
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
                     renamed_table = a_table
-                if "//" in renamed_table:
+                if SOURCE_TABLE_SEPARATOR in renamed_table:
                     # Remove source prefixes from table names
-                    renamed_table = re.sub(r"//[^/]+//", "", renamed_table)
+                    renamed_table = re.sub(r".*?<->", "", renamed_table)
                 sql_query = sql_query.replace(a_table, renamed_table)
                 mirrors[renamed_table] = (a_source, a_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
@@ -586,7 +586,7 @@ class SQLAgent(LumenBaseAgent):
         multi_source = len(self._memory['sources']) > 1
         if multi_source:
             tables = [
-                f"//{a_source}//{a_table}" for a_source in self._memory["sources"]
+                f"{SOURCE_TABLE_SEPARATOR}{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in self._memory["sources"]
                 for a_table in a_source.get_tables()
             ]
         else:
@@ -613,15 +613,15 @@ class SQLAgent(LumenBaseAgent):
             sources = self._memory["sources"]
             if multi_source:
                 try:
-                    _, a_source_name, a_table = source_table.split("//", maxsplit=2)
+                    _, a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=2)
                 except ValueError:
-                    a_source_name, a_table = source_table.split("//", maxsplit=1)
+                    a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
                 for source in sources:
                     if source.name == a_source_name:
                         a_source = source
                         break
                 if a_table in tables_to_source:
-                    a_table = f"//{a_source_name}//{a_table}"
+                    a_table = f"{SOURCE_TABLE_SEPARATOR}{a_source_name}{SOURCE_TABLE_SEPARATOR}{a_table}"
             else:
                 a_source = next(iter(sources))
                 a_table = source_table
@@ -695,8 +695,8 @@ class SQLAgent(LumenBaseAgent):
             table=table,
         )
         if join_required:
-            # Remove source prefixes message, e.g. //<source>//<table>
-            messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
+            # Remove source prefixes message, e.g. SOURCE_TABLE_SEPARATOR<source>SOURCE_TABLE_SEPARATOR<table>
+            messages[-1]["content"] = re.sub(r".*?<->", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['pipeline']
 

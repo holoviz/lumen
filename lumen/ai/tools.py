@@ -8,13 +8,11 @@ from panel.viewable import Viewable
 
 from ..views.base import View
 from .actor import Actor, ContextProvider
-from .config import PROMPTS_DIR
+from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .translate import function_to_model
 from .vector_store import NumpyVectorStore, VectorStore
-
-SOURCE_TABLE_SEPARATOR = "<->"
 
 
 class Tool(Actor, ContextProvider):

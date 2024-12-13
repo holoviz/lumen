@@ -19,6 +19,8 @@ from panel.theme import Material
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
+from lumen.ai.config import SOURCE_TABLE_SEPARATOR
+
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
@@ -371,8 +373,8 @@ class ExplorerUI(UI):
                 source_tables = source.get_tables()
                 for t in source_tables:
                     if deduplicate:
-                        t = f'{source.name}//{t}'
-                    if t.rsplit('//', 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
+                        t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
+                    if t.rsplit(SOURCE_TABLE_SEPARATOR, 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
                         selected.append(t)
                     new[t] = source
             source_map.clear()
@@ -405,7 +407,7 @@ class ExplorerUI(UI):
                 for table in table_select.value:
                     source = source_map[table]
                     if len(memory['sources']) > 1:
-                        _, table = table.rsplit('//', 1)
+                        _, table = table.rsplit(SOURCE_TABLE_SEPARATOR, 1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )

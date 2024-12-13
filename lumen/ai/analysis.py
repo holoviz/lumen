@@ -5,6 +5,8 @@ import param
 
 from panel.viewable import Viewable
 
+from lumen.ai.config import SOURCE_TABLE_SEPARATOR
+
 from ..base import Component
 from .controls import SourceControls
 from .memory import memory
@@ -102,7 +104,11 @@ class Join(Analysis):
     async def __call__(self, pipeline):
         if self.table_name:
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
-            content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['source']}//{self.table_name}'"
+            content = (
+                "Join these tables: "
+                f"'{SOURCE_TABLE_SEPARATOR}{self._previous_source}{SOURCE_TABLE_SEPARATOR}{self._previous_table}' "
+                f"and '{SOURCE_TABLE_SEPARATOR}{memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
+            )
             if self.index_col:
                 content += f" left join on {self.index_col}"
             else:
