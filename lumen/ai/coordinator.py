@@ -106,6 +106,8 @@ class Coordinator(Viewer, Actor):
     ):
         def on_message(message, instance):
             def update_on_reaction(reactions):
+                if not self._logs:
+                    return
                 self._logs.update_status(
                     message_id=message_id,
                     liked="like" in reactions,
@@ -124,12 +126,16 @@ class Coordinator(Viewer, Actor):
             )
 
         def on_undo(instance, _):
+            if not self._logs:
+                return
             count = instance._get_last_user_entry_index()
             messages = instance[-count:]
             for message in messages:
                 self._logs.update_status(message_id=id(message), removed=True)
 
         def on_rerun(instance, _):
+            if not self._logs:
+                return
             count = instance._get_last_user_entry_index() - 1
             messages = instance[-count:]
             for message in messages:
@@ -150,6 +156,7 @@ class Coordinator(Viewer, Actor):
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
+            self._logs = None
 
         llm = llm or self.llm
         instantiated = []
