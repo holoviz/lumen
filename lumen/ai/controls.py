@@ -4,8 +4,9 @@ import zipfile
 import pandas as pd
 import param
 
-from panel import Row
-from panel.layout import Column, FlexBox, Tabs
+from panel.layout import (
+    Column, FlexBox, Row, Tabs,
+)
 from panel.pane.markup import Markdown
 from panel.viewable import Viewer
 from panel.widgets import (
@@ -370,13 +371,13 @@ class RetryControls(Viewer):
         icon = ToggleIcon.from_param(
             self.param.active,
             name=" ",
-            description="Issue with the spec? Click to give feedback and retry.",
+            description="Prompt LLM to retry",
             icon="repeat-once",
             active_icon="x",
             margin=5,
         )
         self._text_input = TextInput(
-            placeholder="Enter feedback and press the <Enter> key to retry.",
+            placeholder="Enter feedback and press the <Enter> to retry.",
             visible=icon.param.value,
             max_length=200,
             margin=(5, 0),

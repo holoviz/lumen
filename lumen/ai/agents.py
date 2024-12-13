@@ -448,7 +448,7 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data", "base_schema"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "tables_sql_schemas"], readonly=True)
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -693,9 +693,6 @@ class SQLAgent(LumenBaseAgent):
 
         # include min max for more context for data cleaning
         schema = await get_schema(source, table, include_min_max=True)
-        if not source.ephemeral:
-            # store the schema of the original table
-            self._memory["base_schema"] = schema
         join_required = await self._check_requires_joins(messages, schema, table)
         if join_required is None:
             return None
@@ -704,7 +701,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables_to_source = {table: source}
 
-        table_schemas = {}
+        tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
             if source_table == table:
                 table_schema = schema
@@ -720,16 +717,20 @@ class SQLAgent(LumenBaseAgent):
             ):
                 table_name = source.tables[table_name]
 
-            table_schemas[table_name] = {
+            tables_sql_schemas[table_name] = {
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table),
             }
+
+        if not source.ephemeral:
+            # store the schema of the original table
+            self._memory["tables_sql_schemas"] = tables_sql_schemas
 
         dialect = source.dialect
         system_prompt = await self._render_prompt(
             "main",
             messages,
-            tables_sql_schemas=table_schemas,
+            tables_sql_schemas=tables_sql_schemas,
             dialect=dialect,
             join_required=join_required,
             table=table,
