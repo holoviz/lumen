@@ -116,8 +116,7 @@ class TableLookup(VectorLookupTool):
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         closest_tables = []
-        message = ""
-
+        message = "The most relevant tables are:\n"
         results = self.vector_store.query(
             messages[-1]["content"],
             top_k=self.n,
@@ -126,14 +125,13 @@ class TableLookup(VectorLookupTool):
         for result in results:
             table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
             closest_tables.append(table_name)
-            message = "The most relevant tables are:\n"
 
         if not closest_tables:
+            message = "No relevant tables found, but here are some other tables:\n"
             results = self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
             for result in results:
                 table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
                 closest_tables.append(table_name)
-            message = "No relevant tables found, but here are some other tables:\n"
 
         self._memory["closest_tables"] = closest_tables
         return message + "\n".join(f"- `{table}`" for table in closest_tables)
