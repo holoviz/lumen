@@ -481,6 +481,7 @@ class Source(MultiTypeComponent):
     def __str__(self) -> str:
         return self.name
 
+
 class RESTSource(Source):
     """
     `RESTSource` allows querying REST endpoints conforming to the Lumen REST specification.
