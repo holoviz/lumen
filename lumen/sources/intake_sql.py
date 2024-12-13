@@ -9,7 +9,9 @@ from ..transforms.sql import (
     SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
 )
 from ..util import get_dataframe_schema
-from .base import BaseSQLSource, cached, cached_schema
+from .base import (
+    BaseSQLSource, Source, cached, cached_schema,
+)
 from .intake import IntakeBaseSource, IntakeSource
 
 
@@ -89,7 +91,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
                 continue
             source = self._get_source(entry)
             if not hasattr(source, '_sql_expr'):
-                schemas[entry] = super().get_schema(table)
+                schemas[entry] = Source.get_schema(self, table)
                 continue
             data = self._read(self._apply_transforms(source, [sql_limit]))
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']

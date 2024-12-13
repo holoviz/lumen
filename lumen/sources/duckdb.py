@@ -11,13 +11,8 @@ import param
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
-from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
-)
-from ..util import get_dataframe_schema
-from .base import (
-    BaseSQLSource, Source, cached, cached_schema,
-)
+from ..transforms.sql import SQLFilter
+from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -235,6 +230,9 @@ class DuckDBSource(BaseSQLSource):
                     raise e
         return source
 
+    def execute(self, sql_query: str):
+        return self._connection.execute(sql_query).fetch_df()
+
     def get_tables(self):
         if isinstance(self.tables, dict | list):
             return list(self.tables)
@@ -277,64 +275,3 @@ class DuckDBSource(BaseSQLSource):
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
-
-    @cached_schema
-    def get_schema(
-        self, table: str | None = None, limit: int | None = None
-    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
-        if table is None:
-            tables = self.get_tables()
-        else:
-            tables = [table]
-
-        schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
-        for entry in tables:
-            if not self.load_schema:
-                schemas[entry] = {}
-                continue
-            sql_expr = self.get_sql_expr(entry)
-            data = self._connection.execute(sql_limit.apply(sql_expr)).fetch_df()
-            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
-            if limit:
-                continue
-
-            enums, min_maxes = [], []
-            for name, col_schema in schema.items():
-                if 'enum' in col_schema:
-                    enums.append(name)
-                elif 'inclusiveMinimum' in col_schema:
-                    min_maxes.append(name)
-            for col in enums:
-                distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
-                distinct_expr = ' '.join(distinct_expr.splitlines())
-                distinct = self._connection.execute(distinct_expr).fetch_df()
-                schema[col]['enum'] = distinct[col].tolist()
-
-            if not min_maxes:
-                continue
-
-            minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
-            minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self._connection.execute(minmax_expr).fetch_df()
-            for col in min_maxes:
-                kind = data[col].dtype.kind
-                if kind in 'iu':
-                    cast = int
-                elif kind == 'f':
-                    cast = float
-                elif kind == 'M':
-                    cast = str
-                else:
-                    cast = lambda v: v
-                min_data = minmax_data[f'{col}_min'].iloc[0]
-                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
-                max_data = minmax_data[f'{col}_max'].iloc[0]
-                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
-
-            count_expr = SQLCount().apply(sql_expr)
-            count_expr = ' '.join(count_expr.splitlines())
-            count_data = self._connection.execute(count_expr).fetch_df()
-            schema['count'] = cast(count_data['count'].iloc[0])
-
-        return schemas if table is None else schemas[table]
