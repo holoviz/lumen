@@ -721,10 +721,7 @@ class SQLAgent(LumenBaseAgent):
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table),
             }
-
-        if not source.ephemeral:
-            # store the schema of the original table
-            self._memory["tables_sql_schemas"] = tables_sql_schemas
+        self._memory["tables_sql_schemas"] = tables_sql_schemas
 
         dialect = source.dialect
         system_prompt = await self._render_prompt(
