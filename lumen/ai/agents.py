@@ -29,7 +29,7 @@ from ..views import (
 )
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR
-from .controls import SourceControls
+from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
@@ -297,15 +297,36 @@ class LumenBaseAgent(Agent):
         title: str | None = None,
         **kwargs
     ):
+        memory = self._memory
+        async def retry_invoke(event: param.parameterized.Event):
+            reason = event.new
+            modified_messages = messages.copy() + [{"role": "user", "content": f"The feedback: {reason!r}"}]
+            for modified_message in modified_messages:
+                if modified_message["role"] == "user":
+                    user_query = modified_message["content"]
+                    break
+            with self.param.update(memory=memory):
+                system = await self._render_prompt(
+                    "retry_output", messages=modified_messages, user_query=user_query, spec=out.spec
+                )
+            retry_model = self._lookup_prompt_key("retry_output", "response_model")
+            with out.param.update(loading=True):
+                result = await self.llm.invoke(
+                    messages, system=system, response_model=retry_model, model_spec="reasoning"
+                )
+                if "```" in result:
+                    spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
+                else:
+                    spec = result.corrected_spec
+                out.spec = spec
+
+        retry_controls = RetryControls()
+        retry_controls.param.watch(retry_invoke, "reason")
         out = self._output_type(
             component=component,
+            footer=[retry_controls],
             render_output=render_output,
             title=title,
-            llm=self.llm,
-            messages=messages,
-            _render_prompt=self._render_prompt,
-            _retry_model=self.prompts["retry_output"]["response_model"],
-            _memory=self._memory,
             **kwargs
         )
         if 'outputs' in self._memory:
@@ -314,7 +335,9 @@ class LumenBaseAgent(Agent):
             # and won't allow diffing between old and new values
             self._memory['outputs'] = self._memory['outputs']+[out]
         message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
+        self.interface.stream(
+            message=message, **message_kwargs, replace=True, max_width=self._max_width
+        )
 
 
 class TableListAgent(LumenBaseAgent):
@@ -498,7 +521,7 @@ class SQLAgent(LumenBaseAgent):
                 step.failed_title = "Cancelled SQL query generation"
                 raise e
 
-        if step.failed_title.startswith("Cancelled"):
+        if step.failed_title and step.failed_title.startswith("Cancelled"):
             raise asyncio.CancelledError()
         elif not sql_query:
             raise ValueError("No SQL query was generated.")
