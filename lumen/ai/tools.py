@@ -113,10 +113,16 @@ class TableLookup(VectorLookupTool):
                     self.vector_store.add([{"text": source_table}])
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        self._memory["closest_tables"] = closest_tables = [
-            result["text"].split("//")[1] for result in
-            self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=self.min_similarity)
-        ]
+        closest_tables = []
+        results = self.vector_store.query(
+            messages[-1]["content"],
+            top_k=self.n,
+            threshold=self.min_similarity,
+        )
+        for result in results:
+            table_name = result["text"].split("//", 1)[1]
+            closest_tables.append(table_name)
+        self._memory["closest_tables"] = closest_tables
 
         message = "The most relevant tables are:\n"
         if not closest_tables:
