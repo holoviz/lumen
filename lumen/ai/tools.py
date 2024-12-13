@@ -4,6 +4,9 @@ from typing import Any
 
 import param
 
+from panel.viewable import Viewable
+
+from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR
 from .embeddings import NumpyEmbeddings
@@ -97,7 +100,10 @@ class TableLookup(VectorLookupTool):
     def __init__(self, **params):
         super().__init__(**params)
         self._memory.on_change('sources', self._update_vector_store)
-        self._update_vector_store(None, None, self._memory.get("sources", [self._memory.get("source")]))
+        if sources := self._memory.get("sources"):
+            self._update_vector_store(None, None, sources)
+        elif source := self._memory.get("source"):
+            self._update_vector_store(None, None, [source])
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
@@ -185,6 +191,8 @@ class FunctionTool(Tool):
             result = await self.function(**arguments)
         else:
             result = self.function(**arguments)
+        if isinstance(result, (View, Viewable)):
+            return result
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result

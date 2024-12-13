@@ -17,6 +17,8 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
+from lumen.ai.utils import log_debug
+
 from .interceptor import Interceptor
 
 if TYPE_CHECKING:
@@ -115,9 +117,6 @@ class Llm(param.Parameterized):
         The completed response_model.
         """
         system = system.strip().replace("\n\n", "\n")
-
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
 
         kwargs = dict(self._client_kwargs)
@@ -208,6 +207,17 @@ class Llm(param.Parameterized):
                     yield getattr(chunk, field) if field is not None else chunk
 
     async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
+        if response_model := kwargs.get("response_model"):
+            log_debug(f"\033[93m{response_model.__name__}\033[0m model used", show_sep=True)
+        for i, message in enumerate(messages):
+            if message["role"] == "system":
+                continue
+            if message["role"] == "user":
+                log_debug(f"\033[95m{i} (u)\033[0m. {message['content']}")
+            else:
+                log_debug(f"\033[95m{i} (a)\033[0m. {message['content']}")
+        log_debug(f"Length is \033[94m{len(messages)} messages\033[0m including system")
+
         client = await self.get_client(model_spec, **kwargs)
         return await client(messages=messages, **kwargs)
 
@@ -452,35 +462,6 @@ class MistralAI(Llm):
             return chunk.data.choices[0].delta.content or ""
         return ""
 
-    async def invoke(
-        self,
-        messages: list[Message],
-        system: str = "",
-        response_model: BaseModel | None = None,
-        allow_partial: bool = False,
-        model_spec: str | dict = "default",
-        **input_kwargs,
-    ) -> BaseModel:
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-
-        if messages[0]["role"] == "assistant":
-            # Mistral cannot start with assistant
-            messages = messages[1:]
-
-        if messages and messages[-1]["role"] == "assistant":
-            # Nor can it end with assistant
-            messages.append({"role": "user", "content": "--"})
-
-        return await super().invoke(
-            messages,
-            system,
-            response_model,
-            allow_partial,
-            model_spec,
-            **input_kwargs,
-        )
-
 
 class AzureMistralAI(MistralAI):
     """
@@ -574,38 +555,3 @@ class AnthropicAI(Llm):
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         input_kwargs["system"] = system
         return messages, input_kwargs
-
-    async def invoke(
-        self,
-        messages: list[Message],
-        system: str = "",
-        response_model: BaseModel | None = None,
-        allow_partial: bool = False,
-        model_spec: MODEL_TYPE | dict = "default",
-        **input_kwargs,
-    ) -> BaseModel:
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-
-        # check that first message is user message; if not, insert empty message
-        if messages[0]["role"] != "user":
-            messages.insert(0, {"role": "user", "content": "--"})
-
-        # check that role alternates between user and assistant and
-        # there are no duplicates in a row; if so insert empty message
-        for i in range(len(messages) - 1):
-            if messages[i]["role"] == messages[i + 1]["role"]:
-                role = "user" if messages[i]["role"] == "assistant" else "assistant"
-                messages.insert(i + 1, {"role": role, "content": "--"})
-            if messages[i]["content"] == messages[i + 1]["content"]:
-                messages.insert(i + 1, {"role": "assistant", "content": "--"})
-
-            # ensure no empty messages
-            if not messages[i]["content"]:
-                messages[i]["content"] = "--"
-
-        if messages and messages[-1]["role"] == "assistant":
-            # cannot end with assistant
-            messages.append({"role": "user", "content": "--"})
-
-        return await super().invoke(messages, system, response_model, allow_partial, model_spec, **input_kwargs)

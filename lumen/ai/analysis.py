@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import panel as pn
 import param
 
-from lumen.ai.utils import get_data
+from panel.viewable import Viewable
 
 from ..base import Component
 from .controls import SourceControls
 from .memory import memory
+from .utils import get_data
 
 
 class Analysis(param.ParameterizedFunction):
@@ -50,7 +53,7 @@ class Analysis(param.ParameterizedFunction):
         if config_options:
             return pn.Param(self.param, parameters=config_options)
 
-    def __call__(self, pipeline) -> Component:
+    def __call__(self, pipeline) -> Component | Viewable:
         return pipeline
 
 
@@ -96,7 +99,7 @@ class Join(Analysis):
         )
         return controls
 
-    async def __call__(self, pipeline) -> Component:
+    async def __call__(self, pipeline):
         if self.table_name:
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
             content = f"Join these tables: '//{self._previous_source}//{self._previous_table}' and '//{memory['source']}//{self.table_name}'"
