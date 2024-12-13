@@ -90,7 +90,7 @@ class RetrySpec(BaseModel):
     )
 
     corrected_spec: str = Field(
-        description="The corrected version of the previous spec that addresses the user query."
+        description="The corrected version of the previous spec without any additional comments, additions or code examples."
     )
 
 

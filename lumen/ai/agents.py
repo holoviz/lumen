@@ -747,7 +747,7 @@ class BaseViewAgent(LumenBaseAgent):
 
     requires = param.List(default=["pipeline"], readonly=True)
 
-    provides = param.List(default=["plot"], readonly=True)
+    provides = param.List(default=["view"], readonly=True)
 
     prompts = param.Dict(
         default={
