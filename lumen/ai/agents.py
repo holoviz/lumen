@@ -841,6 +841,10 @@ class hvPlotAgent(BaseViewAgent):
         })
         return model[self.view_type.__name__]
 
+    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
+        memory['view'] = dict(await self._extract_spec(spec), type=self.view_type)
+
     async def _extract_spec(self, spec: dict[str, Any]):
         pipeline = self._memory["pipeline"]
         spec = {
@@ -878,6 +882,10 @@ class VegaLiteAgent(BaseViewAgent):
     view_type = VegaLiteView
 
     _extensions = ('vega',)
+
+    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
+        memory['view'] = dict(await self._extract_spec({"json_spec": json.dumps(spec)}), type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
         vega_spec = json.loads(spec['json_spec'])

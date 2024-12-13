@@ -446,7 +446,7 @@ class ExplorerUI(UI):
                 sql_pane = Column(
                     sql_pane, max_height=250, scroll='y-auto', name='SQL'
                 )
-            if len(exploration) and exploration[0] == 'SQL':
+            if len(exploration) and exploration[0].name == 'SQL':
                 exploration[0] = sql_pane
             else:
                 exploration.insert(0, sql_pane)
