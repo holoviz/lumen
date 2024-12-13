@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 
+from copy import deepcopy
 from functools import partial
 from typing import Any, Literal
 
@@ -40,7 +41,7 @@ from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, log_debug, report_error, retry_llm_output,
+    get_schema, log_debug, mutate_user_message, report_error, retry_llm_output,
 )
 from .views import AnalysisOutput, LumenOutput, SQLOutput
 
@@ -374,14 +375,13 @@ class LumenBaseAgent(Agent):
 
         async def retry_invoke(event: param.parameterized.Event):
             reason = event.new
-            modified_messages = messages.copy() + [{"role": "user", "content": f"The feedback: {reason!r}"}]
-            for modified_message in modified_messages:
-                if modified_message["role"] == "user":
-                    user_query = modified_message["content"]
-                    break
+            modified_messages = mutate_user_message(
+                f"New feedback: {reason!r}.\n\nThese were the previous instructions to use as reference:\n",
+                deepcopy(messages), wrap='"""', suffix=False
+            )
             with self.param.update(memory=memory):
                 system = await self._render_prompt(
-                    "retry_output", messages=modified_messages, user_query=user_query, spec=out.spec,
+                    "retry_output", messages=modified_messages, spec=out.spec,
                     language=out.language
                 )
             retry_model = self._lookup_prompt_key("retry_output", "response_model")

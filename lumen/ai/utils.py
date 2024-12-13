@@ -365,15 +365,17 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
         log.debug(suffix)
 
 
-def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool = False):
+def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False):
     """
     Helper to mutate the last user message in a list of messages. Suffixes the content by default, else prefixes.
     """
     for message in messages[::-1]:
         if message["role"] == "user":
             user_message = message["content"]
-            if wrap:
+            if isinstance(wrap, bool):
                 user_message = f"{user_message!r}"
+            elif isinstance(wrap, str):
+                user_message = f"{wrap}{user_message}{wrap}"
 
             if suffix:
                 user_message += " " + content
