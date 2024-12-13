@@ -30,6 +30,9 @@ from ..base import MultiTypeComponent
 from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
+from ..transforms.sql import (
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax,
+)
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
 
@@ -713,6 +716,8 @@ class BaseSQLSource(Source):
     a SQL based data source.
     """
 
+    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
+
     # Declare this source supports SQL transforms
     _supports_sql = True
 
@@ -728,6 +733,84 @@ class BaseSQLSource(Source):
         corresponding SQL expressions.
         """
         raise NotImplementedError
+
+    def execute(self, sql_query: str) -> pd.DataFrame:
+        """
+        Executes a SQL query and returns the result as a DataFrame.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+
+        Returns
+        -------
+        pd.DataFrame
+            The result as a pandas DataFrame
+        """
+        raise NotImplementedError
+
+    @cached_schema
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
+        if table is None:
+            tables = self.get_tables()
+        else:
+            tables = [table]
+
+        schemas = {}
+        sql_limit = SQLLimit(limit=limit or 1)
+        for entry in tables:
+            if not self.load_schema:
+                schemas[entry] = {}
+                continue
+            sql_expr = self.get_sql_expr(entry)
+            data = self.execute_query(sql_limit.apply(sql_expr))
+            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+            if limit:
+                continue
+
+            enums, min_maxes = [], []
+            for name, col_schema in schema.items():
+                if 'enum' in col_schema:
+                    enums.append(name)
+                elif 'inclusiveMinimum' in col_schema:
+                    min_maxes.append(name)
+            for col in enums:
+                distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
+                distinct_expr = ' '.join(distinct_expr.splitlines())
+                distinct = self.execute(distinct_expr)
+                schema[col]['enum'] = distinct[col].tolist()
+
+            if not min_maxes:
+                continue
+
+            minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_data = self.execute(minmax_expr)
+            for col in min_maxes:
+                kind = data[col].dtype.kind
+                if kind in 'iu':
+                    cast = int
+                elif kind == 'f':
+                    cast = float
+                elif kind == 'M':
+                    cast = str
+                else:
+                    cast = lambda v: v
+                min_data = minmax_data[f'{col}_min'].iloc[0]
+                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
+                max_data = minmax_data[f'{col}_max'].iloc[0]
+                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
+
+            count_expr = SQLCount().apply(sql_expr)
+            count_expr = ' '.join(count_expr.splitlines())
+            count_data = self.execute(count_expr)
+            schema['count'] = cast(count_data['count'].iloc[0])
+
+        return schemas if table is None else schemas[table]
+
 
 
 class JSONSource(FileSource):
