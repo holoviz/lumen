@@ -14,6 +14,8 @@ from .llm import Message
 from .translate import function_to_model
 from .vector_store import NumpyVectorStore, VectorStore
 
+SOURCE_TABLE_SEPARATOR = "<->"
+
 
 class Tool(Actor, ContextProvider):
     """
@@ -108,29 +110,32 @@ class TableLookup(VectorLookupTool):
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             for table in source.get_tables():
-                source_table = f'{source.name}//{table}'
+                source_table = f'{source.name}SOURCE_TABLE_SEPARATOR{table}'
                 if not self.vector_store.query(source_table, threshold=1):
                     self.vector_store.add([{"text": source_table}])
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         closest_tables = []
+        message = ""
+
         results = self.vector_store.query(
             messages[-1]["content"],
             top_k=self.n,
             threshold=self.min_similarity,
         )
         for result in results:
-            table_name = result["text"].split("//", 1)[1]
+            table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
             closest_tables.append(table_name)
-        self._memory["closest_tables"] = closest_tables
+            message = "The most relevant tables are:\n"
 
-        message = "The most relevant tables are:\n"
         if not closest_tables:
-            self._memory["closest_tables"] = closest_tables = [
-                result["text"].split("//")[1] for result in
-                self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
-            ]
+            results = self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
+            for result in results:
+                table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
+                closest_tables.append(table_name)
             message = "No relevant tables found, but here are some other tables:\n"
+
+        self._memory["closest_tables"] = closest_tables
         return message + "\n".join(f"- `{table}`" for table in closest_tables)
 
 
