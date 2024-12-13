@@ -431,7 +431,7 @@ class Coordinator(Viewer, Actor):
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
 
-    def _serialize(self, obj, exclude_passwords=True):
+    def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
         if isinstance(obj, (Column, Card, Tabs)):
             string = ""
             for o in obj:
@@ -452,10 +452,10 @@ class Coordinator(Viewer, Actor):
             obj = obj.value
         return str(obj)
 
-    def _process_messages(self, messages, max_user_messages=2):
+    def _fuse_messages(self, messages: list[Message], max_user_messages: int = 2) -> list[Message]:
         """
-        Process messages to group consecutive messages from the same user.
-        Limit the number of user messages to `max_user_messages`.
+        Fuse consecutive messages from the same user and limit the
+        the number of user messages to `max_user_messages`.
         """
         user_count = 0
         input_messages = []
@@ -469,7 +469,7 @@ class Coordinator(Viewer, Actor):
 
             if role == previous_role and input_messages:
                 # remember it's in reverse order
-                input_messages[-1]["content"] = f"{content}\n---\n{input_messages[-1]["content"]}"
+                input_messages[-1]["content"] = f"{content}\n---\n{input_messages[-1]['content']}"
             else:
                 input_messages.append({"role": role, "content": content})
 
@@ -480,7 +480,6 @@ class Coordinator(Viewer, Actor):
                     break
         return input_messages[::-1]
 
-
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
@@ -490,7 +489,7 @@ class Coordinator(Viewer, Actor):
                     step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     await self.llm.get_client("default")  # caches the model for future use
 
-            messages = self._process_messages(
+            messages = self._fuse_messages(
                 self.interface.serialize(custom_serializer=self._serialize, limit=10),
                 max_user_messages=3
             )
