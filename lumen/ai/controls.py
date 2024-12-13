@@ -4,11 +4,13 @@ import zipfile
 import pandas as pd
 import param
 
+from panel import Row
 from panel.layout import Column, FlexBox, Tabs
 from panel.pane.markup import Markdown
 from panel.viewable import Viewer
 from panel.widgets import (
     Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
+    ToggleIcon,
 )
 
 from ..sources.duckdb import DuckDBSource
@@ -355,3 +357,40 @@ class SourceControls(Viewer):
 
     def __panel__(self):
         return self.menu
+
+
+class RetryControls(Viewer):
+
+    active = param.Boolean(False, doc="Click to retry")
+
+    reason = param.String(doc="Reason for retry")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        icon = ToggleIcon.from_param(
+            self.param.active,
+            name=" ",
+            description=None,
+            icon="repeat-once",
+            active_icon="x",
+            margin=5,
+        )
+        self._text_input = TextInput(
+            placeholder="State the issue and press enter to retry",
+            visible=icon.param.value,
+            max_length=200,
+            margin=(5, 0),
+        )
+        row = Row(icon, self._text_input)
+        self._row = row
+
+        self._text_input.param.watch(self._enter_reason, "enter_pressed")
+
+    def _enter_reason(self, _):
+        self.param.update(
+            reason=self._text_input.value,
+            active=False,
+        )
+
+    def __panel__(self):
+        return self._row

@@ -34,7 +34,7 @@ from .controls import SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    JoinRequired, Sql, TableJoins, VegaLiteSpec, make_table_model,
+    JoinRequired, RetrySpec, Sql, TableJoins, VegaLiteSpec, make_table_model,
 )
 from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
@@ -293,12 +293,21 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         message: pn.chat.ChatMessage = None,
+        messages: list | None = None,
         render_output: bool = False,
         title: str | None = None,
         **kwargs
     ):
         out = self._output_type(
-            component=component, render_output=render_output, title=title, **kwargs
+            component=component,
+            render_output=render_output,
+            title=title,
+            llm=self.llm,
+            messages=messages,
+            _render_prompt=self._render_prompt,
+            _retry_model=self.prompts["retry_output"]["response_model"],
+            _memory=self._memory,
+            **kwargs
         )
         if 'outputs' in self._memory:
             # We have to create a new list to trigger an event
@@ -382,7 +391,6 @@ class SQLAgent(LumenBaseAgent):
             "main": {
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
-                "llm_spec": "reasoning",
             },
             "select_table": {
                 "response_model": make_table_model,
@@ -397,10 +405,14 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": TableJoins,
                 "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
             },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "base_schema"], readonly=True)
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -643,6 +655,9 @@ class SQLAgent(LumenBaseAgent):
 
         # include min max for more context for data cleaning
         schema = await get_schema(source, table, include_min_max=True)
+        if not source.ephemeral:
+            # store the schema of the original table
+            self._memory["base_schema"] = schema
         join_required = await self._check_requires_joins(messages, schema, table)
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
@@ -684,7 +699,8 @@ class SQLAgent(LumenBaseAgent):
             messages[-1]["content"] = re.sub(r"//[^/]+//", "", messages[-1]["content"])
         sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
         pipeline = self._memory['pipeline']
-        self._render_lumen(pipeline, spec=sql_query, render_output=render_output, title=step_title)
+
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline
 
 
@@ -697,6 +713,7 @@ class BaseViewAgent(LumenBaseAgent):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2"},
+            "retry_output": {"template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
         }
     )
 
@@ -747,7 +764,8 @@ class BaseViewAgent(LumenBaseAgent):
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, render_output=render_output, title=step_title)
+
+        self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
 
@@ -760,6 +778,10 @@ class hvPlotAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2"},
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
@@ -811,7 +833,12 @@ class VegaLiteAgent(BaseViewAgent):
         default={
             "main": {
                 "response_model": VegaLiteSpec,
-                "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
         }
     )
 
