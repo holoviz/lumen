@@ -141,7 +141,6 @@ class Coordinator(Viewer, Actor):
             )
         else:
             interface.callback = self._chat_invoke
-        interface.callback_exception = "verbose"
 
         self._session_id = id(self)
 
@@ -367,7 +366,7 @@ class Coordinator(Viewer, Actor):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]):
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]) -> bool:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -404,13 +403,22 @@ class Coordinator(Viewer, Actor):
             if isinstance(subagent, Agent):
                 shared_ctx["steps_layout"] = steps_layout
             with subagent.param.update(**shared_ctx):
-                result = await subagent.respond(
-                    mutated_messages,
-                    step_title=title,
-                    render_output=render_output,
-                    **respond_kwargs
-                )
-                log_debug(f"\033[96m{agent_name} successfully responded\033[0m", show_sep=False, show_length=False)
+                try:
+                    result = await subagent.respond(
+                        mutated_messages,
+                        step_title=title,
+                        render_output=render_output,
+                        **respond_kwargs
+                    )
+                except asyncio.CancelledError as e:
+                    step.failed_title = f"{agent_name} agent was cancelled"
+                    raise e
+                log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
+
+            unprovided = [p for p in subagent.provides if p not in self._memory]
+            if unprovided:
+                step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
+                raise RuntimeError(f"{agent_name} failed to provide declared context.")
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
@@ -430,6 +438,7 @@ class Coordinator(Viewer, Actor):
                     message_kwargs = dict(value=out, user=subagent.name)
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
+        return step.status == "success"
 
     def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
         if isinstance(obj, (Column, Card, Tabs)):
@@ -508,7 +517,9 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
-                await self._execute_graph_node(node, messages[-3:])
+                succeeded = await self._execute_graph_node(node, messages[-3:])
+                if not succeeded:
+                    break
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
@@ -807,16 +818,17 @@ class Planner(Coordinator):
             while not planned:
                 if attempts > 0:
                     log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
+                plan = None
                 try:
                     plan = await self._make_plan(
                         messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas
                     )
+                except asyncio.CancelledError as e:
+                    istep.failed_title = 'Planning was cancelled, please try again.'
+                    raise e
                 except Exception as e:
-                    if self.interface.callback_exception not in ('raise', 'verbose'):
-                        istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
-                        istep.stream(str(e), replace=True)
-                    else:
-                        raise e
+                    istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                    raise e
                 execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
@@ -824,7 +836,8 @@ class Planner(Coordinator):
                 else:
                     planned = True
                 if attempts > 5:
-                    raise ValueError(f"Could not find a suitable plan for {messages[-1]['content']!r}")
+                    istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
+                    raise RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
             self._memory['plan'] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):

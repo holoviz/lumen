@@ -11,7 +11,6 @@ import panel as pn
 import param
 import yaml
 
-from instructor.retry import InstructorRetryException
 from panel.chat import ChatInterface
 from panel.layout import Column
 from panel.viewable import Viewable, Viewer
@@ -488,14 +487,20 @@ class SQLAgent(LumenBaseAgent):
             model_spec = self.prompts["main"].get("llm_spec", "default")
             response = self.llm.stream(messages, system=system, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
-            async for output in response:
-                step_message = output.chain_of_thought
-                if output.query:
-                    sql_query = clean_sql(output.query)
-                    step_message += f"\n```sql\n{sql_query}\n```"
-                step.stream(step_message, replace=True)
+            try:
+                async for output in response:
+                    step_message = output.chain_of_thought
+                    if output.query:
+                        sql_query = clean_sql(output.query)
+                        step_message += f"\n```sql\n{sql_query}\n```"
+                    step.stream(step_message, replace=True)
+            except asyncio.CancelledError as e:
+                step.failed_title = "Cancelled SQL query generation"
+                raise e
 
-        if not sql_query:
+        if step.failed_title.startswith("Cancelled"):
+            raise asyncio.CancelledError()
+        elif not sql_query:
             raise ValueError("No SQL query was generated.")
 
         sources = set(tables_to_source.values())
@@ -527,18 +532,6 @@ class SQLAgent(LumenBaseAgent):
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
-        except InstructorRetryException as e:
-            error_msg = str(e)
-            step.stream(f'\n```python\n{error_msg}\n```')
-            if len(error_msg) > 50:
-                error_msg = error_msg[:50] + "..."
-            step.failed_title = error_msg
-            step.status = "failed"
-            if e.n_attempts > 1:
-                # Show the last error message
-                step.stream(f'\n```python\n{e.messages[-1]["content"]}\n```')
-            elif e.n_attempts > 2:
-                raise e
         except Exception as e:
             report_error(e, step)
             raise e
@@ -564,6 +557,7 @@ class SQLAgent(LumenBaseAgent):
         schema,
         table: str
     ):
+        requires_joins = None
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
             join_prompt = await self._render_prompt(
                 "require_joins",
@@ -578,8 +572,12 @@ class SQLAgent(LumenBaseAgent):
                 model_spec=model_spec,
                 response_model=self._get_model("require_joins"),
             )
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
+            try:
+                async for output in response:
+                    step.stream(output.chain_of_thought, replace=True)
+            except asyncio.CancelledError as e:
+                step.failed_title = "SQLAgent cancelled while determining required joins"
+                raise e
             requires_joins = output.requires_joins
             step.success_title = 'Query requires join' if requires_joins else 'No join required'
         return requires_joins
@@ -659,6 +657,8 @@ class SQLAgent(LumenBaseAgent):
             # store the schema of the original table
             self._memory["base_schema"] = schema
         join_required = await self._check_requires_joins(messages, schema, table)
+        if join_required is None:
+            return None
         if join_required:
             tables_to_source = await self.find_join_tables(messages)
         else:

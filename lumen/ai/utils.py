@@ -100,7 +100,6 @@ def retry_llm_output(retries=3, sleep=1):
                 for i in range(retries):
                     if errors:
                         kwargs["errors"] = errors
-
                     try:
                         output = await func(*args, **kwargs)
                         if not output:
@@ -108,7 +107,7 @@ def retry_llm_output(retries=3, sleep=1):
                         return output
                     except Exception as e:
                         if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
-                            raise
+                            raise e
                         errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)
