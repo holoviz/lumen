@@ -209,13 +209,22 @@ class Llm(param.Parameterized):
     async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
         if response_model := kwargs.get("response_model"):
             log_debug(f"\033[93m{response_model.__name__}\033[0m model used", show_sep=True)
+
+        previous_role = None
         for i, message in enumerate(messages):
-            if message["role"] == "system":
+            role = message["role"]
+            if role == "system":
                 continue
-            if message["role"] == "user":
+            if role == "user":
                 log_debug(f"\033[95m{i} (u)\033[0m. {message['content']}")
             else:
                 log_debug(f"\033[95m{i} (a)\033[0m. {message['content']}")
+            if previous_role == role:
+                log_debug(
+                    "\033[91mWARNING: Two consecutive messages from the same role; "
+                    "some providers disallow this.\033[0m"
+                )
+            previous_role = role
         log_debug(f"Length is \033[94m{len(messages)} messages\033[0m including system")
 
         client = await self.get_client(model_spec, **kwargs)

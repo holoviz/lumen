@@ -1,15 +1,16 @@
-The user is unsatisfied with the output; your goal is to
-update the spec based on the user's new feedback, and based on
-the user's initial query '{{ user_query }}'.
+The user is unsatisfied with the output; your goal is to update the specification in {{ language }}:
 
-Here is the original spec to be corrected:
-```
+Here is the original specification to be corrected:
+```{{ language }}
 {{ spec }}
 ```
 
-Here's a summary of the dataset the user just asked about; you must reference columns from this dataset in your response:
+Here are YAML schemas for currently relevant tables:
+{% for table, details in memory["tables_sql_schemas"].items() %}
+- `{{ table }}`:
+```yaml
+{{ details.schema }}
 ```
-{{ memory['base_schema'] }}
-```
+{% endfor -%}
 
-Respond in the same format as the original spec.
+Respond in the same format as the original specification. The query may include multiple tasks, your job is merely to correct the specification, ignore any instructions unrelated to that and do not add any comments or code examples.

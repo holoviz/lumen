@@ -1,5 +1,4 @@
 import asyncio
-import re
 import traceback
 
 import panel as pn
@@ -14,10 +13,7 @@ from panel.widgets import (
     Button, ButtonIcon, Checkbox, CodeEditor, LoadingSpinner,
 )
 from param.parameterized import discard_events
-from pydantic import BaseModel
 
-from lumen.ai.llm import Llm
-from lumen.ai.memory import _Memory
 from lumen.ai.utils import get_data
 
 from ..base import Component
@@ -26,7 +22,6 @@ from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Table
-from .controls import RetryControls
 
 
 class LumenOutput(Viewer):
@@ -35,21 +30,15 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
-    llm = param.ClassSelector(class_=Llm, doc="To be used for retrying.")
+    loading = param.Boolean()
+
+    footer = param.List()
 
     render_output = param.Boolean(default=True)
 
     spec = param.String(allow_None=True)
 
     title = param.String(allow_None=True)
-
-    messages = param.List(doc="For context in retry.")
-
-    _render_prompt = param.Callable()
-
-    _retry_model = param.ClassSelector(class_=BaseModel, is_instance=False)
-
-    _memory = param.ClassSelector(class_=_Memory, default=None)
 
     language = "yaml"
 
@@ -64,14 +53,14 @@ class LumenOutput(Viewer):
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = ButtonIcon(
-            icon="copy", active_icon="check", toggle_duration=1000
+            icon="copy", active_icon="check", toggle_duration=1000, description="Copy YAML to clipboard"
         )
         copy_icon.js_on_click(
             args={"code_editor": code_editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
         download_icon = ButtonIcon(
-            icon="download", active_icon="check", toggle_duration=1000
+            icon="download", active_icon="check", toggle_duration=1000, description="Download YAML to file"
         )
         download_icon.js_on_click(
             args={"code_editor": code_editor},
@@ -87,9 +76,7 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        retry_controls = RetryControls()
-        retry_controls.param.watch(self._retry_invoke, "reason")
-        icons = Row(copy_icon, download_icon, retry_controls)
+        icons = Row(copy_icon, download_icon, *self.footer)
         code_col = Column(code_editor, icons, sizing_mode="stretch_both")
         if self.render_output:
             placeholder = Column(
@@ -106,26 +93,9 @@ class LumenOutput(Viewer):
             self._main.link(self, bidirectional=True, active='active')
         else:
             self._main = code_col
+        self._main.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
-
-    async def _retry_invoke(self, event):
-        reason = event.new
-        messages = self.messages.copy() + [{"role": "user", "content": f"The feedback: {reason!r}"}]
-        for message in messages:
-            if message["role"] == "user":
-                user_query = message["content"]
-                break
-        system = await self._render_prompt("retry_output", messages=self.messages, user_query=user_query, spec=self.spec)
-        with self._main.param.update(loading=True):
-            result = await self.llm.invoke(
-                messages, system=system, response_model=self._retry_model, model_spec="reasoning"
-            )
-            if "```" in result:
-                spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
-            else:
-                spec = result.corrected_spec
-            self.spec = spec
 
     async def _render_pipeline(self, pipeline):
         table = Table(
@@ -278,10 +248,6 @@ class SQLOutput(LumenOutput):
             return
 
         pipeline = self.component
-
-        # questionable if this is best way to handle memory
-        # does NOT work if user updates SQL from earlier in the history
-        self._memory["sql"] = self.spec
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
             return

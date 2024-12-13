@@ -13,6 +13,7 @@ import tqdm  # type: ignore
 
 from panel.io.document import unlocked
 from panel.io.state import state as pn_state
+from panel.param import Param
 from panel.viewable import Viewer
 from panel.widgets import Widget
 
@@ -159,7 +160,7 @@ class Pipeline(Viewer, Component):
             raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
         self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
-        self._update_widget = pn.Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
+        self._update_widget = Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
         self._init_callbacks()
 
     def _update_stale(self, event):
