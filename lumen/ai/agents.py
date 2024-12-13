@@ -387,7 +387,7 @@ class LumenBaseAgent(Agent):
             retry_model = self._lookup_prompt_key("retry_output", "response_model")
             with out.param.update(loading=True):
                 result = await self.llm.invoke(
-                    messages, system=system, response_model=retry_model, model_spec="reasoning",
+                    modified_messages, system=system, response_model=retry_model, model_spec="reasoning",
                 )
                 if "```" in result:
                     spec = re.search(r'(?s)```(\w+)?\s*(.*?)```', result.corrected_spec, re.DOTALL)
