@@ -53,14 +53,14 @@ class LumenOutput(Viewer):
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = ButtonIcon(
-            icon="copy", active_icon="check", toggle_duration=1000
+            icon="copy", active_icon="check", toggle_duration=1000, description="Copy YAML to clipboard"
         )
         copy_icon.js_on_click(
             args={"code_editor": code_editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
         download_icon = ButtonIcon(
-            icon="download", active_icon="check", toggle_duration=1000
+            icon="download", active_icon="check", toggle_duration=1000, description="Download YAML to file"
         )
         download_icon.js_on_click(
             args={"code_editor": code_editor},

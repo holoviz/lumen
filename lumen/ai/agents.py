@@ -376,8 +376,8 @@ class LumenBaseAgent(Agent):
         async def retry_invoke(event: param.parameterized.Event):
             reason = event.new
             modified_messages = mutate_user_message(
-                f"New feedback: {reason!r}.\n\nThese were the previous instructions to use as reference:\n",
-                deepcopy(messages), wrap='"""', suffix=False
+                f"New feedback: {reason!r}.\n\nThese were the previous instructions to use as reference:",
+                deepcopy(messages), wrap='\n"""\n', suffix=False
             )
             with self.param.update(memory=memory):
                 system = await self._render_prompt(
