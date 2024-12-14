@@ -108,7 +108,7 @@ class TableLookup(VectorLookupTool):
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             for table in source.get_tables():
-                source_table = f'{source.name}SOURCE_TABLE_SEPARATOR{table}'
+                source_table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
                 if not self.vector_store.query(source_table, threshold=1):
                     self.vector_store.add([{"text": source_table}])
 
@@ -121,8 +121,11 @@ class TableLookup(VectorLookupTool):
             threshold=self.min_similarity,
         )
         for result in results:
-            table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
-            closest_tables.append(table_name)
+            if SOURCE_TABLE_SEPARATOR not in result["text"]:
+                closest_tables.append(result["text"])
+            else:
+                table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
+                closest_tables.append(table_name)
 
         if not closest_tables:
             message = "No relevant tables found, but here are some other tables:\n"
