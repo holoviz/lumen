@@ -40,6 +40,8 @@ class LumenOutput(Viewer):
 
     title = param.String(allow_None=True)
 
+    disabled = param.Boolean(default=False)
+
     language = "yaml"
 
     def __init__(self, **params):
@@ -51,6 +53,7 @@ class LumenOutput(Viewer):
             value=self.param.spec, language=self.language, theme='tomorrow_night_bright', sizing_mode="stretch_both",
             on_keyup=False
         )
+        code_editor.link(self, bidirectional=True, disabled='disabled')
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = ButtonIcon(
             icon="copy", active_icon="check", toggle_duration=1000, description="Copy YAML to clipboard"
@@ -76,7 +79,7 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = Row(copy_icon, download_icon, *self.footer)
+        icons = Row(copy_icon, download_icon, pn.Spacer(width=5), *self.footer)
         code_col = Column(code_editor, icons, sizing_mode="stretch_both")
         if self.render_output:
             placeholder = Column(

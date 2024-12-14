@@ -404,6 +404,7 @@ class LumenBaseAgent(Agent):
             title=title,
             **kwargs
         )
+        retry_controls.disabled = out.param.disabled
         out.param.watch(partial(self._update_spec, self._memory), 'spec')
         if 'outputs' in self._memory:
             # We have to create a new list to trigger an event

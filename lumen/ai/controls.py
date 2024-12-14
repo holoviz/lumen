@@ -366,6 +366,8 @@ class RetryControls(Viewer):
 
     reason = param.String(doc="Reason for retry")
 
+    disabled = param.Boolean(False, doc="Disable retry", allow_refs=True)
+
     def __init__(self, **params):
         super().__init__(**params)
         icon = ToggleIcon.from_param(
@@ -375,6 +377,7 @@ class RetryControls(Viewer):
             icon="repeat-once",
             active_icon="x",
             margin=5,
+            visible=self.param.disabled.rx().rx.not_(),
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",

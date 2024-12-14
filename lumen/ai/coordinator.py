@@ -356,6 +356,16 @@ class Coordinator(Viewer, Actor):
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         log_debug("\033[94mNEW\033[0m", show_sep=True)
+        chat_messages = instance.objects
+        # in case there's race conditions; skip user message if it's the last one
+        ini = 1 if chat_messages[-1].user == instance.user else 0
+        for chat_message in instance.objects[:-ini][::-1]:
+            if chat_message.user == instance.user:
+                # only go up to the last user message to prevent long loops
+                break
+            chat_obj = chat_message.object
+            if isinstance(chat_obj, LumenOutput):
+                chat_obj.disabled = True
         await self.respond(contents)
 
     @retry_llm_output()
