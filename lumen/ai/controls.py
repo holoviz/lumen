@@ -4,6 +4,7 @@ import zipfile
 import pandas as pd
 import param
 
+from markitdown import MarkItDown
 from panel.layout import (
     Column, FlexBox, Row, Tabs,
 )
@@ -18,7 +19,6 @@ from ..sources.duckdb import DuckDBSource
 from .memory import _Memory, memory
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
-DOCUMENT_EXTENSIONS = ("doc", "docx", "pdf", "txt", "md", "rst")
 
 
 class MediaControls(Viewer):
@@ -124,6 +124,7 @@ class SourceControls(Viewer):
     def __init__(self, **params):
         super().__init__(**params)
 
+        self._markitdown = MarkItDown()
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
         self._file_input = FileDropper(
             height=100,
@@ -133,7 +134,7 @@ class SourceControls(Viewer):
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
         self._file_input.param.watch(self._generate_media_controls, "value")
-        self._upload_tabs = Tabs(sizing_mode="stretch_width")
+        self._upload_tabs = Tabs(sizing_mode="stretch_width", closable=True)
 
         self._input_tabs = Tabs(
             ("Upload", Column(self._file_input, self._upload_tabs)),
@@ -198,7 +199,7 @@ class SourceControls(Viewer):
                         file_obj,
                         filename=filename,
                     )
-                elif filename.lower().endswith(DOCUMENT_EXTENSIONS):
+                else:
                     table_controls = DocumentControls(
                         file_obj,
                         filename=filename,
@@ -277,25 +278,11 @@ class SourceControls(Viewer):
         file: io.BytesIO,
         document_controls: DocumentControls
     ):
-        extension = document_controls.extension.lower()
-        if extension in ("txt", "md", "rst"):
-            file.seek(0)
-            text = file.read().decode("utf-8", errors="replace")
-        elif extension in ("doc", "docx"):
-            # Ensure python-docx is installed: pip install python-docx
-            from docx import Document
-            file.seek(0)
-            doc = Document(file)
-            text = "\n".join([p.text for p in doc.paragraphs])
-        elif extension == "pdf":
-            # Ensure pdfminer.six is installed: pip install pdfminer.six
-            from pdfminer.high_level import extract_text
-            file.seek(0)
-            text = extract_text(file)
-        else:
-            raise ValueError(f"Unsupported document extension: {extension}")
+        text = self._markitdown.convert_stream(
+            file, file_extension=document_controls.extension
+        ).text_content
 
-        metadata = f"Filename: {document_controls.filename}\n\n" + document_controls._metadata_input.value
+        metadata = f"Filename: {document_controls.filename} " + document_controls._metadata_input.value
         document = {"text": text, "metadata": metadata}
         if "document_sources" in self._memory:
             self._memory["document_sources"].append(document)
@@ -328,7 +315,7 @@ class SourceControls(Viewer):
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
                     self._add_table(source, media_controls.file_obj, media_controls)
                     n_tables += 1
-                elif media_controls.extension.endswith(DOCUMENT_EXTENSIONS):
+                else:
                     self._add_document(media_controls.file_obj, media_controls)
                     n_docs += 1
 
@@ -347,10 +334,13 @@ class SourceControls(Viewer):
                     self.menu.height = 70
 
             if self.clear_uploads:
+                # Clear uploaded files from view
                 self._upload_tabs.clear()
                 self._media_controls.clear()
                 self._add_button.visible = False
 
+            # Clear uploaded files from memory
+            self._file_input.value = {}
             self._message_placeholder.param.update(
                 object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
                 visible=True,

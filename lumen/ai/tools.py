@@ -79,7 +79,7 @@ class DocumentLookup(VectorLookupTool):
         ]
         if not closest_doc_chunks:
             return ""
-        message = "Please augment your response with the following context:\n"
+        message = "Please augment your response with the following context if relevant:\n"
         message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
         return message
 
