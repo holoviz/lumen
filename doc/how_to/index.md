@@ -2,6 +2,18 @@
 
 Lumen's How to Guides provide step by step recipes for solving essential problems and tasks. They are more advanced than the Getting Started material and assume some knowledge of how Lumen works.
 
+## Configuring Lumen AI
+
+::::{grid} 1 2 2 3
+:gutter: 1 1 1 2
+
+:::{grid-item-card} {octicon}`gear;2.5em;sd-mr-1` Configuring Lumen AI
+
+Lumen AI is designed to be highly customizable and composable. Users can easily modify the default behavior of Lumen AI by providing custom data sources, LLM providers, agents, and prompts. This guide will walk users through the basic and advanced customization options available in Lumen AI.
+
+Learn how to configure Lumen AI.
+:::
+
 ## Data Intake
 
 ::::{grid} 1 2 2 3
@@ -140,6 +152,7 @@ Learn how to perform custom actions with callbacks.
 :hidden:
 :maxdepth: 1
 
+Configuring Lumen AI<ai_config/index>
 Data Intake<data_intake/index>
 Data Processing<data_processing/index>
 Visualize and Deploy<data_visualization/index>
