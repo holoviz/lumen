@@ -178,11 +178,9 @@ class SourceAgent(Agent):
     """
 
     purpose = param.String(default="""
-        The SourceAgent allows a user to upload unavailable,
-        new datasets, tables, or documents.
+        The SourceAgent allows a user to upload unavailable, new datasets, tables, or documents.
 
-        Only use this if the user is requesting to add a completely new table
-        or you think additional information is required to solve the user query.
+        Only use this if the user is requesting to add a completely new table.
         Not useful for answering what's available or loading existing datasets.
         """)
 
@@ -285,9 +283,9 @@ class AnalystAgent(ChatAgent):
 class TableListAgent(Agent):
 
     purpose = param.String(default="""
-        Renders a list of all availables tables to the user.
+        Renders a list of all availables tables to the user and lets the user
+        pick one, do not use if user has already picked a table.
         Not useful for gathering information about the tables.
-        Use with ChatAgent to provide info about the tables.
         """)
 
     prompts = param.Dict(
