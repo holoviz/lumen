@@ -67,6 +67,8 @@ The following `Agent`s are built-in:
 
 - **`AnalysisAgent`** allows users to plug in their own custom analyses and views.
 
+See [Custom Agents](../how_to/ai_config/custom_agents.md) for more information on creating custom agents.
+
 ## LLM Providers
 
 Lumen AI supports multiple Large Language Model (LLM) providers to ensure flexibility and access to the best models available, or specific models that are available to the user.
@@ -87,50 +89,25 @@ The following are provided:
 
 ## Tools
 
-`Tool`s are used to provide additional context to the `Agent`s. They can be used to provide additional context to the `Agent`s, or to request additional context from the user.
+`Tool`s are used to provide additional context to `Coordinator`s and `Agent`s.
 
 Users can provide tools to the `ExplorerUI`:
 
 ```python
-def duckduckgo_search(queries: list[str]) -> dict:
-    results = {}
-    for query in queries:
-        url = f"https://duckduckgo.com/html/?q={query}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, "html.parser")
-        links = soup.find_all("a", {"class": "result__a"}, href=True)
-
-        results[query] = [
-            {"title": link.get_text(strip=True), "url": link["href"]} for link in links
-        ]
-    return results
-
-tools = [duckduckgo_search]
-ui = lmai.ExplorerUI(tools=tools)
+ui = lmai.ExplorerUI(tools=[lmai.DocumentLookup])
 ```
 
-This will grant the `Coordinator` access to the `duckduckgo_search` function to use at its discretion.
+This will grant the `Coordinator` access to the `document_lookup` function to use at its discretion.
 
-Alternatively, tools can be provided to individual `Agent`s:
+By default, `ChatAgent` includes both the `DocumentLookup` and `TableLookup` tools, but you can also provide these tools to other, individual `Agent`s as well.
 
 ```python
-def get_wiki(articles: list[str]) -> str:
-    wiki = wikipediaapi.Wikipedia("lumen-assistant", language="en")
-    out = ""
-    for article in articles:
-        page = wiki.page(article)
-        if page.exists():
-            out += f"{article}:\n{page.summary}\n\n"
-        else:
-            out += f"The article '{article}' does not exist.\n"
-    return out
-
-tools = [get_wiki]
-agents = [lmai.agents.ChatAgent(prompts={"main": {"tools": tools}})]
+ui = lmai.ExplorerUI(
+    agents=[lmai.agents.SQLAgent(prompts={"main": {"tools": [lmai.DocumentLookup]}})]
+)
 ```
 
-This will override the default `TableLookup` tool for the `ChatAgent` with the `get_wiki` function.
+However, unlike the `Coordinator`, agents will *always* use all available `tools` in their queries.
 
 The following are built-in:
 
@@ -139,3 +116,5 @@ The following are built-in:
 - **TableLookup**: provides context to the `Agent`s by looking up information in the table.
 
 - **FunctionTool**: wraps arbitrary functions and makes them available as a tool for an LLM to call.
+
+See [Custom Tools](../how_to/ai_config/custom_tools.md) for more information on creating custom tools.
