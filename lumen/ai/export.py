@@ -14,9 +14,12 @@ from lumen.pipeline import Pipeline
 from lumen.views import View
 
 
+def make_md_cell(text: str):
+    return nbformat.v4.new_markdown_cell(source=text)
+
 def make_preamble(preamble: str):
     now = dt.datetime.now()
-    header = nbformat.v4.new_markdown_cell(source=f'# Lumen.ai - Chat Logs {now}')
+    header = make_md_cell(f'# Lumen.ai - Chat Logs {now}')
     source = (preamble + dedent(
         """
         import lumen as lm
@@ -55,8 +58,8 @@ def format_output(msg: ChatMessage):
         ])
     return [nbformat.v4.new_code_cell(source='\n'.join(code))]
 
-def export_notebook(messages: list[ChatMessage], preamble: str = ""):
-    cells = make_preamble(preamble)
+def render_cells(messages: list[ChatMessage]):
+    cells = []
     for msg in messages:
         if msg.user == 'Help':
             continue
@@ -69,6 +72,12 @@ def export_notebook(messages: list[ChatMessage], preamble: str = ""):
                 if isinstance(obj, ChatStep):
                     continue
                 cells += format_output(obj)
+    return cells
 
+def write_notebook(cells):
     nb = nbformat.v4.new_notebook(cells=cells)
     return nbformat.v4.writes(nb)
+
+def export_notebook(messages: list[ChatMessage], preamble: str = ""):
+    cells = make_preamble(preamble) + render_cells(messages)
+    return write_notebook(cells)
