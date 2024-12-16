@@ -36,7 +36,9 @@ from .agents import (
 from .components import SplitJS
 from .controls import SourceControls
 from .coordinator import Coordinator, Planner
-from .export import export_notebook
+from .export import (
+    export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
+)
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
 
@@ -129,7 +131,7 @@ class UI(Viewer):
             icon_size="1.5em",
             button_type="primary",
             callback=self._export_notebook,
-            filename=" ",
+            filename=f"{self.title.replace(' ', '_')}.ipynb",
             stylesheets=['.bk-btn a { padding: 0 6px; }'],
         )
         self._exports = Row(
@@ -143,8 +145,7 @@ class UI(Viewer):
                 for label, e in self.export_functions.items()
             ),
             styles={'position': 'relative', 'right': '20px', 'top': '-5px'},
-            sizing_mode='stretch_width',
-            visible=False
+            sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         if state.curdoc and state.curdoc.session_context:
@@ -245,20 +246,11 @@ class ChatUI(UI):
     ```python
     import lumen.ai as lmai
 
-    lmai.ChatUI('~/data.csv').servable()
+    lmai.ChatUI(data='~/data.csv').servable()
     ```
     """
 
     title = param.String(default='Lumen ChatUI', doc="Title of the app.")
-
-    def __init__(
-        self,
-        data: DataT | list[DataT] | None = None,
-        **params
-    ):
-        super().__init__(data, **params)
-        self._notebook_export.filename = f"{self.title.replace(' ', '_')}.ipynb"
-        self._exports.visible = True
 
 
 class ExplorerUI(UI):
@@ -275,7 +267,7 @@ class ExplorerUI(UI):
     ```python
     import lumen.ai as lmai
 
-    lmai.ExplorerUI('~/data.csv').servable()
+    lmai.ExplorerUI(data='~/data.csv').servable()
     ```
     """
 
@@ -294,6 +286,16 @@ class ExplorerUI(UI):
         self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
+        self._global_notebook_export = FileDownload(
+            icon="notebook",
+            icon_size="1.5em",
+            button_type="primary",
+            callback=self._global_export_notebook,
+            filename=f"{self.title.replace(' ', '_')}.ipynb",
+            stylesheets=['.bk-btn a { padding: 0 6px; }'],
+            styles={'position': 'absolute', 'right': '0px', 'top': '-5px', 'z-index': '100'},
+        )
+        self._exports.visible = False
         self._titles = []
         self._contexts = []
         self._root_conversation = self._coordinator.interface.objects
@@ -305,7 +307,7 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=Column(self._output, styles={'overflow-x': 'auto'}, sizing_mode='stretch_both'),
+                left=Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto'}, sizing_mode='stretch_both'),
                 right=Column(self._exports, self._coordinator),
                 sizing_mode='stretch_both'
             )
@@ -321,6 +323,15 @@ class ExplorerUI(UI):
         """
         for c in self._contexts:
             c.cleanup()
+
+    def _global_export_notebook(self):
+        cells = make_preamble(self.notebook_preamble)
+        for i, objects in enumerate(self._conversations):
+            title = self._titles[i]
+            header = make_md_cell(f'## {title}')
+            cells.append(header)
+            cells += render_cells(objects)
+        return StringIO(write_notebook(cells))
 
     async def _update_conversation(self, event=None, tab=None):
         active = self._explorations.active
