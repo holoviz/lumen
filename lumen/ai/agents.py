@@ -247,14 +247,18 @@ class ChatAgent(Agent):
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
         table = self._memory.get("table")
+        source = self._memory.get("source")
+        source_tables = source.get_tables() if source else []
         if table:
-            schema = await get_schema(self._memory["source"], table, include_count=True, limit=1000)
+            schema = await get_schema(source, table, include_count=True, limit=1000)
             context["table"] = table
             context["schema"] = schema
-        elif "closest_tables" in self._memory:
+        elif "closest_tables" in self._memory and any(
+            table for table in self._memory["closest_tables"] if table in source_tables
+        ):
             schemas = [
-                await get_schema(self._memory["source"], table, include_count=True, limit=1000)
-                for table in self._memory["closest_tables"]
+                await get_schema(source, table, include_count=True, limit=1000)
+                for table in self._memory["closest_tables"] if table in source_tables
             ]
             context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
         system_prompt = await self._render_prompt("main", messages, **context)

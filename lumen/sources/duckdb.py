@@ -240,7 +240,10 @@ class DuckDBSource(BaseSQLSource):
 
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
-            table = self.tables[table]
+            try:
+                table = self.tables[table]
+            except KeyError:
+                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
         if '(' not in table and ')' not in table:
             table = f'"{table}"'
 
