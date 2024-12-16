@@ -364,9 +364,9 @@ class RetryControls(Viewer):
 
     active = param.Boolean(False, doc="Click to retry")
 
-    reason = param.String(doc="Reason for retry")
-
     disabled = param.Boolean(False, doc="Disable retry", allow_refs=True)
+
+    reason = param.String(doc="Reason for retry")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -387,7 +387,6 @@ class RetryControls(Viewer):
         )
         row = Row(icon, self._text_input)
         self._row = row
-
         self._text_input.param.watch(self._enter_reason, "enter_pressed")
 
     def _enter_reason(self, _):

@@ -30,6 +30,8 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
+    disabled = param.Boolean(default=False)
+
     loading = param.Boolean()
 
     footer = param.List()
@@ -39,8 +41,6 @@ class LumenOutput(Viewer):
     spec = param.String(allow_None=True)
 
     title = param.String(allow_None=True)
-
-    disabled = param.Boolean(default=False)
 
     language = "yaml"
 
