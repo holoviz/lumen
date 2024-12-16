@@ -47,20 +47,12 @@ ui = lmai.ExplorerUI(tools=tools)
 
 By sharing the `duckduckgo_search` tool with the `Coordinator`, the subsequent `Agent`s can digest the tools' results to provide more accurate and relevant information to the user.
 
-Another example is a `get_wiki` tool that fetches summaries of Wikipedia articles.
+Given the number of tools already implemented in LangChain, and other libraries, you may want to simply wrap these existing tools with `FunctionTool` and add them to the `tools` list.
 
 ```python
-def get_wiki(articles: list[str]) -> str:
-    wiki = wikipediaapi.Wikipedia("lumen-assistant", language="en")
-    out = ""
-    for article in articles:
-        page = wiki.page(article)
-        if page.exists():
-            out += f"{article}:\n{page.summary}\n\n"
-        else:
-            out += f"The article '{article}' does not exist.\n"
-    return out
+from langchain_community.tools import DuckDuckGoSearchRun
 
-tools = [get_wiki]
-agents = [lmai.agents.ChatAgent(prompts={"main": {"tools": tools}})]
+search = DuckDuckGoSearchRun()
+tool = lmai.tools.FunctionTool(function=search.invoke, purpose=search.description)
+ui = lmai.ExplorerUI(tools=[tool])
 ```
