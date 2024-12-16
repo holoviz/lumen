@@ -310,7 +310,8 @@ class ExplorerUI(UI):
                 sizing_mode='stretch_both'
             )
         )
-        self._running = False
+        self._idle = asyncio.Event()
+        self._idle.set()
         self._last_synced = None
         self._output.param.watch(self._update_conversation, 'active')
 
@@ -326,8 +327,7 @@ class ExplorerUI(UI):
         if tab is None:
             # When user switches tabs and coordinator is running
             # wait to switch the conversation context
-            while self._running:
-                await asyncio.sleep(0.1)
+            await self._idle.wait()
             # If conversation was already updated, resync conversation
             if self._last_synced == active:
                 self._conversations[active] = self._coordinator.interface.objects
@@ -360,9 +360,7 @@ class ExplorerUI(UI):
 
     async def _set_context(self, event):
         active = event.new
-        while self._running:
-            await asyncio.sleep(0.1)
-        print(self._last_synced, active)
+        await self._idle.wait()
         if self._last_synced == active:
             self._conversations[active] = self._coordinator.interface.objects
         else:
@@ -561,11 +559,11 @@ class ExplorerUI(UI):
             local_memory.on_change('outputs', render_output)
 
             try:
-                self._running = True
+                self._idle.clear()
                 with self._coordinator.param.update(memory=local_memory):
                     await callback(contents, user, instance)
             finally:
-                self._running = False
+                self._idle.set()
                 local_memory.remove_on_change('plan', render_plan)
                 if not outputs:
                     prev_memory.update(local_memory)
