@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import param
 
-from panel.chat import ChatInterface
+from panel.chat import ChatInterface, ChatMessage
+from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
 from panel.layout import (
     Column, HSpacer, Row, Tabs,
 )
-from panel.pane import Markdown
+from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.theme import Material
 from panel.viewable import Viewer
@@ -307,6 +310,9 @@ class ExplorerUI(UI):
                 sizing_mode='stretch_both'
             )
         )
+        self._idle = asyncio.Event()
+        self._idle.set()
+        self._last_synced = None
         self._output.param.watch(self._update_conversation, 'active')
 
     def _destroy(self, session_context):
@@ -316,20 +322,31 @@ class ExplorerUI(UI):
         for c in self._contexts:
             c.cleanup()
 
-    def _update_conversation(self, event):
+    async def _update_conversation(self, event=None, tab=None):
         active = self._explorations.active
-        if event.new:
+        if tab is None:
+            # When user switches tabs and coordinator is running
+            # wait to switch the conversation context
+            await self._idle.wait()
+            # If conversation was already updated, resync conversation
+            if self._last_synced == active:
+                self._conversations[active] = self._coordinator.interface.objects
+        if (event.new if event else tab):
+            # Explorations Tab
             if active < len(self._conversations):
                 conversation = self._conversations[active]
             else:
-                conversation = list(self._coordinator.interface.objects)
+                conversation = self._snapshot_messages()
             self._exports.visible = True
         else:
-            if len(self._explorations):
-                self._conversations[active] = list(self._coordinator.interface.objects)
+            # Overview tab
             self._exports.visible = False
             conversation = self._root_conversation
+            # We must mark the last synced as None to ensure
+            # we do not resync with the Overview tab conservation
+            active = None
         self._coordinator.interface.objects = conversation
+        self._last_synced = active
 
     def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
@@ -341,15 +358,31 @@ class ExplorerUI(UI):
                 self._titles.pop(i)
                 break
 
-    def _set_context(self, event):
-        self._conversations[event.old] = list(self._coordinator.interface.objects)
-        if event.new == len(self._conversations):
-            return
-        self._coordinator.interface.objects = self._conversations[event.new]
+    async def _set_context(self, event):
+        active = event.new
+        await self._idle.wait()
+        if self._last_synced == active:
+            self._conversations[active] = self._coordinator.interface.objects
+        else:
+            self._conversations[event.old] = self._snapshot_messages()
+        conversation = self._conversations[active]
+        self._coordinator.interface.objects = conversation
         self._notebook_export.param.update(
             filename = f"{self._titles[event.new].replace(' ', '_')}.ipynb"
         )
         self._exports.visible = True
+        self._last_synced = active
+
+    def _snapshot_messages(self, new=False):
+        to = -3 if new else None
+        messages = []
+        for msg in self._coordinator.interface.objects[:to]:
+            if isinstance(msg, ChatMessage):
+                avatar = msg.avatar
+                if isinstance(avatar, SVG) and avatar.object is PLACEHOLDER_SVG:
+                    continue
+            messages.append(msg)
+        return messages
 
     def _table_explorer(self):
         from panel_gwalker import GraphicWalker
@@ -427,14 +460,23 @@ class ExplorerUI(UI):
             sizing_mode='stretch_both',
         )
 
-    def _add_exploration(self, title: str, memory: _Memory):
+    async def _add_exploration(self, title: str, memory: _Memory):
+        n = len(self._explorations)
+        active = self._explorations.active
         self._titles.append(title)
         self._contexts.append(memory)
-        self._conversations.append(self._coordinator.interface.objects)
+        self._coordinator.interface.objects = conversation = list(self._coordinator.interface.objects)
+        self._conversations.append(conversation)
         self._explorations.append((title, Column(name=title, sizing_mode='stretch_both', loading=True)))
         self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
-        self._explorations.active = len(self._explorations)-1
+        if n:
+            self._conversations[active] = self._snapshot_messages(new=True)
+        else:
+            self._root_conversation = self._snapshot_messages(new=True)
+        self._last_synced = n
+        self._explorations.active = n
         self._output.active = 1
+        await self._update_conversation(tab=1)
 
     def _add_outputs(self, exploration: Column, outputs: list[LumenOutput], memory: _Memory):
         from panel_gwalker import GraphicWalker
@@ -488,11 +530,11 @@ class ExplorerUI(UI):
             local_memory = prev_memory.clone()
             local_memory["outputs"] = outputs = []
 
-            def render_plan(_, old, new):
+            async def render_plan(_, old, new):
                 nonlocal index
                 plan = local_memory["plan"]
                 if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
-                    self._add_exploration(plan.title, local_memory)
+                    await self._add_exploration(plan.title, local_memory)
                     index += 1
 
             def sync_available_sources_memory(_, __, sources):
@@ -508,7 +550,7 @@ class ExplorerUI(UI):
             local_memory.on_change('plan', render_plan)
             local_memory.on_change('sources', sync_available_sources_memory)
 
-            def render_output(_, old, new):
+            async def render_output(_, old, new):
                 added = [out for out in new if out not in old]
                 exploration = self._explorations[index]
                 self._add_outputs(exploration, added, local_memory)
@@ -517,9 +559,11 @@ class ExplorerUI(UI):
             local_memory.on_change('outputs', render_output)
 
             try:
+                self._idle.clear()
                 with self._coordinator.param.update(memory=local_memory):
                     await callback(contents, user, instance)
             finally:
+                self._idle.set()
                 local_memory.remove_on_change('plan', render_plan)
                 if not outputs:
                     prev_memory.update(local_memory)

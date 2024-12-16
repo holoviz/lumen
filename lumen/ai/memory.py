@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import partial
 
 import param
 
@@ -43,7 +44,10 @@ class _Memory(SessionCache):
 
     def _trigger_update(self, key, old, new):
         for cb in self._callbacks[key]:
-            cb(key, old, new)
+            if param.parameterized.iscoroutinefunction(cb):
+                param.parameterized.async_executor(partial(cb, key, old, new))
+            else:
+                cb(key, old, new)
         if key in self._rx:
             self._rx[key].rx.value = new
 
