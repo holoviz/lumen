@@ -73,6 +73,9 @@ A list of memory keys that the tool expects to already exist. These values are a
 **`provides`**:
 A list of memory keys that the tool will populate after it runs. For instance, if your function returns a new `sql` query string, you can specify `provides=["sql"]`.
 
+**`formatter`**:
+A string that formats the return value of the function for inclusion in the global context. The formatter accepts the `function`, `arguments`, and `output` as formatting variables. By default, the formatter is set to `"{function}({arguments}) returned: {output}"`.
+
 Some useful keys you might use in `requires` and `provides` include:
 
 - `table`: A DataFrame or similar structure representing tabular data.
@@ -82,7 +85,7 @@ Some useful keys you might use in `requires` and `provides` include:
 ```python
 from lmai.tools import FunctionTool
 
-def run_propietary_algorithm(table) -> str:
+def apply_propietary_algorithm(table) -> str:
     """
     Shares the proprietary algorithm on the provided data,
     which SQLAgent can then use to query the data.
@@ -99,7 +102,7 @@ def run_propietary_algorithm(table) -> str:
         return "Please continue on; this tool only works with the expected_table."
 
 tool = FunctionTool(
-    function=filter_table,
+    function=apply_propietary_algorithm,
     requires=["table"],  # require a table to be in memory
     provides=["sql"],  # provide the resulting SQL query
     purpose="Filter the table to only include rows where column > 10; only use if the table is 'expected_table'."
