@@ -7,12 +7,42 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 ::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
-:::{grid-item-card} {octicon}`gear;2.5em;sd-mr-1` Configuring Lumen AI
+:::{grid-item-card} {octicon}`tools;2.5em;sd-mr-1` Custom Agents
+:link: ai_config/custom_agents
+:link-type: doc
 
-Lumen AI is designed to be highly customizable and composable. Users can easily modify the default behavior of Lumen AI by providing custom data sources, LLM providers, agents, and prompts. This guide will walk users through the basic and advanced customization options available in Lumen AI.
-
-Learn how to configure Lumen AI.
+Learn how to create and configure custom agents to tailor Lumen AI's behavior to your needs.
 :::
+
+:::{grid-item-card} {octicon}`tasklist;2.5em;sd-mr-1` Custom Analyses
+:link: ai_config/custom_analyses
+:link-type: doc
+
+Discover how to implement and integrate custom analyses into Lumen AI.
+:::
+
+:::{grid-item-card} {octicon}`plug;2.5em;sd-mr-1` Custom Tools
+:link: ai_config/custom_tools
+:link-type: doc
+
+Explore how to develop and incorporate custom tools for enhanced AI functionality.
+:::
+
+:::{grid-item-card} {octicon}`comment-discussion;2.5em;sd-mr-1` Model Prompts
+:link: ai_config/model_prompts
+:link-type: doc
+
+Understand how to define and manage model-specific prompts for fine-tuning Lumen AI.
+:::
+
+:::{grid-item-card} {octicon}`note;2.5em;sd-mr-1` Template Prompts
+:link: ai_config/template_prompts
+:link-type: doc
+
+Learn to create and use template prompts for consistent and reusable interactions with Lumen AI.
+:::
+
+::::
 
 ## Data Intake
 
