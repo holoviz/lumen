@@ -423,6 +423,7 @@ class ExplorerUI(UI):
                     new[t] = source
             source_map.clear()
             source_map.update(new)
+            selected = selected if len(selected) == 1 else []
             table_select.param.update(options=list(source_map), value=selected)
             input_row.visible = bool(source_map)
         memory.on_change('sources', update_source_map)
