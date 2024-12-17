@@ -31,6 +31,13 @@ Additionally the following datasets/tables are available and you may request to 
 - {{ table }}
 {% endfor %}
 {%- endif -%}
+{% if memory.get('document_sources') %}
+Here are the documents you have access to:
+{%- for document_source in memory['document_sources'] %}
+- '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
+
+{%- endfor %}
+{% endif %}
 Here's the choice of experts and their uses:
 {%- for agent in agents %}
 - `{{ agent.name[:-5] }}`
