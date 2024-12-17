@@ -38,10 +38,14 @@ class Actor(param.Parameterized):
         self._validate_prompts()
         self._tools = {}
         for prompt_name in self.prompts:
-            self._tools[prompt_name] = [
-                tool if isinstance(tool, Actor) else tool(llm=self.llm)
-                for tool in self._lookup_prompt_key(prompt_name, "tools")
-            ]
+            self._tools[prompt_name] = []
+            for tool in self._lookup_prompt_key(prompt_name, "tools"):
+                if isinstance(tool, Actor):
+                    if tool.llm is None:
+                        tool.llm = self.llm
+                    self._tools[prompt_name].append(tool)
+                else:
+                    self._tools[prompt_name].append(tool(llm=self.llm))
 
     def _validate_template_overrides(self):
         valid_prompt_names = self.param["prompts"].default.keys()

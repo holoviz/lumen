@@ -178,7 +178,7 @@ class FunctionTool(Tool):
         super().__init__(
             function=function,
             name=function.__name__,
-            purpose=model.__doc__ or "",
+            purpose=params.pop("purpose", model.__doc__) or "",
             **params
         )
         self._model = model

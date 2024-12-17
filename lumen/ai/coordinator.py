@@ -181,10 +181,16 @@ class Coordinator(Viewer, Actor):
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
-        self._tools["__main__"] = [
-            tool if isinstance(tool, Actor) else (FunctionTool(tool, llm=llm) if isinstance(tool, FunctionType) else tool(llm=llm))
-            for tool in self.tools
-        ]
+        self._tools["__main__"] = []
+        for tool in self.tools:
+            if isinstance(tool, Actor):
+                if tool.llm is None:
+                    tool.llm = llm
+                self._tools["__main__"].append(tool)
+            elif isinstance(tool, FunctionType):
+                self._tools["__main__"].append(FunctionTool(tool, llm=llm))
+            else:
+                self._tools["__main__"].append(tool(llm=llm))
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
