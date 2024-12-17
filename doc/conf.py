@@ -129,6 +129,11 @@ html_theme_options = {
     "pygment_dark_style": "material"
 }
 
+html_sidebars = {
+    "index": ["sidebar-nav-bs-alt"],
+    "**": ["sidebar-nav-bs-alt"],
+}
+
 html_context = {
     "default_mode": "light",
 }
