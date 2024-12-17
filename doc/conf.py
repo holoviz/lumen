@@ -32,7 +32,9 @@ param.parameterized.docstring_describe_params = False
 import panel
 
 from nbsite import nbbuild
-from nbsite.shared_conf import remove_mystnb_static
+from nbsite.shared_conf import (
+    html_sidebars, remove_mystnb_static, templates_path,
+)
 from nbsite.util import base_version  # noqa
 from panel.io.convert import BOKEH_VERSION, PY_VERSION
 from panel.io.resources import CDN_DIST, DIST_DIR
@@ -90,7 +92,7 @@ nbsite_pyodide_conf = {
 }
 
 # Add any paths that contain templates here, relative to this directory.
-templates_path = ['_templates']
+templates_path += ['_templates']
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -127,11 +129,6 @@ html_theme_options = {
     ],
     "pygment_light_style": "material",
     "pygment_dark_style": "material"
-}
-
-html_sidebars = {
-    "index": ["sidebar-nav-bs-alt"],
-    "**": ["sidebar-nav-bs-alt"],
 }
 
 html_context = {
