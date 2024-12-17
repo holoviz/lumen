@@ -11,39 +11,39 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 :link: ai_config/custom_agents
 :link-type: doc
 
-Learn how to create and configure custom agents to tailor Lumen AI's behavior to your needs.
+Learn how to create and configure custom agents to accomplish goals in Lumen AI.
 :::
 
 :::{grid-item-card} {octicon}`tasklist;2.5em;sd-mr-1` Custom Analyses
 :link: ai_config/custom_analyses
 :link-type: doc
 
-Discover how to implement and integrate custom analyses into Lumen AI.
+Discover how to implement and output custom views within Lumen AI.
 :::
 
 :::{grid-item-card} {octicon}`plug;2.5em;sd-mr-1` Custom Tools
 :link: ai_config/custom_tools
 :link-type: doc
 
-Explore how to develop and incorporate custom tools for enhanced AI functionality.
+Explore how to develop and incorporate custom tools to provide additional context.
 :::
 
 :::{grid-item-card} {octicon}`comment-discussion;2.5em;sd-mr-1` Model Prompts
 :link: ai_config/model_prompts
 :link-type: doc
 
-Understand how to define and manage model-specific prompts for fine-tuning Lumen AI.
+Understand how to define and manage model-specific prompts for replacing response models.
 :::
 
 :::{grid-item-card} {octicon}`note;2.5em;sd-mr-1` Template Prompts
 :link: ai_config/template_prompts
 :link-type: doc
 
-Learn to create and use template prompts for consistent and reusable interactions with Lumen AI.
+Learn to create and use template prompts for influencing the AI's responses.
 :::
 
 ::::
-
+2
 ## Data Intake
 
 ::::{grid} 1 2 2 3
