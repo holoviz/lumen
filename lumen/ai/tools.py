@@ -32,8 +32,8 @@ class VectorLookupTool(Tool):
     min_similarity = param.Number(default=0.1, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=3, bounds=(0, None), doc="""
-        The number of document results to return.""")
+    n = param.Integer(default=5, bounds=(0, None), doc="""
+        The number of document results to return, per document.""")
 
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
@@ -68,13 +68,40 @@ class DocumentLookup(VectorLookupTool):
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             if not self.vector_store.query(source["text"], threshold=1):
-                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
+                metadata = source["metadata"]
+                self.vector_store.add([{"text": metadata["filename"], "metadata": metadata | {"kind": "filename"}}])
+                self.vector_store.add([{"text": source["text"], "metadata": metadata | {"kind": "contents"}}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
-        results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
+
+        results = []
+        # first try to query by the filename
+        for filename_results in self.vector_store.query(query, top_k=5, threshold=0.2, filters={"kind": "filename"}):
+            filename_similarity = filename_results["similarity"]
+            # for matching filenames, query the content by the filename
+            content_results = self.vector_store.query(
+                query, top_k=5, threshold=0, filters={"filename": filename_results["text"], "kind": "contents"}
+            )
+            for content_result in content_results:
+                # for matching content, add the filename similarity to the content similarity, capped to 1
+                content_result["similarity"] = min(content_result["similarity"] + filename_similarity, 1)
+                results.append(content_result)
+
+        # now query the content directly across all documents
+        results += self.vector_store.query(query, top_k=5, threshold=0.2, filters={"kind": "contents"})
+
+        # drop duplicates and sort by similarity, and take the top n
+        unique_results = {}
+        for result in results:
+            if result["similarity"] > self.min_similarity:
+                content = result["text"]
+                if content not in unique_results or unique_results[content]["similarity"] < result["similarity"]:
+                    unique_results[content] = result
+        results = sorted(unique_results.values(), key=lambda x: x["similarity"], reverse=True)[:self.n]
+
         closest_doc_chunks = [
-            f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
+            f"{result['text']} (Relevance: {result['similarity']:.3f} - Metadata: {result['metadata']}"
             for result in results
         ]
         if not closest_doc_chunks:
