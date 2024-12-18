@@ -615,7 +615,9 @@ class Panel(View):
 
     @classmethod
     def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
-        if not isinstance(spec, dict) or 'type' not in spec:
+        if spec is None:
+            return None
+        elif not isinstance(spec, dict) or 'type' not in spec:
             return spec
         elif spec['type'] in ('rx', 'param'):
             try:
@@ -666,7 +668,9 @@ class Panel(View):
 
     def _serialize_object(self, obj, objects=None, refs=None, depth=0):
         obj_type = type(obj)
-        if objects is None:
+        if obj is None:
+            return None
+        elif objects is None:
             objects = {'pipeline': self.pipeline, obj.name: obj}
         else:
             objects[obj.name] = obj
