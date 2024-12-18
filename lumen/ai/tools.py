@@ -33,7 +33,7 @@ class VectorLookupTool(Tool):
         The minimum similarity to include a document.""")
 
     n = param.Integer(default=5, bounds=(0, None), doc="""
-        The number of document results to return, per document.""")
+        The number of document chunks to return""")
 
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
