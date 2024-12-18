@@ -65,7 +65,7 @@ class WindAnalysis(lmai.Analysis):
             text="wind_direction",
             kind="labels",
         )
-        wind_table = Table(wind_pipeline)
+        wind_table = Table(pipeline=wind_pipeline)
         return Layout(
             views=[
                 wind_speed_view,
@@ -82,7 +82,7 @@ uv_df = pd.DataFrame({
     "u": np.random.rand(12),
     "v": np.random.rand(12)
 })
-source = lmai.memory["current_source"] = DuckDBSource.from_df({"uv_df": uv_df})
+source = lmai.memory["source"] = DuckDBSource.from_df({"uv_df": uv_df})
 analysis_agent = lmai.agents.AnalysisAgent(analyses=[WindAnalysis])
 ui = lmai.ExplorerUI(llm=llm, agents=[analysis_agent])
 ui.servable()

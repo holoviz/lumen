@@ -967,39 +967,40 @@ class AnalysisAgent(LumenBaseAgent):
         else:
             analysis_name = next(iter(analyses))
 
-        with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
-            await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-            analysis_callable = analyses[analysis_name].instance(agents=agents)
+        view = None
+        with self.interface.param.update(callback_exception="raise"):
+            with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
+                await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
+                analysis_callable = analyses[analysis_name].instance(agents=agents)
 
-            data = await get_data(pipeline)
-            for field in analysis_callable._field_params:
-                analysis_callable.param[field].objects = list(data.columns)
-            self._memory["analysis"] = analysis_callable
+                data = await get_data(pipeline)
+                for field in analysis_callable._field_params:
+                    analysis_callable.param[field].objects = list(data.columns)
+                self._memory["analysis"] = analysis_callable
 
-            if analysis_callable.autorun:
-                if asyncio.iscoroutinefunction(analysis_callable.__call__):
-                    view = await analysis_callable(pipeline)
+                if analysis_callable.autorun:
+                    if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                        view = await analysis_callable(pipeline)
+                    else:
+                        view = await asyncio.to_thread(analysis_callable, pipeline)
+                    if isinstance(view, Viewable):
+                        view = Panel(object=view, pipeline=self._memory.get('pipeline'))
+                    spec = view.to_spec()
+                    if isinstance(view, View):
+                        view_type = view.view_type
+                        self._memory["view"] = dict(spec, type=view_type)
+                    elif isinstance(view, Pipeline):
+                        self._memory["pipeline"] = view
+                    # Ensure data reflects processed pipeline
+                    if pipeline is not self._memory['pipeline']:
+                        pipeline = self._memory['pipeline']
+                        if len(data) > 0:
+                            self._memory["data"] = await describe_data(data)
+                    yaml_spec = yaml.dump(spec)
+                    step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
+                    step.success_title = "Generated view"
                 else:
-                    view = await asyncio.to_thread(analysis_callable, pipeline)
-                if isinstance(view, Viewable):
-                    view = Panel(object=view, pipeline=self._memory.get('pipeline'))
-                spec = view.to_spec()
-                if isinstance(view, View):
-                    view_type = view.view_type
-                    self._memory["view"] = dict(spec, type=view_type)
-                elif isinstance(view, Pipeline):
-                    self._memory["pipeline"] = view
-                # Ensure data reflects processed pipeline
-                if pipeline is not self._memory['pipeline']:
-                    pipeline = self._memory['pipeline']
-                    if len(data) > 0:
-                        self._memory["data"] = await describe_data(data)
-                yaml_spec = yaml.dump(spec)
-                step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
-                step.success_title = "Generated view"
-            else:
-                step.success_title = "Configure the analysis"
-                view = None
+                    step.success_title = "Configure the analysis"
 
         analysis = self._memory["analysis"]
         pipeline = self._memory['pipeline']
