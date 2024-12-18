@@ -94,10 +94,11 @@ class DocumentLookup(VectorLookupTool):
         # drop duplicates and sort by similarity, and take the top n
         unique_results = {}
         for result in results:
-            if result["similarity"] > self.min_similarity:
-                content = result["text"]
-                if content not in unique_results or unique_results[content]["similarity"] < result["similarity"]:
-                    unique_results[content] = result
+            if result["similarity"] <= self.min_similarity:
+                continue
+            content = result["text"]
+            if content not in unique_results:
+                unique_results[content] = result
         results = sorted(unique_results.values(), key=lambda x: x["similarity"], reverse=True)[:self.n]
 
         closest_doc_chunks = [
@@ -105,7 +106,7 @@ class DocumentLookup(VectorLookupTool):
             for result in results
         ]
         if not closest_doc_chunks:
-            return ""
+            return "No relevant documents found."
         message = "Please augment your response with the following context if relevant:\n"
         message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
         return message
