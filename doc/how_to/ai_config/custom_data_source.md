@@ -81,28 +81,28 @@ source = SnowflakeSource(
 lmai.ExplorerUI(source).servable()
 ```
 
-### DuckDb
+### DuckDB
 
-One thing to note about using DuckDb as a custom data source is that if your parquet files have a
+One thing to note about using DuckDB as a custom data source is that if your parquet files have a
 non-standard extension name _e.g._ `.parq`, then you need to wrap the path to those files with the
-directive `read_parquet(...)`. DuckDb has many native ways for reading parquet files, see
+directive `read_parquet(...)`. DuckDB has many native ways for reading parquet files, see
 [https://duckdb.org/docs/data/parquet/overview.html](https://duckdb.org/docs/data/parquet/overview.html)
 for an overview of the methods available to you, and which ones you will need to use the directive
 for when using Lumen AI.
 
 ```python
 import lumen.ai as lmai
-from lumen.sources.duckdb import DuckDbSource
+from lumen.sources.duckdb import DuckDBSource
 
 # Use a list
-tables = ["path/to/parquet/dataset/file.parquet", "read_parquet('file.parq')"]
+tables = ["path/to/parquet/dataset/file.parquet", "read_parquet('file.parq')", "penguins.csv"]
 # Use a dictionary
 #tables = {
-#    "penguins": "path/to/penguins.parquet",
+#    "penguins": "path/to/penguins.csv",
 #    "earthquakes": "read_parquet('path/to/earthquakes.parq')",
 #}
 
-source = DuckDbSource(tables=tables)
+source = DuckDBSource(tables=tables)
 lmai.ExplorerUI(source).servable()
 ```
 
@@ -125,3 +125,17 @@ catalog = {
 #catalog = "s3://bucket/data/cat*.yaml"
 lmai.ExplorerUI(catalog=catalog).servable
 ```
+
+## No local or remote data files
+
+The Panel apps and terminal commands above use local paths or URIs to hosted data files, however,
+you are not required to specify data files when starting Lumen AI. You can run the following command
+in your terminal.
+
+```bash
+lumen-ai serve --provider llama --show
+```
+
+Lumen AI will start up in your default browser with no data available. You can use the `Drag & Drop`
+area to upload your local data files, or select the `Browse` link to open a file dialog where you
+can select the data you wish to upload to Lumen AI.
