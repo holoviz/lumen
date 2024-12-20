@@ -257,6 +257,7 @@ class SQLOutput(LumenOutput):
                 pipeline.source = pipeline.source.create_sql_expr_source(
                     tables={pipeline.table: self.spec}
                 )
+                pipeline._stale = True
             output = await self._render_pipeline(pipeline)
             self._rendered = True
             self._last_output.clear()
