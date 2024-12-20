@@ -14,6 +14,8 @@ from panel.widgets import (
 )
 from param.parameterized import discard_events
 
+from lumen.ai.llm import Llm
+from lumen.ai.models import SqlTable
 from lumen.ai.utils import get_data
 
 from ..base import Component
@@ -29,6 +31,8 @@ class LumenOutput(Viewer):
     active = param.Integer(default=1)
 
     component = param.ClassSelector(class_=Component)
+
+    llm = param.ClassSelector(class_=Llm, allow_None=True)
 
     loading = param.Boolean()
 
@@ -254,8 +258,18 @@ class SQLOutput(LumenOutput):
 
         try:
             if self._rendered:
+                result = await self.llm.invoke(
+                    [{'role': 'user', 'content': self.spec}],
+                    system="Provide a SQL expr slug",
+                    response_model=SqlTable,
+                )
+                table = result.expr_slug
+            else:
+                table = pipeline.table
+
+            if self._rendered:
                 pipeline.source = pipeline.source.create_sql_expr_source(
-                    tables={pipeline.table: self.spec}
+                    tables={table: self.spec}
                 )
             output = await self._render_pipeline(pipeline)
             self._rendered = True
