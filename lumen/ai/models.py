@@ -60,6 +60,16 @@ class Sql(BaseModel):
         the chain of thought; do NOT add extraneous comments.""")
 
 
+class SqlTable(BaseModel):
+
+    expr_slug: str = Field(
+        description="""
+        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
+        e.g. top_5_athletes_gold_medals
+        """
+    )
+
+
 class Validity(BaseModel):
 
     correct_assessment: str = Field(

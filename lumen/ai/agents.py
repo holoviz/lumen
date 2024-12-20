@@ -405,6 +405,7 @@ class LumenBaseAgent(Agent):
             footer=[retry_controls],
             render_output=render_output,
             title=title,
+            llm=self.llm,
             **kwargs
         )
         out.param.watch(partial(self._update_spec, self._memory), 'spec')
