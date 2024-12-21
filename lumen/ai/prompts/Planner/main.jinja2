@@ -22,14 +22,11 @@ Agent Rules:
 {%- if 'table' in memory %}- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.{% endif -%}
 
 {%- if table_info %}
-Here are schemas for tables that were recently used (note that these schemas are computed on a subset of data):
+Here are schemas for tables that were recently requested (note that these schemas are computed on a subset of data):
 {{ table_info }}
 {%- endif %}
-{%- if tables %}
-Additionally the following datasets/tables are available and you may request to look at them before revising your plan:
-{% for table in tables %}
-- {{ table }}
-{% endfor %}
+{%- if tables_schema_str %}
+{{ tables_schema_str }}
 {%- endif -%}
 {% if memory.get('document_sources') %}
 Here are the documents you have access to:
