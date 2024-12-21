@@ -31,7 +31,8 @@ from .logs import ChatLogs
 from .models import Validity, make_agent_model, make_plan_models
 from .tools import FunctionTool, Tool
 from .utils import (
-    get_schema, log_debug, mutate_user_message, retry_llm_output,
+    gather_table_sources, get_schema, log_debug, mutate_user_message,
+    retry_llm_output,
 )
 from .views import LumenOutput
 
@@ -688,7 +689,8 @@ class Planner(Coordinator):
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
-        schemas: dict[str, dict] | None = None
+        schemas: dict[str, dict] | None = None,
+        tables_schema_str: str = ""
     ) -> BaseModel:
         info = ''
         reasoning = None
@@ -701,7 +703,6 @@ class Planner(Coordinator):
         while reasoning is None or requested:
             log_debug(f"Creating plan for \033[91m{requested}\033[0m")
             info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
-            available = [t for t in tables if t not in provided]
             system = await self._render_prompt(
                 "main",
                 messages,
@@ -711,7 +712,7 @@ class Planner(Coordinator):
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
                 table_info=info,
-                tables=available
+                tables_schema_str=tables_schema_str,
             )
             model_spec = self.prompts["main"].get("llm_spec", "default")
             reasoning = await self.llm.invoke(
@@ -811,10 +812,8 @@ class Planner(Coordinator):
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
         tool_names = [tool.name for tool in self._tools["__main__"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
-        tables = {}
-        for src in self._memory['sources']:
-            for table in src.get_tables():
-                tables[table] = src
+
+        tables, tables_schema_str = await gather_table_sources(self._memory['sources'])
 
         reason_model, plan_model = self._get_model(
             "main",
@@ -834,7 +833,7 @@ class Planner(Coordinator):
                 plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas
+                        messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas, tables_schema_str
                     )
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
