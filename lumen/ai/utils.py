@@ -330,16 +330,17 @@ async def gather_table_sources(sources: list[Source]) -> tuple[dict[str, Source]
     and a markdown string of the tables and their schemas.
     """
     tables_to_source = {}
-    tables_schema_str = "\nHere are the tables\n"
+    tables_schema_str = "\nHere are the tables and schemas if available\n"
     for source in sources:
         for table in source.get_tables():
             tables_to_source[table] = source
             if isinstance(source, DuckDBSource) and source.ephemeral:
-                schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=1)
-                tables_schema_str += f"### {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n"
+                sql = source.get_sql_expr(table)
+                schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=3)
+                tables_schema_str += f"- {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
             else:
-                tables_schema_str += f"### {table}\n"
-    return tables_to_source, tables_schema_str
+                tables_schema_str += f"- {table}\n\n"
+    return tables_to_source, tables_schema_str.strip()
 
 
 def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: bool = False, show_length: bool = False):
