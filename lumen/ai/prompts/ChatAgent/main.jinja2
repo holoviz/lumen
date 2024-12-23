@@ -21,4 +21,8 @@ Available table schemas:
 {% elif table is defined and schema is defined %}
 - `{{ table }}`: {{ schema }}
 {% endif -%}
+Here was the plan that was executed:
+"""
+{{ memory.reasoning }}
+"""
 {% endblock -%}
