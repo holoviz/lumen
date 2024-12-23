@@ -550,7 +550,7 @@ def test_exec_python_exec_code_view_roundtrip():
     }
 
     reconstructed = ExecPythonView.from_spec(spec)
-    assert reconstructed.code == original_code
+    assert reconstructed.spec == original_code
 
     original_result = view.execute_code()
     reconstructed_result = reconstructed.execute_code()
