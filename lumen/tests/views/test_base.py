@@ -453,7 +453,7 @@ def test_panel_cross_reference_rx():
 
 def test_exec_python_basic_execution():
     view = ExecPythonView(
-        code='''"Hello World"'''
+        spec='''"Hello World"'''
     )
     result = view.execute_code()
     assert result == "Hello World"
@@ -462,7 +462,7 @@ def test_exec_python_basic_execution():
 def test_exec_python_holoviews_execution():
     """Test execution with HoloViews output"""
     view = ExecPythonView(
-        code="""
+        spec="""
         import numpy as np
         import holoviews as hv
 
@@ -478,7 +478,7 @@ def test_exec_python_holoviews_execution():
 def test_exec_python_inside_function_execution():
     """Test execution with HoloViews output"""
     view = ExecPythonView(
-        code="""
+        spec="""
         def plot():
             import numpy as np
             import holoviews as hv
@@ -495,7 +495,7 @@ def test_exec_python_inside_function_execution():
 
 def test_exec_python_error_handling():
     view = ExecPythonView(
-        code="""
+        spec="""
         this is not valid python
         """
     )
@@ -507,7 +507,7 @@ def test_exec_python_error_handling():
 def test_exec_python_panel_output():
     """Test that Panel objects are handled correctly"""
     view = ExecPythonView(
-        code="""
+        spec="""
         return pn.Column(
             pn.pane.Markdown("# Title"),
             pn.pane.Markdown("Content")
@@ -522,7 +522,7 @@ def test_exec_python_panel_output():
 
 def test_exec_python_indentation_handling():
     view = ExecPythonView(
-        code="""
+        spec="""
             x = 1
             y = 2
                 # Extra indented comment
@@ -541,7 +541,7 @@ def test_exec_python_exec_code_view_roundtrip():
     hv.Scatter(data)
     '''
 
-    view = ExecPythonView(code=original_code)
+    view = ExecPythonView(spec=original_code)
     spec = view.to_spec()
 
     assert spec == {
@@ -560,7 +560,7 @@ def test_exec_python_exec_code_view_roundtrip():
 
 def test_exec_python_return_statement():
     view = ExecPythonView(
-        code="""
+        spec="""
         x = 42
         return x
         """
@@ -571,7 +571,7 @@ def test_exec_python_return_statement():
 
 def test_exec_python_within_python_code_fence():
     view = ExecPythonView(
-        code="""
+        spec="""
         ```python
         x = 42
         return x
@@ -584,7 +584,7 @@ def test_exec_python_within_python_code_fence():
 
 def test_exec_python_multiple_code_fence():
     view = ExecPythonView(
-        code="""
+        spec="""
         Here's x
         ```python
         x = 42
@@ -607,7 +607,7 @@ def test_exec_python_pipeline_data_access(make_filesource):
     pipeline = Pipeline(source=source, filters=[cfilter], table='test')
     view = ExecPythonView(
         pipeline=pipeline,
-        code="""
+        spec="""
         return data["A"].sum()
         """
     )
@@ -617,7 +617,7 @@ def test_exec_python_pipeline_data_access(make_filesource):
 
 def test_exec_python_multiple_imports():
     view = ExecPythonView(
-        code="""
+        spec="""
         import numpy as np
         import pandas as pd
         arr = np.array([1, 2, 3])
