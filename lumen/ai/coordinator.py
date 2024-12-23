@@ -724,6 +724,7 @@ class Planner(Coordinator):
                 max_retries=3,
             )
             if reasoning.chain_of_thought:  # do not replace with empty string
+                self._memory["reasoning"] = reasoning.chain_of_thought
                 step.stream(reasoning.chain_of_thought, replace=True)
                 previous_plans.append(reasoning.chain_of_thought)
             requested = [
@@ -851,7 +852,7 @@ class Planner(Coordinator):
                 if attempts > 5:
                     istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
                     raise RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
-            self._memory['plan'] = plan
+            self._memory["plan"] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
