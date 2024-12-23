@@ -9,6 +9,10 @@ The `AnalysisAgent` will then invoke the custom `Analysis` when needed based on 
 As a basic example, the user may be a meteorologist and want to perform a `WindAnalysis`.
 
 ```python
+import numpy as np
+import pandas as pd
+import lumen.ai as lmai
+
 import param
 import numpy as np
 import pandas as pd
@@ -16,7 +20,7 @@ import lumen.ai as lmai
 from lumen.layout import Layout
 from lumen.transforms import Transform
 from lumen.sources.duckdb import DuckDBSource
-from lumen.views import hvPlotView, Table
+from lumen.views import hvPlotView, hvOverlayView, Table
 
 
 class WindSpeedDirection(Transform):
@@ -26,16 +30,13 @@ class WindSpeedDirection(Transform):
     v_component = param.String(default="v", doc="Column name of the meridional component")
 
     def apply(self, df):
-        # Calculate wind speed
         df["wind_speed"] = np.sqrt(
             df[self.u_component] ** 2 + df[self.v_component] ** 2
         )
-
         # Calculate wind direction in degrees (from north)
         df["wind_direction"] = np.degrees(
             np.arctan2(df[self.v_component], df[self.u_component])
         )
-
         # Ensure wind direction is in the range [0, 360)
         df["wind_direction"] = (df["wind_direction"] + 360) % 360
         return df
@@ -68,15 +69,18 @@ class WindAnalysis(lmai.Analysis):
         wind_table = Table(pipeline=wind_pipeline)
         return Layout(
             views=[
-                wind_speed_view,
-                wind_direction_view,
+                hvOverlayView(
+                    layers=[
+                        wind_speed_view,
+                        wind_direction_view
+                    ],
+                ),
                 wind_table,
             ],
-            layout=[[0, 1], [2]],
+            layout=[[0], [1]],
         )
 
-
-llm = lmai.llm.Llama()
+llm = lmai.llm.OpenAI()
 uv_df = pd.DataFrame({
     "time": pd.date_range('2024-11-11', '2024-11-22'),
     "u": np.random.rand(12),
@@ -87,3 +91,5 @@ analysis_agent = lmai.agents.AnalysisAgent(analyses=[WindAnalysis])
 ui = lmai.ExplorerUI(llm=llm, agents=[analysis_agent])
 ui.servable()
 ```
+
+In this example, the `WindAnalysis` calculates the wind speed and direction from the u and v components of wind, displaying both the table and meteogram.
