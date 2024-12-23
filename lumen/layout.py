@@ -565,6 +565,8 @@ class Layout(Component, Viewer):
                             view.pipeline.traverse('transforms') +
                             view.pipeline.traverse('sql_transforms')
                         )
+                    else:
+                        transforms = []
                     for transform in transforms:
                         if transform not in all_transforms and transform.controls:
                             controls.append(transform.control_panel)
