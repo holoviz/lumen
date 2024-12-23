@@ -19,6 +19,8 @@ from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.views.base import ExecPythonView
+
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
@@ -35,7 +37,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    JoinRequired, RetrySpec, Sql, TableJoins, VegaLiteSpec, make_table_model,
+    JoinRequired, PythonCodeSpec, RetrySpec, Sql, TableJoins, VegaLiteSpec,
+    make_table_model,
 )
 from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
@@ -898,6 +901,34 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 500}
+
+
+class PythonCodeAgent(BaseViewAgent):
+    """
+    Agent that generates Python code, commonly for visualizations.
+    """
+
+    purpose = param.String(default="""
+        Generates Python code based on the user's visualization request.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "response_model": PythonCodeSpec,
+                "template": PROMPTS_DIR / "PythonCodeAgent" / "main.jinja2"
+            },
+        }
+    )
+
+    view_type = ExecPythonView
+
+    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
+        memory['view'] = dict(await self._extract_spec({"code": spec}), type=self.view_type)
+
+    async def _extract_spec(self, spec: dict[str, Any]):
+        python_spec = spec["code"]
+        return {'spec': python_spec}
 
 
 class AnalysisAgent(LumenBaseAgent):
