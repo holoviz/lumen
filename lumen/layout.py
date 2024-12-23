@@ -560,13 +560,13 @@ class Layout(Component, Viewer):
                 for view in card.views:
                     if view.controls:
                         controls.append(view.control_panel)
+
+                    transforms = []
                     if view.pipeline is not None:
                         transforms = (
                             view.pipeline.traverse('transforms') +
                             view.pipeline.traverse('sql_transforms')
                         )
-                    else:
-                        transforms = []
                     for transform in transforms:
                         if transform not in all_transforms and transform.controls:
                             controls.append(transform.control_panel)
