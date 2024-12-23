@@ -19,7 +19,8 @@ class Serializer(MultiTypeComponent):
 
     @classmethod
     def deserialize(cls, data) -> dict[str, any]:
-        serialize_spec = dict(data.pop('serializer', {}))
+        data = dict(data)
+        serialize_spec = data.pop('serializer', {})
         serializer = cls.from_spec(serialize_spec)
         return serializer.deserialize(data)
 
