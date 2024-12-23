@@ -82,6 +82,16 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
 
 
+class PythonCodeSpec(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="Explain the thought process behind the code snippet."
+    )
+
+    code: str = Field(
+        description="The code snippet that answers the user query."
+    )
+
 
 class RetrySpec(BaseModel):
 

@@ -1,0 +1,25 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Help write a Python program that will satisfy the user's request.
+
+The following variables are already defined for you:
+- `pn`: The HoloViz Panel package.
+- `pipeline`: The current pipeline, if it's avaialble.
+- `data`: The current data from the pipeline, if it's available.
+
+Be sure to import any necessary libraries used in the code.
+If no `return` statement is present, the last line of the code will be returned.
+Prefer quotations `"` over apostrophes `'` in Python code.
+{% endblock %}
+
+{%- block examples %}
+If the user asks to plot a line chart of the pipeline, do not call plt.show():
+
+'''
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+ax.plot(data["x"], data["y"])
+fig
+'''
+{% endblock %}
