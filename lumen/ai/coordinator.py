@@ -676,7 +676,8 @@ class Planner(Coordinator):
             if table in provided:
                 continue
             provided.append(table)
-            schema_info += f'- {table}: {cache[table]}\n\n'
+            schema = cache[table]
+            schema_info += f'- {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n'
         return schema_info
 
     async def _make_plan(
@@ -726,7 +727,7 @@ class Planner(Coordinator):
                 step.stream(reasoning.chain_of_thought, replace=True)
                 previous_plans.append(reasoning.chain_of_thought)
             requested = [
-                t for t in getattr(reasoning, 'tables', [])
+                t for t in getattr(reasoning, 'requested_tables', [])
                 if t and t not in provided
             ]
 
