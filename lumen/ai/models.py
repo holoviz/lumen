@@ -58,7 +58,7 @@ class Sql(BaseModel):
 
     query: str = Field(description="""
         Correct, valid SQL query that answers the user's query and is based on
-        the chain of thought. If the query is complex, please leave inlined comments.""")
+        the chain of thought; do NOT add extraneous comments.""")
 
 
 class Validity(BaseModel):
