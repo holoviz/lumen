@@ -519,7 +519,7 @@ class Coordinator(Viewer, Actor):
             invalidation = await self._invalidate_memory(messages)
             if invalidation:
                 messages = mutate_user_message(
-                    f"Please be aware, {invalidation['table']!r} was invalidated because {invalidation['assessment']!r}",
+                    f"Please be aware the prior, current table, {invalidation['table']!r}, was invalidated because {invalidation['assessment']!r}",
                     messages[-3:]
                 )
 
