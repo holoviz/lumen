@@ -14,8 +14,7 @@ from typing import (
 
 import param
 
-from _griffe.enumerations import DocstringSectionKind
-from _griffe.models import Docstring
+from griffe import Docstring, DocstringSectionKind
 from pydantic import BaseModel, ConfigDict, create_model
 from pydantic._internal import _typing_extra
 from pydantic.fields import FieldInfo, PydanticUndefined
