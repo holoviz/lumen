@@ -44,7 +44,8 @@ class Sql(BaseModel):
         If it's simple, just provide one step. However, if applicable, be sure to carefully
         study the schema, discuss the values in the columns, and whether you need to
         wrangle the data before you can use it, before finally writing a correct and valid
-        SQL query that fully answers the user's query.
+        SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
+        Everything should be made as simple as possible, but no simpler.
         """
     )
 
@@ -104,10 +105,10 @@ def make_plan_models(experts_or_tools: list[str], tables: list[str]):
     )
     extras = {}
     if tables:
-        extras['tables'] = (
+        extras['requested_tables'] = (
             list[Literal[tuple(tables)]],
             FieldInfo(
-                description="A list of tables to load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
+                description="A list of the most relevant tables to explore and load into memory before coming up with a plan, based on the chain of thought. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
             )
         )
     reasoning = create_model(
@@ -115,7 +116,7 @@ def make_plan_models(experts_or_tools: list[str], tables: list[str]):
         chain_of_thought=(
             str,
             FieldInfo(
-                description="Describe at a high-level how the actions of each expert will solve the user query."
+                description="Describe at a high-level how the actions of each expert will solve the user query. If the user asks a question about data that is seemingly unavailable, please request to see tables' schemas."
             ),
         ),
         **extras

@@ -330,7 +330,7 @@ async def gather_table_sources(sources: list[Source]) -> tuple[dict[str, Source]
     and a markdown string of the tables and their schemas.
     """
     tables_to_source = {}
-    tables_schema_str = "\nHere are the tables and schemas if available\n"
+    tables_schema_str = ""
     for source in sources:
         for table in source.get_tables():
             tables_to_source[table] = source
