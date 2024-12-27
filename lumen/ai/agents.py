@@ -517,10 +517,10 @@ class SQLAgent(LumenBaseAgent):
                 last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
             system += (
-                "Your last query did not work as intended, expertly revise these errors:\n"
-                f"```python\n{errors}\n```\n\n"
-                "If the error is `syntax error at or near \")\"`, double check you used "
-                "table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
+                f"Your last query:\n```sql\n{last_query}\n```\ndid not work as intended, so your task is to "
+                f"expertly revise these errors:\n```python\n{errors}\n```\n\n"
+                f"If the error is `syntax error at or near \")\"`, double check you used "
+                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
             )
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
@@ -757,6 +757,41 @@ class BaseViewAgent(LumenBaseAgent):
         }
     )
 
+    @retry_llm_output()
+    async def _create_valid_spec(
+        self,
+        messages: list[Message],
+        system: str,
+        schema: dict[str, Any],
+        step_title: str | None = None,
+        errors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if errors:
+            errors = '\n'.join(errors)
+            system += (
+                f"\nNote, your last specification\n```json\n{self._last_output}\n```\n\ndid not work as intended, "
+                f"so your task is to expertly revise these errors:\n```python\n{errors}\n```\n"
+            )
+
+        model_spec = self.prompts["main"].get("llm_spec", "default")
+        output = await self.llm.invoke(
+            messages,
+            system=system,
+            model_spec=model_spec,
+            response_model=self._get_model("main", schema=schema),
+        )
+        self._last_output = dict(output)
+        spec = await self._extract_spec(self._last_output)
+        chain_of_thought = spec.pop("chain_of_thought", None)
+        if chain_of_thought:
+            with self.interface.add_step(
+                title=step_title or "Generating view...",
+                steps_layout=self._steps_layout
+            ) as step:
+                step.stream(chain_of_thought)
+        log_debug(f"{self.name} settled on spec: {spec!r}.")
+        return spec
+
     async def _extract_spec(self, spec: dict[str, Any]):
         return dict(spec)
 
@@ -789,25 +824,9 @@ class BaseViewAgent(LumenBaseAgent):
             view=self._memory.get('view'),
             doc=doc,
         )
-        model_spec = self.prompts["main"].get("llm_spec", "default")
-        output = await self.llm.invoke(
-            messages,
-            system=system_prompt,
-            model_spec=model_spec,
-            response_model=self._get_model("main", schema=schema),
-        )
-        spec = await self._extract_spec(dict(output))
-        chain_of_thought = spec.pop("chain_of_thought", None)
-        if chain_of_thought:
-            with self.interface.add_step(
-                title=step_title or "Generating view...",
-                steps_layout=self._steps_layout
-            ) as step:
-                step.stream(chain_of_thought)
-        log_debug(f"{self.name} settled on spec: {spec!r}.")
+        spec = self._create_valid_spec(messages, system_prompt, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
