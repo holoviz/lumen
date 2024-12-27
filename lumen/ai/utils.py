@@ -194,9 +194,9 @@ async def get_schema(
         if not include_enum:
             spec.pop("enum")
             continue
-        elif limit and len(spec["enum"]) > truncate_limit:
+        elif len(spec["enum"]) > truncate_limit:
             spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
-        elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
+        elif len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [f"(unknown; truncated to {get_kwargs['limit']} rows)"]
         # truncate each enum to 100 characters
         spec["enum"] = [enum if enum is None or len(enum) < 100 else f"{enum[:100]} ..." for enum in spec["enum"]]
