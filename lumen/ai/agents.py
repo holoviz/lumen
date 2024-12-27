@@ -824,7 +824,7 @@ class BaseViewAgent(LumenBaseAgent):
             view=self._memory.get('view'),
             doc=doc,
         )
-        spec = self._create_valid_spec(messages, system_prompt, schema, step_title)
+        spec = await self._create_valid_spec(messages, system_prompt, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
