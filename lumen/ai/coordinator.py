@@ -516,9 +516,12 @@ class Coordinator(Viewer, Actor):
                 max_user_messages=3
             )
 
-            invalidation_assessment = await self._invalidate_memory(messages)
-            if invalidation_assessment:
-                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages[-3:])
+            invalidation = await self._invalidate_memory(messages)
+            if invalidation:
+                messages = mutate_user_message(
+                    f"Please be aware, {invalidation['table']!r} was invalidated for because {invalidation['assessment']!r}",
+                    messages[-3:]
+                )
 
             agents = {agent.name[:-5]: agent for agent in self.agents}
             execution_graph = await self._compute_execution_graph(messages, agents)
@@ -675,7 +678,8 @@ class Planner(Coordinator):
             if table in provided:
                 continue
             provided.append(table)
-            schema_info += f'- {table}: {cache[table]}\n\n'
+            schema = cache[table]
+            schema_info += f'- {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n'
         return schema_info
 
     async def _make_plan(
@@ -726,7 +730,7 @@ class Planner(Coordinator):
                 step.stream(reasoning.chain_of_thought, replace=True)
                 previous_plans.append(reasoning.chain_of_thought)
             requested = [
-                t for t in getattr(reasoning, 'tables', [])
+                t for t in getattr(reasoning, 'requested_tables', [])
                 if t and t not in provided
             ]
 
