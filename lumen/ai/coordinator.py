@@ -358,7 +358,7 @@ class Coordinator(Viewer, Actor):
                 self._memory.pop("data", None)
                 self._memory.pop("pipeline", None)
                 log_debug("\033[91mInvalidated SQL from memory.\033[0m")
-            return output.correct_assessment
+            return {"table": table, "assessment": output.correct_assessment}
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         log_debug("\033[94mNEW\033[0m", show_sep=True)
@@ -516,9 +516,12 @@ class Coordinator(Viewer, Actor):
                 max_user_messages=3
             )
 
-            invalidation_assessment = await self._invalidate_memory(messages)
-            if invalidation_assessment:
-                messages = mutate_user_message(f"Please be aware: {invalidation_assessment!r}", messages[-3:])
+            invalidation = await self._invalidate_memory(messages)
+            if invalidation:
+                messages = mutate_user_message(
+                    f"Please be aware the prior, current table, {invalidation['table']!r}, was invalidated because {invalidation['assessment']!r}",
+                    messages[-3:]
+                )
 
             agents = {agent.name[:-5]: agent for agent in self.agents}
             execution_graph = await self._compute_execution_graph(messages, agents)
