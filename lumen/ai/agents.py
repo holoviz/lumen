@@ -710,7 +710,8 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source = {table: source}
         if join_required is None:
             join_required = await self._check_requires_joins(messages, schema, table)
-            if join_required is None:  # TODO: what is this for? can we remove?
+            if join_required is None:
+                # Bail if query was cancelled or errored out
                 return None
             if join_required:
                 tables_to_source = await self.find_join_tables(messages)
