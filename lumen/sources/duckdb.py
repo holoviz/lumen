@@ -209,8 +209,10 @@ class DuckDBSource(BaseSQLSource):
             return source
         existing = self.get_tables()
         for table, sql_expr in tables.copy().items():
-            if table in existing or sql_expr == self.sql_expr.format(table=f'"{table}"'):
+            if sql_expr == self.sql_expr.format(table=f'"{table}"'):
                 continue
+            if table in existing:
+                self._connection.execute(f'DROP TABLE IF EXISTS "{table}"')
             table_expr = f'CREATE TEMP TABLE "{table}" AS ({sql_expr})'
             try:
                 self._connection.execute(table_expr)
@@ -219,7 +221,7 @@ class DuckDBSource(BaseSQLSource):
                 match = re.search(pattern, str(e))
                 if match and isinstance(self.tables, dict):
                     name = match.group(1)
-                    real = self.tables[name]
+                    real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
                     if 'select' not in real.lower() and not real.startswith('"'):
                         real = f'"{real}"'
                     else:
