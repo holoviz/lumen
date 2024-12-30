@@ -36,7 +36,7 @@ CAST or TO_DATE
 - Try to pretty print the SQL output with newlines and indentation.
 - Specify data types explicitly to avoid type mismatches.
 - Handle NULL values using functions like COALESCE or IS NULL.
-- Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, if necessary.
+- Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, only if needed.
 - Use parameterized queries to prevent SQL injection attacks.
 - Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts.
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.

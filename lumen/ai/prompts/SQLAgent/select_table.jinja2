@@ -2,10 +2,11 @@
 
 {% block instructions %}
 Select the most appropriate table to use in the SQL query to answer the user's question.
+Note the table names may be outdated or incorrect, so check the schemas for the most
+accurate information if it's available.
 {% endblock %}
 
 {% block context %}
-Here are the table schemas:
-
+Here are the tables (and schemas if available):
 {{ tables_schema_str }}
 {% endblock %}
