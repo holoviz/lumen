@@ -106,26 +106,6 @@ source = DuckDBSource(tables=tables)
 lmai.ExplorerUI(source).servable()
 ```
 
-### Intake
-
-Using Intake is also supported. You can supply a URI to where your catalog exists, or build an
-inline catalog for Lumen AI to access.
-
-```python
-import lumen.ai as lmai
-from intake.catalog.local import LocalCatalogEntry
-from lumen.sources.intake import IntakeSource
-
-# Inline catalog
-catalog = {
-    "penguins": LocalCatalogEntry(name="penguins", description="Palmer penguins", args=...),
-    "earthquakes": LocalCatalogEntry(name="earthquakes"),
-}
-# URI to a catalog
-#catalog = "s3://bucket/data/cat*.yaml"
-lmai.ExplorerUI(catalog=catalog).servable
-```
-
 ## No local or remote data files
 
 The Panel apps and terminal commands above use local paths or URIs to hosted data files, however,
