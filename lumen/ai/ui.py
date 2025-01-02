@@ -335,6 +335,9 @@ class ExplorerUI(UI):
 
     async def _update_conversation(self, event=None, tab=None):
         active = self._explorations.active
+        if len(self._conversations) <= active:
+            return
+
         if tab is None:
             # When user switches tabs and coordinator is running
             # wait to switch the conversation context
