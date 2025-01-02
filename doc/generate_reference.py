@@ -21,6 +21,8 @@ import lumen.sources.intake_sql
 
 from lumen.ai.actor import Actor
 from lumen.ai.agents import Agent
+from lumen.ai.llm import Llm
+from lumen.ai.tools import Tool
 from lumen.base import MultiTypeComponent
 from lumen.dashboard import Auth, Config, Defaults
 from lumen.filters import Filter
@@ -31,7 +33,7 @@ from lumen.transforms import Transform
 from lumen.variables import Variable
 from lumen.views import View
 
-bases = [Agent, Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
+bases = [Agent, Llm, Tool, Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
 
 BASE_PATH = pathlib.Path(lumen.__file__).parent.parent
 REFERENCE_PATH = BASE_PATH / 'doc' / 'reference'

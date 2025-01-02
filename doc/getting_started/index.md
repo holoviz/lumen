@@ -26,7 +26,7 @@ Install Lumen in a few easy steps
 How to explore your data with Lumen AI
 :::
 
-:::{grid-item-card} {octicon}`zap;2em;sd-mr-1` Configuring Lumen AI
+:::{grid-item-card} {octicon}`gear;2em;sd-mr-1` Configuring Lumen AI
 :link: configuring_lumen_ai
 :link-type: doc
 
