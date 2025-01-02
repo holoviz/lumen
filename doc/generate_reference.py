@@ -18,6 +18,8 @@ import lumen
 import lumen.sources.intake
 import lumen.sources.intake_sql
 
+from lumen.ai.actor import Actor
+from lumen.ai.agents import Agent
 from lumen.base import MultiTypeComponent
 from lumen.dashboard import Auth, Config, Defaults
 from lumen.filters import Filter
@@ -28,7 +30,7 @@ from lumen.transforms import Transform
 from lumen.variables import Variable
 from lumen.views import View
 
-bases = [Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
+bases = [Agent, Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
 
 BASE_PATH = pathlib.Path(lumen.__file__).parent.parent
 REFERENCE_PATH = BASE_PATH / 'doc' / 'reference'
@@ -128,7 +130,7 @@ def generate_param_docs(base, component, gutter=3, margin=0):
         pobj = component.param[pname]
         ptype = type(pobj)
         pbadge = f'<span style="font-size: 1.25em;">{{bdg-dark}}`{pname}`'
-        if pname in component._required_keys:
+        if pname in getattr(component, '_required_keys', []):
             pbadge += '&emsp;&emsp;&emsp;{bdg-warning}`required`'
         pbadge += '</span>'
         pitems = []
@@ -189,7 +191,7 @@ def generate_automethods(component):
 
 def generate_page(base, component):
     title = f'# {component.__name__}'
-    if base is not component:
+    if base is not component and issubclass(component, MultiTypeComponent):
         ctype = getattr(component, f'{base.__name__.lower()}_type')
         title += f'&nbsp;&nbsp;{{bdg-primary}}`type: {ctype}`'
     title += '\n'
@@ -230,9 +232,9 @@ def generate_grid(base, gridspec='2 2 3 3', gutter=3, margin=0, rel=''):
             description = component.__doc__.split('\n')[1].strip()
         else:
             description = f'{name} {base.__name__}'
-        ctype = getattr(component, f'{base.__name__.lower()}_type')
-        badge = f'   {{bdg-primary}}`type: {ctype}`'
-        page += f':::{{grid-item-card}} {name} {badge}\n:link: {rel}{name}.html\n:shadow: md\n\n{description}\n:::\n\n'
+        ctype = getattr(component, f'{base.__name__.lower()}_type', None)
+        badge = f'   {{bdg-primary}}`type: {ctype}`' if ctype else ''
+        page += f':::{{grid-item-card}} {name}{badge}\n:link: {rel}{name}.html\n:shadow: md\n\n{description}\n:::\n\n'
     page += '::::'
     return page
 
@@ -245,16 +247,28 @@ def generate_multi_component_pages(base):
     index = generate_component_index(base)
     component_path = REFERENCE_PATH /  base.__name__.lower()
     component_path.mkdir(exist_ok=True, parents=True)
-    with open(component_path / 'index.md', 'w') as f:
-        f.write(index)
+    toc = ''
     for component in concrete_descendents(base).values():
         if component.__name__.startswith('_'):
             continue
         page = generate_page(base, component)
-        path = REFERENCE_PATH /  base.__name__.lower() / f'{component.__name__}.md'
+        name = component.__name__
+        path = REFERENCE_PATH /  base.__name__.lower() / f'{name}.md'
         print(f'Writing {path}.')
         with open(path, 'w') as f:
             f.write(page)
+        toc += f'{name}\n'
+    index += f"""
+
+```{{toctree}}
+---
+hidden: true
+---
+{toc[:-1]}
+```
+"""
+    with open(component_path / 'index.md', 'w') as f:
+        f.write(index)
     return page
 
 def generate_single_component_page(component):
@@ -265,21 +279,32 @@ def generate_single_component_page(component):
 
 def write_index(bases):
     page = '# Reference\n\n'
+    toc = ''
     for base in bases:
+        name = base.__name__
         if base.__doc__:
             description = base.__doc__.split("\n")[1].strip()
         else:
             description = None
-        if issubclass(base, MultiTypeComponent):
-            page += f'## [`{base.__name__}`]({base.__name__.lower()}/index)\n\n'
+        if issubclass(base, (Actor, MultiTypeComponent)):
+            page += f'## [`{name}`]({name.lower()}/index)\n\n'
             if description:
                 page += f'{description}\n\n'
             page += generate_grid(base, rel=f'{base.__name__.lower()}/')
             page += '\n\n'
         else:
-            page += f'## [`{base.__name__}`]({base.__name__})\n\n'
+            page += f'## [`{name}`]({name})\n\n'
             if description:
                 page += f'{description}\n\n'
+        toc += f'{name} <{name.lower()}/index>\n'
+    page += f"""
+```{{toctree}}
+---
+hidden: true
+---
+{toc[:-1]}
+```
+"""
     path = REFERENCE_PATH / 'index.md'
     with open(path, 'w') as f:
         f.write(page)
@@ -287,7 +312,7 @@ def write_index(bases):
 if __name__ == '__main__':
     REFERENCE_PATH.mkdir(exist_ok=True, parents=True)
     for component in bases:
-        if issubclass(component, MultiTypeComponent):
+        if issubclass(component, (Actor, MultiTypeComponent)):
             generate_multi_component_pages(component)
         else:
             generate_single_component_page(component)

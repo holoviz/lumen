@@ -43,7 +43,7 @@ Learn to create and use template prompts for influencing the AI's responses.
 :::
 
 ::::
-2
+
 ## Data Intake
 
 ::::{grid} 1 2 2 3
