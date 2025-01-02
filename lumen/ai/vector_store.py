@@ -105,7 +105,7 @@ class VectorStore(param.Parameterized):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
-        query_metadata: bool = True,
+        query_with_metadata: bool = True,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -115,7 +115,7 @@ class VectorStore(param.Parameterized):
             top_k: Number of top results to return.
             filters: Optional metadata filters.
             threshold: Minimum similarity score required for a result to be included.
-            query_metadata: Whether to additionally query by metadata, i.e. include metadata in the text for querying.
+            query_with_metadata: Whether to additionally query by metadata, i.e. include metadata in the text for querying.
 
         Returns:
             List of results with 'id', 'text', 'metadata', 'text_and_metadata', and 'similarity' score.
@@ -157,7 +157,7 @@ class NumpyVectorStore(VectorStore):
     def __init__(self, **params):
         super().__init__(**params)
         self.content_vectors = np.empty((0, self.vocab_size), dtype=np.float32)
-        self.metadata_vectors = np.empty((0, self.vocab_size), dtype=np.float32)
+        self.text_and_metadata_vectors = np.empty((0, self.vocab_size), dtype=np.float32)
         self.texts: list[str] = []
         self.text_and_metadatas: list[str] = []
         self.metadata: list[dict] = []
@@ -231,7 +231,7 @@ class NumpyVectorStore(VectorStore):
         content_embeddings = np.array(
             self.embeddings.embed(all_texts), dtype=np.float32
         )
-        metadata_embeddings = np.array(
+        text_and_metadata_embeddings = np.array(
             self.embeddings.embed(all_text_and_metadatas), dtype=np.float32
         )
 
@@ -242,10 +242,10 @@ class NumpyVectorStore(VectorStore):
             if len(self.content_vectors) > 0
             else content_embeddings
         )
-        self.metadata_vectors = (
-            np.vstack([self.metadata_vectors, metadata_embeddings])
-            if len(self.metadata_vectors) > 0
-            else metadata_embeddings
+        self.text_and_metadata_vectors = (
+            np.vstack([self.text_and_metadata_vectors, text_and_metadata_embeddings])
+            if len(self.text_and_metadata_vectors) > 0
+            else text_and_metadata_embeddings
         )
         self.texts.extend(all_texts)
         self.text_and_metadatas.extend(all_text_and_metadatas)
@@ -260,7 +260,7 @@ class NumpyVectorStore(VectorStore):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
-        query_metadata: bool = True,
+        query_with_metadata: bool = True,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -270,13 +270,13 @@ class NumpyVectorStore(VectorStore):
             top_k: Number of top results to return.
             filters: Optional metadata filters.
             threshold: Minimum similarity score required for a result to be included.
-            query_metadata: Whether to additionally query by metadata, i.e. include metadata in the text for querying.
+            query_with_metadata: Whether to additionally query by metadata, i.e. include metadata in the text for querying.
 
         Returns:
             List of results with 'id', 'text', 'metadata', 'text_and_metadata', and 'similarity' score.
         """
         query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
-        vectors = self.metadata_vectors if query_metadata else self.content_vectors
+        vectors = self.text_and_metadata_vectors if query_with_metadata else self.content_vectors
         similarities = self._cosine_similarity(query_embedding, vectors)
 
         if filters and len(vectors) > 0:
@@ -361,7 +361,7 @@ class NumpyVectorStore(VectorStore):
                 keep_mask[idx] = False
 
         self.content_vectors = self.content_vectors[keep_mask]
-        self.metadata_vectors = self.metadata_vectors[keep_mask]
+        self.text_and_metadata_vectors = self.text_and_metadata_vectors[keep_mask]
         self.texts = [text for i, text in enumerate(self.texts) if keep_mask[i]]
         self.text_and_metadatas = [
             text for i, text in enumerate(self.text_and_metadatas) if keep_mask[i]
@@ -372,7 +372,7 @@ class NumpyVectorStore(VectorStore):
     def clear(self) -> None:
         """Clear all items from the vector store."""
         self.content_vectors = np.empty((0, self.vocab_size), dtype=np.float32)
-        self.metadata_vectors = np.empty((0, self.vocab_size), dtype=np.float32)
+        self.text_and_metadata_vectors = np.empty((0, self.vocab_size), dtype=np.float32)
         self.texts = []
         self.text_and_metadatas = []
         self.metadata = []
@@ -451,7 +451,7 @@ class DuckDBVectorStore(VectorStore):
                 all_metadata.append(metadata)
 
         content_embeddings = self.embeddings.embed(all_texts)
-        metadata_embeddings = self.embeddings.embed(all_text_and_metadatas)
+        text_and_metadata_embeddings = self.embeddings.embed(all_text_and_metadatas)
 
         text_ids = []
         for i in range(len(all_texts)):
@@ -464,7 +464,7 @@ class DuckDBVectorStore(VectorStore):
                     all_texts[i],
                     all_text_and_metadatas[i],
                     np.array(content_embeddings[i], dtype=np.float32).tolist(),
-                    np.array(metadata_embeddings[i], dtype=np.float32).tolist(),
+                    np.array(text_and_metadata_embeddings[i], dtype=np.float32).tolist(),
                     json.dumps(all_metadata[i]),
                 ],
             )
@@ -482,7 +482,7 @@ class DuckDBVectorStore(VectorStore):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
-        query_metadata: bool = True,
+        query_with_metadata: bool = True,
     ) -> list[dict]:
         """
         Query the DuckDB vector store for similar items.
@@ -492,7 +492,7 @@ class DuckDBVectorStore(VectorStore):
             top_k: Number of top results to return.
             filters: Optional metadata filters.
             threshold: Minimum similarity score required for a result to be included.
-            query_metadata: Whether to additionally query by metadata, i.e. include metadata in the text for querying.
+            query_with_metadata: Whether to additionally query by metadata, i.e. include metadata in the text for querying.
 
         Returns:
             List of results with 'id', 'text', 'text_and_metadata', 'metadata', and 'similarity' score.
@@ -501,7 +501,7 @@ class DuckDBVectorStore(VectorStore):
             self.embeddings.embed([text])[0], dtype=np.float32
         ).tolist()
         embedding_column = (
-            "metadata_embedding" if query_metadata else "content_embedding"
+            "metadata_embedding" if query_with_metadata else "content_embedding"
         )
 
         base_query = f"""
