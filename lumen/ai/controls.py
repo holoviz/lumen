@@ -4,7 +4,6 @@ import zipfile
 import pandas as pd
 import param
 
-from markitdown import MarkItDown
 from panel.layout import (
     Column, FlexBox, Row, Tabs,
 )
@@ -123,9 +122,8 @@ class SourceControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
-
-        self._markitdown = MarkItDown()
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
+        self._markitdown = None
         self._file_input = FileDropper(
             height=100,
             multiple=self.param.multiple,
@@ -278,6 +276,9 @@ class SourceControls(Viewer):
         file: io.BytesIO,
         document_controls: DocumentControls
     ):
+        if self._markitdown is None:
+            from markitdown import MarkItDown
+            self._markitdown = MarkItDown()
         text = self._markitdown.convert_stream(
             file, file_extension=document_controls.extension
         ).text_content
