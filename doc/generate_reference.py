@@ -15,6 +15,7 @@ param.parameterized.docstring_describe_params = False
 from param import concrete_descendents
 
 import lumen
+import lumen.sources.duckdb
 import lumen.sources.intake
 import lumen.sources.intake_sql
 
