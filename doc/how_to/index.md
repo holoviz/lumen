@@ -7,6 +7,13 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 ::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
+:::{grid-item-card} {octicon}`cache;2.5em;sd-mr-1` Custom Data Sources
+:link: ai_config/custom_data_source
+:link-type: doc
+
+Learn how to configure custom data sources, to connect with databases or local and remote files, when working with Lumen AI.
+:::
+
 :::{grid-item-card} {octicon}`tools;2.5em;sd-mr-1` Custom Agents
 :link: ai_config/custom_agents
 :link-type: doc
