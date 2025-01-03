@@ -98,7 +98,7 @@ class RetrySpec(BaseModel):
 class RelevantFiles(BaseModel):
 
     files: list[str] = Field(
-        description="List of relevant files that are related to the user query."
+        description="List of relevant files that are related to the user query. Can be empty if no files are relevant."
     )
 
 
