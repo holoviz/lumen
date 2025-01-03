@@ -243,7 +243,7 @@ class NumpyVectorStore(VectorStore):
             sorted_indices = np.argsort(similarities)[::-1]
             for idx in sorted_indices:
                 similarity = similarities[idx]
-                if similarity < threshold:
+                if similarity <= threshold:
                     continue
                 results.append(
                     {
@@ -346,7 +346,7 @@ class DuckDBVectorStore(VectorStore):
         """Set up the DuckDB database with necessary tables and indexes."""
         self.connection.execute("INSTALL 'vss';")
         self.connection.execute("LOAD 'vss';")
-
+        self.connection.execute("SET hnsw_enable_experimental_persistence = true;")
         self.connection.execute("CREATE SEQUENCE IF NOT EXISTS documents_id_seq;")
 
         self.connection.execute(
@@ -433,7 +433,7 @@ class DuckDBVectorStore(VectorStore):
 
         base_query = f"""
             SELECT id, text, metadata,
-                   1 - array_distance(embedding, ?::FLOAT[{self.vocab_size}], 'cosine') AS similarity
+                   1 - array_distance(embedding, ?::FLOAT[{self.vocab_size}]) AS similarity
             FROM documents
             WHERE 1=1
         """
@@ -445,7 +445,7 @@ class DuckDBVectorStore(VectorStore):
                 base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
                 params.append(str(value))
 
-        base_query += f" AND 1 - array_distance(embedding, ?::FLOAT[{self.vocab_size}], 'cosine') >= ?"
+        base_query += f" AND 1 - array_distance(embedding, ?::FLOAT[{self.vocab_size}]) >= ?"
         params.extend([query_embedding, threshold])
 
         base_query += """
@@ -525,6 +525,10 @@ class DuckDBVectorStore(VectorStore):
         self.connection.execute(query, ids)
 
     def clear(self) -> None:
-        """Clear all items from the DuckDB vector store."""
-        self.connection.execute("DELETE FROM documents;")
-        self.connection.execute("ALTER SEQUENCE documents_id_seq RESTART WITH 1;")
+        """
+        Clear all entries from both tables and reset sequence by dropping/recreating everything.
+        """
+        self.connection.execute("DROP TABLE IF EXISTS metadata_embeddings;")
+        self.connection.execute("DROP TABLE IF EXISTS documents;")
+        self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
+        self._setup_database()
