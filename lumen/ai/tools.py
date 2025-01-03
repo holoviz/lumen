@@ -13,6 +13,7 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
+from .models import RelevantFiles
 from .translate import function_to_model
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -62,6 +63,14 @@ class DocumentLookup(VectorLookupTool):
     requires = param.List(default=["document_sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "DocumentLookup" / "main.jinja2",
+                "response_model": RelevantFiles,
+            },
+        }
+    )
     def __init__(self, **params):
         super().__init__(**params)
         self._memory.on_change('document_sources', self._update_vector_store)
@@ -74,7 +83,17 @@ class DocumentLookup(VectorLookupTool):
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = re.findall(r"'(.*?)'", messages[-1]["content"])[0]
-        results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
+        filenames = self.vector_store.unique_metadata(key="filename")
+        relevant_files_model = self._lookup_prompt_key("main", "response_model")
+        system = await self._render_prompt("main", messages=messages, filenames=filenames)
+        result = await self.llm.invoke(messages, system=system, response_model=relevant_files_model)
+        if result.files:
+            filters = {"filename": result.files}
+            threshold = 0
+        else:
+            filters = None
+            threshold = self.min_similarity
+        results = self.vector_store.query(query, top_k=self.n, threshold=threshold, filters=filters)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
             for result in results

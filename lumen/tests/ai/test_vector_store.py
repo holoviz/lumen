@@ -27,20 +27,32 @@ class VectorStoreTestKit:
     @pytest.fixture
     def store_with_three_docs(self, store):
         """
-        Returns a store preloaded with three documents for convenience.
+        Returns a store preloaded with three (or more) documents for convenience.
         """
         items = [
             {
-                "text": "Food: $10, Drinks: $5, Total: $15",
-                "metadata": {"title": "receipt", "department": "accounting"},
+                "text": "Food: $10, Drinks: $5, Total: $15. Find important info about a.dat here.",
+                "metadata": {
+                    "title": "receipt",
+                    "department": "accounting",
+                    "filename": "a.dat",
+                },
             },
             {
-                "text": "In the org chart, the CEO reports to the board.",
-                "metadata": {"title": "org_chart", "department": "management"},
+                "text": "In the org chart, the CEO reports to the board. Another doc referencing b.csv.",
+                "metadata": {
+                    "title": "org_chart",
+                    "department": "management",
+                    "filename": "b.csv",
+                },
             },
             {
                 "text": "A second receipt with different details",
-                "metadata": {"title": "receipt", "department": "accounting"},
+                "metadata": {
+                    "title": "receipt",
+                    "department": "accounting",
+                    # no filename here, intentionally
+                },
             },
         ]
         store.add(items)
@@ -78,6 +90,34 @@ class VectorStoreTestKit:
         assert len(results) == 1
         assert results[0]["metadata"]["title"] == "org_chart"
         assert "CEO" in results[0]["text"]
+
+    def test_query_with_filter_filename_single_and_multi(self, store_with_three_docs):
+        # Query text that should match documents containing certain keywords
+        query_text = "Find important info"
+
+        # 1. Query with no filters
+        results = store_with_three_docs.query(query_text)
+        assert len(results) >= 1, "Should have at least one result without filtering."
+        # Optional: if you know the first doc is 'a.dat'
+        # assert results[0]["metadata"]["filename"] == "a.dat"
+        # assert "important info" in results[0]["text"].lower()
+
+        # 2. Query with a single-value filter
+        #    Testing that we only retrieve documents where 'filename' == 'a.dat'
+        single_filter_results = store_with_three_docs.query(
+            query_text, filters={"filename": "a.dat"}
+        )
+        assert len(single_filter_results) >= 1, "Should find doc(s) matching filename=a.dat."
+        for res in single_filter_results:
+            assert res["metadata"]["filename"] == "a.dat"
+            # assert "important info" in res["text"].lower()
+
+        # 3. Query with a multi-value filter
+        #    Testing that we retrieve documents where 'filename' is either 'a.dat' or 'b.csv'
+        multi_filter_results = store_with_three_docs.query(
+            query_text, filters={"filename": ["a.dat", "b.csv"]}, threshold=-1
+        )
+        assert len(multi_filter_results) >= 2, "Should find docs matching a.dat or b.csv."
 
     def test_query_empty_store(self, empty_store):
         results = empty_store.query("some query")
@@ -224,6 +264,22 @@ class VectorStoreTestKit:
         assert len(results) <= 5
         found_doc1 = any("large_document_1" in r["metadata"].get("title", "") for r in results)
         assert found_doc1, "Expected to find at least one chunk belonging to doc1"
+
+    def test_unique_metadata(self, store_with_three_docs):
+        """
+        Test the unique_metadata() method, both with and without the optional `key`.
+        """
+        distinct_metadata = store_with_three_docs.unique_metadata()
+        assert len(distinct_metadata) == 3, f"Expected 3 distinct metadata dicts, got {len(distinct_metadata)}"
+
+        # 2) Test retrieving distinct values for a specific key, e.g. 'title'
+        titles = store_with_three_docs.unique_metadata(key="title")
+        # We expect {'receipt', 'org_chart'}
+        assert set(titles) == {"receipt", "org_chart"}, f"Unexpected titles: {titles}"
+
+        # 3) Test retrieving distinct values for a key that doesn't exist
+        non_existent = store_with_three_docs.unique_metadata(key="non_existent_key")
+        assert non_existent == [], f"Expected empty list for non-existent key, got {non_existent}"
 
 
 class TestNumpyVectorStore(VectorStoreTestKit):
