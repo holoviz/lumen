@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 import param
@@ -29,10 +31,10 @@ class VectorLookupTool(Tool):
     chunks.
     """
 
-    min_similarity = param.Number(default=0.1, doc="""
+    min_similarity = param.Number(default=0.05, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=3, bounds=(0, None), doc="""
+    n = param.Integer(default=8, bounds=(0, None), doc="""
         The number of document results to return.""")
 
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
@@ -67,12 +69,13 @@ class DocumentLookup(VectorLookupTool):
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
-            if not self.vector_store.query(source["text"], threshold=1):
-                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
+            if not self.vector_store.query(source["text"], doc_threshold=1):
+                self.vector_store.add([{"text": source["text"], "metadata": {"comments": source.get("metadata", "")}}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
-        query = messages[-1]["content"]
-        results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
+        query = re.findall(r"'(.*?)'", messages[-1]["content"])[0]
+        print(query, "QUERY...")
+        results = self.vector_store.query(query, top_k=self.n, doc_threshold=self.min_similarity)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
             for result in results
@@ -109,7 +112,7 @@ class TableLookup(VectorLookupTool):
         for source in sources:
             for table in source.get_tables():
                 source_table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-                if not self.vector_store.query(source_table, threshold=1):
+                if not self.vector_store.query(source_table, doc_threshold=1):
                     self.vector_store.add([{"text": source_table}])
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
@@ -118,7 +121,7 @@ class TableLookup(VectorLookupTool):
         results = self.vector_store.query(
             messages[-1]["content"],
             top_k=self.n,
-            threshold=self.min_similarity,
+            doc_threshold=self.min_similarity,
         )
         for result in results:
             if SOURCE_TABLE_SEPARATOR not in result["text"]:
@@ -129,7 +132,7 @@ class TableLookup(VectorLookupTool):
 
         if not closest_tables:
             message = "No relevant tables found, but here are some other tables:\n"
-            results = self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
+            results = self.vector_store.query(messages[-1]["content"], top_k=self.n, doc_threshold=0)
             for result in results:
                 table_name = result["text"].split(SOURCE_TABLE_SEPARATOR, 1)[1]
                 closest_tables.append(table_name)
