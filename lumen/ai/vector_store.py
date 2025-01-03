@@ -433,7 +433,7 @@ class DuckDBVectorStore(VectorStore):
 
         base_query = f"""
             SELECT id, text, metadata,
-                   1 - array_distance(embedding, ?::FLOAT[{self.vocab_size}]) AS similarity
+                array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) AS similarity
             FROM documents
             WHERE 1=1
         """
@@ -441,11 +441,29 @@ class DuckDBVectorStore(VectorStore):
 
         if filters:
             for key, value in filters.items():
-                # Use json_extract_string for string comparison
-                base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
-                params.append(str(value))
+                if isinstance(value, list):
+                    if not all(isinstance(v, (str,int,float)) for v in value):
+                        print(f"Invalid value in filter {key}. Can only filter by string, integer or float.")
+                        return []
+                    placeholders = ", ".join("?" for _ in value)
+                    base_query += (
+                        f" AND json_extract_string(metadata, '$.{key}') IS NOT NULL "
+                        f"AND json_extract_string(metadata, '$.{key}') IN ({placeholders})"
+                    )
+                    params.extend([str(v) for v in value])
+                elif isinstance(value, (str,int,float)):
+                    # Single value equality check
+                    base_query += (
+                        f" AND json_extract_string(metadata, '$.{key}') IS NOT NULL "
+                        f"AND json_extract_string(metadata, '$.{key}') = ?"
+                    )
+                    params.append(str(value))
+                else:
+                    print(f"Invalid value in filter {key}. Can only filter by string, integer or float.")
+                    return []
 
-        base_query += f" AND 1 - array_distance(embedding, ?::FLOAT[{self.vocab_size}]) >= ?"
+
+        base_query += f" AND array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) >= ?"
         params.extend([query_embedding, threshold])
 
         base_query += """
@@ -454,17 +472,21 @@ class DuckDBVectorStore(VectorStore):
         """
         params.append(top_k)
 
-        result = self.connection.execute(base_query, params).fetchall()
+        try:
+            result = self.connection.execute(base_query, params).fetchall()
 
-        return [
-            {
-                "id": row[0],
-                "text": row[1],
-                "metadata": json.loads(row[2]),
-                "similarity": row[3],
-            }
-            for row in result
-        ]
+            return [
+                {
+                    "id": row[0],
+                    "text": row[1],
+                    "metadata": json.loads(row[2]),
+                    "similarity": row[3],
+                }
+                for row in result
+            ]
+        except duckdb.Error as e:
+            print(f"Error during query: {e}")
+            return []
 
     def filter_by(
         self, filters: dict, limit: int | None = None, offset: int = 0
