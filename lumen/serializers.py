@@ -46,9 +46,9 @@ class CSVSerializer(Serializer):
         }
 
     def deserialize(self, data) -> dict[str, any]:
-        data = StringIO(data['data'])
+        data_buf = StringIO(data['data'])
         df = pd.read_csv(
-            data, parse_dates=data['date_cols']
+            data_buf, parse_dates=data['date_cols']
         ).astype(data['dtypes'])
         index_cols = data['index']
         if index_cols:
