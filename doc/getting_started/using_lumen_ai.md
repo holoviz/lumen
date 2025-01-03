@@ -32,7 +32,7 @@ Datasets will be loaded into the LLM's memory and can be referred to in the chat
 
 ![](../_static/getting_started/using_lumen_ai_02.png)
 
-Upon uploading, a prompt will appear to ask the user to specify aliases for each file, and additionally metadata, if documents are uploaded. These aliases will be used to refer to the files in the chat while the metadata will be used to provide additional context to the LLMs on when to refer to the files.
+A prompt will appear during upload that asks the user to specify aliases for each file and any additional metadata. These aliases will be used to refer to the files in the chat, while the metadata will be used to provide additional context to the LLMs on when to refer to the files.
 
 ### Option B: Explore Table(s)
 
