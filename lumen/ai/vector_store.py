@@ -167,6 +167,37 @@ class NumpyVectorStore(VectorStore):
 
         return similarities
 
+    def unique_metadata(self, key: str | None = None) -> list:
+        """
+        Retrieve distinct metadata from in-memory storage.
+
+        If `key` is provided, return distinct values for that key
+        from all metadata dictionaries. Otherwise, return distinct
+        metadata dictionaries as a whole.
+
+        Args:
+            key: Optional JSON key within the metadata. If provided,
+                 only the distinct values of that key will be returned.
+
+        Returns:
+            A list of distinct metadata entries or distinct values for a
+            specific key.
+        """
+        if key is None:
+            # Distinct dictionaries. Since dicts are unhashable, we convert them to JSON.
+            distinct_metadata_strs = {
+                json.dumps(m, sort_keys=True) for m in self.metadata
+            }
+            return [json.loads(m_str) for m_str in distinct_metadata_strs]
+        else:
+            # Distinct values for the given `key`
+            distinct_values = set()
+            for m in self.metadata:
+                val = m.get(key, None)
+                if val is not None:
+                    distinct_values.add(val)
+            return list(distinct_values)
+
     def add(self, items: list[dict]) -> list[int]:
         """
         Add items to the vector store.
@@ -222,7 +253,7 @@ class NumpyVectorStore(VectorStore):
         Args:
             text: The query text.
             top_k: Number of top results to return.
-            filters: Optional metadata filters.
+            filters: Optional metadata filters (string or list of strings).
             threshold: Minimum similarity score required for a result to be included.
 
         Returns:
@@ -235,7 +266,12 @@ class NumpyVectorStore(VectorStore):
         if filters and len(self.vectors) > 0:
             mask = np.ones(len(self.vectors), dtype=bool)
             for key, value in filters.items():
-                mask &= np.array([item.get(key) == value for item in self.metadata])
+                if isinstance(value, list):
+                    # If value is a list, check if the metadata item's key is in that list
+                    mask &= np.array([item.get(key) in value for item in self.metadata])
+                else:
+                    # If value is a single item, check for direct equality
+                    mask &= np.array([item.get(key) == value for item in self.metadata])
             similarities = similarities * mask
 
         results = []
@@ -266,6 +302,7 @@ class NumpyVectorStore(VectorStore):
 
         Args:
             filters: Dictionary of metadata key-value pairs to filter by.
+                    (value can be a single string or a list of strings).
             limit: Maximum number of results to return. If None, returns all matches.
             offset: Number of results to skip (for pagination).
 
@@ -278,7 +315,10 @@ class NumpyVectorStore(VectorStore):
         # Create mask for matching items
         mask = np.ones(len(self.metadata), dtype=bool)
         for key, value in filters.items():
-            mask &= np.array([item.get(key) == value for item in self.metadata])
+            if isinstance(value, list):
+                mask &= np.array([item.get(key) in value for item in self.metadata])
+            else:
+                mask &= np.array([item.get(key) == value for item in self.metadata])
 
         # Get matching indices
         matching_indices = np.where(mask)[0]
@@ -367,6 +407,39 @@ class DuckDBVectorStore(VectorStore):
             """
         )
 
+    def unique_metadata(self, key: str | None = None) -> list:
+        """
+        Retrieve distinct metadata from the documents table.
+
+        If `key` is provided, return distinct values for that key
+        from all metadata dictionaries. Otherwise, return distinct
+        metadata dictionaries as a whole.
+
+        Args:
+            key: Optional JSON key within the metadata. If provided,
+                only the distinct values of that key will be returned.
+
+        Returns:
+            A list of distinct metadata entries or distinct values for a
+            specific key.
+        """
+        if key is None:
+            # Return entire JSON metadata objects
+            query = "SELECT DISTINCT metadata FROM documents;"
+            rows = self.connection.execute(query).fetchall()
+            # Each row is a one-element tuple containing the JSON string
+            return [json.loads(row[0]) for row in rows]
+        else:
+            # Return only the distinct metadata values for the given key
+            # e.g., key = "filename"
+            query = """
+                SELECT DISTINCT json_extract_string(metadata, ?) AS value
+                FROM documents;
+            """
+            rows = self.connection.execute(query, [f"$.{key}"]).fetchall()
+            # rows will be a list of one-element tuples; filter out any null values
+            return [row[0] for row in rows if row[0] is not None]
+
     def add(self, items: list[dict]) -> list[int]:
         """
         Add items to the DuckDB vector store.
@@ -414,7 +487,7 @@ class DuckDBVectorStore(VectorStore):
         text: str,
         top_k: int = 5,
         filters: dict | None = None,
-        threshold: float = 0.0,
+        threshold: float = -0.1,
     ) -> list[dict]:
         """
         Query the DuckDB vector store for similar items.
@@ -422,15 +495,17 @@ class DuckDBVectorStore(VectorStore):
         Args:
             text: The query text.
             top_k: Number of top results to return.
-            filters: Optional metadata filters.
+            filters: Optional metadata filters (single string or list of strings).
             threshold: Minimum similarity score required for a result to be included.
 
         Returns:
             List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
+        # Convert query text into an embedding
         query_embedding = self.embeddings.embed([text])[0]
         query_embedding = np.array(query_embedding, dtype=np.float32).tolist()
 
+        # Build the base query
         base_query = f"""
             SELECT id, text, metadata,
                 array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) AS similarity
@@ -439,6 +514,7 @@ class DuckDBVectorStore(VectorStore):
         """
         params = [query_embedding]
 
+        # Add filters to the query
         if filters:
             for key, value in filters.items():
                 if isinstance(value, list):
@@ -466,6 +542,7 @@ class DuckDBVectorStore(VectorStore):
         base_query += f" AND array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) >= ?"
         params.extend([query_embedding, threshold])
 
+        # Order by similarity and limit by top_k
         base_query += """
             ORDER BY similarity DESC
             LIMIT ?;
@@ -495,13 +572,15 @@ class DuckDBVectorStore(VectorStore):
         Filter items by metadata without using embeddings similarity.
 
         Args:
-            filters: Dictionary of metadata key-value pairs to filter by.
+            filters: Dictionary of metadata key-value pairs to filter by
+                     (value can be a single string or a list of strings).
             limit: Maximum number of results to return. If None, returns all matches.
             offset: Number of results to skip (for pagination).
 
         Returns:
             List of results with 'id', 'text', and 'metadata'.
         """
+        # Start building the base query
         base_query = """
             SELECT id, text, metadata
             FROM documents
@@ -511,22 +590,35 @@ class DuckDBVectorStore(VectorStore):
 
         # Add filters to query
         for key, value in filters.items():
-            base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
-            params.append(str(value))
+            if isinstance(value, list):
+                placeholders = ", ".join("?" for _ in value)
+                base_query += (
+                    f" AND json_extract_string(metadata, '$.{key}') "
+                    f"IN ({placeholders})"
+                )
+                params.extend(str(v) for v in value)
+            else:
+                base_query += (
+                    f" AND json_extract_string(metadata, '$.{key}') = ?"
+                )
+                params.append(str(value))
 
-        # Add offset and limit
+        # Add OFFSET if needed
         if offset:
             base_query += " OFFSET ?"
             params.append(offset)
 
+        # Add LIMIT if needed
         if limit is not None:
             base_query += " LIMIT ?"
             params.append(limit)
 
         base_query += ";"
 
+        # Execute and fetch
         result = self.connection.execute(base_query, params).fetchall()
 
+        # Construct the result list
         return [
             {"id": row[0], "text": row[1], "metadata": json.loads(row[2])}
             for row in result

@@ -95,6 +95,13 @@ class RetrySpec(BaseModel):
     )
 
 
+class RelevantFiles(BaseModel):
+
+    files: list[str] = Field(
+        description="List of relevant files that are related to the user query."
+    )
+
+
 def make_plan_models(experts_or_tools: list[str], tables: list[str]):
     step = create_model(
         "Step",

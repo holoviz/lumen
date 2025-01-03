@@ -1,0 +1,11 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions %}
+Help select the most relevant files.
+{% endblock -%}
+
+{%- block context %}
+{% for filename in filenames %}
+- {{ filename }}
+{% endfor %}
+{% endblock %}
