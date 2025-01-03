@@ -487,7 +487,7 @@ class DuckDBVectorStore(VectorStore):
         text: str,
         top_k: int = 5,
         filters: dict | None = None,
-        threshold: float = -0.1,
+        threshold: float = 0.0,
     ) -> list[dict]:
         """
         Query the DuckDB vector store for similar items.
