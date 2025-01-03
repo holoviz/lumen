@@ -283,7 +283,10 @@ class SourceControls(Viewer):
             file, file_extension=document_controls.extension
         ).text_content
 
-        metadata = f"Filename: {document_controls.filename} " + document_controls._metadata_input.value
+        metadata = {
+            "filename": document_controls.filename,
+            "comments": document_controls._metadata_input.value,
+        }
         document = {"text": text, "metadata": metadata}
         if "document_sources" in self._memory:
             self._memory["document_sources"].append(document)
