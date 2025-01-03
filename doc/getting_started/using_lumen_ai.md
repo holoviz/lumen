@@ -10,21 +10,19 @@ To get started with Lumen AI, users can launch the built-in chat interface throu
 lumen-ai serve
 ```
 
-Alternatively users can launch the chat interface with a pre-loaded source. Here, we load the `penguins` dataset from the HoloViz datasets.
+Alternatively users can launch the chat interface with a pre-loaded source. Here, we load the `penguins` dataset directly from the web:
 
 ```bash
-lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
+lumen-ai serve https://raw.githubusercontent.com/allisonhorst/palmerpenguins/refs/heads/main/inst/extdata/penguins.csv
 ```
 
 This will launch the chat interface on `localhost:5006`.
 
 ![](../_static/getting_started/using_lumen_ai_00.png)
 
-Upon loading the page, users have a few options to get started.
+Upon loading the page, users have a few options to get started, but [Option D: Chat](#option-d-chat) is the main way to interact with the LLM--all the other options are supplementary.
 
 ![](../_static/getting_started/using_lumen_ai_01.png)
-
-[Option D: Chat](#option-d-chat) is the main way to interact with the LLM--all the other options are supplementary.
 
 ### Option A: Upload Files
 
