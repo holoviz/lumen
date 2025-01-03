@@ -28,6 +28,8 @@ Upon loading the page, users have a few options to get started, but [Option D: C
 
 Upload additional files, such as datasets (CSVs, XLSX, Parquet, etc) and documents (DOCX, PDF, MD, etc), by dragging and dropping files or selecting them from the file browser.
 
+Datasets will be loaded into the LLM's memory and can be referred to in the chat to generate insights and visualizations, while documents will be converted to text and indexed for search, allowing the LLM to refer to them to enrich its responses.
+
 ![](../_static/getting_started/using_lumen_ai_02.png)
 
 Upon uploading, a prompt will appear to ask the user to specify aliases for each file, and additionally metadata, if documents are uploaded. These aliases will be used to refer to the files in the chat while the metadata will be used to provide additional context to the LLMs on when to refer to the files.
