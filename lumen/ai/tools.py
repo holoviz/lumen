@@ -73,8 +73,7 @@ class DocumentLookup(VectorLookupTool):
             if filename:
                 # overwrite existing items with the same filename
                 existing_items = self.vector_store.filter_by({'filename': filename})
-                existing_ids = [item['id'] for item in existing_items]
-                if existing_ids:
+                if existing_ids := [item['id'] for item in existing_items]:
                     self.vector_store.delete(existing_ids)
             self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
 
