@@ -52,7 +52,7 @@ class Sql(BaseModel):
     expr_slug: str = Field(
         description="""
         Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
-        e.g. top_5_athletes_gold_medals
+        e.g. top_5_athletes_gold_medals. The slug must be unique, i.e. should not match other existing table names or slugs.
         """
     )
 
