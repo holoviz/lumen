@@ -1,9 +1,15 @@
 import pytest
 
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
 from lumen.ai.embeddings import NumpyEmbeddings
 from lumen.ai.vector_store import DuckDBVectorStore, NumpyVectorStore
 
 
+@pytest.mark.xdist_group("vss")
 class VectorStoreTestKit:
     """
     A base class (test kit) that provides the *common* tests and fixture definitions.
