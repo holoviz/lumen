@@ -290,7 +290,7 @@ class SourceControls(Viewer):
         document = {"text": text, "metadata": metadata}
         if "document_sources" in self._memory:
             for i, source in enumerate(self._memory["document_sources"]):
-                if source["metadata"] == metadata:
+                if source.get("metadata", {})["filename"] == metadata["filename"]:
                     self._memory["document_sources"][i] = document
                     break
             else:
