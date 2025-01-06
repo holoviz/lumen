@@ -1,4 +1,4 @@
-# Getting Started with Lumen Spec
+# Getting Started
 
 This _Getting Started_ guide will go through the installation of Lumen, how to build an app, and describe the Lumen spec concepts.
 
@@ -32,8 +32,6 @@ Get an overview of the core concepts of Lumen
 ---
 hidden: true
 ---
-using_lumen_ai
-configuring_lumen_ai
 build_dashboard
 core_concepts
 pipelines

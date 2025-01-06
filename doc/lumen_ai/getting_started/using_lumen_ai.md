@@ -18,11 +18,11 @@ lumen-ai serve https://raw.githubusercontent.com/allisonhorst/palmerpenguins/ref
 
 This will launch the chat interface on `localhost:5006`.
 
-![](../_static/getting_started/using_lumen_ai_00.png)
+![](../../_static/getting_started/using_lumen_ai_00.png)
 
 Upon loading the page, users have a few options to get started, but [Option D: Chat](#option-d-chat) is the main way to interact with the LLM--all the other options are supplementary.
 
-![](../_static/getting_started/using_lumen_ai_01.png)
+![](../../_static/getting_started/using_lumen_ai_01.png)
 
 ### Option A: Upload Files
 
@@ -30,7 +30,7 @@ Upload additional files, such as datasets (CSVs, XLSX, Parquet, etc) and documen
 
 Datasets will be loaded into the LLM's memory and can be referred to in the chat to generate insights and visualizations, while documents will be converted to text and indexed for search, allowing the LLM to refer to them to enrich its responses.
 
-![](../_static/getting_started/using_lumen_ai_02.png)
+![](../../_static/getting_started/using_lumen_ai_02.png)
 
 A prompt will appear during upload that asks the user to specify aliases for each file and any additional metadata. These aliases will be used to refer to the files in the chat, while the metadata will be used to provide additional context to the LLMs on when to refer to the files.
 
@@ -38,7 +38,7 @@ A prompt will appear during upload that asks the user to specify aliases for eac
 
 If a dataset is available, whether pre-loaded or later uploaded, enter the name of the dataset and click "Explore table(s)".
 
-![](../_static/getting_started/using_lumen_ai_03.png)
+![](../../_static/getting_started/using_lumen_ai_03.png)
 
 This will allow users to create dynamic visualizations, analyze datasets, and build dashboards with [panel-graphic-walker](https://github.com/panel-extensions/panel-graphic-walker).
 
@@ -46,7 +46,7 @@ This will allow users to create dynamic visualizations, analyze datasets, and bu
 
 Start a conversation with the LLM by selecting a suggestion button, such as "Tell me about the dataset."
 
-![](../_static/getting_started/using_lumen_ai_04.png)
+![](../../_static/getting_started/using_lumen_ai_04.png)
 
 Selecting a suggestion will automatically send the message, and the LLM will respond accordingly.
 
@@ -54,7 +54,7 @@ Selecting a suggestion will automatically send the message, and the LLM will res
 
 Users can also type their own queries and send them to the LLM by pressing the "Send" button or pressing "Enter". This is the main way for the user to interact with the LLM.
 
-![](../_static/getting_started/using_lumen_ai_05.png)
+![](../../_static/getting_started/using_lumen_ai_05.png)
 
 The LLM will respond to the user's messages, providing insights, answering questions, and generating visualizations.
 
@@ -97,7 +97,7 @@ Given the nature of the LLMs, the results may vary between runs, and the LLM may
 
 If the LLM is not providing the expected results, or if the user simply wants to provide an update or feedback:
 
-![](../_static/getting_started/using_lumen_ai_06.png)
+![](../../_static/getting_started/using_lumen_ai_06.png)
 
 - Press the retry icon and provide feedback to prompt the LLM to retry. Under the hood, this will provide all the previous messages, the last attempt's output, and the user's feedback, to the LLM, but also use a larger, more capable model to regenerate a response.
 - Continue the conversation by sending a new message to the LLM. This will simply send the message to the LLM and receive a response, as usual.
@@ -109,7 +109,7 @@ All interaction outputs can be exported by clicking the "Download Lumen_Explorer
 
 To export only the current exploration's output, click the "Download <exploration_slug>.ipynb" button in the top right corner.
 
-![](../_static/getting_started/using_lumen_ai_07.png)
+![](../../_static/getting_started/using_lumen_ai_07.png)
 
 The notebook comprises several cells:
 

@@ -50,27 +50,41 @@ Get an overview of the core concepts of Lumen
 :link: lumen_spec/getting_started/pipelines
 :link-type: doc
 
-Discover how to build powerful data pipelines with with Lumen.
-:::
+```{toctree}
+:titlesonly:
+:hidden:
+:maxdepth: 2
 
-::::
+installation
+```
 
 ```{toctree}
----
-hidden: true
----
-Home <self>
-
+:titlesonly:
+:hidden:
+:maxdepth: 2
 :caption: Lumen AI
-Getting Started <lumen_ai/getting_started/index>
-How to <lumen_ai/how_to/index>
 
+lumen_ai/getting_started/index
+lumen_ai/how_to/index
+```
+
+```{toctree}
+:titlesonly:
+:hidden:
+:maxdepth: 2
 :caption: Lumen Spec
-Getting Started <lumen_spec/getting_started/index>
-How to <lumen_spec/how_to/index>
 
+lumen_spec/getting_started/index
+lumen_spec/how_to/index
+```
+
+```{toctree}
+:titlesonly:
+:hidden:
+:maxdepth: 2
 :caption: Lumen
-Gallery <gallery/index>
-Reference <reference/index>
-Background <background/index>
+
+gallery/index
+reference/index
+background/index
 ```

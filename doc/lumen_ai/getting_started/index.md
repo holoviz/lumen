@@ -1,4 +1,4 @@
-# Getting Started with Lumen AI
+# Getting Started
 
 This _Getting Started_ guide will go through the installation of Lumen, how to build an app, and describe Lumen AI concepts.
 

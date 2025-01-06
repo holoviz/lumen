@@ -8,7 +8,7 @@ This tutorial is meant to get your hands dirty with building a Lumen dashboard. 
 ```
 
 You will build a simple Lumen dashboard and deploy it in your browser. The result will look something like this:
-![](../_static/getting_started/build_app_07.png)
+![](../../_static/getting_started/build_app_07.png)
 
 ## 1. Create a YAML file
 
@@ -54,7 +54,7 @@ sources:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_00.png)
+![](../../_static/getting_started/build_app_00.png)
 :::
 
 ::::
@@ -91,7 +91,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_01.png)
+![](../../_static/getting_started/build_app_01.png)
 :::
 
 ::::
@@ -125,7 +125,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_02.png)
+![](../../_static/getting_started/build_app_02.png)
 :::
 
 ::::
@@ -160,7 +160,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_03.png)
+![](../../_static/getting_started/build_app_03.png)
 :::
 
 ::::
@@ -209,7 +209,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_04.png)
+![](../../_static/getting_started/build_app_04.png)
 :::
 
 ::::
@@ -265,7 +265,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_05.png)
+![](../../_static/getting_started/build_app_05.png)
 :::
 
 ::::
@@ -327,7 +327,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_06.png)
+![](../../_static/getting_started/build_app_06.png)
 :::
 
 ::::
@@ -395,7 +395,7 @@ layouts:
 
 :::{tab-item} Preview
 :sync: preview
-![](../_static/getting_started/build_app_07.png)
+![](../../_static/getting_started/build_app_07.png)
 :::
 
 ::::
