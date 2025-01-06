@@ -85,6 +85,13 @@ class VectorStoreTestKit:
         assert results[0]["metadata"]["title"] == "org_chart"
         assert "CEO" in results[0]["text"]
 
+    def test_query_0_threshold(self, store_with_three_docs):
+        text = "Food: $10, Drinks: $5, Total: $15"
+        metadata = {"title": "receipt", "department": "accounting"}
+        stored_embedding_text = store_with_three_docs._join_text_and_metadata(text, metadata)
+        results = store_with_three_docs.query(stored_embedding_text, threshold=1)
+        assert len(results) == 1
+
     def test_query_empty_store(self, empty_store):
         results = empty_store.query("some query")
         assert results == []

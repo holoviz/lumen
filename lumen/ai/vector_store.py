@@ -101,7 +101,6 @@ class VectorStore(param.Parameterized):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
-        query_with_metadata: bool = True,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -111,7 +110,6 @@ class VectorStore(param.Parameterized):
             top_k: Number of top results to return.
             filters: Optional metadata filters.
             threshold: Minimum similarity score required for a result to be included.
-            query_with_metadata: Whether to additionally query by metadata, i.e., include metadata in the text for querying.
 
         Returns:
             List of results with 'id', 'text', 'metadata', and 'similarity' score.
@@ -212,10 +210,10 @@ class NumpyVectorStore(VectorStore):
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
-            text_and_metadata = self._join_text_and_metadata(text, metadata)
 
             content_chunks = self._chunk_text(text)
             for chunk in content_chunks:
+                text_and_metadata = self._join_text_and_metadata(chunk, metadata)
                 all_texts.append(chunk)
                 all_metadata.append(metadata)
                 text_and_metadata_list.append(text_and_metadata)
@@ -240,7 +238,6 @@ class NumpyVectorStore(VectorStore):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
-        query_with_metadata: bool = True,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -250,35 +247,25 @@ class NumpyVectorStore(VectorStore):
             top_k: Number of top results to return.
             filters: Optional metadata filters.
             threshold: Minimum similarity score required for a result to be included.
-            query_with_metadata: Whether to additionally query by metadata, i.e., include metadata in the text for querying.
 
         Returns:
             List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
-        if query_with_metadata and filters:
-            metadata_text = " ".join(
-                f"({key}: {self._format_metadata_value(value)})"
-                for key, value in filters.items()
-            )
-            query_text = f"{text} {metadata_text}"
-        else:
-            query_text = text
-
-        query_embedding = np.array(self.embeddings.embed([query_text])[0], dtype=np.float32)
+        query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
 
         if filters and len(self.vectors) > 0:
             mask = np.ones(len(self.vectors), dtype=bool)
             for key, value in filters.items():
                 mask &= np.array([item.get(key) == value for item in self.metadata])
-            similarities = similarities * mask
+            similarities = np.where(mask, similarities, -1.0)  # make filtered similarity values == -1
 
         results = []
         if len(similarities) > 0:
             sorted_indices = np.argsort(similarities)[::-1]
             for idx in sorted_indices:
                 similarity = similarities[idx]
-                if similarity <= threshold:
+                if similarity < threshold:
                     continue
                 results.append(
                     {
@@ -290,6 +277,8 @@ class NumpyVectorStore(VectorStore):
                 )
                 if len(results) >= top_k:
                     break
+
+        print(results, "RESULTS", "ABC")
 
         return results
 
@@ -416,10 +405,10 @@ class DuckDBVectorStore(VectorStore):
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
-            text_and_metadata = self._join_text_and_metadata(text, metadata)
 
-            chunks = self._chunk_text(text)
-            for chunk in chunks:
+            content_chunks = self._chunk_text(text)
+            for chunk in content_chunks:
+                text_and_metadata = self._join_text_and_metadata(chunk, metadata)
                 all_texts.append(chunk)
                 all_metadata.append(metadata)
                 text_and_metadata_list.append(text_and_metadata)
@@ -453,7 +442,6 @@ class DuckDBVectorStore(VectorStore):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
-        query_with_metadata: bool = True,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -463,22 +451,12 @@ class DuckDBVectorStore(VectorStore):
             top_k: Number of top results to return.
             filters: Optional metadata filters.
             threshold: Minimum similarity score required for a result to be included.
-            query_with_metadata: Whether to additionally query by metadata, i.e., include metadata in the text for querying.
 
         Returns:
             List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
-        if query_with_metadata and filters:
-            metadata_text = " ".join(
-                f"({key}: {self._format_metadata_value(value)})"
-                for key, value in filters.items()
-            )
-            query_text = f"{text} {metadata_text}"
-        else:
-            query_text = text
-
         query_embedding = np.array(
-            self.embeddings.embed([query_text])[0], dtype=np.float32
+            self.embeddings.embed([text])[0], dtype=np.float32
         ).tolist()
 
         base_query = f"""
