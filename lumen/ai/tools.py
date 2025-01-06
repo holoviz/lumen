@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 import param
@@ -68,10 +70,10 @@ class DocumentLookup(VectorLookupTool):
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             if not self.vector_store.query(source["text"], threshold=1):
-                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", "")}])
+                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
-        query = messages[-1]["content"]
+        query = re.findall(r"'(.*?)'", messages[-1]["content"])[0]
         results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
