@@ -290,7 +290,6 @@ class SourceControls(Viewer):
         document = {"text": text, "metadata": metadata}
         if "document_sources" in self._memory:
             self._memory["document_sources"].append(document)
-            self._memory.trigger("document_sources")
         else:
             self._memory["document_sources"] = [document]
 

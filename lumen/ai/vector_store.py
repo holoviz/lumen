@@ -144,6 +144,9 @@ class VectorStore(param.Parameterized):
     def clear(self) -> None:
         """Clear all items from the vector store."""
 
+    @abstractmethod
+    def __len__(self) -> int:
+        """Return the number of items in the vector store."""
 
 class NumpyVectorStore(VectorStore):
     """Vector store implementation using NumPy for in-memory storage."""
@@ -277,9 +280,6 @@ class NumpyVectorStore(VectorStore):
                 )
                 if len(results) >= top_k:
                     break
-
-        print(results, "RESULTS", "ABC")
-
         return results
 
     def filter_by(
@@ -351,6 +351,9 @@ class NumpyVectorStore(VectorStore):
         self.metadata = []
         self.ids = []
         self._current_id = 0
+
+    def __len__(self) -> int:
+        return len(self.vectors)
 
 
 class DuckDBVectorStore(VectorStore):
@@ -562,3 +565,7 @@ class DuckDBVectorStore(VectorStore):
         self.connection.execute("DROP TABLE IF EXISTS documents;")
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
         self._setup_database()
+
+    def __len__(self) -> int:
+        result = self.connection.execute("SELECT COUNT(*) FROM documents;").fetchone()
+        return result[0]
