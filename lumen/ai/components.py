@@ -9,7 +9,7 @@ CSS = """
 }
 
 .gutter {
-    background-color: #eee;
+    background-color: var(--panel-surface-color);
     background-repeat: no-repeat;
     background-position: 50%;
     cursor: col-resize;
