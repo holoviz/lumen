@@ -478,14 +478,16 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
-        welcome_message = """
-        👋 **Start chatting to get started!**
+        welcome_message = Markdown(
+            """
+            👋 **Start chatting to get started!**
 
-        - Ask for summaries, ask for plots, ask for inspiration--query away!
-        - Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
-        - Download the chat into a reproducible notebook to share with others!
-        - Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
-        """
+            - Ask for summaries, ask for plots, ask for inspiration--query away!
+            - Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
+            - Download the chat into a reproducible notebook to share with others!
+            - Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
+            """
+        )
 
         return Column(
             welcome_message,
