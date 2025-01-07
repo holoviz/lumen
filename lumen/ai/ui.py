@@ -48,6 +48,23 @@ if TYPE_CHECKING:
 DataT = str | Path | Source | Pipeline
 
 
+OVERVIEW_INTRO = """
+👋 **Start chatting to get started!**
+
+- Ask for summaries, ask for plots, ask for inspiration--query away!
+- Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
+- Download the chat into a reproducible notebook to share with others!
+- Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
+"""
+
+EXPLORATIONS_INTRO = """
+🧪 **Explorations**
+
+- Explorations are queries of your original data.
+- They consist of interactive tables and visualizations.
+- Each exploration is saved as a new tab to allow for easy comparison.
+"""
+
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
@@ -301,18 +318,9 @@ class ExplorerUI(UI):
         self._root_conversation = self._coordinator.interface.objects
         self._conversations = []
 
-        explorations_message = Markdown(
-            """
-            🧪 **Explorations**
-
-            - Explorations are queries of your original data
-            - They consist of interactive tables and visualizations.
-            - Each exploration is saved as a new tab to allow for easy comparison.
-            """
-        )
         self._output = Tabs(
             ('Overview', self._table_explorer()),
-            ('Explorations', Column(explorations_message, self._explorations)),
+            ('Explorations', Column(EXPLORATIONS_INTRO, self._explorations)),
             design=Material
         )
         self._main = Column(
@@ -478,19 +486,8 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
-        welcome_message = Markdown(
-            """
-            👋 **Start chatting to get started!**
-
-            - Ask for summaries, ask for plots, ask for inspiration--query away!
-            - Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
-            - Download the chat into a reproducible notebook to share with others!
-            - Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
-            """
-        )
-
         return Column(
-            welcome_message,
+            OVERVIEW_INTRO,
             tabs,
             input_row,
             sizing_mode='stretch_both',
