@@ -207,13 +207,11 @@ class DuckDBSource(BaseSQLSource):
         source = type(self)(**params)
         if not materialize:
             return source
-        existing = self.get_tables()
+
         for table, sql_expr in tables.copy().items():
             if sql_expr == self.sql_expr.format(table=f'"{table}"'):
                 continue
-            if table in existing:
-                self._connection.execute(f'DROP TABLE IF EXISTS "{table}"')
-            table_expr = f'CREATE TEMP TABLE "{table}" AS ({sql_expr})'
+            table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
             try:
                 self._connection.execute(table_expr)
             except duckdb.CatalogException as e:
