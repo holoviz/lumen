@@ -567,6 +567,7 @@ class ExplorerUI(UI):
 
             async def render_output(_, old, new):
                 added = [out for out in new if out not in old]
+                index = self._explorations.active if len(self._explorations) else -1
                 exploration = self._explorations[index]
                 self._add_outputs(exploration, added, local_memory)
                 exploration.loading = False
