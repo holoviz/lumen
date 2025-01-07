@@ -1,4 +1,4 @@
-# {octicon}`desktop-download;2em;sd-mr-1` Installation
+# Installation
 
 ## Setup
 

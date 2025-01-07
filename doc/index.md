@@ -19,50 +19,72 @@ The declarative Lumen data model further sets it apart from other tools, making 
 :gutter: 1 1 1 2
 
 :::{grid-item-card} {octicon}`desktop-download;2em;sd-mr-1` Installation
-:link: getting_started/installation
+:link: installation
 :link-type: doc
 
 Install Lumen in a few easy steps
 :::
 
 :::{grid-item-card} {octicon}`zap;2em;sd-mr-1` Exploration with Lumen AI
-:link: getting_started/using_lumen_ai
+:link: lumen_ai/getting_started/using_lumen_ai
 :link-type: doc
 
 How to explore your data with Lumen AI.
 :::
 
-:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a dashboard
-:link: getting_started/build_dashboard
+:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a Lumen Spec dashboard
+:link: lumen_spec/getting_started/build_dashboard
 :link-type: doc
 
 How to build a Lumen dashboard
 :::
 
-:::{grid-item-card} {octicon}`mortar-board;2em;sd-mr-1` Core concepts
-:link: getting_started/core_concepts
+:::{grid-item-card} {octicon}`mortar-board;2em;sd-mr-1` Lumen Spec Core concepts
+:link: lumen_spec/getting_started/core_concepts
 :link-type: doc
 
 Get an overview of the core concepts of Lumen
 :::
 
-:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Data Pipelines
-:link: getting_started/pipelines
+:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Lumen Spec Data Pipelines
+:link: lumen_spec/getting_started/pipelines
 :link-type: doc
 
-Discover how to build powerful data pipelines with with Lumen.
-:::
+```{toctree}
+:titlesonly:
+:hidden:
+:maxdepth: 2
 
-::::
+installation
+```
 
 ```{toctree}
----
-hidden: true
----
-Home <self>
-Getting Started <getting_started/index>
-How to <how_to/index>
-Gallery <gallery/index>
-Reference <reference/index>
-Background <background/index>
+:titlesonly:
+:hidden:
+:maxdepth: 2
+:caption: Lumen AI
+
+lumen_ai/getting_started/index
+lumen_ai/how_to/index
+```
+
+```{toctree}
+:titlesonly:
+:hidden:
+:maxdepth: 2
+:caption: Lumen Spec
+
+lumen_spec/getting_started/index
+lumen_spec/how_to/index
+```
+
+```{toctree}
+:titlesonly:
+:hidden:
+:maxdepth: 2
+:caption: Lumen
+
+gallery/index
+reference/index
+background/index
 ```
