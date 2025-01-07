@@ -65,12 +65,17 @@ class DocumentLookup(VectorLookupTool):
     def __init__(self, **params):
         super().__init__(**params)
         self._memory.on_change('document_sources', self._update_vector_store)
-        self._update_vector_store(None, None, self._memory.get("document_sources", []))
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
-            if not self.vector_store.query(source["text"], threshold=1):
-                self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
+            metadata = source.get("metadata", {})
+            filename = metadata.get("filename")
+            if filename:
+                # overwrite existing items with the same filename
+                existing_items = self.vector_store.filter_by({'filename': filename})
+                if existing_ids := [item['id'] for item in existing_items]:
+                    self.vector_store.delete(existing_ids)
+            self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = re.findall(r"'(.*?)'", messages[-1]["content"])[0]

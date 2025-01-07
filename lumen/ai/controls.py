@@ -289,7 +289,12 @@ class SourceControls(Viewer):
         }
         document = {"text": text, "metadata": metadata}
         if "document_sources" in self._memory:
-            self._memory["document_sources"].append(document)
+            for i, source in enumerate(self._memory["document_sources"]):
+                if source.get("metadata", {})["filename"] == metadata["filename"]:
+                    self._memory["document_sources"][i] = document
+                    break
+            else:
+                self._memory["document_sources"].append(document)
             self._memory.trigger("document_sources")
         else:
             self._memory["document_sources"] = [document]

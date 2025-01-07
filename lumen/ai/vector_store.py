@@ -24,8 +24,63 @@ class VectorStore(param.Parameterized):
     )
 
     chunk_size = param.Integer(
-        default=512, doc="Maximum size of text chunks to split documents into."
+        default=1024, doc="Maximum size of text chunks to split documents into."
     )
+
+    def _format_metadata_value(self, value) -> str:
+        """Format a metadata value appropriately based on its type.
+
+        Args:
+            value: The metadata value to format.
+
+        Returns:
+            A string representation of the metadata value.
+        """
+        if isinstance(value, (list, tuple)):
+            return f"[{', '.join(str(v) for v in value)}]"
+        return str(value)
+
+    def _join_text_and_metadata(self, text: str, metadata: dict) -> str:
+        """Join text and metadata into a single string for embedding.
+
+        Args:
+            text: The main content text.
+            metadata: Dictionary of metadata.
+
+        Returns:
+            Combined text with metadata appended.
+        """
+        metadata_str = " ".join(
+            f"({key}: {self._format_metadata_value(value)})" for key, value in metadata.items()
+        )
+        return f"{text} {metadata_str}"
+
+    def _chunk_text(self, text: str) -> list[str]:
+        """Split text into chunks of size up to self.chunk_size.
+
+        Args:
+            text: The text to split.
+
+        Returns:
+            List of text chunks.
+        """
+        if self.chunk_size is None or len(text) <= self.chunk_size:
+            return [text]
+
+        words = text.split()
+        chunks = []
+        current_chunk = ""
+
+        for word in words:
+            if len(current_chunk) + len(word) + 1 <= self.chunk_size:
+                current_chunk += (" " + word) if current_chunk else word
+            else:
+                chunks.append(current_chunk)
+                current_chunk = word
+
+        if current_chunk:
+            chunks.append(current_chunk)
+        return chunks
 
     @abstractmethod
     def add(self, items: list[dict]) -> list[int]:
@@ -89,33 +144,9 @@ class VectorStore(param.Parameterized):
     def clear(self) -> None:
         """Clear all items from the vector store."""
 
-    def _chunk_text(self, text: str) -> list[str]:
-        """
-        Split text into chunks of size up to self.chunk_size.
-
-        Args:
-            text: The text to split.
-
-        Returns:
-            List of text chunks.
-        """
-        if self.chunk_size is None or len(text) <= self.chunk_size:
-            return [text]
-        else:
-            # Split text into chunks without breaking words
-            words = text.split()
-            chunks = []
-            current_chunk = ""
-            for word in words:
-                if len(current_chunk) + len(word) + 1 <= self.chunk_size:
-                    current_chunk += (" " + word) if current_chunk else word
-                else:
-                    chunks.append(current_chunk)
-                    current_chunk = word
-            if current_chunk:
-                chunks.append(current_chunk)
-            return chunks
-
+    @abstractmethod
+    def __len__(self) -> int:
+        """Return the number of items in the vector store."""
 
 class NumpyVectorStore(VectorStore):
     """Vector store implementation using NumPy for in-memory storage."""
@@ -132,35 +163,33 @@ class NumpyVectorStore(VectorStore):
         """Generate the next available ID.
 
         Returns:
-            The next unique ID.
+            The next unique integer ID.
         """
         self._current_id += 1
         return self._current_id
 
-    def _cosine_similarity(self, query_vector: np.ndarray) -> np.ndarray:
-        """
-        Calculate cosine similarity between the query vector and all stored vectors.
+    def _cosine_similarity(
+        self, query_vector: np.ndarray, vectors: np.ndarray
+    ) -> np.ndarray:
+        """Calculate cosine similarity between query vector and stored vectors.
 
         Args:
-            query_vector: Query embedding of shape (vocab_size,).
+            query_vector: The query embedding vector.
+            vectors: Array of stored embedding vectors.
 
         Returns:
-            Array of similarity scores.
+            Array of cosine similarity scores.
         """
-        # Normalize the query vector
         query_norm = np.linalg.norm(query_vector)
         if query_norm == 0:
-            return np.zeros(len(self.vectors))
+            return np.zeros(len(vectors))
 
         query_normalized = query_vector / query_norm
 
-        # Normalize stored vectors if any
-        if len(self.vectors) > 0:
-            vectors_norm = np.linalg.norm(self.vectors, axis=1, keepdims=True)
-            vectors_norm[vectors_norm == 0] = 1  # Avoid division by zero
-            vectors_normalized = self.vectors / vectors_norm
-
-            # Calculate cosine similarity
+        if len(vectors) > 0:
+            vectors_norm = np.linalg.norm(vectors, axis=1, keepdims=True)
+            vectors_norm[vectors_norm == 0] = 1
+            vectors_normalized = vectors / vectors_norm
             similarities = np.dot(vectors_normalized, query_normalized)
         else:
             similarities = np.array([])
@@ -179,29 +208,26 @@ class NumpyVectorStore(VectorStore):
         """
         all_texts = []
         all_metadata = []
+        text_and_metadata_list = []
 
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
-            chunks = self._chunk_text(text)
 
-            for chunk in chunks:
+            content_chunks = self._chunk_text(text)
+            for chunk in content_chunks:
+                text_and_metadata = self._join_text_and_metadata(chunk, metadata)
                 all_texts.append(chunk)
                 all_metadata.append(metadata)
+                text_and_metadata_list.append(text_and_metadata)
 
-        embeddings = self.embeddings.embed(all_texts)
-
-        # Convert embeddings to NumPy array
-        embeddings_array = np.array(embeddings, dtype=np.float32)
-
-        # Generate IDs for new items
+        embeddings = np.array(self.embeddings.embed(text_and_metadata_list), dtype=np.float32)
         new_ids = [self._get_next_id() for _ in all_texts]
 
-        # Append to storage
         self.vectors = (
-            np.vstack([self.vectors, embeddings_array])
+            np.vstack([self.vectors, embeddings])
             if len(self.vectors) > 0
-            else embeddings_array
+            else embeddings
         )
         self.texts.extend(all_texts)
         self.metadata.extend(all_metadata)
@@ -229,21 +255,20 @@ class NumpyVectorStore(VectorStore):
             List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
         query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
-
-        similarities = self._cosine_similarity(query_embedding)
+        similarities = self._cosine_similarity(query_embedding, self.vectors)
 
         if filters and len(self.vectors) > 0:
             mask = np.ones(len(self.vectors), dtype=bool)
             for key, value in filters.items():
                 mask &= np.array([item.get(key) == value for item in self.metadata])
-            similarities = similarities * mask
+            similarities = np.where(mask, similarities, -1.0)  # make filtered similarity values == -1
 
         results = []
         if len(similarities) > 0:
             sorted_indices = np.argsort(similarities)[::-1]
             for idx in sorted_indices:
                 similarity = similarities[idx]
-                if similarity <= threshold:
+                if similarity < threshold:
                     continue
                 results.append(
                     {
@@ -255,7 +280,6 @@ class NumpyVectorStore(VectorStore):
                 )
                 if len(results) >= top_k:
                     break
-
         return results
 
     def filter_by(
@@ -275,32 +299,25 @@ class NumpyVectorStore(VectorStore):
         if not self.metadata:
             return []
 
-        # Create mask for matching items
         mask = np.ones(len(self.metadata), dtype=bool)
         for key, value in filters.items():
             mask &= np.array([item.get(key) == value for item in self.metadata])
 
-        # Get matching indices
         matching_indices = np.where(mask)[0]
 
-        # Apply offset and limit
         if offset:
             matching_indices = matching_indices[offset:]
         if limit is not None:
             matching_indices = matching_indices[:limit]
 
-        # Build results
-        results = []
-        for idx in matching_indices:
-            results.append(
-                {
-                    "id": self.ids[idx],
-                    "text": self.texts[idx],
-                    "metadata": self.metadata[idx],
-                }
-            )
-
-        return results
+        return [
+            {
+                "id": self.ids[idx],
+                "text": self.texts[idx],
+                "metadata": self.metadata[idx],
+            }
+            for idx in matching_indices
+        ]
 
     def delete(self, ids: list[int]) -> None:
         """
@@ -324,12 +341,19 @@ class NumpyVectorStore(VectorStore):
         self.ids = [id_ for i, id_ in enumerate(self.ids) if keep_mask[i]]
 
     def clear(self) -> None:
-        """Clear all items from the vector store."""
+        """
+        Clear all items from the vector store.
+
+        Resets the vectors, texts, metadata, and IDs to their initial empty states.
+        """
         self.vectors = np.empty((0, self.vocab_size), dtype=np.float32)
         self.texts = []
         self.metadata = []
         self.ids = []
         self._current_id = 0
+
+    def __len__(self) -> int:
+        return len(self.vectors)
 
 
 class DuckDBVectorStore(VectorStore):
@@ -354,22 +378,22 @@ class DuckDBVectorStore(VectorStore):
             CREATE TABLE IF NOT EXISTS documents (
                 id BIGINT DEFAULT NEXTVAL('documents_id_seq') PRIMARY KEY,
                 text VARCHAR,
-                embedding FLOAT[{self.vocab_size}],
-                metadata JSON
+                metadata JSON,
+                embedding FLOAT[{self.vocab_size}]
             );
-            """
+        """
         )
 
         self.connection.execute(
             """
             CREATE INDEX IF NOT EXISTS embedding_index
             ON documents USING HNSW (embedding) WITH (metric = 'cosine');
-            """
+        """
         )
 
     def add(self, items: list[dict]) -> list[int]:
         """
-        Add items to the DuckDB vector store.
+        Add items to the vector store.
 
         Args:
             items: List of dictionaries containing 'text' and optional 'metadata'.
@@ -379,33 +403,39 @@ class DuckDBVectorStore(VectorStore):
         """
         all_texts = []
         all_metadata = []
+        text_and_metadata_list = []
 
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
-            chunks = self._chunk_text(text)
 
-            for chunk in chunks:
+            content_chunks = self._chunk_text(text)
+            for chunk in content_chunks:
+                text_and_metadata = self._join_text_and_metadata(chunk, metadata)
                 all_texts.append(chunk)
                 all_metadata.append(metadata)
+                text_and_metadata_list.append(text_and_metadata)
 
-        embeddings = self.embeddings.embed(all_texts)
+        embeddings = self.embeddings.embed(text_and_metadata_list)
 
         text_ids = []
-
         for i in range(len(all_texts)):
-            text = all_texts[i]
-            metadata = all_metadata[i]
-            embedding = np.array(embeddings[i], dtype=np.float32).tolist()
-
             result = self.connection.execute(
                 """
-                INSERT INTO documents (text, embedding, metadata)
-                VALUES (?, ?, ?::JSON) RETURNING id;
+                INSERT INTO documents (text, metadata, embedding)
+                VALUES (?, ?::JSON, ?) RETURNING id;
                 """,
-                [text, embedding, json.dumps(metadata)],
+                [
+                    all_texts[i],
+                    json.dumps(all_metadata[i]),
+                    np.array(embeddings[i], dtype=np.float32).tolist(),
+                ],
             )
-            text_ids.append(result.fetchone()[0])
+            fetched = result.fetchone()
+            if fetched:
+                text_ids.append(fetched[0])
+            else:
+                raise ValueError("Failed to insert item into DuckDB.")
 
         return text_ids
 
@@ -417,7 +447,7 @@ class DuckDBVectorStore(VectorStore):
         threshold: float = 0.0,
     ) -> list[dict]:
         """
-        Query the DuckDB vector store for similar items.
+        Query the vector store for similar items.
 
         Args:
             text: The query text.
@@ -428,43 +458,22 @@ class DuckDBVectorStore(VectorStore):
         Returns:
             List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
-        query_embedding = self.embeddings.embed([text])[0]
-        query_embedding = np.array(query_embedding, dtype=np.float32).tolist()
+        query_embedding = np.array(
+            self.embeddings.embed([text])[0], dtype=np.float32
+        ).tolist()
 
         base_query = f"""
             SELECT id, text, metadata,
                 array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) AS similarity
             FROM documents
-            WHERE 1=1
+            WHERE array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) >= ?
         """
-        params = [query_embedding]
+        params = [query_embedding, query_embedding, threshold]
 
         if filters:
             for key, value in filters.items():
-                if isinstance(value, list):
-                    if not all(isinstance(v, (str,int,float)) for v in value):
-                        print(f"Invalid value in filter {key}. Can only filter by string, integer or float.")
-                        return []
-                    placeholders = ", ".join("?" for _ in value)
-                    base_query += (
-                        f" AND json_extract_string(metadata, '$.{key}') IS NOT NULL "
-                        f"AND json_extract_string(metadata, '$.{key}') IN ({placeholders})"
-                    )
-                    params.extend([str(v) for v in value])
-                elif isinstance(value, (str,int,float)):
-                    # Single value equality check
-                    base_query += (
-                        f" AND json_extract_string(metadata, '$.{key}') IS NOT NULL "
-                        f"AND json_extract_string(metadata, '$.{key}') = ?"
-                    )
-                    params.append(str(value))
-                else:
-                    print(f"Invalid value in filter {key}. Can only filter by string, integer or float.")
-                    return []
-
-
-        base_query += f" AND array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) >= ?"
-        params.extend([query_embedding, threshold])
+                base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
+                params.append(str(value))
 
         base_query += """
             ORDER BY similarity DESC
@@ -474,7 +483,6 @@ class DuckDBVectorStore(VectorStore):
 
         try:
             result = self.connection.execute(base_query, params).fetchall()
-
             return [
                 {
                     "id": row[0],
@@ -509,12 +517,10 @@ class DuckDBVectorStore(VectorStore):
         """
         params = []
 
-        # Add filters to query
         for key, value in filters.items():
             base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
             params.append(str(value))
 
-        # Add offset and limit
         if offset:
             base_query += " OFFSET ?"
             params.append(offset)
@@ -528,13 +534,17 @@ class DuckDBVectorStore(VectorStore):
         result = self.connection.execute(base_query, params).fetchall()
 
         return [
-            {"id": row[0], "text": row[1], "metadata": json.loads(row[2])}
+            {
+                "id": row[0],
+                "text": row[1],
+                "metadata": json.loads(row[2]),
+            }
             for row in result
         ]
 
     def delete(self, ids: list[int]) -> None:
         """
-        Delete items from the DuckDB vector store by their IDs.
+        Delete items from the vector store by their IDs.
 
         Args:
             ids: List of IDs to delete.
@@ -548,9 +558,14 @@ class DuckDBVectorStore(VectorStore):
 
     def clear(self) -> None:
         """
-        Clear all entries from both tables and reset sequence by dropping/recreating everything.
+        Clear all entries and reset sequence.
+
+        Drops the documents table and sequence, then sets up the database again.
         """
-        self.connection.execute("DROP TABLE IF EXISTS metadata_embeddings;")
         self.connection.execute("DROP TABLE IF EXISTS documents;")
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
         self._setup_database()
+
+    def __len__(self) -> int:
+        result = self.connection.execute("SELECT COUNT(*) FROM documents;").fetchone()
+        return result[0]
