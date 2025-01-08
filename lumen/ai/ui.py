@@ -550,7 +550,7 @@ class ExplorerUI(UI):
                 plan = local_memory["plan"]
                 if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
                     await self._add_exploration(plan.title, local_memory)
-                    index += 1
+                    index = len(self._explorations)-1
 
             def sync_available_sources_memory(_, __, sources):
                 """

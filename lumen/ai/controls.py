@@ -169,13 +169,18 @@ class SourceControls(Viewer):
             visible=self.param.cancellable,
         )
 
-        self._message_placeholder = Markdown(css_classes=["message"] if self.replace_controls else [], visible=False)
+        self._error_placeholder = Markdown(
+            "", css_classes=["message"] if self.replace_controls else [], visible=False, margin=(0, 10))
+        self._message_placeholder = Markdown(
+            css_classes=["message"] if self.replace_controls else [], visible=False, margin=(0, 10)
+        )
 
         self.menu = Column(
             self._input_tabs if self.select_existing else self._input_tabs[0],
             self._add_button,
             self._cancel_button,
             self.tables_tabs,
+            self._error_placeholder,
             self._message_placeholder,
             sizing_mode="stretch_width",
         )
@@ -217,7 +222,7 @@ class SourceControls(Viewer):
         duckdb_source: DuckDBSource,
         file: io.BytesIO | io.StringIO,
         table_controls: TableControls,
-    ):
+    ) -> int:
         conn = duckdb_source._connection
         extension = table_controls.extension
         table = table_controls.alias
@@ -251,7 +256,9 @@ class SourceControls(Viewer):
             cols = ', '.join(f'"{c}"' for c in df.columns if c != 'geometry')
             conversion = f'CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp'
         else:
-            raise ValueError(f"Unsupported file extension: {extension}")
+            self._error_placeholder.object += f"\nCould not convert {table_controls.filename}.{extension}."
+            self._error_placeholder.visible = True
+            return 0
 
         duckdb_source.param.update(params)
         df_rel = conn.from_df(df)
@@ -270,18 +277,26 @@ class SourceControls(Viewer):
         else:
             self._memory["sources"] = [duckdb_source]
         self._last_table = table
+        return 1
 
     def _add_document(
         self,
         file: io.BytesIO,
         document_controls: DocumentControls
-    ):
+    ) -> int:
         if self._markitdown is None:
-            from markitdown import MarkItDown
+            from markitdown import MarkItDown, UnsupportedFormatException
             self._markitdown = MarkItDown()
-        text = self._markitdown.convert_stream(
-            file, file_extension=document_controls.extension
-        ).text_content
+            self._unsupported_exception = UnsupportedFormatException
+        extension = document_controls.extension
+        try:
+            text = self._markitdown.convert_stream(
+                file, file_extension=extension
+            ).text_content
+        except self._unsupported_exception:
+            self._error_placeholder.object += f"\nCould not convert {document_controls.filename}.{extension}."
+            self._error_placeholder.visible = True
+            return 0
 
         metadata = {
             "filename": document_controls.filename,
@@ -295,9 +310,10 @@ class SourceControls(Viewer):
                     break
             else:
                 self._memory["document_sources"].append(document)
-            self._memory.trigger("document_sources")
         else:
-            self._memory["document_sources"] = [document]
+            with param.discard_events(self._memory):
+                self._memory["document_sources"] = [document]
+        return 1
 
     @param.depends("add", watch=True)
     def add_medias(self):
@@ -322,11 +338,9 @@ class SourceControls(Viewer):
                 if media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
-                    self._add_table(source, media_controls.file_obj, media_controls)
-                    n_tables += 1
+                    n_tables += self._add_table(source, media_controls.file_obj, media_controls)
                 else:
-                    self._add_document(media_controls.file_obj, media_controls)
-                    n_docs += 1
+                    n_docs += self._add_document(media_controls.file_obj, media_controls)
 
             if self.replace_controls:
                 src = self._memory.get("source")
@@ -348,12 +362,17 @@ class SourceControls(Viewer):
                 self._media_controls.clear()
                 self._add_button.visible = False
 
+            if n_docs > 0:
+                # Rather than triggering document sources on every upload, trigger it once
+                self._memory.trigger("document_sources")
+
             # Clear uploaded files from memory
             self._file_input.value = {}
             self._message_placeholder.param.update(
                 object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
                 visible=True,
             )
+            self._error_placeholder.object = self._error_placeholder.object.strip()
 
     def __panel__(self):
         return self.menu
