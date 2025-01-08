@@ -319,9 +319,14 @@ class ExplorerUI(UI):
         self._root_conversation = self._coordinator.interface.objects
         self._conversations = []
 
+        self._explorations_intro = Markdown(
+            EXPLORATIONS_INTRO,
+            margin=(0, 0, 10, 0),
+            sizing_mode='stretch_width',
+        )
         self._output = Tabs(
             ('Overview', self._table_explorer()),
-            ('Explorations', Column(EXPLORATIONS_INTRO, self._explorations)),
+            ('Explorations', Column(self._explorations_intro, self._explorations)),
             design=Material
         )
         self._main = Column(
@@ -335,6 +340,7 @@ class ExplorerUI(UI):
         self._idle.set()
         self._last_synced = None
         self._output.param.watch(self._update_conversation, 'active')
+        self._coordinator.interface.param.watch(self._hide_intros, 'objects')
 
     def _destroy(self, session_context):
         """
@@ -487,12 +493,23 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
-        return Column(
+        self._overview_intro = Markdown(
             OVERVIEW_INTRO,
+            margin=(0, 0, 10, 0),
+            sizing_mode='stretch_width',
+        )
+        return Column(
+            self._overview_intro,
             tabs,
             input_row,
             sizing_mode='stretch_both',
         )
+
+    def _hide_intros(self, event):
+        if len(event.new)> 1:
+            self._overview_intro.visible = False
+        if len(self._explorations) > 0:
+            self._explorations_intro.visible = False
 
     async def _add_exploration(self, title: str, memory: _Memory):
         n = len(self._explorations)
