@@ -60,9 +60,10 @@ OVERVIEW_INTRO = """
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
 
-- Explorations are queries of your original data.
-- They consist of interactive tables and visualizations.
-- Each exploration is saved as a new tab to allow for easy comparison.
+- Explorations are analyses applied to one or more datasets.
+- An exploration consists of interactive tables and visualizations.
+- New explorations are launched in a new tab for each SQL query result.
+- Each exploration maintains its own context, so you can branch off an existing result by navigating to that tab.
 """
 
 class UI(Viewer):
