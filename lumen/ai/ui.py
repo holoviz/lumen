@@ -323,6 +323,7 @@ class ExplorerUI(UI):
             EXPLORATIONS_INTRO,
             margin=(0, 0, 10, 0),
             sizing_mode='stretch_width',
+            visible=self._explorations.param["objects"].rx.bool().rx.not_()
         )
         self._output = Tabs(
             ('Overview', self._table_explorer()),
@@ -340,7 +341,6 @@ class ExplorerUI(UI):
         self._idle.set()
         self._last_synced = None
         self._output.param.watch(self._update_conversation, 'active')
-        self._coordinator.interface.param.watch(self._hide_intros, 'objects')
 
     def _destroy(self, session_context):
         """
@@ -497,6 +497,7 @@ class ExplorerUI(UI):
             OVERVIEW_INTRO,
             margin=(0, 0, 10, 0),
             sizing_mode='stretch_width',
+            visible=self._coordinator.interface.param["objects"].rx.len() <= 1
         )
         return Column(
             self._overview_intro,
@@ -504,12 +505,6 @@ class ExplorerUI(UI):
             input_row,
             sizing_mode='stretch_both',
         )
-
-    def _hide_intros(self, event):
-        if len(event.new)> 1:
-            self._overview_intro.visible = False
-        if len(self._explorations) > 0:
-            self._explorations_intro.visible = False
 
     async def _add_exploration(self, title: str, memory: _Memory):
         n = len(self._explorations)
