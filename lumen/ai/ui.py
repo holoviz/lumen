@@ -48,6 +48,24 @@ if TYPE_CHECKING:
 DataT = str | Path | Source | Pipeline
 
 
+OVERVIEW_INTRO = """
+👋 **Start chatting to get started!**
+
+- Ask for summaries, ask for plots, ask for inspiration--query away!
+- Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
+- Download the chat into a reproducible notebook to share with others!
+- Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
+"""
+
+EXPLORATIONS_INTRO = """
+🧪 **Explorations**
+
+- Explorations are analyses applied to one or more datasets.
+- An exploration consists of interactive tables and visualizations.
+- New explorations are launched in a new tab for each SQL query result.
+- Each exploration maintains its own context, so you can branch off an existing result by navigating to that tab.
+"""
+
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
@@ -300,9 +318,16 @@ class ExplorerUI(UI):
         self._contexts = []
         self._root_conversation = self._coordinator.interface.objects
         self._conversations = []
+
+        self._explorations_intro = Markdown(
+            EXPLORATIONS_INTRO,
+            margin=(0, 0, 10, 0),
+            sizing_mode='stretch_width',
+            visible=self._explorations.param["objects"].rx.bool().rx.not_()
+        )
         self._output = Tabs(
             ('Overview', self._table_explorer()),
-            ('Explorations', self._explorations),
+            ('Explorations', Column(self._explorations_intro, self._explorations)),
             design=Material
         )
         self._main = Column(
@@ -468,8 +493,14 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
+        self._overview_intro = Markdown(
+            OVERVIEW_INTRO,
+            margin=(0, 0, 10, 0),
+            sizing_mode='stretch_width',
+            visible=self._coordinator.interface.param["objects"].rx.len() <= 1
+        )
         return Column(
-            Markdown('### Start chatting or select an existing dataset or upload table(s) or document(s).', margin=(5, 0)),
+            self._overview_intro,
             tabs,
             input_row,
             sizing_mode='stretch_both',
