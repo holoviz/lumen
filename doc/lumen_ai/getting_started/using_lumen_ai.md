@@ -103,6 +103,12 @@ If the LLM is not providing the expected results, or if the user simply wants to
 - Continue the conversation by sending a new message to the LLM. This will simply send the message to the LLM and receive a response, as usual.
 - Manually correct the SQL query or Lumen specification to get the desired output by adding or removing lines, changing column names, etc. This will depend on the user's knowledge of SQL and Lumen specifications.
 
+:::{admonition} Tip
+:class: success
+
+Use this feature to tweak the existing output. For instance, if a Vega-Lite chart needs adjustments, like changing the sort order in an axis, provide feedback through this feature. However, if you'd like to modify the underlying SQL query, send a new message instead.
+:::
+
 ### Notebook Download
 
 All interaction outputs can be exported by clicking the "Download Lumen_Explorer.ipynb" button located near the center. This action downloads a Jupyter notebook that can be executed to reproduce the results, provided the original sources and dependencies are available.
