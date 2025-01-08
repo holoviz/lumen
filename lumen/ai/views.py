@@ -5,6 +5,7 @@ import panel as pn
 import param
 import yaml
 
+from panel.config import config
 from panel.layout import Column, Row, Tabs
 from panel.pane import Alert
 from panel.param import ParamMethod
@@ -14,14 +15,13 @@ from panel.widgets import (
 )
 from param.parameterized import discard_events
 
-from lumen.ai.utils import get_data
-
 from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Table
+from .utils import get_data
 
 
 class LumenOutput(Viewer):
@@ -48,7 +48,10 @@ class LumenOutput(Viewer):
             params['spec'] = yaml.dump(component_spec)
         super().__init__(**params)
         code_editor = CodeEditor(
-            value=self.param.spec, language=self.language, theme='tomorrow_night_bright', sizing_mode="stretch_both",
+            value=self.param.spec,
+            language=self.language,
+            theme="tomorrow_night" if config.theme == "dark" else "tomorrow",
+            sizing_mode="stretch_both",
             on_keyup=False
         )
         code_editor.link(self, bidirectional=True, value='spec')
