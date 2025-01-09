@@ -2,6 +2,11 @@
 
 {% block instructions %}
 Correctly assess and list the tables that need to be joined; be sure to include both `//`.
+
+Use table names verbatim:
+
+- if the table is read_csv('table.csv'), then use read_csv('table.csv') and not 'table' or 'table.csv'
+- if the table is table.csv, then use table.csv and not read_csv('table.csv')
 {% endblock %}
 
 {% block context %}
