@@ -11,6 +11,12 @@ A join is unnecessary if the schema already includes all the required columns, u
 {% endblock %}
 
 {% block context %}
-Here are the tables (and schemas if available):
+
+The current table '{{ table }}' follows this YAML schema:
+```yaml
+{{ schema }}
+```
+
+Here are all the tables (and schemas if available):
 {{ tables_schema_str }}
 {%- endblock -%}

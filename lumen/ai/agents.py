@@ -603,6 +603,8 @@ class SQLAgent(LumenBaseAgent):
     async def _check_requires_joins(
         self,
         messages: list[Message],
+        table: str,
+        schema: str,
         tables_schema_str: str,
     ):
         requires_joins = None
@@ -610,7 +612,9 @@ class SQLAgent(LumenBaseAgent):
             join_prompt = await self._render_prompt(
                 "require_joins",
                 messages,
-                tables_schema_str=tables_schema_str
+                table=table,
+                schema=schema,  # this contains current table schema
+                tables_schema_str=tables_schema_str  # this may not be populated with any schemas
             )
             model_spec = self.prompts["require_joins"].get("llm_spec", "default")
             response = self.llm.stream(
@@ -703,9 +707,10 @@ class SQLAgent(LumenBaseAgent):
         if not hasattr(source, "get_sql_expr"):
             return None
 
+        schema = await get_schema(source, table, include_min_max=True)
         tables_to_source = {table: source}
         if join_required is None:
-            join_required = await self._check_requires_joins(messages, tables_schema_str)
+            join_required = await self._check_requires_joins(messages, table, schema, tables_schema_str)
             if join_required is None:
                 # Bail if query was cancelled or errored out
                 return None
@@ -714,7 +719,10 @@ class SQLAgent(LumenBaseAgent):
 
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
-            table_schema = await get_schema(source, source_table, include_min_max=True)
+            if source_table == table:
+                table_schema = schema
+            else:
+                table_schema = await get_schema(source, source_table, include_min_max=True)
 
             # Look up underlying table name
             table_name = source_table
