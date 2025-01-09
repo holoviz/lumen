@@ -44,7 +44,7 @@ CAST or TO_DATE
 - Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT to focus on the most relevant results.
 {% if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
-- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table'
+- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table' or 'table.csv'
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
 - String literals are delimited using single quotes (', apostrophe) and result in STRING_LITERAL values. Note that
 double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted
