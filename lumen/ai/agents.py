@@ -539,9 +539,10 @@ class SQLAgent(LumenBaseAgent):
             sql_query = None
             try:
                 async for output in response:
-                    step_message = output.chain_of_thought
+                    step_message = output.chain_of_thought or ""
                     if output.query:
                         sql_query = clean_sql(output.query)
+                    if sql_query is not None:
                         step_message += f"\n```sql\n{sql_query}\n```"
                     step.stream(step_message, replace=True)
             except asyncio.CancelledError as e:
