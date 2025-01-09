@@ -5,6 +5,6 @@ Generate the plot the user requested as a vega-lite specification.
 
 - The data will be provided separately. Never provide a data field.
 - Ensure you use the column names verbatim.
-- To sort the x axis, use `sort: x` or `sort: -x` for descending.
-- Integer columns like year (e.g., 2010, 2011) should be treated as quantitative, not temporal, but '2010-01' or '2011-01-01' should be treated as temporal.
+- To sort an axis do not reference a column name, rather refer to the axis (`sort: x` or `sort: y`) and add a minus sign (`sort: -y`) for descending order.
+- Integer columns like year (e.g., 2010, 2011) should be treated as ordinal, not numerical or temporal, but '2010-01' or '2011-01-01' should be treated as temporal.
 {% endblock %}
