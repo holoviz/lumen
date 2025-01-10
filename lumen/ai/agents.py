@@ -459,11 +459,9 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
-    async def _select_relevant_table(self, messages: list[Message]) -> tuple[str, BaseSQLSource, bool]:
+    async def _select_relevant_table(self, messages: list[Message], sources: list, tables_to_source: dict, tables_schema_str: str) -> tuple[str, BaseSQLSource, bool]:
         """Select the most relevant table based on the user query."""
         join_required = None
-        sources = self._memory["sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(sources)
         tables = tuple(tables_to_source)
 
         user_message = ""
@@ -605,16 +603,18 @@ class SQLAgent(LumenBaseAgent):
     async def _check_requires_joins(
         self,
         messages: list[Message],
-        schema,
-        table: str
+        table: str,
+        schema: str,
+        tables_schema_str: str,
     ):
         requires_joins = None
         with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
             join_prompt = await self._render_prompt(
                 "require_joins",
                 messages,
-                schema=yaml.dump(schema),
-                table=table
+                table=table,
+                schema=schema,  # this contains current table schema
+                tables_schema_str=tables_schema_str  # this may not be populated with any schemas
             )
             model_spec = self.prompts["require_joins"].get("llm_spec", "default")
             response = self.llm.stream(
@@ -643,7 +643,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = self._memory['source'].get_tables()
 
-        find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables)
+        find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables, separator=SOURCE_TABLE_SEPARATOR)
         model_spec = self.prompts["find_joins"].get("llm_spec", "default")
         with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
             output = await self.llm.invoke(
@@ -662,7 +662,7 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source = {}
         for source_table in tables_to_join:
             sources = self._memory["sources"]
-            if multi_source:
+            if multi_source and SOURCE_TABLE_SEPARATOR in source_table:
                 try:
                     _, a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=2)
                 except ValueError:
@@ -701,16 +701,16 @@ class SQLAgent(LumenBaseAgent):
         8. If a join is required, remove source/table prefixes from the last message.
         9. Construct the SQL query with `_create_valid_sql`.
         """
-        table, source, join_required = await self._select_relevant_table(messages)
+        sources = self._memory["sources"]
+        tables_to_source, tables_schema_str = await gather_table_sources(sources)
+        table, source, join_required = await self._select_relevant_table(messages, sources, tables_to_source, tables_schema_str)
         if not hasattr(source, "get_sql_expr"):
             return None
 
-        # include min max for more context for data cleaning
         schema = await get_schema(source, table, include_min_max=True)
-
         tables_to_source = {table: source}
         if join_required is None:
-            join_required = await self._check_requires_joins(messages, schema, table)
+            join_required = await self._check_requires_joins(messages, table, schema, tables_schema_str)
             if join_required is None:
                 # Bail if query was cancelled or errored out
                 return None

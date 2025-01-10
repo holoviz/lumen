@@ -5,14 +5,18 @@ Determine whether a table join is required to answer the user's query.
 
 Notes:
 - Carefully consider the columns described in the schema
-- If the schema references all the columns needed, no join is required
 - Consider if missing data can be calculated without a join
+
+A join is unnecessary if the schema already includes all the required columns, unless the schema values are untruncated and obviously missing necessary values in the min/max/enum.
 {% endblock %}
 
 {% block context %}
-The current table '{{ table }}' follows this YAML schema:
 
+The current table '{{ table }}' follows this YAML schema:
 ```yaml
 {{ schema }}
 ```
+
+Here are all the tables (and schemas if available):
+{{ tables_schema_str }}
 {%- endblock -%}
