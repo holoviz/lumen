@@ -356,7 +356,6 @@ class OpenAI(Llm):
         model = model_kwargs.pop("model")
         if self.endpoint:
             model_kwargs["base_url"] = self.endpoint
-        print(model_kwargs)
         if self.api_key:
             model_kwargs["api_key"] = self.api_key
         if self.organization:
