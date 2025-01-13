@@ -12,8 +12,11 @@ from lumen.ai.agents import {{ agent }}
 {%- if api_key is defined and api_key -%}
   {%- set args = args + ["api_key='" ~ api_key ~ "'"] -%}
 {%- endif -%}
-{%- if provider_endpoint is defined %}
-  {%- set args = args + ["endpoint='" ~ provider_endpoint ~ "'"] -%}
+{%- if mode is defined %}
+  {%- set args = args + ["mode='" ~ mode ~ "'"] -%}
+{%- endif -%}
+{%- if endpoint is defined %}
+  {%- set args = args + ["endpoint='" ~ endpoint ~ "'"] -%}
 {%- endif -%}
 {%- if model_kwargs is defined and model_kwargs -%}
   {%- set args = args + ["model_kwargs=" ~ model_kwargs] -%}

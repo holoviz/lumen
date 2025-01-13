@@ -28,7 +28,8 @@ LLM_PROVIDERS = {
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
-    'llama': 'Llama'
+    "ai-navigator": "AINavigator",
+    'llama': 'Llama',
 }
 
 
@@ -64,11 +65,12 @@ class LumenAIServe(Serve):
         group = parser.add_argument_group("Lumen AI Configuration")
         group.add_argument(
             "--provider",
-            choices=["openai", "azure-openai", "anthropic", "mistral", "azure-mistral", "llama"],
+            choices=list(LLM_PROVIDERS.keys()),
             help="LLM provider (auto-detected from environment variables if not specified)",
         )
         group.add_argument("--api-key", help="API key for the LLM provider")
         group.add_argument("--provider-endpoint", help="Custom endpoint for the LLM provider")
+        group.add_argument("--validation-mode", help="Validation mode for the LLM")
         group.add_argument("--temperature", type=float, help="Temperature for the LLM")
         group.add_argument("--agents", nargs="+", help="Additional agents to include")
         group.add_argument(
@@ -82,6 +84,7 @@ class LumenAIServe(Serve):
         provider = args.provider
         api_key = args.api_key
         endpoint = args.provider_endpoint
+        mode = args.validation_mode
         temperature = args.temperature
         agents = args.agents
         log_level = args.log_level
@@ -120,6 +123,7 @@ class LumenAIServe(Serve):
                 api_key=api_key,
                 temperature=temperature,
                 endpoint=endpoint,
+                mode=mode,
                 agents=agents,
                 log_level=log_level,
                 model_kwargs=model_kwargs,
@@ -149,6 +153,7 @@ class AIHandler(CodeHandler):
         api_key: str | None = None,
         temperature: float | None = None,
         endpoint: str | None = None,
+        mode: str | None = None,
         agents: list[str] | None = None,
         log_level: str = "INFO",
         model_kwargs: dict | None = None,
@@ -160,6 +165,7 @@ class AIHandler(CodeHandler):
             api_key=api_key,
             temperature=temperature,
             endpoint=endpoint,
+            mode=mode,
             agents=agents,
             log_level=log_level,
             model_kwargs=model_kwargs,
@@ -173,6 +179,7 @@ class AIHandler(CodeHandler):
             "tables": [repr(t) for t in tables],
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
+            "mode": config.get("mode"),
             "agents": config.get("agents"),
             "log_level": config["log_level"],
             "temperature": config.get("temperature"),
@@ -180,6 +187,7 @@ class AIHandler(CodeHandler):
         }
         context = {k: v for k, v in context.items() if v is not None}
 
+        print(context)
         source = render_template(
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
