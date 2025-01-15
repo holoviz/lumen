@@ -31,7 +31,7 @@ class Message(TypedDict):
     name: str | None
 
 
-BASE_MODES = [Mode.JSON_SCHEMA, Mode.JSON, Mode.FUNCTIONS, Mode.TOOLS]
+BASE_MODES = list(Mode)
 
 
 class Llm(param.Parameterized):
@@ -62,6 +62,12 @@ class Llm(param.Parameterized):
     _supports_model_stream = True
 
     __abstract = True
+
+    def __init__(self, **params):
+        if "mode" in params:
+            if isinstance(params["mode"], str):
+                params["mode"] = Mode[params["mode"].upper()]
+        super().__init__(**params)
 
     def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
         if model_spec in self.model_kwargs:
@@ -241,6 +247,8 @@ class Llama(Llm):
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
 
+    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES)
+
     model_kwargs = param.Dict(default={
         "default": {
             "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
@@ -280,7 +288,7 @@ class Llama(Llm):
         # patch works with/without response_model
         client_callable = patch(
             create=raw_client,
-            mode=Mode.JSON_SCHEMA,
+            mode=self.mode,
         )
         pn.state.cache[model_spec] = client_callable
         return client_callable
@@ -358,7 +366,7 @@ class OpenAI(Llm):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm)
+            llm = patch(llm, mode=self.mode)
 
         if self.interceptor:
             # must be called after instructor
@@ -409,7 +417,7 @@ class AzureOpenAI(Llm):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm)
+            llm = patch(llm, mode=self.mode)
 
         if self.interceptor:
             # must be called after instructor
@@ -457,7 +465,7 @@ class MistralAI(Llm):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm)
+            llm = patch(llm, mode=self.mode)
 
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
@@ -506,7 +514,7 @@ class AzureMistralAI(MistralAI):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm)
+            llm = patch(llm, mode=self.mode)
 
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
@@ -564,3 +572,15 @@ class AnthropicAI(Llm):
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         input_kwargs["system"] = system
         return messages, input_kwargs
+
+
+class AINavigator(OpenAI):
+    """
+    A LLM implementation that calls the [Anaconda AI Navigator](https://www.anaconda.com/products/ai-navigator) API.
+    """
+
+    endpoint = param.String(
+        default="http://localhost:8080/v1", doc="""
+            The API endpoint; should include the full address, including the port.""")
+
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
