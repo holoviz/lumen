@@ -30,6 +30,8 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
+    disabled = param.Boolean(default=False)
+
     loading = param.Boolean()
 
     footer = param.List()
@@ -54,6 +56,7 @@ class LumenOutput(Viewer):
             sizing_mode="stretch_both",
             on_keyup=False
         )
+        code_editor.link(self, bidirectional=True, disabled='disabled')
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = ButtonIcon(
             icon="copy", active_icon="check", toggle_duration=1000, description="Copy YAML to clipboard"
@@ -79,7 +82,7 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = Row(copy_icon, download_icon, *self.footer)
+        icons = Row(copy_icon, download_icon, pn.Spacer(width=5), *self.footer)
         code_col = Column(code_editor, icons, sizing_mode="stretch_both")
         if self.render_output:
             placeholder = Column(
