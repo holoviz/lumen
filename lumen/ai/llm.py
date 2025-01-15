@@ -580,7 +580,7 @@ class AINavigator(OpenAI):
     """
 
     endpoint = param.String(
-        default="http://127.0.0.1:8080/v1", doc="""
+        default="http://localhost:8080/v1", doc="""
             The API endpoint; should include the full address, including the port.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
