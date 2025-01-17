@@ -77,6 +77,7 @@ class TableControls(MediaControls):
             self._sheet_select,
         )
         self.param.trigger("filename")  # fix name
+        self.param.trigger("alias")  # fix alias
         self.param.trigger("_load")  # to prevent blocking
 
     @param.depends("_load", watch=True)
@@ -94,7 +95,7 @@ class TableControls(MediaControls):
     @param.depends("alias", watch=True)
     async def _replace_with_underscore(self):
         self.alias = "".join(
-            c if c.isalnum() or c == "." else "_" for c in self.alias
+            c if c.isalnum() else "_" for c in self.alias
         ).strip("_").lower()
 
 
