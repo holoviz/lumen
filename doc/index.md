@@ -61,21 +61,17 @@ installation
 ```{toctree}
 :titlesonly:
 :hidden:
-:maxdepth: 2
-:caption: Lumen AI
+:maxdepth: 1
 
-lumen_ai/getting_started/index
-lumen_ai/how_to/index
+lumen_ai/index
 ```
 
 ```{toctree}
 :titlesonly:
 :hidden:
-:maxdepth: 2
-:caption: Lumen Spec
+:maxdepth: 1
 
-lumen_spec/getting_started/index
-lumen_spec/how_to/index
+lumen_spec/index
 ```
 
 ```{toctree}
