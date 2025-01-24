@@ -261,7 +261,7 @@ class ChatUI(UI):
 
     :Example:
 
-    ..codeblock:: python
+    .. code-block:: python
 
         import lumen.ai as lmai
 
@@ -283,7 +283,7 @@ class ExplorerUI(UI):
 
     :Example:
 
-    ..codeblock:: python
+    .. code-block:: python
 
         import lumen.ai as lmai
 
