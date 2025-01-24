@@ -15,13 +15,9 @@ Lumen sets itself apart from other agent based frameworks in that it focuses on 
 
 The declarative Lumen data model further sets it apart from other tools, making it easy for LLMs to populate custom components and making it easy for the user to share the results. Entire multi-step data transformation pipelines be they in SQL or Python can easily be captured and used to drive custom visualizations, interactive tables and more. Once generated the declarative nature of the Lumen specification allows them to be shared, reproducing them in a notebook or composing them through a drag-and-drop interface into a dashboard.
 
----
-
-<video controls style="max-width: 1024px; width: 100%; display: block; margin: 0 auto;">
+<video controls style="max-width: 1024px; width: 100%; display: block; margin: 0 auto; border-radius: 10px;">
   <source src="https://assets.holoviz.org/lumen/videos/intro.webm" type="video/webm" />
 </video>
-
----
 
 ## Getting Started
 
