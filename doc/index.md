@@ -17,8 +17,8 @@ The declarative Lumen data model further sets it apart from other tools, making 
 
 ---
 
-<video controls style="max-width: 800px; width: 100%;">
-  <source src="https:/assets.holoviz.org/lumen/videos/intro.webm" type="video/webm" />
+<video controls style="max-width: 1024px; width: 100%; display: block; margin: 0 auto;">
+  <source src="https://assets.holoviz.org/lumen/videos/intro.webm" type="video/webm" />
 </video>
 
 ---
