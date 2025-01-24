@@ -15,7 +15,17 @@ Lumen sets itself apart from other agent based frameworks in that it focuses on 
 
 The declarative Lumen data model further sets it apart from other tools, making it easy for LLMs to populate custom components and making it easy for the user to share the results. Entire multi-step data transformation pipelines be they in SQL or Python can easily be captured and used to drive custom visualizations, interactive tables and more. Once generated the declarative nature of the Lumen specification allows them to be shared, reproducing them in a notebook or composing them through a drag-and-drop interface into a dashboard.
 
-::::{grid} 1 2 2 4
+---
+
+<video controls style="max-width: 1024px; width: 100%; display: block; margin: 0 auto;">
+  <source src="https://assets.holoviz.org/lumen/videos/intro.webm" type="video/webm" />
+</video>
+
+---
+
+## Getting Started
+
+::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
 :::{grid-item-card} {octicon}`desktop-download;2em;sd-mr-1` Installation
@@ -32,23 +42,36 @@ Install Lumen in a few easy steps
 How to explore your data with Lumen AI.
 :::
 
-:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a Lumen Spec dashboard
+:::{grid-item-card} {octicon}`gear;2em;sd-mr-1` Configuring Lumen AI
+:link: lumen_ai/getting_started/configuring_lumen_ai
+:link-type: doc
+
+How to explore your data with Lumen AI.
+:::
+
+:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a Lumen dashboard
 :link: lumen_spec/getting_started/build_dashboard
 :link-type: doc
 
 How to build a Lumen dashboard
 :::
 
-:::{grid-item-card} {octicon}`mortar-board;2em;sd-mr-1` Lumen Spec Core concepts
+:::{grid-item-card} {octicon}`mortar-board;2em;sd-mr-1` Lumen Core concepts
 :link: lumen_spec/getting_started/core_concepts
 :link-type: doc
 
 Get an overview of the core concepts of Lumen
 :::
 
-:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Lumen Spec Data Pipelines
+:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Lumen Data Pipelines
 :link: lumen_spec/getting_started/pipelines
 :link-type: doc
+
+A quick introduction to data transformations with Lumen Piplines.
+:::
+
+:::::
+
 
 ```{toctree}
 :titlesonly:
@@ -56,30 +79,8 @@ Get an overview of the core concepts of Lumen
 :maxdepth: 2
 
 installation
-```
-
-```{toctree}
-:titlesonly:
-:hidden:
-:maxdepth: 1
-
 lumen_ai/index
-```
-
-```{toctree}
-:titlesonly:
-:hidden:
-:maxdepth: 1
-
 lumen_spec/index
-```
-
-```{toctree}
-:titlesonly:
-:hidden:
-:maxdepth: 2
-:caption: Lumen
-
 gallery/index
 reference/index
 background/index

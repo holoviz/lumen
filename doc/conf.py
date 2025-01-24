@@ -91,6 +91,11 @@ nbsite_pyodide_conf = {
     ]
 }
 
+html_js_files = [
+    (None, {'body': '{"shimMode": true}', 'type': 'esms-options'}),
+    f'https://cdn.holoviz.org/panel/{js_version}/dist/bundled/reactiveesm/es-module-shims@^1.10.0/dist/es-module-shims.min.js',
+]
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path += ['_templates']
 
