@@ -156,6 +156,14 @@ class Actor(param.Parameterized):
         Responds to the provided messages.
         """
 
+    @classmethod
+    def get_prompt_template(cls, key: str = "main") -> str:
+        return cls._lookup_prompt_key(cls, key, "template").read_text()
+
+    @classmethod
+    def print_prompt_template(cls, key: str = "main"):
+        print(cls.get_prompt_template(key))
+
 
 class ContextProvider(param.Parameterized):
     """

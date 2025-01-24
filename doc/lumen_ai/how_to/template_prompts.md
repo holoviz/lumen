@@ -117,6 +117,8 @@ Some `Agent`s may have multiple prompts, besides the `main` prompt. For example,
 - `find_joins`: Prompt to find the necessary joins
 
 Not all prompts will be used in every interaction, e.g. `find_joins` may not be used if `require_joins` decides that joins are not necessary.
+
+To see all the prompts available for an `Agent`, you can check the `prompts` parameter of the `Agent` class.
 :::
 
 If you simply want to prefix or suffix the original `instructions`, you can specify `{{ super() }}`:
@@ -127,6 +129,13 @@ template_overrides = {
         "instructions": "{{ super() }}. Spice it up by speaking like a pirate."
     },
 }
+```
+
+If you aren't sure what the original prompt is, you can print it out:
+
+```python
+Agent.print_prompt_template()  # defaults to key='main'
+```
 
 :::{admonition} Tip
 :class: success
