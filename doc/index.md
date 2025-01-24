@@ -40,23 +40,36 @@ Install Lumen in a few easy steps
 How to explore your data with Lumen AI.
 :::
 
-:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a Lumen Spec dashboard
+:::{grid-item-card} {octicon}`gear;2em;sd-mr-1` Configuring Lumen AI
+:link: lumen_ai/getting_started/configuring_lumen_ai
+:link-type: doc
+
+How to explore your data with Lumen AI.
+:::
+
+:::{grid-item-card} {octicon}`tools;2em;sd-mr-1` Build a Lumen dashboard
 :link: lumen_spec/getting_started/build_dashboard
 :link-type: doc
 
 How to build a Lumen dashboard
 :::
 
-:::{grid-item-card} {octicon}`mortar-board;2em;sd-mr-1` Lumen Spec Core concepts
+:::{grid-item-card} {octicon}`mortar-board;2em;sd-mr-1` Lumen Core concepts
 :link: lumen_spec/getting_started/core_concepts
 :link-type: doc
 
 Get an overview of the core concepts of Lumen
 :::
 
-:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Lumen Spec Data Pipelines
+:::{grid-item-card} {octicon}`git-commit;2em;sd-mr-1` Lumen Data Pipelines
 :link: lumen_spec/getting_started/pipelines
 :link-type: doc
+
+A quick introduction to data transformations with Lumen Piplines.
+:::
+
+:::::
+
 
 ```{toctree}
 :titlesonly:
@@ -64,30 +77,8 @@ Get an overview of the core concepts of Lumen
 :maxdepth: 2
 
 installation
-```
-
-```{toctree}
-:titlesonly:
-:hidden:
-:maxdepth: 1
-
 lumen_ai/index
-```
-
-```{toctree}
-:titlesonly:
-:hidden:
-:maxdepth: 1
-
 lumen_spec/index
-```
-
-```{toctree}
-:titlesonly:
-:hidden:
-:maxdepth: 2
-:caption: Lumen
-
 gallery/index
 reference/index
 background/index
