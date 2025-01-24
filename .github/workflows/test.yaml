@@ -57,8 +57,16 @@ jobs:
     name: Setup workflow
     runs-on: ubuntu-latest
     outputs:
+      img_change: ${{ steps.filter.outputs.img }}
       matrix: ${{ env.MATRIX }}
     steps:
+      - name: Check for code changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            img:
+              - '**/*.png'
       - name: Set matrix option
         run: |
           if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
