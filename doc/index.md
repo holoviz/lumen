@@ -79,5 +79,4 @@ lumen_ai/index
 lumen_spec/index
 gallery/index
 reference/index
-background/index
 ```
