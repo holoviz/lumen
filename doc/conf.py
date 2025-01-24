@@ -123,6 +123,8 @@ html_theme = "pydata_sphinx_theme"
 html_logo = "_static/logo_horizontal.png"
 html_favicon = "_static/favicon.ico"
 
+announcement_text = f"Lumen {version} has just been released! Check out the <a href='https://blog.holoviz.org/posts/lumen_ai_announcement/'>announcement blog post</a> and support Lumen by giving it a 🌟 on <a href='https://github.com/holoviz/lumen'>Github</a>."
+
 html_theme_options = {
     "github_url": "https://github.com/holoviz/lumen",
     "icon_links": [
@@ -132,8 +134,10 @@ html_theme_options = {
             "icon": "fab fa-discourse",
         },
     ],
+    "header_links_before_dropdown": 6,
     "pygment_light_style": "material",
-    "pygment_dark_style": "material"
+    "pygment_dark_style": "material",
+    "announcement": announcement_text,
 }
 
 html_context = {
