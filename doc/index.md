@@ -23,7 +23,7 @@ The declarative Lumen data model further sets it apart from other tools, making 
 
 ---
 
-::::{grid} 1 2 2 4
+::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
 :::{grid-item-card} {octicon}`desktop-download;2em;sd-mr-1` Installation
