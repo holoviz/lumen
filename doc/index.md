@@ -17,9 +17,9 @@ The declarative Lumen data model further sets it apart from other tools, making 
 
 ---
 
-:::{figure} https://assets.holoviz.org/lumen/videos/intro.webm
-Performing some exploration using Lumen AI.
-:::
+<video controls style="max-width: 800px; width: 100%;">
+  <source src="https:/assets.holoviz.org/lumen/videos/intro.webm" type="video/webm" />
+</video>
 
 ---
 
