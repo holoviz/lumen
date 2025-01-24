@@ -29,10 +29,6 @@ Lumen sets itself apart from other agent based frameworks in that it focuses on 
 
 The declarative Lumen data model further sets it apart from other tools, making it easy for LLMs to populate custom components and making it easy for the user to share the results. Entire multi-step data transformation pipelines be they in SQL or Python can easily be captured and used to drive custom visualizations, interactive tables and more. Once generated the declarative nature of the Lumen specification allows them to be shared, reproducing them in a notebook or composing them through a drag-and-drop interface into a dashboard.
 
-<video controls style="width: 100%;">
-  <source src="https:/assets.holoviz.org/lumen/videos/intro.webm" type="video/webm" />
-</video>
-
 ## Getting started
 
 Lumen works with Python 3 and above on Linux, Windows, or Mac. The recommended way to install Lumen is using the [`conda`](https://conda.pydata.org/docs/) command provided by [Anaconda](https://docs.continuum.io/anaconda/install) or [`Miniconda`](https://conda.pydata.org/miniconda.html):
