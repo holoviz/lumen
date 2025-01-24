@@ -29,6 +29,7 @@ pipelines:
 layouts:
   - title: Southern Rockies
     pipeline: rockies
+    height: 250
     facet:
       by: [model]
       layout: column
@@ -38,5 +39,5 @@ layouts:
         x: time
         y: precip
         by: [model, emissions]
-        min_height: 200
+        height: 200
         responsive: true

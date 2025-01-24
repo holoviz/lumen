@@ -39,9 +39,19 @@ env:
 jobs:
   pre_commit:
     name: Run pre-commit
+    needs: [setup]
     runs-on: "ubuntu-latest"
     steps:
       - uses: holoviz-dev/holoviz_tasks/pre-commit@v0
+      - uses: pre-commit/action@v3.0.1
+        if: needs.setup.outputs.img_change == 'true'
+        with:
+          extra_args: -a --hook-stage manual oxipng || true --
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        if: needs.setup.outputs.img_change == 'true'
+        with:
+          commit_message: "Optimize PNG images (lossless)"
+          file_pattern: "*.png"
 
   setup:
     name: Setup workflow
