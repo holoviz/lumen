@@ -21,6 +21,9 @@ import lumen.sources.intake_sql
 
 from lumen.ai.actor import Actor
 from lumen.ai.agents import Agent
+from lumen.ai.coordinator import Coordinator
+from lumen.ai.tools import Tool
+from lumen.ai.ui import UI
 from lumen.base import MultiTypeComponent
 from lumen.dashboard import Auth, Config, Defaults
 from lumen.filters import Filter
@@ -31,7 +34,13 @@ from lumen.transforms import Transform
 from lumen.variables import Variable
 from lumen.views import View
 
-bases = [Agent, Config, Variable, Pipeline, Source, Filter, Transform, View, Layout, Auth, Defaults]
+sections = {
+    'AI': [Agent, Coordinator, Tool, UI],
+    'Spec': [
+        Config, Variable, Pipeline, Source, Filter,
+        Transform, View, Layout, Auth, Defaults
+    ]
+}
 
 BASE_PATH = pathlib.Path(lumen.__file__).parent.parent
 REFERENCE_PATH = BASE_PATH / 'doc' / 'reference'
@@ -278,27 +287,29 @@ def generate_single_component_page(component):
     with open(path, 'w') as f:
         f.write(page)
 
-def write_index(bases):
+def write_index(sections):
     page = '# Reference\n\n'
-    toc = ''
-    for base in bases:
-        name = base.__name__
-        if base.__doc__:
-            description = base.__doc__.split("\n")[1].strip()
-        else:
-            description = None
-        if issubclass(base, (Actor, MultiTypeComponent)):
-            page += f'## [`{name}`]({name.lower()}/index)\n\n'
-            if description:
-                page += f'{description}\n\n'
-            page += generate_grid(base, rel=f'{base.__name__.lower()}/')
-            page += '\n\n'
-        else:
-            page += f'## [`{name}`]({name})\n\n'
-            if description:
-                page += f'{description}\n\n'
-        toc += f'{name} <{name.lower()}/index>\n'
-    page += f"""
+    for section, bases in sections.items():
+        toc = ''
+        page += f'## {section}\n\n'
+        for base in bases:
+            name = base.__name__
+            if base.__doc__:
+                description = base.__doc__.split("\n")[1].strip()
+            else:
+                description = None
+            if issubclass(base, (Actor, MultiTypeComponent, UI)):
+                page += f'### [`{name}`]({name.lower()}/index)\n\n'
+                if description:
+                    page += f'{description}\n\n'
+                page += generate_grid(base, rel=f'{base.__name__.lower()}/')
+                page += '\n\n'
+            else:
+                page += f'### [`{name}`]({name})\n\n'
+                if description:
+                    page += f'{description}\n\n'
+            toc += f'{name} <{name.lower()}/index>\n'
+        page += f"""
 ```{{toctree}}
 ---
 hidden: true
@@ -312,9 +323,10 @@ hidden: true
 
 if __name__ == '__main__':
     REFERENCE_PATH.mkdir(exist_ok=True, parents=True)
-    for component in bases:
-        if issubclass(component, (Actor, MultiTypeComponent)):
-            generate_multi_component_pages(component)
-        else:
-            generate_single_component_page(component)
-    write_index(bases)
+    for bases in sections.values():
+        for component in bases:
+            if issubclass(component, (Actor, MultiTypeComponent, UI)):
+                generate_multi_component_pages(component)
+            else:
+                generate_single_component_page(component)
+    write_index(sections)

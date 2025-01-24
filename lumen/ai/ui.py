@@ -259,13 +259,13 @@ class ChatUI(UI):
     This high-level wrapper allows providing the data sources you will
     be chatting with and then configures the assistant and agents.
 
-    Example:
+    :Example:
 
-    ```python
-    import lumen.ai as lmai
+    ..codeblock:: python
 
-    lmai.ChatUI(data='~/data.csv').servable()
-    ```
+        import lumen.ai as lmai
+
+        lmai.ChatUI(data='~/data.csv').servable()
     """
 
     title = param.String(default='Lumen ChatUI', doc="Title of the app.")
@@ -280,13 +280,14 @@ class ExplorerUI(UI):
     This high-level wrapper allows providing the data sources you will
     be chatting with and then configures the assistant and agents.
 
-    Example:
 
-    ```python
-    import lumen.ai as lmai
+    :Example:
 
-    lmai.ExplorerUI(data='~/data.csv').servable()
-    ```
+    ..codeblock:: python
+
+        import lumen.ai as lmai
+
+        lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
     title = param.String(default='Lumen Explorer', doc="Title of the app.")
