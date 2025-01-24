@@ -23,6 +23,8 @@ The declarative Lumen data model further sets it apart from other tools, making 
 
 ---
 
+## Getting Started
+
 ::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
