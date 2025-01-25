@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import traceback
 
 from io import StringIO
 from pathlib import Path
@@ -16,7 +18,7 @@ from panel.io.state import state
 from panel.layout import (
     Column, HSpacer, Row, Tabs,
 )
-from panel.pane import SVG, Markdown
+from panel.pane import SVG, Alert, Markdown
 from panel.param import ParamMethod
 from panel.theme import Material
 from panel.viewable import Viewer
@@ -168,6 +170,33 @@ class UI(Viewer):
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
+        state.onload(self._verify_llm)
+
+    async def _verify_llm(self):
+        alert = Alert(
+            'Initializing LLM',
+            alert_type='primary',
+            margin=5,
+            sizing_mode='stretch_width',
+            styles={'background-color': 'var(--primary-bg-subtle)'}
+        )
+        self._coordinator.interface.send(alert, respond=False, user='System')
+        try:
+            await self.llm.run_client('default', [{'role': 'user', 'content': 'Are you alive? YES | NO'}])
+        except Exception as e:
+            e_msg = str(e).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
+            tb = html.escape(traceback.format_exc(1)).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
+            alert.param.update(
+                alert_type='danger',
+                object=f'<b>{type(e).__name__}</b>: {e_msg}\n<pre style="overflow-y: auto">{tb}</pre>',
+                styles={'background-color': 'var(--danger-bg-subtle)', 'overflow-x': 'scroll'}
+            )
+            return
+        alert.param.update(
+            alert_type='success',
+            object='Successfully initialized LLM',
+                styles={'background-color': 'var(--success-bg-subtle)'}
+        )
 
     def _destroy(self, session_context):
         """
