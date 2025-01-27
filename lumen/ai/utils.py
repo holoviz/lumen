@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import inspect
 import math
 import re
 import time
+import traceback
 
 from functools import wraps
 from pathlib import Path
@@ -394,3 +396,25 @@ def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bo
             message["content"] = user_message
             break
     return messages
+
+
+def format_exception(exc: Exception, limit: int = 0) -> str:
+    """
+    Format and return a string representation of an exception.
+
+    Parameters
+    ----------
+    exc : Exception
+        The exception to be formatted.
+    limit : int
+        The maximum number of layers of traceback to include in the output.
+        Default is 0.
+
+    Returns
+    -------
+    str
+        A formatted string describing the exception and its traceback.
+    """
+    e_msg = str(exc).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
+    tb = html.escape('\n'.join(traceback.format_exception(exc, limit=limit))).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
+    return f'<b>{type(exc).__name__}</b>: {e_msg}\n<pre style="overflow-y: auto">{tb}</pre>'

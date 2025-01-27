@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import html
 import traceback
 
 from io import StringIO
@@ -43,6 +42,7 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .utils import format_exception
 
 if TYPE_CHECKING:
     from .views import LumenOutput
@@ -174,7 +174,7 @@ class UI(Viewer):
 
     async def _verify_llm(self):
         alert = Alert(
-            'Initializing LLM',
+            'Initializing LLM ⌛',
             alert_type='primary',
             margin=5,
             sizing_mode='stretch_width',
@@ -182,21 +182,24 @@ class UI(Viewer):
         )
         self._coordinator.interface.send(alert, respond=False, user='System')
         try:
-            await self.llm.run_client('default', [{'role': 'user', 'content': 'Are you alive? YES | NO'}])
+            await self.llm.invoke([{'role': 'user', 'content': 'Are you there? YES | NO'}])
         except Exception as e:
-            e_msg = str(e).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
-            tb = html.escape(traceback.format_exc(1)).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
+            traceback.print_exc()
             alert.param.update(
                 alert_type='danger',
-                object=f'<b>{type(e).__name__}</b>: {e_msg}\n<pre style="overflow-y: auto">{tb}</pre>',
-                styles={'background-color': 'var(--danger-bg-subtle)', 'overflow-x': 'scroll'}
+                object='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else 0),
+                styles={
+                    'background-color': 'var(--danger-bg-subtle)',
+                    'overflow-x': 'auto',
+                    'padding-bottom': '0.8em'
+                }
             )
-            return
-        alert.param.update(
-            alert_type='success',
-            object='Successfully initialized LLM',
+        else:
+            alert.param.update(
+                alert_type='success',
+                object='Successfully initialized LLM ✅︎',
                 styles={'background-color': 'var(--success-bg-subtle)'}
-        )
+            )
 
     def _destroy(self, session_context):
         """
