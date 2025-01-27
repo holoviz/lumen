@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 
 from io import StringIO
 from pathlib import Path
@@ -16,7 +17,7 @@ from panel.io.state import state
 from panel.layout import (
     Column, HSpacer, Row, Tabs,
 )
-from panel.pane import SVG, Markdown
+from panel.pane import SVG, Alert, Markdown
 from panel.param import ParamMethod
 from panel.theme import Material
 from panel.viewable import Viewer
@@ -41,6 +42,7 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .utils import format_exception
 
 if TYPE_CHECKING:
     from .views import LumenOutput
@@ -168,6 +170,36 @@ class UI(Viewer):
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
+        state.onload(self._verify_llm)
+
+    async def _verify_llm(self):
+        alert = Alert(
+            'Initializing LLM ⌛',
+            alert_type='primary',
+            margin=5,
+            sizing_mode='stretch_width',
+            styles={'background-color': 'var(--primary-bg-subtle)'}
+        )
+        self._coordinator.interface.send(alert, respond=False, user='System')
+        try:
+            await self.llm.invoke([{'role': 'user', 'content': 'Are you there? YES | NO'}])
+        except Exception as e:
+            traceback.print_exc()
+            alert.param.update(
+                alert_type='danger',
+                object='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else 0),
+                styles={
+                    'background-color': 'var(--danger-bg-subtle)',
+                    'overflow-x': 'auto',
+                    'padding-bottom': '0.8em'
+                }
+            )
+        else:
+            alert.param.update(
+                alert_type='success',
+                object='Successfully initialized LLM ✅︎',
+                styles={'background-color': 'var(--success-bg-subtle)'}
+            )
 
     def _destroy(self, session_context):
         """

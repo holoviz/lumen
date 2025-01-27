@@ -176,9 +176,11 @@ class AIHandler(CodeHandler):
         """Build source code with configuration"""
         if config.get("provider") is None:
             raise RuntimeError(
-                "No provider detected. Please specify a provider with --provider "
-                "and an API key with --api-key, set an environment variable with "
-                "the API key, or specify a custom endpoint with --provider-endpoint."
+                "No LLM provider was detected. To resolve this specify a provider "
+                "using the --provider CLI argument along with an API key (using --api-key) "
+                "or configure environment variable(s) for your favorite LLM cloud provider "
+                "(e.g. OPENAI_API_KEY or ANTHROPIC_API_KEY). If you are running an OpenAI "
+                "compatible API specify a custom endpoint with --provider-endpoint."
             )
 
         context = {
@@ -194,7 +196,6 @@ class AIHandler(CodeHandler):
         }
         context = {k: v for k, v in context.items() if v is not None}
 
-        print(context)
         source = render_template(
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()

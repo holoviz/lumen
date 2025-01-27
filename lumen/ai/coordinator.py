@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import traceback
 
 from copy import deepcopy
 from types import FunctionType
@@ -842,9 +843,11 @@ class Planner(Coordinator):
                     )
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
+                    traceback.print_exception(e)
                     raise e
                 except Exception as e:
                     istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                    traceback.print_exception(e)
                     raise e
                 execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
                 if unmet_dependencies:
@@ -854,7 +857,9 @@ class Planner(Coordinator):
                     planned = True
                 if attempts > 5:
                     istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
-                    raise RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
+                    e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
+                    traceback.print_exception(e)
+                    raise e
             self._memory["plan"] = plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
