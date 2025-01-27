@@ -24,7 +24,7 @@ CMD_DIR = THIS_DIR / ".." / "command"
 
 LLM_PROVIDERS = {
     'openai': 'OpenAI',
-    'anthropic': 'Anthropic',
+    'anthropic': 'AnthropicAI',
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
@@ -40,8 +40,8 @@ class LLMConfig:
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "mistral": "MISTRAL_API_KEY",
-        "azure-mistral": "AZURE_API_KEY",
-        "azure-openai": "AZURE_API_KEY",
+        "azure-mistral": "AZUREAI_ENDPOINT_KEY",
+        "azure-openai": "AZUREAI_ENDPOINT_KEY",
     }
 
     @classmethod

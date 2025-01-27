@@ -4,7 +4,15 @@ Powered by state-of-the-art large language models (LLMs), Lumen AI lets users ch
 
 ## Quick Start
 
-To get started with Lumen AI, users can launch the built-in chat interface through the command line interface (CLI) by calling:
+Before launching into Lumen AI you have to decide on the LLM that will be powering it. The first choice will be whether to use a cloud provided LLM or run one locally. To get started we generally recommend OpenAI, Anthropic or Mistral models since they are powerful and don't require specialized hardware to run. You can find detailed instructions on how to configure different LLM providers [in the how-to guide](../how_to/llm/index). Assuming you decide on one of the three cloud providers simply set a valid API key:
+
+- OpenAI: `OPENAI_API_KEY`
+- Mistral: `MISTRAL_API_KEY`
+- Anthropic: `ANTHROPIC_API_KEY`
+
+Once set Lumen will automatically pick the first LLM provider it can find an API key for.
+
+Now you can launch the built-in chat interface through the command line interface (CLI) by calling:
 
 ```bash
 lumen-ai serve
@@ -13,7 +21,7 @@ lumen-ai serve
 Alternatively users can launch the chat interface with a pre-loaded source. Here, we load the `penguins` dataset directly from the web:
 
 ```bash
-lumen-ai serve https://raw.githubusercontent.com/allisonhorst/palmerpenguins/refs/heads/main/inst/extdata/penguins.csv
+lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
 ```
 
 This will launch the chat interface on `localhost:5006`.
@@ -139,16 +147,6 @@ Wildcards are also supported:
 ```bash
 lumen-ai serve path/to/datasets/*.csv
 ```
-
-### LLM Providers
-
-The desired LLM provider can be chosen by specifying the `--provider` option:
-
-```bash
-lumen-ai serve --provider mistral
-```
-
-Note the provider can be auto-detected from standard environment variable names, e.g. `OPENAI_API_KEY`, if the provider option is not specified.
 
 ### Agents
 

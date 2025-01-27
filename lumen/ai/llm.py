@@ -296,23 +296,28 @@ class Llama(Llm):
     async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
         if client_callable := pn.state.cache.get(model_spec):
             return client_callable
-        from huggingface_hub import hf_hub_download
-
         model_kwargs = self._get_model_kwargs(model_spec)
-        repo = model_kwargs["repo"]
-        model_file = model_kwargs["model_file"]
-        chat_format = model_kwargs["chat_format"]
-        n_ctx = model_kwargs["n_ctx"]
-        model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
+        if 'repo' in model_kwargs:
+            from huggingface_hub import hf_hub_download
+            repo = model_kwargs.pop("repo")
+            model_file = model_kwargs.pop("model_file")
+            model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
+        elif 'model_path' in model_kwargs:
+            model_path = model_kwargs['model_path']
+        else:
+            raise ValueError(
+                "Llama.model_kwargs must contain either a 'repo' and 'model_file' "
+                "(to fetch a model using `huggingface_hub` or a 'model_path' pointing "
+                "to a model on disk."
+            )
         llm_kwargs = dict(
             model_path=model_path,
             n_gpu_layers=-1,
-            n_ctx=n_ctx,
             seed=128,
-            chat_format=chat_format,
             logits_all=False,
             use_mlock=True,
-            verbose=False
+            verbose=False,
+            **model_kwargs
         )
         client_callable = await asyncio.to_thread(self._cache_model, model_spec, **llm_kwargs)
         return client_callable
@@ -386,11 +391,11 @@ class AzureOpenAI(Llm):
     A LLM implementation that uses the Azure OpenAI integration.
     """
 
-    api_key = param.String(doc="The Azure API key.")
+    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key.")
 
     api_version = param.String(doc="The Azure AI Studio API version.")
 
-    endpoint = param.String(doc="The Azure AI Studio endpoint.")
+    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure AI Studio endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -485,9 +490,9 @@ class AzureMistralAI(MistralAI):
     A LLM implementation that calls Mistral AI models on Azure.
     """
 
-    api_key = param.String(default=os.getenv("AZURE_API_KEY"), doc="The Azure API key")
+    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key")
 
-    endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure API endpoint to invoke.")
+    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure API endpoint to invoke.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
@@ -535,8 +540,8 @@ class AnthropicAI(Llm):
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-3-haiku-20240307"},
-        "reasoning": {"model": "claude-3-5-sonnet-20240620"},
+        "default": {"model": "claude-3-haiku-latest"},
+        "reasoning": {"model": "claude-3-5-sonnet-latest"},
     })
 
     _supports_model_stream = True

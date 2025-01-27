@@ -15,7 +15,7 @@ lmai.memory["current_source"] = DuckDBSource(
 :::{admonition} Tip
 :class: success
 
-Lumen AI currently supports CSV, Parquet, JSON, XLSX, GeoJSON, WKT, and ZIP files for tables, and DOC, DOCX, PDF, TXT, MD, and RST files for documents.
+Lumen AI currently supports CSV, Parquet, JSON, XLSX, GeoJSON, WKT, and ZIP files for tables, and DOC, DOCX, PDF, TXT, MD, HTML, and RST files for documents. In fact as long as [MarkItDown](https://github.com/microsoft/markitdown) any file format that is not a table will be treated as a document.
 :::
 
 ## Coordinator
