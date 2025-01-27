@@ -40,6 +40,13 @@ Configure Lumen AI to use custom Coordinators, Agents, and LLM providers
 ::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
+:::{grid-item-card} {octicon}`dependabot;2.5em;sd-mr-1` LLM Providers
+:link: ./how_to/llm/index
+:link-type: doc
+
+Learn how to configure Lumen AI to use your favorite LLM provider and model.
+:::
+
 :::{grid-item-card} {octicon}`cache;2.5em;sd-mr-1` Custom Data Sources
 :link: ./how_to/custom_data_source
 :link-type: doc
