@@ -262,7 +262,10 @@ class UI(Viewer):
             config.template = self.template
             template = state.template
             template.title = self.title
-            template.config.raw_css = ['#header a { font-family: Futura; font-size: 2em; font-weight: bold;}']
+            template.config.css_files.append(
+                'https://fonts.googleapis.com/css2?family=Nunito:wght@700'
+            )
+            template.config.raw_css = ["#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"]
             template.main.append(self._main)
             return template
         return super()._create_view()
