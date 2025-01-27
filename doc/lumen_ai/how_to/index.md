@@ -60,6 +60,7 @@ Learn to create and use template prompts for influencing the AI's responses.
 ---
 hidden: true
 ---
+llm/index
 custom_agents
 custom_analyses
 custom_data_source

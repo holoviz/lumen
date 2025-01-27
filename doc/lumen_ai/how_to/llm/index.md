@@ -1,4 +1,4 @@
-# Using & Configuring the LLM
+# Configuring LLM Providers
 
 Lumen AI can use a wide range of LLM providers and different models. Discover how-to configure your favorite provider, either by running a model in the cloud or locally.
 

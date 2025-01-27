@@ -4,7 +4,7 @@ Powered by state-of-the-art large language models (LLMs), Lumen AI lets users ch
 
 ## Quick Start
 
-Before launching into Lumen AI you have to decide on the LLM that will be powering it. The first choice will be whether to use a cloud provided LLM or run one locally. To get started we generally recommend OpenAI, Anthropic or Mistral models since they are powerful and don't require specialized hardware to run. You can find detailed instructions on how to configure different LLM providers [in the how-to guide](../how_to/llms/index). Assuming you decide on one of the three cloud providers simply set a valid API key:
+Before launching into Lumen AI you have to decide on the LLM that will be powering it. The first choice will be whether to use a cloud provided LLM or run one locally. To get started we generally recommend OpenAI, Anthropic or Mistral models since they are powerful and don't require specialized hardware to run. You can find detailed instructions on how to configure different LLM providers [in the how-to guide](../how_to/llm/index). Assuming you decide on one of the three cloud providers simply set a valid API key:
 
 - OpenAI: `OPENAI_API_KEY`
 - Mistral: `MISTRAL_API_KEY`
