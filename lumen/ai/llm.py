@@ -386,11 +386,11 @@ class AzureOpenAI(Llm):
     A LLM implementation that uses the Azure OpenAI integration.
     """
 
-    api_key = param.String(doc="The Azure API key.")
+    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key.")
 
     api_version = param.String(doc="The Azure AI Studio API version.")
 
-    endpoint = param.String(doc="The Azure AI Studio endpoint.")
+    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure AI Studio endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -485,9 +485,9 @@ class AzureMistralAI(MistralAI):
     A LLM implementation that calls Mistral AI models on Azure.
     """
 
-    api_key = param.String(default=os.getenv("AZURE_API_KEY"), doc="The Azure API key")
+    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key")
 
-    endpoint = param.String(default=os.getenv("AZURE_ENDPOINT"), doc="The Azure API endpoint to invoke.")
+    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure API endpoint to invoke.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
