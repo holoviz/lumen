@@ -158,11 +158,13 @@ class Actor(param.Parameterized):
 
     @classmethod
     def get_prompt_template(cls, key: str = "main") -> str:
-        return cls._lookup_prompt_key(cls, key, "template").read_text()
+        """
+        Returns the template for the given prompt key.
 
-    @classmethod
-    def print_prompt_template(cls, key: str = "main"):
-        print(cls.get_prompt_template(key))
+        Parameters:
+            key (str): The key of the prompt to return the template for.
+        """
+        return cls._lookup_prompt_key(cls, key, "template").read_text()
 
 
 class ContextProvider(param.Parameterized):

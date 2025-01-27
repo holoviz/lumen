@@ -134,7 +134,7 @@ template_overrides = {
 If you aren't sure what the original prompt is, you can print it out:
 
 ```python
-Agent.print_prompt_template()  # defaults to key='main'
+print(Agent.get_prompt_template())  # defaults to key='main'
 ```
 
 :::{admonition} Tip
