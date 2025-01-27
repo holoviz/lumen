@@ -58,3 +58,29 @@ azure_llm = lmai.llm.AzureOpenAI(api_key='your-azure-api-key', endpoint='your-az
 ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=azure_llm)
 ui.servable()
 ```
+
+### Managed Identity
+
+When working with Azure in corporate setting you may have to use managed identity providers. To enable this use case you can configure a `token_provider`:
+
+```python
+import lumen.ai as lmai
+
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+)
+
+llm = lmai.llm.AzureOpenAI(
+    api_version=...,
+    endpoint=...,
+    model_kwargs={
+        "default": {"model": "gpt4o-mini", "azure_ad_token_provider": token_provider},
+        "reasoning": {"model": "gpt4o", "azure_ad_token_provider": token_provider},
+    },
+)
+
+ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
+ui.servable()
+```
