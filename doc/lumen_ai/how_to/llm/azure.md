@@ -30,6 +30,8 @@ set AZUREAI_ENDPOINT_URL=your-azure-endpoint
 ```
 :::
 
+::::
+
 2. Now run `lumen-ai` serve and select whether you want to use OpenAI or Mistral based models:
 
 ```bash

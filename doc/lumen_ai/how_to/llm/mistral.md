@@ -32,6 +32,8 @@ set MISTRAL_API_KEY=your-mistral-api-key
 ```
 :::
 
+::::
+
 2. Simply run your Lumen AI application, and it will automatically use Anthropic as the LLM provider. If you have environment variables for multiple providers override it.
 
 ```bash

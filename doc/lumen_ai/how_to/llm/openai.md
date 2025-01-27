@@ -30,6 +30,8 @@ set OPENAI_API_KEY=your-openai-api-key
 ```
 :::
 
+::::
+
 2. Simply run your Lumen AI application, and it will automatically use OpenAI as the LLM provider. If you have environment variables for multiple providers override it.
 
 ```bash
