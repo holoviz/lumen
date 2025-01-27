@@ -5,7 +5,7 @@ Lumen's How to Guides provide step by step recipes for solving essential problem
 ::::{grid} 1 2 2 3
 :gutter: 1 1 1 2
 
-:::{grid-item-card} {octicon}`cache;2.5em;sd-mr-1` Configuring LLM Providers
+:::{grid-item-card} {octicon}`dependabot;2.5em;sd-mr-1` Configuring LLM Providers
 :link: llm/index
 :link-type: doc
 
