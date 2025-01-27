@@ -369,7 +369,7 @@ class DocumentListAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         # extract the filename, following this pattern `Filename: 'filename'``
-        sources = [re.search(r"'(.*?)'", src["metadata"]).group(1) for src in self._memory["document_sources"]]
+        sources = [doc["metadata"].get("filename", "untitled") for doc in self._memory["document_sources"]]
         self._df = pd.DataFrame({"Documents": sources})
         document_list = pn.widgets.Tabulator(
             self._df,
