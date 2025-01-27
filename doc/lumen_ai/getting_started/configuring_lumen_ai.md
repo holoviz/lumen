@@ -67,25 +67,13 @@ The following `Agent`s are built-in:
 
 - **`AnalysisAgent`** allows users to plug in their own custom analyses and views.
 
-See [Custom Agents](../how_to/ai_config/custom_agents.md) for more information on creating custom agents.
+See [Custom Agents](../how_to/ai_config/custom_agents) for more information on creating custom agents.
 
 ## LLM Providers
 
 Lumen AI supports multiple Large Language Model (LLM) providers to ensure flexibility and access to the best models available, or specific models that are available to the user.
 
-Users can initialize the LLM provider and pass it to the `ExplorerUI`:
-
-```python
-llm = lmai.llm.OpenAI(model="gpt-4o-mini")
-ui = lmai.ExplorerUI(llm=llm)
-```
-
-The following are provided:
-
-- **OpenAI** requires `openai`. The `api_key` defaults to the environment variable `OPENAI_API_KEY` if available and the `model` defaults to `gpt-4o-mini`.
-- **MistralAI** requires `mistralai`. The `api_key` defaults to the environment variable `MISTRAL_API_KEY` if available and the `model` defaults to `mistral-large-latest`.
-- **Anthropic** requires `anthropic`. The `api_key` defaults to the environment variable `ANTHROPIC_API_KEY` if available and the `model` defaults to `claude-3-5-sonnet-20240620`.
-- **Llama** requires `llama-cpp-python`,and `huggingface_hub`. The `model` defaults to `qwen2.5-coder-7b-instruct-q5_k_m.gguf`.
+See the [how to guides on configuring LLM Providers](../how_to/llm/index) for more information on configuring different LLM providers and models.
 
 ## Tools
 
@@ -117,4 +105,4 @@ The following are built-in:
 
 - **FunctionTool**: wraps arbitrary functions and makes them available as a tool for an LLM to call.
 
-See [Custom Tools](../how_to/ai_config/custom_tools.md) for more information on creating custom tools.
+See [Custom Tools](../how_to/ai_config/custom_tools) for more information on creating custom tools.
