@@ -47,7 +47,7 @@ Learn how to configure the Llama.cpp as the LLM provider used by Lumen AI.
 :::
 
 :::{grid-item-card} Use OpenAI compatible endpoints
-:link: endpoint
+:link: endpoints
 :link-type: doc
 
 Learn how to configure the OpenAI as the LLM provider used by Lumen AI.
@@ -63,6 +63,6 @@ openai
 mistral
 anthropic
 azure
-endpoint
 llama_cpp
+endpoints
 ```
