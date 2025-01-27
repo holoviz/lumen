@@ -161,8 +161,14 @@ class Actor(param.Parameterized):
         """
         Returns the template for the given prompt key.
 
-        Parameters:
-            key (str): The key of the prompt to return the template for.
+        Parameters
+        ----------
+        key : str, optional
+            The key of the prompt to return the template for. Default is "main".
+
+        Returns
+        -------
+        The template associated with the given prompt key.
         """
         return cls._lookup_prompt_key(cls, key, "template").read_text()
 
