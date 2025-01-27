@@ -300,7 +300,7 @@ class SourceControls(Viewer):
             return 0
 
         metadata = {
-            "filename": document_controls.filename,
+            "filename": f"{document_controls.filename}.{document_controls.extension}",
             "comments": document_controls._metadata_input.value,
         }
         document = {"text": text, "metadata": metadata}
