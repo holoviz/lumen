@@ -216,7 +216,7 @@ class Coordinator(Viewer, Actor):
     def _add_suggestions_to_footer(
         self,
         suggestions: list[str],
-        num_objects: int = 1,
+        num_objects: int = 2,
         inplace: bool = True,
         analysis: bool = False,
         append_demo: bool = True,
