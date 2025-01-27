@@ -312,8 +312,7 @@ class SourceControls(Viewer):
             else:
                 self._memory["document_sources"].append(document)
         else:
-            with param.discard_events(self._memory):
-                self._memory["document_sources"] = [document]
+            self._memory["document_sources"] = [document]
         return 1
 
     @param.depends("add", watch=True)
