@@ -107,6 +107,39 @@ class VectorStore(param.Parameterized):
         List of assigned IDs for the added items.
         """
 
+    def add_file(self, filename, ext=None, metadata=None) -> list[int]:
+        """
+        Adds a file or a URL to the collection.
+
+        Parameters
+        ----------
+        filename (str): str | os.PathLike | IO
+            The path to the file, a file-like object or a URL to be added.
+        ext : str | None
+            The file extension to associate with the added file.
+            If not provided, it will be determined from the file or URL.
+        metadata : dict | None
+            A dictionary containing metadata related to the file
+            (e.g., title, author, description). Defaults to None.
+
+        Returns
+        -------
+        List of assigned IDs for the added items.
+        """
+        from markitdown import MarkItDown
+        if metadata is None:
+            metadata = {}
+        mdit = MarkItDown()
+        if isinstance(filename, str) and filename.startswith(('http://', 'https://')):
+            doc = mdit.convert_url(filename)
+        elif hasattr(filename, 'read'):
+            doc = mdit.convert_stream(filename, file_extension=ext)
+        else:
+            if 'filename' not in metadata:
+                metadata['filename'] = filename
+            doc = mdit.convert_local(filename, file_extension=ext)
+        return self.add([{'text': doc.text_content, 'metadata': metadata}])
+
     @abstractmethod
     def query(
         self,
@@ -280,39 +313,6 @@ class NumpyVectorStore(VectorStore):
         self.ids.extend(new_ids)
 
         return new_ids
-
-    def add_file(self, filename, ext=None, metadata=None) -> list[int]:
-        """
-        Adds a file or a URL to the collection.
-
-        Parameters
-        ----------
-        filename (str): str | os.PathLike | IO
-            The path to the file, a file-like object or a URL to be added.
-        ext : str | None
-            The file extension to associate with the added file.
-            If not provided, it will be determined from the file or URL.
-        metadata : dict | None
-            A dictionary containing metadata related to the file
-            (e.g., title, author, description). Defaults to None.
-
-        Returns
-        -------
-        List of assigned IDs for the added items.
-        """
-        from markitdown import MarkItDown
-        if metadata is None:
-            metadata = {}
-        mdit = MarkItDown()
-        if filename.startswith(('http://', 'https://')):
-            doc = mdit.convert_url(filename)
-        elif hasattr(filename, 'read'):
-            doc = mdit.convert_stream(filename, file_extension=ext)
-        else:
-            if 'filename' not in metadata:
-                metadata['filename'] = filename
-            doc = mdit.convert_local(filename, file_extension=ext)
-        return self.add([{'text': doc.text_content, 'metadata': metadata}])
 
     def query(
         self,
