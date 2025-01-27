@@ -19,6 +19,7 @@ from panel.layout import (
 )
 from panel.pane import SVG, Alert, Markdown
 from panel.param import ParamMethod
+from panel.template import FastListTemplate
 from panel.theme import Material
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
@@ -261,6 +262,8 @@ class UI(Viewer):
             )
             config.template = self.template
             template = state.template
+            if isinstance(template, FastListTemplate):
+                template.main_layout = None
             template.title = self.title
             template.config.css_files.append(
                 'https://fonts.googleapis.com/css2?family=Nunito:wght@700'
