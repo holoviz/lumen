@@ -7,6 +7,8 @@ Lumen AI is designed to be highly customizable and composable. Users can easily 
 In a script, users can initialize Lumen AI with specific datasets by injecting `current_source` into `lmai.memory`:
 
 ```python
+from lumen.sources.duckdb import DuckDBSource
+
 lmai.memory["current_source"] = DuckDBSource(
     tables=["path/to/table.csv", "dir/data.parquet"]
 )
