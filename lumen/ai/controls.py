@@ -300,7 +300,7 @@ class SourceControls(Viewer):
             return 0
 
         metadata = {
-            "filename": document_controls.filename,
+            "filename": f"{document_controls.filename}.{document_controls.extension}",
             "comments": document_controls._metadata_input.value,
         }
         document = {"text": text, "metadata": metadata}
@@ -312,8 +312,7 @@ class SourceControls(Viewer):
             else:
                 self._memory["document_sources"].append(document)
         else:
-            with param.discard_events(self._memory):
-                self._memory["document_sources"] = [document]
+            self._memory["document_sources"] = [document]
         return 1
 
     @param.depends("add", watch=True)

@@ -32,8 +32,8 @@ from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
 from ..util import log
 from .agents import (
-    AnalysisAgent, AnalystAgent, ChatAgent, SourceAgent, SQLAgent,
-    TableListAgent, VegaLiteAgent,
+    AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
+    SQLAgent, TableListAgent, VegaLiteAgent,
 )
 from .components import SplitJS
 from .controls import SourceControls
@@ -88,7 +88,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent
+        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent
     ], doc="""List of default agents which will always be added.""")
 
     export_functions = param.Dict(default={}, doc="""

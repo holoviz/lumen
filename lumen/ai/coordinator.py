@@ -433,7 +433,7 @@ class Coordinator(Viewer, Actor):
                 log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
-            if unprovided:
+            if unprovided and not any(unprovided):
                 step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{agent_name} failed to provide declared context.")
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)

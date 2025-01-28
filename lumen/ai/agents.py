@@ -186,7 +186,7 @@ class SourceAgent(Agent):
 
     requires = param.List(default=[], readonly=True)
 
-    provides = param.List(default=["source"], readonly=True)
+    provides = param.List(default=["source", "document_sources"], readonly=True)
 
     on_init = param.Boolean(default=True)
 
@@ -293,12 +293,6 @@ class TableListAgent(Agent):
         Not useful for gathering information about the tables.
         """)
 
-    prompts = param.Dict(
-        default={
-            "main": {"template": PROMPTS_DIR / "TableListAgent" / "main.jinja2"},
-        }
-    )
-
     requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('tabulator',)
@@ -341,6 +335,59 @@ class TableListAgent(Agent):
         self.interface.stream(table_list, user="Lumen")
         self._memory["closest_tables"] = tables[:5]
         return table_list
+
+
+class DocumentListAgent(Agent):
+    """
+    The DocumentListAgent lists all available documents provided by the user.
+    """
+
+    purpose = param.String(default="""
+        Renders a list of all availables documents to the user and lets the user
+        pick one. Not useful for gathering details about the documents;
+        use ChatAgent for that instead.
+        """)
+
+    requires = param.List(default=["document_sources"], readonly=True)
+
+    _extensions = ('tabulator',)
+
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        sources = memory.get("document_sources")
+        if not sources:
+            return False  # source not loaded yet; always apply
+        return len(sources) > 1
+
+    def _use_document(self, event):
+        if event.column != "show":
+            return
+        document = self._df.iloc[event.row, 0]
+        self.interface.send(f"Tell me about: {document!r}")
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        # extract the filename, following this pattern `Filename: 'filename'``
+        sources = [doc["metadata"].get("filename", "untitled") for doc in self._memory["document_sources"]]
+        self._df = pd.DataFrame({"Documents": sources})
+        document_list = pn.widgets.Tabulator(
+            self._df,
+            buttons={'show': '<i class="fa fa-eye"></i>'},
+            show_index=False,
+            min_height=150,
+            min_width=350,
+            widths={'Table': '90%'},
+            disabled=True,
+            page_size=10,
+            header_filters=True
+        )
+        document_list.on_click(self._use_document)
+        self.interface.stream(document_list, user="Lumen")
+        return document_list
 
 
 class LumenBaseAgent(Agent):
