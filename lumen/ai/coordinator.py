@@ -372,7 +372,10 @@ class Coordinator(Viewer, Actor):
     async def _fill_model(self, messages, system, agent_model, errors=None):
         if errors:
             errors = '\n'.join(errors)
-            system += f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}"
+            messages = mutate_user_message(
+                f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}",
+                messages
+            )
 
         model_spec = self.prompts["main"].get("llm_spec", "default")
         out = await self.llm.invoke(

@@ -844,9 +844,10 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
             errors = '\n'.join(errors)
             if self._last_output:
-                system += (
-                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n\n"
-                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n"
+                messages = mutate_user_message(
+                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n"
+                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n",
+                    messages
                 )
         model_spec = self.prompts["main"].get("llm_spec", "default")
         output = await self.llm.invoke(
