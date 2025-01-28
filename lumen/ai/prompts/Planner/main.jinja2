@@ -19,6 +19,10 @@ Agent Rules:
 {% endblock -%}
 
 {% block context -%}
+{%- if tool_context %}
+Note that you previously decided that you required additional context and got the following responses DO NOT invoke the same tools again: {{ tool_context }}
+{% endif %}
+
 {%- if 'table' in memory %}- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.{% endif -%}
 
 {%- if table_info %}

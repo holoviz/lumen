@@ -11,7 +11,7 @@ class JoinRequired(BaseModel):
     chain_of_thought: str = Field(
         description="""
         Concisely explain whether a table join is required to answer the user's query, or
-        if the user is requesting a join or merge using a couple sentences.
+        if the user is requesting a join or merge.
         """
     )
 
@@ -65,11 +65,11 @@ class Validity(BaseModel):
 
     correct_assessment: str = Field(
         description="""
-        Restate the current table and think through whether the current table meets the requirement
-        to answer the user's query, i.e. table contains all the necessary raw columns.
-        However, if the query can be solved through SQL, the data is assumed to be valid.
-        If the number of rows is insufficient, the table is invalid.
+        Think through whether the current table is sufficient to answer the user query,
+        i.e. table contains all the necessary raw columns.
+        If the query can be solved by transforming the current data with SQL, the data is assumed to be valid.
         If the user user explicitly asks for a refresh, then the table is invalid.
+        Keep it concise.
         """
     )
 
@@ -95,31 +95,41 @@ class RetrySpec(BaseModel):
     )
 
 
-def make_plan_models(experts_or_tools: list[str], tables: list[str]):
+def make_context_model(tools: list[str], tables: list[str]):
+    fields = {}
+    if tables:
+        fields['tables'] = (
+            list[Literal[tuple(tables)]],
+            FieldInfo(
+                description="A list of the most relevant tables to explore and load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
+            )
+        )
+    if tools:
+        fields['tools'] = tools=(
+            list[Literal[tuple(tools)]],
+            FieldInfo(
+                description="A list of tools to call to provide context before launching into the planning stage."
+            )
+        )
+    return create_model("Context", **fields)
+
+
+def make_plan_models(agents: list[str], tools: list[str]):
     step = create_model(
         "Step",
-        expert_or_tool=(Literal[tuple(experts_or_tools)], FieldInfo(description="The name of the expert or tool to assign a task to.")),
+        expert_or_tool=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the expert or tool to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
         render_output=(bool, FieldInfo(description="Whether the output of the expert should be rendered. If the user wants to see the table, and the expert is SQL, then this should be `True`.")),
     )
-    extras = {}
-    if tables:
-        extras['requested_tables'] = (
-            list[Literal[tuple(tables)]],
-            FieldInfo(
-                description="A list of the most relevant tables to explore and load into memory before coming up with a plan, based on the chain of thought. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
-            )
-        )
     reasoning = create_model(
         'Reasoning',
         chain_of_thought=(
             str,
             FieldInfo(
-                description="Describe at a high-level how the actions of each expert will solve the user query. If the user asks a question about data that is seemingly unavailable, please request to see tables' schemas."
+                description="Describe at a high-level how the actions of each expert will solve the user query."
             ),
         ),
-        **extras
     )
     plan = create_model(
         "Plan",
