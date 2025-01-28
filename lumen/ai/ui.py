@@ -435,15 +435,18 @@ class ExplorerUI(UI):
         self.interface.objects = conversation
         self._last_synced = active
 
-    def _cleanup_explorations(self, event):
+    async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
         for i, (old, new) in enumerate(zip(event.old, event.new)):
-            if old is not new:
-                self._contexts.pop(i)
-                self._conversations.pop(i)
-                self._titles.pop(i)
-                break
+            if old is new:
+                continue
+            self._contexts.pop(i)
+            self._conversations.pop(i)
+            self._titles.pop(i)
+            if i == self._last_synced:
+                await self._update_conversation(tab=1)
+            break
 
     async def _set_context(self, event):
         active = event.new
