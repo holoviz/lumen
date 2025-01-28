@@ -449,7 +449,7 @@ class ExplorerUI(UI):
                 await self._update_conversation(tab=1)
             break
 
-    async def _set_context(self, event, old=None, new=None):
+    async def _set_context(self, event=None, old=None, new=None):
         active = new or event.new
         if len(self._conversations) == 0 or active != self._explorations.active:
             return
