@@ -340,13 +340,13 @@ class Coordinator(Viewer, Actor):
         )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             model_spec = self.prompts["check_validity"].get("llm_spec", "default")
-            async for output in self.llm.stream(
+            output = await self.llm.invoke(
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=self._get_model("check_validity"),
-            ):
-                step.stream(output.correct_assessment, replace=True)
+            )
+            step.stream(output.correct_assessment, replace=True)
             step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
 
         if output and output.is_invalid:
