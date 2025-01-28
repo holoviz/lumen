@@ -416,10 +416,17 @@ class ExplorerUI(UI):
             # When user switches tabs and coordinator is running
             # wait to switch the conversation context
             await self._idle.wait()
+            if self._explorations.active != active:
+                # If active tab has changed while we waited
+                # skip the sync
+                return
             # If conversation was already updated, resync conversation
             if self._last_synced == active:
-                self._conversations[active] = self.interface.objects
-        if (event.new if event else tab):
+                if self._conversations:
+                    self._conversations[active] = self.interface.objects
+                else:
+                    self._root_conversation = self.interface.objects
+        if (event.new if event is not None else tab):
             # Explorations Tab
             if active < len(self._conversations):
                 conversation = self._conversations[active]
@@ -449,19 +456,21 @@ class ExplorerUI(UI):
                 await self._update_conversation(tab=1)
             break
 
-    async def _set_context(self, event, old=None, new=None):
-        active = new or event.new
-        if len(self._conversations) == 0 or active != self._explorations.active:
+    async def _set_context(self, event=None, old=None, new=None):
+        active = event.new if new is None else new
+        if len(self._conversations) == 0:
             return
         await self._idle.wait()
+        if active != self._explorations.active:
+            return
         if self._last_synced == active:
             self._conversations[active] = self.interface.objects
         else:
-            self._conversations[old or event.old] = self._snapshot_messages()
+            self._conversations[event.old if old is None else old] = self._snapshot_messages()
         conversation = self._conversations[active]
         self.interface.objects = conversation
         self._notebook_export.param.update(
-            filename = f"{self._titles[event.new].replace(' ', '_')}.ipynb"
+            filename = f"{self._titles[active].replace(' ', '_')}.ipynb"
         )
         self._exports.visible = True
         self._last_synced = active
