@@ -525,8 +525,8 @@ class SQLAgent(LumenBaseAgent):
                 last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
             system += (
-                f"\n\nYour last query:\n```sql\n{last_query}\n```\ndid not work as intended, so your task is to "
-                f"expertly revise these errors:\n```python\n{errors}\n```\n\n"
+                f"\n\nYour last query did not work as intended:\n```sql\n{last_query}\n```\n\n"
+                f"Your priority is to expertly revise these errors:\n\n```sql\n{errors}\n```\n\n"
                 f"If the error is `syntax error at or near \")\"`, double check you used "
                 f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
             )
