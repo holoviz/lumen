@@ -774,6 +774,10 @@ class BaseViewAgent(LumenBaseAgent):
         }
     )
 
+    def __init__(self, **params):
+        self._last_output = None
+        super().__init__(**params)
+
     @retry_llm_output()
     async def _create_valid_spec(
         self,
@@ -785,11 +789,11 @@ class BaseViewAgent(LumenBaseAgent):
     ) -> dict[str, Any]:
         if errors:
             errors = '\n'.join(errors)
-            system += (
-                f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n\n"
-                f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n"
-            )
-
+            if self._last_output:
+                system += (
+                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n\n"
+                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n"
+                )
         model_spec = self.prompts["main"].get("llm_spec", "default")
         output = await self.llm.invoke(
             messages,
