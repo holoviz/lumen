@@ -52,7 +52,7 @@ class Sql(BaseModel):
     expr_slug: str = Field(
         description="""
         Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
-        e.g. top_5_athletes_gold_medals. The slug must be unique, i.e. should not match other existing table names or slugs.
+        e.g. top_5_athletes. The slug must be unique, i.e. should not match other existing table names or slugs.
         """
     )
 
@@ -124,7 +124,7 @@ def make_plan_models(experts_or_tools: list[str], tables: list[str]):
     plan = create_model(
         "Plan",
         title=(
-            str, FieldInfo(description="A title that describes this plan in a few words")
+            str, FieldInfo(description="A title that describes this plan, up to three words.")
         ),
         steps=(
             list[step],
