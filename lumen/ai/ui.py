@@ -449,15 +449,15 @@ class ExplorerUI(UI):
                 await self._update_conversation(tab=1)
             break
 
-    async def _set_context(self, event):
-        if len(self._conversations) == 0:
+    async def _set_context(self, event, old=None, new=None):
+        active = new or event.new
+        if len(self._conversations) == 0 or active != self._explorations.active:
             return
-        active = self._explorations.active
         await self._idle.wait()
         if self._last_synced == active:
             self._conversations[active] = self.interface.objects
         else:
-            self._conversations[event.old] = self._snapshot_messages()
+            self._conversations[old or event.old] = self._snapshot_messages()
         conversation = self._conversations[active]
         self.interface.objects = conversation
         self._notebook_export.param.update(
@@ -663,7 +663,7 @@ class ExplorerUI(UI):
 
             # Remove exploration on error if no outputs have been
             # added yet and we launched a new exploration
-            def remove_output(_, __, ___):
+            async def remove_output(_, __, ___):
                 nonlocal index, new_exploration
                 del memory['__error__']
                 if outputs or not new_exploration:
@@ -679,7 +679,8 @@ class ExplorerUI(UI):
                 self._contexts.pop()
                 self._titles.pop()
                 with hold():
-                    self._explorations.active -= 1
+                    self._explorations.active = prev
+                    await self._set_context(old=index, new=prev)
                     self._explorations.pop(-1)
                     if len(self._titles) == 0:
                         self._output.active = 0
