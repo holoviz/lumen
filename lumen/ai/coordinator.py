@@ -433,8 +433,8 @@ class Coordinator(Viewer, Actor):
                 log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
-            if unprovided and not any(unprovided):
-                step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
+            if unprovided:
+                step.failed_title = f"{agent_name}Agent did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{agent_name} failed to provide declared context.")
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             if isinstance(subagent, Tool):
@@ -711,6 +711,7 @@ class Planner(Coordinator):
             table_info=table_info,
             tools=list(tools.values()),
         )
+        tool_context = ''
         with self.interface.add_step(
             success_title="Obtained necessary context",
             title="Obtaining additional context...",
@@ -725,9 +726,9 @@ class Planner(Coordinator):
             )
             if getattr(context, 'tables', None):
                 requested = [t for t in context.tables if t not in provided]
-                istep.stream(f'Looking up schemas for following tables: {requested}')
+                loaded = '\n'.join([f'- {table}' for table in requested])
+                istep.stream(f'Looking up schemas for following tables:\n\n{loaded}')
                 table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
-            tool_context = ''
             if getattr(context, 'tools', None):
                 for tool in context.tools:
                     tool_messages = list(messages)

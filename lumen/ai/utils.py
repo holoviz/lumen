@@ -214,7 +214,10 @@ async def get_schema(
                 for enum in spec["enum"]
             ]
         # truncate each enum to 100 characters
-        spec["enum"] = [enum if enum is None or len(enum) < 100 else f"{enum[:100]} ..." for enum in spec["enum"]]
+        spec["enum"] = [
+            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
+            for enum in spec["enum"]
+        ]
 
     if count and include_count:
         schema["count"] = count
