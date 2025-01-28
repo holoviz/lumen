@@ -4,8 +4,11 @@ object.
 """
 from __future__ import annotations
 
+import ast
 import html
+import re
 import sys
+import textwrap
 
 from io import BytesIO, StringIO
 from typing import (
@@ -1270,5 +1273,158 @@ class YdataProfilingView(View):
         download_button = HtmlPdfDownloadButton(value=report_html, align="end")
         return pn.Column(download_button, ydata_pane)
 
+
+class ExecPythonView(View):
+    """
+    `ExecPythonView` executes arbitrary Python code and renders the result using Panel.
+
+    The code is executed in a restricted environment and must return a value that
+    can be rendered by Panel's pn.panel() function.
+
+    Example:
+    ```python
+    view = ExecPythonView(
+        code='''
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        x = np.linspace(0, 2*np.pi, 100)
+        y = np.sin(x)
+        fig, ax = plt.subplots()
+        ax.plot(x, y)
+        fig
+        '''
+    )
+    ```
+    """
+
+    spec = param.String(doc="The Python code to execute. Must include a return statement.")
+
+    view_type = 'exec_code'
+
+    _requires_source: ClassVar[bool] = False
+
+    def _analyze_code(self, code: str) -> str:
+        """
+        Analyzes the code to determine if it contains a function definition and if it needs a return statement.
+
+        Parameters
+        ----------
+        code : str
+            The code to analyze
+
+        Returns
+        -------
+        str
+            The processed code with any necessary modifications.
+        """
+        try:
+            pattern = r"```(?:python)?\s*([\s\S]*?)\s*```"
+            if extracted_code := re.findall(pattern, code):
+                code = "\n\n".join(extracted_code)
+
+            tree = ast.parse(code)
+            # Check if the last statement is a function definition
+            has_function = isinstance(tree.body[-1], ast.FunctionDef) if tree.body else False
+
+            # For simple expressions, add return
+            if len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr):
+                return f"return {code}"
+
+            # For function definitions, add function call
+            if has_function:
+                func_name = tree.body[-1].name
+                return f"{code}\nreturn {func_name}()"
+
+            # For multi-line code without return, add return to last expression
+            lines = code.split('\n')
+            if not any(isinstance(node, ast.Return) for node in ast.walk(tree)):
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    while lines and not lines[-1].strip():
+                        lines.pop()
+                    if lines:
+                        last_line = lines[-1].rstrip(';').strip()
+                        lines[-1] = f"return {last_line}"
+                        code = '\n'.join(lines)
+
+            if lines[-1].strip() != ")" and "return" not in lines[-1]:
+                lines[-1] = f"return {lines[-1]}"
+                code = '\n'.join(lines)
+
+            return code
+
+        except SyntaxError:
+            # If we can't parse the code, return it unchanged
+            return code
+
+    def execute_code(self) -> Any:
+        """
+        Executes the provided code in a restricted environment and returns the result.
+
+        Returns
+        -------
+        Any
+            The result of executing the code, which must be something Panel can render.
+
+        Raises
+        ------
+        SyntaxError
+            If the code is not valid Python syntax.
+        Exception
+            If there is an error during code execution.
+        """
+        # Create a new dictionary for local variables
+        local_vars = {}
+
+        # Add common imports that might be useful
+        exec("import panel as pn", local_vars)
+
+        # If we have pipeline data, make it available to the code
+        if hasattr(self, 'pipeline') and self.pipeline is not None:
+            try:
+                local_vars['pipeline'] = self.pipeline
+                local_vars['data'] = self.get_data()
+            except Exception as e:
+                return pn.pane.Alert(f"Error accessing pipeline data: {e!s}", alert_type='danger')
+
+        try:
+            # Dedent the code to remove any common leading whitespace
+            code = textwrap.dedent(self.spec).strip()
+
+            # Handle empty code
+            if not code:
+                return None
+            processed_code = self._analyze_code(code)
+            wrapped_code = f"def _exec_func():\n{textwrap.indent(processed_code, '    ')}"
+            exec(wrapped_code, local_vars)
+            result = local_vars['_exec_func']()
+            return result
+        except Exception as e:
+            error_msg = f"Error executing code: {e!s}"
+            return pn.pane.Alert(error_msg, alert_type='danger')
+
+    def get_panel(self) -> pn.viewable.Viewable:
+        """
+        Executes the code and returns a Panel representation of the result.
+
+        Returns
+        -------
+        panel.viewable.Viewable
+            A Panel object representing the result of the code execution.
+        """
+        result = self.execute_code()
+        return pn.panel(result, sizing_mode="stretch_both", min_height=500)
+
+    def _get_params(self) -> dict[str, Any] | None:
+        """
+        Returns parameters for updating the panel object.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            A dictionary of parameters to update the panel with.
+        """
+        result = self.execute_code()
+        return dict(object=result) if result is not None else None
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
