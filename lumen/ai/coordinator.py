@@ -724,7 +724,15 @@ class Planner(Coordinator):
         tool_context = ''
         if getattr(context, 'tools', None):
             for tool in context.tools:
-                tool_context += f'\n- {await tools[tool].respond(messages)}'
+                tool_messages = list(messages)
+                if tool.instruction:
+                    mutate_user_message(
+                        f"-- Here are instructions of the context you are to provide: {tool.instruction!r}",
+                        tool_messages, suffix=True, wrap=True, inplace=False
+                    )
+                response = await tools[tool.name].respond(tool_messages)
+                if response is not None:
+                    tool_context += f'\n- {response}'
         return table_info, tool_context
 
     async def _make_plan(

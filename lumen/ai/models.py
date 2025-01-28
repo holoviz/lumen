@@ -105,10 +105,15 @@ def make_context_model(tools: list[str], tables: list[str]):
             )
         )
     if tools:
+        tool = create_model(
+            "Tool",
+            name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
+            instruction=(str, FieldInfo(description="Instructions for the tool.")),
+        )
         fields['tools'] = tools=(
-            list[Literal[tuple(tools)]],
+            list[tool],
             FieldInfo(
-                description="A list of tools to call to provide context before launching into the planning stage."
+                description="A list of tools to call to provide context before launching into the planning stage. Use tools to gather additional context or clarification, tools should NEVER be used to obtain the actual data you will be working with."
             )
         )
     return create_model("Context", **fields)

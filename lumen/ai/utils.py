@@ -381,12 +381,14 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
         log.debug(suffix)
 
 
-def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False):
+def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True):
     """
     Helper to mutate the last user message in a list of messages. Suffixes the content by default, else prefixes.
     """
+    mutated = False
+    new = []
     for message in messages[::-1]:
-        if message["role"] == "user":
+        if message["role"] == "user" and not mutated:
             user_message = message["content"]
             if isinstance(wrap, bool):
                 user_message = f"{user_message!r}"
@@ -397,9 +399,14 @@ def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bo
                 user_message += " " + content
             else:
                 user_message = content + user_message
-            message["content"] = user_message
-            break
-    return messages
+            mutated = True
+            if inplace:
+                message["content"] = user_message
+                break
+            else:
+                message = dict(message, content=user_message)
+        new.append(message)
+    return messages if inplace else new[::-1]
 
 
 def format_exception(exc: Exception, limit: int = 0) -> str:
