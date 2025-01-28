@@ -30,11 +30,14 @@ class VectorStore(param.Parameterized):
     def _format_metadata_value(self, value) -> str:
         """Format a metadata value appropriately based on its type.
 
-        Args:
-            value: The metadata value to format.
+        Parameters
+        ----------
+        value: Any
+            The metadata value to format.
 
-        Returns:
-            A string representation of the metadata value.
+        Returns
+        -------
+        A string representation of the metadata value.
         """
         if isinstance(value, (list, tuple)):
             return f"[{', '.join(str(v) for v in value)}]"
@@ -43,12 +46,16 @@ class VectorStore(param.Parameterized):
     def _join_text_and_metadata(self, text: str, metadata: dict) -> str:
         """Join text and metadata into a single string for embedding.
 
-        Args:
-            text: The main content text.
-            metadata: Dictionary of metadata.
+        Parameters
+        ----------
+        text: str
+            The main content text.
+        metadata: dict[str, Any]
+            Dictionary of metadata.
 
-        Returns:
-            Combined text with metadata appended.
+        Returns
+        -------
+        Combined text with metadata appended.
         """
         metadata_str = " ".join(
             f"({key}: {self._format_metadata_value(value)})" for key, value in metadata.items()
@@ -58,11 +65,14 @@ class VectorStore(param.Parameterized):
     def _chunk_text(self, text: str) -> list[str]:
         """Split text into chunks of size up to self.chunk_size.
 
-        Args:
-            text: The text to split.
+        Parameters
+        ----------
+        text: str
+            The text to split.
 
-        Returns:
-            List of text chunks.
+        Returns
+        -------
+        List of text chunks.
         """
         if self.chunk_size is None or len(text) <= self.chunk_size:
             return [text]
@@ -87,12 +97,48 @@ class VectorStore(param.Parameterized):
         """
         Add items to the vector store.
 
-        Args:
-            items: List of dictionaries containing 'text' and optional 'metadata'.
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
 
-        Returns:
-            List of assigned IDs for the added items.
+        Returns
+        -------
+        List of assigned IDs for the added items.
         """
+
+    def add_file(self, filename, ext=None, metadata=None) -> list[int]:
+        """
+        Adds a file or a URL to the collection.
+
+        Parameters
+        ----------
+        filename (str): str | os.PathLike | IO
+            The path to the file, a file-like object or a URL to be added.
+        ext : str | None
+            The file extension to associate with the added file.
+            If not provided, it will be determined from the file or URL.
+        metadata : dict | None
+            A dictionary containing metadata related to the file
+            (e.g., title, author, description). Defaults to None.
+
+        Returns
+        -------
+        List of assigned IDs for the added items.
+        """
+        from markitdown import MarkItDown
+        if metadata is None:
+            metadata = {}
+        mdit = MarkItDown()
+        if isinstance(filename, str) and filename.startswith(('http://', 'https://')):
+            doc = mdit.convert_url(filename)
+        elif hasattr(filename, 'read'):
+            doc = mdit.convert_stream(filename, file_extension=ext)
+        else:
+            if 'filename' not in metadata:
+                metadata['filename'] = filename
+            doc = mdit.convert_local(filename, file_extension=ext)
+        return self.add([{'text': doc.text_content, 'metadata': metadata}])
 
     @abstractmethod
     def query(
@@ -105,14 +151,20 @@ class VectorStore(param.Parameterized):
         """
         Query the vector store for similar items.
 
-        Args:
-            text: The query text.
-            top_k: Number of top results to return.
-            filters: Optional metadata filters.
-            threshold: Minimum similarity score required for a result to be included.
+        Parameters
+        ----------
+        text : str
+            The query text.
+        top_k: int
+            Number of top results to return.
+        filters: dict | None
+            Optional metadata filters.
+        threshold: float
+            Minimum similarity score required for a result to be included.
 
-        Returns:
-            List of results with 'id', 'text', 'metadata', and 'similarity' score.
+        Returns
+        -------
+        List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
 
     @abstractmethod
@@ -122,13 +174,18 @@ class VectorStore(param.Parameterized):
         """
         Filter items by metadata without using embeddings similarity.
 
-        Args:
-            filters: Dictionary of metadata key-value pairs to filter by.
-            limit: Maximum number of results to return. If None, returns all matches.
-            offset: Number of results to skip (for pagination).
+        Parameters
+        ----------
+        filters: dict[str, str]
+            Dictionary of metadata key-value pairs to filter by.
+        limit: int | None
+            Maximum number of results to return. If None, returns all matches.
+        offset: int
+            Number of results to skip (for pagination).
 
-        Returns:
-            List of results with 'id', 'text', and 'metadata'.
+        Returns
+        -------
+        List of results with 'id', 'text', and 'metadata'.
         """
 
     @abstractmethod
@@ -136,8 +193,10 @@ class VectorStore(param.Parameterized):
         """
         Delete items from the vector store by their IDs.
 
-        Args:
-            ids: List of IDs to delete.
+        Parameters
+        ----------
+        ids: list[int]
+            List of IDs to delete.
         """
 
     @abstractmethod
@@ -149,7 +208,19 @@ class VectorStore(param.Parameterized):
         """Return the number of items in the vector store."""
 
 class NumpyVectorStore(VectorStore):
-    """Vector store implementation using NumPy for in-memory storage."""
+    """
+    Vector store implementation using NumPy for in-memory storage.
+
+    :Example:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import NumpyVectorStore
+
+        vector_store = NumpyVectorStore()
+        vector_store.add_file('https://lumen.holoviz.org')
+        vector_store.query('LLM', threshold=0.1)
+    """
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -162,8 +233,9 @@ class NumpyVectorStore(VectorStore):
     def _get_next_id(self) -> int:
         """Generate the next available ID.
 
-        Returns:
-            The next unique integer ID.
+        Returns
+        -------
+        The next unique integer ID.
         """
         self._current_id += 1
         return self._current_id
@@ -173,12 +245,16 @@ class NumpyVectorStore(VectorStore):
     ) -> np.ndarray:
         """Calculate cosine similarity between query vector and stored vectors.
 
-        Args:
-            query_vector: The query embedding vector.
-            vectors: Array of stored embedding vectors.
+        Parameters
+        ----------
+        query_vector: np.ndarray
+            The query embedding vector.
+        vectors: np.ndarray
+            Array of stored embedding vectors.
 
-        Returns:
-            Array of cosine similarity scores.
+        Returns
+        -------
+        Array of cosine similarity scores.
         """
         query_norm = np.linalg.norm(query_vector)
         if query_norm == 0:
@@ -200,11 +276,14 @@ class NumpyVectorStore(VectorStore):
         """
         Add items to the vector store.
 
-        Args:
-            items: List of dictionaries containing 'text' and optional 'metadata'.
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
 
-        Returns:
-            List of assigned IDs for the added items.
+        Returns
+        -------
+        List of assigned IDs for the added items.
         """
         all_texts = []
         all_metadata = []
@@ -245,14 +324,20 @@ class NumpyVectorStore(VectorStore):
         """
         Query the vector store for similar items.
 
-        Args:
-            text: The query text.
-            top_k: Number of top results to return.
-            filters: Optional metadata filters.
-            threshold: Minimum similarity score required for a result to be included.
+        Parameters
+        ----------
+        text : str
+            The query text.
+        top_k: int
+            Number of top results to return.
+        filters: dict | None
+            Optional metadata filters.
+        threshold: float
+            Minimum similarity score required for a result to be included.
 
-        Returns:
-            List of results with 'id', 'text', 'metadata', and 'similarity' score.
+        Returns
+        -------
+        List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
         query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
@@ -288,13 +373,18 @@ class NumpyVectorStore(VectorStore):
         """
         Filter items by metadata without using embeddings similarity.
 
-        Args:
-            filters: Dictionary of metadata key-value pairs to filter by.
-            limit: Maximum number of results to return. If None, returns all matches.
-            offset: Number of results to skip (for pagination).
+        Parameters
+        ----------
+        filters: dict[str, str]
+            Dictionary of metadata key-value pairs to filter by.
+        limit: int | None
+            Maximum number of results to return. If None, returns all matches.
+        offset: int
+            Number of results to skip (for pagination).
 
-        Returns:
-            List of results with 'id', 'text', and 'metadata'.
+        Returns
+        -------
+        List of results with 'id', 'text', and 'metadata'.
         """
         if not self.metadata:
             return []
@@ -323,8 +413,10 @@ class NumpyVectorStore(VectorStore):
         """
         Delete items from the vector store by their IDs.
 
-        Args:
-            ids: List of IDs to delete.
+        Parameters
+        ----------
+        ids: list[int]
+            List of IDs to delete.
         """
         if not ids:
             return
@@ -357,7 +449,19 @@ class NumpyVectorStore(VectorStore):
 
 
 class DuckDBVectorStore(VectorStore):
-    """Vector store implementation using DuckDB for persistent storage."""
+    """
+    Vector store implementation using DuckDB for persistent storage.
+
+    :Example:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import DuckDBStore
+
+        vector_store = DuckDBStore(uri=':memory:)
+        vector_store.add_file('https://lumen.holoviz.org')
+        vector_store.query('LLM', threshold=0.1)
+    """
 
     uri = param.String(doc="The URI of the DuckDB database")
 
@@ -395,11 +499,14 @@ class DuckDBVectorStore(VectorStore):
         """
         Add items to the vector store.
 
-        Args:
-            items: List of dictionaries containing 'text' and optional 'metadata'.
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
 
-        Returns:
-            List of assigned IDs for the added items.
+        Returns
+        -------
+        List of assigned IDs for the added items.
         """
         all_texts = []
         all_metadata = []
@@ -449,14 +556,20 @@ class DuckDBVectorStore(VectorStore):
         """
         Query the vector store for similar items.
 
-        Args:
-            text: The query text.
-            top_k: Number of top results to return.
-            filters: Optional metadata filters.
-            threshold: Minimum similarity score required for a result to be included.
+        Parameters
+        ----------
+        text : str
+            The query text.
+        top_k: int
+            Number of top results to return.
+        filters: dict | None
+            Optional metadata filters.
+        threshold: float
+            Minimum similarity score required for a result to be included.
 
-        Returns:
-            List of results with 'id', 'text', 'metadata', and 'similarity' score.
+        Returns
+        -------
+        List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
         query_embedding = np.array(
             self.embeddings.embed([text])[0], dtype=np.float32
@@ -502,13 +615,18 @@ class DuckDBVectorStore(VectorStore):
         """
         Filter items by metadata without using embeddings similarity.
 
-        Args:
-            filters: Dictionary of metadata key-value pairs to filter by.
-            limit: Maximum number of results to return. If None, returns all matches.
-            offset: Number of results to skip (for pagination).
+        Parameters
+        ----------
+        filters: dict[str, str]
+            Dictionary of metadata key-value pairs to filter by.
+        limit: int | None
+            Maximum number of results to return. If None, returns all matches.
+        offset: int
+            Number of results to skip (for pagination).
 
-        Returns:
-            List of results with 'id', 'text', and 'metadata'.
+        Returns
+        -------
+        List of results with 'id', 'text', and 'metadata'.
         """
         base_query = """
             SELECT id, text, metadata
@@ -546,7 +664,7 @@ class DuckDBVectorStore(VectorStore):
         """
         Delete items from the vector store by their IDs.
 
-        Args:
+        Parameters
             ids: List of IDs to delete.
         """
         if not ids:
