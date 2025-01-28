@@ -12,6 +12,7 @@ import param
 from panel.chat import ChatInterface, ChatMessage
 from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
+from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
 from panel.layout import (
@@ -449,6 +450,8 @@ class ExplorerUI(UI):
             break
 
     async def _set_context(self, event):
+        if len(self._conversations) == 0:
+            return
         active = event.new
         await self._idle.wait()
         if self._last_synced == active:
@@ -625,7 +628,7 @@ class ExplorerUI(UI):
             else:
                 prev_memory = self._contexts[self._explorations.active]
             new_exploration = False
-            index = self._explorations.active if len(self._explorations) else -1
+            prev = index = self._explorations.active if len(self._explorations) else -1
             local_memory = prev_memory.clone()
             local_memory["outputs"] = outputs = []
 
@@ -665,13 +668,21 @@ class ExplorerUI(UI):
                 del memory['__error__']
                 if outputs or not new_exploration:
                     return
-                self._last_synced -= 1
-                self._conversations.pop()
+                # Merge the current conversation with the conversation
+                # that initiated the new exploration
+                conversation = self._conversations.pop()
+                if prev == -1:
+                    self._root_conversation = conversation
+                else:
+                    self._conversations[prev] = conversation
+                self._last_synced = prev
                 self._contexts.pop()
-                self._explorations.pop(-1)
                 self._titles.pop()
-                if len(self._titles) == 0:
-                    self._output.active = 0
+                with hold():
+                    self._explorations.active -= 1
+                    self._explorations.pop(-1)
+                    if len(self._titles) == 0:
+                        self._output.active = 0
                 index -= 1
                 new_exploration = False
             local_memory.on_change('__error__', remove_output)
