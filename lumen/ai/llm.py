@@ -338,7 +338,7 @@ class OpenAI(Llm):
 
     mode = param.Selector(default=Mode.TOOLS)
 
-    temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
     organization = param.String(doc="The OpenAI organization to charge.")
 

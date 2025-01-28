@@ -418,7 +418,10 @@ class ExplorerUI(UI):
             await self._idle.wait()
             # If conversation was already updated, resync conversation
             if self._last_synced == active:
-                self._conversations[active] = self.interface.objects
+                try:
+                    self._conversations[active] = self.interface.objects
+                except IndexError:
+                    pass  # TODO: fix explicitly
         if (event.new if event else tab):
             # Explorations Tab
             if active < len(self._conversations):
