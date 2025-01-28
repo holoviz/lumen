@@ -803,7 +803,7 @@ class SQLAgent(LumenBaseAgent):
             sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
             pipeline = self._memory['pipeline']
         except RetriesExceededError as e:
-            self._memory["__error__"] = e
+            self._memory["__error__"] = str(e)
             return None
         self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline

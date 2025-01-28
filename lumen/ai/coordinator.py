@@ -430,6 +430,9 @@ class Coordinator(Viewer, Actor):
                 except asyncio.CancelledError as e:
                     step.failed_title = f"{agent_name} agent was cancelled"
                     raise e
+                except Exception as e:
+                    self._memory['__error__'] = str(e)
+                    raise e
                 log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
