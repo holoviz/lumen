@@ -35,7 +35,12 @@ Learn how to configure the OpenAI as the LLM provider used by Lumen AI.
 :link-type: doc
 
 Learn how to configure the Azure AI as the LLM provider used by Lumen AI.
-![Azure Logo](../../../_static/logos/azure.png)
+
+```{image} ../../../_static/logos/azure.png
+:alt: Azure Logo
+:width: 160px
+:align: center
+```
 :::
 
 :::{grid-item-card} Use Llama.cpp
