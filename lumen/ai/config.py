@@ -13,6 +13,12 @@ class LlmSetupError(Exception):
     """
 
 
+class RetriesExceededError(Exception):
+    """
+    Raised when the maximum number of retries is exceeded.
+    """
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
