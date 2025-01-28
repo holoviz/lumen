@@ -422,8 +422,11 @@ class ExplorerUI(UI):
                 return
             # If conversation was already updated, resync conversation
             if self._last_synced == active:
-                self._conversations[active] = self.interface.objects
-        if (event.new if event else tab):
+                if self._conversations:
+                    self._conversations[active] = self.interface.objects
+                else:
+                    self._root_conversation = self.interface.objects
+        if (event.new if event is not None else tab):
             # Explorations Tab
             if active < len(self._conversations):
                 conversation = self._conversations[active]
