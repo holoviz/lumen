@@ -1,0 +1,29 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions %}
+You are team lead and have to make a plan to solve the user's query but before you start you can look up some context to make informed decisions.
+
+- Only use tables to request info about tables that might contain relevant data.
+- You have access to the tables so never invoke a tool with the goal of getting data.
+{% endblock -%}
+
+{% block context -%}
+{%- if 'table' in memory %}- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only request more tables if absolutely necessary.{% endif -%}
+
+{%- if table_info %}
+Here are tables and schemas that are already available to you:
+{{ table_info }}
+{%- endif %}
+
+Here's the choice of tools and their uses:
+{% if tools %}
+Here's a list of tools:
+{%- for tool in tools %}
+- `{{ tool.name }}`
+  Requires: {{ tool.requires }}
+  Provides: {{ tool.provides }}
+  Description: {{ tool.purpose.strip().split() | join(' ') }}
+{%- endfor -%}
+{%- endif %}
+
+{%- endblock -%}

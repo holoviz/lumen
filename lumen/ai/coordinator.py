@@ -29,7 +29,9 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
-from .models import Validity, make_agent_model, make_plan_models
+from .models import (
+    Validity, make_agent_model, make_context_model, make_plan_models,
+)
 from .tools import FunctionTool, Tool
 from .utils import (
     gather_table_sources, get_schema, log_debug, mutate_user_message,
@@ -338,13 +340,13 @@ class Coordinator(Viewer, Actor):
         )
         with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
             model_spec = self.prompts["check_validity"].get("llm_spec", "default")
-            output = await self.llm.invoke(
+            async for output in self.llm.stream(
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=self._get_model("check_validity"),
-            )
-            step.stream(output.correct_assessment, replace=True)
+            ):
+                step.stream(output.correct_assessment, replace=True)
             step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
 
         if output and output.is_invalid:
@@ -651,14 +653,18 @@ class Planner(Coordinator):
 
     prompts = param.Dict(
         default={
-            "main": {
-                "template": PROMPTS_DIR / "Planner" / "main.jinja2",
-                "response_model": make_plan_models,
-            },
             "check_validity": {
                 "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
                 "response_model": Validity,
             },
+            "context": {
+                "template":  PROMPTS_DIR / "Planner" / "context.jinja2",
+                "response_model": make_context_model
+            },
+            "main": {
+                "template": PROMPTS_DIR / "Planner" / "main.jinja2",
+                "response_model": make_plan_models,
+            }
         }
     )
 
@@ -684,6 +690,58 @@ class Planner(Coordinator):
             schema_info += f'- {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n'
         return schema_info
 
+    async def _lookup_context(
+        self, messages: list[Message], tables: dict[str, Source], schemas: dict[str, dict] | None
+    ) -> tuple[str, str]:
+        requested, provided = [], []
+        if "table" in self._memory:
+            requested.append(self._memory["table"])
+        elif len(tables) == 1:
+            requested.append(next(iter(tables)))
+        table_info = await self._lookup_schemas(tables, requested, provided, cache=schemas)
+        available = [table for table in tables if table not in requested]
+        tools = {tool.name: tool for tool in self._tools["__main__"]}
+        if not tools and not available:
+            return table_info, ''
+        context_model = make_context_model(tools=list(tools), tables=available)
+        model_spec = self.prompts["context"].get("llm_spec", "default")
+        system = await self._render_prompt(
+            "context",
+            messages,
+            table_info=table_info,
+            tools=list(tools.values()),
+        )
+        with self.interface.add_step(
+            success_title="Obtained necessary context",
+            title="Obtaining additional context...",
+            user="Assistant"
+        ) as istep:
+            context = await self.llm.invoke(
+                messages=messages,
+                system=system,
+                model_spec=model_spec,
+                response_model=context_model,
+                max_retries=3,
+            )
+            if getattr(context, 'tables', None):
+                requested = [t for t in context.tables if t not in provided]
+                istep.stream(f'Looking up schemas for following tables: {requested}')
+                table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
+            tool_context = ''
+            if getattr(context, 'tools', None):
+                for tool in context.tools:
+                    tool_messages = list(messages)
+                    if tool.instruction:
+                        mutate_user_message(
+                            f"-- Here are instructions of the context you are to provide: {tool.instruction!r}",
+                            tool_messages, suffix=True, wrap=True, inplace=False
+                        )
+                    response = await tools[tool.name].respond(tool_messages)
+                    if response is not None:
+                        istep.stream(f'{response}\n')
+                        tool_context += f'\n- {response}'
+        return table_info, tool_context
+
     async def _make_plan(
         self,
         messages: list[Message],
@@ -697,17 +755,10 @@ class Planner(Coordinator):
         schemas: dict[str, dict] | None = None,
         tables_schema_str: str = ""
     ) -> BaseModel:
-        info = ''
+        table_info, tool_context = await self._lookup_context(messages, tables, schemas)
         reasoning = None
         tools = self._tools["__main__"]
-        requested, provided = [], []
-        if "table" in self._memory:
-            requested.append(self._memory["table"])
-        elif len(tables) == 1:
-            requested.append(next(iter(tables)))
-        while reasoning is None or requested:
-            log_debug(f"Creating plan for \033[91m{requested}\033[0m")
-            info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
+        while reasoning is None:
             system = await self._render_prompt(
                 "main",
                 messages,
@@ -716,26 +767,22 @@ class Planner(Coordinator):
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
-                table_info=info,
+                table_info=table_info,
                 tables_schema_str=tables_schema_str,
+                tool_context=tool_context
             )
             model_spec = self.prompts["main"].get("llm_spec", "default")
-            reasoning = await self.llm.invoke(
+            async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=reason_model,
                 max_retries=3,
-            )
-            if reasoning.chain_of_thought:  # do not replace with empty string
-                self._memory["reasoning"] = reasoning.chain_of_thought
-                step.stream(reasoning.chain_of_thought, replace=True)
-                previous_plans.append(reasoning.chain_of_thought)
-            requested = [
-                t for t in getattr(reasoning, 'requested_tables', [])
-                if t and t not in provided
-            ]
-
+            ):
+                if reasoning.chain_of_thought:  # do not replace with empty string
+                    self._memory["reasoning"] = reasoning.chain_of_thought
+                    step.stream(reasoning.chain_of_thought, replace=True)
+            previous_plans.append(reasoning.chain_of_thought)
         mutated_messages = mutate_user_message(
             f"Follow this latest plan: {reasoning.chain_of_thought!r} to finish answering: ",
             deepcopy(messages),
@@ -823,8 +870,8 @@ class Planner(Coordinator):
 
         reason_model, plan_model = self._get_model(
             "main",
-            experts_or_tools=agent_names+tool_names,
-            tables=list(tables)
+            agents=agent_names,
+            tools=tool_names,
         )
         planned = False
         unmet_dependencies = set()
