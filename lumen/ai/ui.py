@@ -103,6 +103,9 @@ class UI(Viewer):
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
+    interface = param.ClassSelector(class_=ChatInterface, doc="""
+        The ChatInterface for the Coordinator to interact with.""")
+
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
@@ -139,14 +142,20 @@ class UI(Viewer):
             agents.append(AnalysisAgent(analyses=self.analyses))
 
         self._resolve_data(data)
+
+        if self.interface is None:
+            self.interface = ChatInterface(
+                load_buffer=5,
+            )
+        if self.log_level == "DEBUG":
+            self.interface.callback_exception = "verbose"
         self._coordinator = self.coordinator(
             agents=agents,
+            interface=self.interface,
             llm=self.llm,
             tools=self.tools,
             logs_db_path=self.logs_db_path
         )
-        if self.log_level == "DEBUG":
-            self._coordinator.interface.callback_exception = "verbose"
         self._notebook_export = FileDownload(
             icon="notebook",
             icon_size="1.5em",
@@ -160,7 +169,7 @@ class UI(Viewer):
             self._notebook_export, *(
                 Button(
                     name=label, button_type='primary',
-                    on_click=lambda _: e(self._coordinator.interface),
+                    on_click=lambda _: e(self.interface),
                     stylesheets=['.bk-btn { padding: 4.5px 6px;']
                 )
                 for label, e in self.export_functions.items()
@@ -181,7 +190,7 @@ class UI(Viewer):
             sizing_mode='stretch_width',
             styles={'background-color': 'var(--primary-bg-subtle)'}
         )
-        self._coordinator.interface.send(alert, respond=False, user='System')
+        self.interface.send(alert, respond=False, user='System')
         try:
             await self.llm.invoke([{'role': 'user', 'content': 'Are you there? YES | NO'}])
         except Exception as e:
@@ -208,7 +217,7 @@ class UI(Viewer):
         """
 
     def _export_notebook(self):
-        nb = export_notebook(self._coordinator.interface.objects, preamble=self.notebook_preamble)
+        nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
         return StringIO(nb)
 
     def _resolve_data(self, data: DataT | list[DataT] | None):
@@ -336,10 +345,10 @@ class ExplorerUI(UI):
         **params
     ):
         super().__init__(data=data, **params)
-        self._coordinator.interface.show_button_name = False
-        cb = self._coordinator.interface.callback
+        self.interface.show_button_name = False
+        cb = self.interface.callback
         self._coordinator.render_output = False
-        self._coordinator.interface.callback = self._wrap_callback(cb)
+        self.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
@@ -355,7 +364,7 @@ class ExplorerUI(UI):
         self._exports.visible = False
         self._titles = []
         self._contexts = []
-        self._root_conversation = self._coordinator.interface.objects
+        self._root_conversation = self.interface.objects
         self._conversations = []
 
         self._explorations_intro = Markdown(
@@ -408,7 +417,7 @@ class ExplorerUI(UI):
             await self._idle.wait()
             # If conversation was already updated, resync conversation
             if self._last_synced == active:
-                self._conversations[active] = self._coordinator.interface.objects
+                self._conversations[active] = self.interface.objects
         if (event.new if event else tab):
             # Explorations Tab
             if active < len(self._conversations):
@@ -423,7 +432,7 @@ class ExplorerUI(UI):
             # We must mark the last synced as None to ensure
             # we do not resync with the Overview tab conservation
             active = None
-        self._coordinator.interface.objects = conversation
+        self.interface.objects = conversation
         self._last_synced = active
 
     def _cleanup_explorations(self, event):
@@ -440,11 +449,11 @@ class ExplorerUI(UI):
         active = event.new
         await self._idle.wait()
         if self._last_synced == active:
-            self._conversations[active] = self._coordinator.interface.objects
+            self._conversations[active] = self.interface.objects
         else:
             self._conversations[event.old] = self._snapshot_messages()
         conversation = self._conversations[active]
-        self._coordinator.interface.objects = conversation
+        self.interface.objects = conversation
         self._notebook_export.param.update(
             filename = f"{self._titles[event.new].replace(' ', '_')}.ipynb"
         )
@@ -454,7 +463,7 @@ class ExplorerUI(UI):
     def _snapshot_messages(self, new=False):
         to = -3 if new else None
         messages = []
-        for msg in self._coordinator.interface.objects[:to]:
+        for msg in self.interface.objects[:to]:
             if isinstance(msg, ChatMessage):
                 avatar = msg.avatar
                 if isinstance(avatar, SVG) and avatar.object is PLACEHOLDER_SVG:
@@ -514,7 +523,7 @@ class ExplorerUI(UI):
         def get_explorers(load):
             if not load:
                 return
-            with explore_button.param.update(loading=True), self._coordinator.interface.param.update(loading=True):
+            with explore_button.param.update(loading=True), self.interface.param.update(loading=True):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
@@ -537,7 +546,7 @@ class ExplorerUI(UI):
             OVERVIEW_INTRO,
             margin=(0, 0, 10, 0),
             sizing_mode='stretch_width',
-            visible=self._coordinator.interface.param["objects"].rx.len() <= 1
+            visible=self.interface.param["objects"].rx.len() <= 1
         )
         return Column(
             self._overview_intro,
@@ -551,7 +560,7 @@ class ExplorerUI(UI):
         active = self._explorations.active
         self._titles.append(title)
         self._contexts.append(memory)
-        self._coordinator.interface.objects = conversation = list(self._coordinator.interface.objects)
+        self.interface.objects = conversation = list(self.interface.objects)
         self._conversations.append(conversation)
         tab_title = f"{title[:15]}..." if len(title) > 15 else title
         self._explorations.append((tab_title, Column(name=title, sizing_mode='stretch_both', loading=True)))
