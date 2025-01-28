@@ -508,7 +508,7 @@ class ExplorerUI(UI):
 
         controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
         controls.param.watch(explore_table_if_single, "add")
-        tabs = Tabs(controls, sizing_mode='stretch_both', design=Material)
+        tabs = Tabs(controls, dynamic=True, sizing_mode='stretch_both', design=Material)
 
         @param.depends(explore_button, watch=True)
         def get_explorers(load):
@@ -518,14 +518,15 @@ class ExplorerUI(UI):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
-                    if len(memory['sources']) > 1:
+                    if len(memory['sources']) > 1 and SOURCE_TABLE_SEPARATOR in table:
                         _, table = table.rsplit(SOURCE_TABLE_SEPARATOR, 1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )
+                    table_label = f"{table[:15]}..." if len(table) > 15 else table
                     walker = GraphicWalker(
                         pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                        kernel_computation=True, name=f"View {table}", tab='data'
+                        kernel_computation=True, name=table_label, tab='data'
                     )
                     explorers.append(walker)
 
@@ -552,7 +553,8 @@ class ExplorerUI(UI):
         self._contexts.append(memory)
         self._coordinator.interface.objects = conversation = list(self._coordinator.interface.objects)
         self._conversations.append(conversation)
-        self._explorations.append((title, Column(name=title, sizing_mode='stretch_both', loading=True)))
+        tab_title = f"{title[:15]}..." if len(title) > 15 else title
+        self._explorations.append((tab_title, Column(name=title, sizing_mode='stretch_both', loading=True)))
         self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
         if n:
             self._conversations[active] = self._snapshot_messages(new=True)
@@ -591,14 +593,13 @@ class ExplorerUI(UI):
                     sizing_mode='stretch_both'
                 ))
             )
-        content.extend([
-            (out.title or type(out).__name__.replace('Output', ''), ParamMethod(
-                out.render, inplace=True,
-                sizing_mode='stretch_both'
-            )) for out in outputs
-        ])
+        for out in outputs:
+            title = out.title or type(out).__name__.replace('Output', '')
+            if len(title) > 15:
+                title = f"{title[:15]}..."
+            content.append((title, ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')))
         if exploration.loading:
-            tabs = Tabs(*content, active=len(outputs), dynamic=True)
+            tabs = Tabs(*content, dynamic=True, active=len(outputs))
             exploration.append(tabs)
         else:
             tabs = exploration[-1]
