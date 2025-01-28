@@ -101,7 +101,7 @@ def make_context_model(tools: list[str], tables: list[str]):
         fields['tables'] = (
             list[Literal[tuple(tables)]],
             FieldInfo(
-                description="A list of the most relevant tables to explore and load into memory before coming up with a plan. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
+                description="A list of the most relevant tables to explore and load into memory before coming up with a plan. Choose at most three tables. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
             )
         )
     if tools:
