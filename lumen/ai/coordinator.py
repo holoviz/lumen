@@ -726,7 +726,8 @@ class Planner(Coordinator):
             )
             if getattr(context, 'tables', None):
                 requested = [t for t in context.tables if t not in provided]
-                istep.stream(f'Looking up schemas for following tables: {requested}')
+                loaded = '\n'.join([f'- {table}' for table in requested])
+                istep.stream(f'Looking up schemas for following tables:\n\n{loaded}')
                 table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             if getattr(context, 'tools', None):
                 for tool in context.tools:
