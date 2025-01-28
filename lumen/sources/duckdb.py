@@ -242,6 +242,8 @@ class DuckDBSource(BaseSQLSource):
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             try:
+                if table not in self.tables and 'read_' in table:
+                    table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
                 table = self.tables[table]
             except KeyError:
                 raise KeyError(f"Table {table} not found in {self.tables.keys()}")
