@@ -530,6 +530,7 @@ class SQLAgent(LumenBaseAgent):
                 f"If the error is `syntax error at or near \")\"`, double check you used "
                 f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
             )
+            log_debug(f"\n\033[90m{system}\033[0m", suffix="\033[91mRetry SQLAgent\033[0m")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", "default")
@@ -755,9 +756,10 @@ class SQLAgent(LumenBaseAgent):
             messages[-1]["content"] = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", messages[-1]["content"])
         try:
             sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
-        except RetriesExceededError as e:
-            raise e  # TODO: try to find a way to let ui.py stop the annoying loading symbol after all retries are exhausted
-        pipeline = self._memory['pipeline']
+            pipeline = self._memory['pipeline']
+        except RetriesExceededError:
+            self._memory["outputs"] = self._memory['outputs'] + ["__error__"]
+            return
         self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline
 

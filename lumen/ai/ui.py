@@ -560,7 +560,7 @@ class ExplorerUI(UI):
         self._output.active = 1
         await self._update_conversation(tab=1)
 
-    def _add_outputs(self, exploration: Column, outputs: list[LumenOutput], memory: _Memory):
+    def _add_outputs(self, exploration: Column, outputs: list[LumenOutput] | str, memory: _Memory):
         from panel_gwalker import GraphicWalker
         if "sql" in memory:
             sql = memory.rx("sql")
@@ -576,6 +576,11 @@ class ExplorerUI(UI):
                 exploration[0] = sql_pane
             else:
                 exploration.insert(0, sql_pane)
+
+        if isinstance(outputs[-1], str) and outputs[-1] == "__error__":
+            outputs.pop()
+            self._explorations.pop(-1)
+            return
 
         content = []
         if exploration.loading:
