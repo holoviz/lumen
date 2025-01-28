@@ -711,6 +711,7 @@ class Planner(Coordinator):
             table_info=table_info,
             tools=list(tools.values()),
         )
+        tool_context = ''
         with self.interface.add_step(
             success_title="Obtained necessary context",
             title="Obtaining additional context...",
@@ -727,7 +728,6 @@ class Planner(Coordinator):
                 requested = [t for t in context.tables if t not in provided]
                 istep.stream(f'Looking up schemas for following tables: {requested}')
                 table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
-            tool_context = ''
             if getattr(context, 'tools', None):
                 for tool in context.tools:
                     tool_messages = list(messages)
