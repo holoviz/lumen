@@ -335,7 +335,7 @@ class TableListAgent(Agent):
             widths={'Table': '90%'},
             disabled=True,
             page_size=10,
-            header_filters=True
+            header_filters=len(tables) > 10
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen")
