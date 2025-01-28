@@ -565,7 +565,7 @@ class ExplorerUI(UI):
         self._output.active = 1
         await self._update_conversation(tab=1)
 
-    def _add_outputs(self, exploration: Column, outputs: list[LumenOutput], memory: _Memory):
+    def _add_outputs(self, exploration: Column, outputs: list[LumenOutput] | str, memory: _Memory):
         from panel_gwalker import GraphicWalker
         if "sql" in memory:
             sql = memory.rx("sql")
@@ -612,16 +612,18 @@ class ExplorerUI(UI):
                 prev_memory = memory
             else:
                 prev_memory = self._contexts[self._explorations.active]
+            new_exploration = False
             index = self._explorations.active if len(self._explorations) else -1
             local_memory = prev_memory.clone()
             local_memory["outputs"] = outputs = []
 
             async def render_plan(_, old, new):
-                nonlocal index
+                nonlocal index, new_exploration
                 plan = local_memory["plan"]
                 if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1
+                    new_exploration = True
 
             def sync_available_sources_memory(_, __, sources):
                 """
@@ -644,6 +646,24 @@ class ExplorerUI(UI):
                 outputs[:] = new
             local_memory.on_change('outputs', render_output)
 
+            # Remove exploration on error if no outputs have been
+            # added yet and we launched a new exploration
+            def remove_output(_, __, ___):
+                nonlocal index, new_exploration
+                del memory['__error__']
+                if outputs or not new_exploration:
+                    return
+                self._last_synced -= 1
+                self._conversations.pop()
+                self._contexts.pop()
+                self._explorations.pop(-1)
+                self._titles.pop()
+                if len(self._titles) == 0:
+                    self._output.active = 0
+                index -= 1
+                new_exploration = False
+            local_memory.on_change('__error__', remove_output)
+
             try:
                 self._idle.clear()
                 with self._coordinator.param.update(memory=local_memory):
@@ -651,6 +671,7 @@ class ExplorerUI(UI):
             finally:
                 self._idle.set()
                 local_memory.remove_on_change('plan', render_plan)
-                if not outputs:
+                local_memory.remove_on_change('__error__', remove_output)
+                if not new_exploration:
                     prev_memory.update(local_memory)
         return wrapper

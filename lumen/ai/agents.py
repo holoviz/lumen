@@ -30,7 +30,7 @@ from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import Actor, ContextProvider
-from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
+from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RetriesExceededError
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
@@ -525,11 +525,12 @@ class SQLAgent(LumenBaseAgent):
                 last_query = sql_code_match.group(1)
             errors = '\n'.join(errors)
             system += (
-                f"Your last query:\n```sql\n{last_query}\n```\ndid not work as intended, so your task is to "
-                f"expertly revise these errors:\n```python\n{errors}\n```\n\n"
+                f"\n\nYour last query did not work as intended:\n```sql\n{last_query}\n```\n\n"
+                f"Your priority is to expertly revise these errors:\n\n```\n{errors}\n```\n\n"
                 f"If the error is `syntax error at or near \")\"`, double check you used "
                 f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
             )
+            log_debug(f"\n\033[90m{system}\033[0m", suffix="\033[91mRetry SQLAgent\033[0m")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", "default")
@@ -751,9 +752,12 @@ class SQLAgent(LumenBaseAgent):
         if join_required:
             # Remove source prefixes message, e.g. SOURCE_TABLE_SEPARATOR<source>SOURCE_TABLE_SEPARATOR<table>
             messages[-1]["content"] = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", messages[-1]["content"])
-        sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
-        pipeline = self._memory['pipeline']
-
+        try:
+            sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
+            pipeline = self._memory['pipeline']
+        except RetriesExceededError as e:
+            self._memory["__error__"] = e
+            return None
         self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline
 
@@ -782,8 +786,8 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
             errors = '\n'.join(errors)
             system += (
-                f"\nNote, your last specification\n```json\n{self._last_output}\n```\n\ndid not work as intended, "
-                f"so your task is to expertly revise these errors:\n```python\n{errors}\n```\n"
+                f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n\n"
+                f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n"
             )
 
         model_spec = self.prompts["main"].get("llm_spec", "default")

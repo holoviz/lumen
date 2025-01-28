@@ -27,7 +27,7 @@ from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
 
 from ..util import log
-from .config import PROMPTS_DIR, UNRECOVERABLE_ERRORS
+from .config import PROMPTS_DIR, UNRECOVERABLE_ERRORS, RetriesExceededError
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -108,8 +108,10 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
-                        if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
+                        if isinstance(e, UNRECOVERABLE_ERRORS):
                             raise e
+                        elif i == retries - 1:
+                            raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)
@@ -129,8 +131,10 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
-                        if isinstance(e, UNRECOVERABLE_ERRORS) or i == retries - 1:
-                            raise
+                        if isinstance(e, UNRECOVERABLE_ERRORS):
+                            raise e
+                        elif i == retries - 1:
+                            raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
                         if sleep:
                             time.sleep(sleep)
@@ -362,7 +366,7 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
     terminal_cols -= offset  # Account for the timestamp and log level
     delimiter = "*" * terminal_cols
     if show_sep:
-        log.debug(f"\033[90m{delimiter}\033[0m")
+        log.debug(f"\033[91m{delimiter}\033[0m")
     if prefix:
         log.debug(prefix)
 

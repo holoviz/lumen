@@ -68,6 +68,12 @@ class SessionCache:
     def __setitem__(self, key, value):
         self._curcontext[key] = value
 
+    def __delitem__(self, key):
+        if key in self._curcontext:
+            del self._curcontext[key]
+        else:
+            del self._global_context[key]
+
     def get(self, key, default=None):
         obj = dict(self._global_context, **self._curcontext).get(key, default)
         if hasattr(obj, "copy"):
