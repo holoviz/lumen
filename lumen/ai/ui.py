@@ -452,7 +452,7 @@ class ExplorerUI(UI):
     async def _set_context(self, event):
         if len(self._conversations) == 0:
             return
-        active = event.new
+        active = self._explorations.active
         await self._idle.wait()
         if self._last_synced == active:
             self._conversations[active] = self.interface.objects
