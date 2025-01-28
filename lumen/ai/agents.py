@@ -582,8 +582,6 @@ class SQLAgent(LumenBaseAgent):
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
-            if len(pipeline.data) == 0:
-                raise ValueError("No data was returned from the SQL query.")
         except Exception as e:
             report_error(e, step)
             raise e
