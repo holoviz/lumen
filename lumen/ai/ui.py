@@ -515,7 +515,6 @@ class ExplorerUI(UI):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
-                    print(table)
                     if len(memory['sources']) > 1 and SOURCE_TABLE_SEPARATOR in table:
                         _, table = table.rsplit(SOURCE_TABLE_SEPARATOR, 1)
                     pipeline = Pipeline(
