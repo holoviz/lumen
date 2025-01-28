@@ -61,23 +61,6 @@ class Sql(BaseModel):
         the chain of thought; do NOT add extraneous comments.""")
 
 
-class Validity(BaseModel):
-
-    correct_assessment: str = Field(
-        description="""
-        Think through whether the current table is sufficient to answer the user query,
-        i.e. table contains all the necessary raw columns.
-        If the query can be solved by transforming the current data with SQL, the data is assumed to be valid.
-        If the user user explicitly asks for a refresh, then the table is invalid.
-        Keep it concise.
-        """
-    )
-
-    is_invalid: Literal["table", "sql"] | None = Field(
-        description="Whether the `table` or `sql` is invalid or no longer relevant depending on correct assessment. None if valid."
-    )
-
-
 class VegaLiteSpec(BaseModel):
 
     json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")

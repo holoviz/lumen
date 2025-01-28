@@ -29,9 +29,7 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
-from .models import (
-    Validity, make_agent_model, make_context_model, make_plan_models,
-)
+from .models import make_agent_model, make_context_model, make_plan_models
 from .tools import FunctionTool, Tool
 from .utils import (
     gather_table_sources, get_schema, log_debug, mutate_user_message,
@@ -88,15 +86,6 @@ class Coordinator(Viewer, Actor):
         Initial list of suggestions of actions the user can take.""")
 
     tools = param.List(default=[])
-
-    prompts = param.Dict(
-        default={
-            "check_validity": {
-                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-                "response_model": Validity,
-            },
-        }
-    )
 
     __abstract = True
 
@@ -314,56 +303,6 @@ class Coordinator(Viewer, Actor):
             num_objects=len(self.interface.objects),
         )
 
-    async def _invalidate_memory(self, messages: list[Message]):
-        table = self._memory.get("table")
-        if not table:
-            return
-
-        source = self._memory.get("source")
-        if table not in source:
-            sources = [src for src in self._memory.get('sources', []) if table in src]
-            if sources:
-                self._memory["source"] = source = sources[0]
-            else:
-                raise KeyError(f'Table {table} could not be found in available sources.')
-
-        try:
-            spec = await get_schema(source, table=table, include_count=True)
-        except Exception:
-            # If the selected table cannot be fetched we should invalidate it
-            spec = None
-
-        sql = self._memory.get("sql")
-        analyses_names = [analysis.__name__ for analysis in self._analyses]
-        system = await self._render_prompt(
-            "check_validity", messages, table=table, spec=yaml.dump(spec), sql=sql, analyses=analyses_names
-        )
-        with self.interface.add_step(title="Checking memory...", user="Assistant") as step:
-            model_spec = self.prompts["check_validity"].get("llm_spec", "default")
-            output = await self.llm.invoke(
-                messages=messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=self._get_model("check_validity"),
-            )
-            step.stream(output.correct_assessment, replace=True)
-            step.success_title = f"{output.is_invalid.title()} needs refresh" if output.is_invalid else "Memory still valid"
-
-        if output and output.is_invalid:
-            if output.is_invalid == "table":
-                self._memory.pop("table", None)
-                self._memory.pop("data", None)
-                self._memory.pop("sql", None)
-                self._memory.pop("pipeline", None)
-                self._memory.pop("closest_tables", None)
-                log_debug("\033[91mInvalidated from memory.\033[0m")
-            elif output.is_invalid == "sql":
-                self._memory.pop("sql", None)
-                self._memory.pop("data", None)
-                self._memory.pop("pipeline", None)
-                log_debug("\033[91mInvalidated SQL from memory.\033[0m")
-            return {"table": table, "assessment": output.correct_assessment}
-
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
         log_debug("\033[94mNEW\033[0m", show_sep=True)
         await self.respond(contents)
@@ -523,13 +462,6 @@ class Coordinator(Viewer, Actor):
                 max_user_messages=3
             )
 
-            invalidation = await self._invalidate_memory(messages)
-            if invalidation:
-                messages = mutate_user_message(
-                    f"Please be aware the prior, current table, {invalidation['table']!r}, was invalidated because {invalidation['assessment']!r}",
-                    messages[-3:]
-                )
-
             agents = {agent.name[:-5]: agent for agent in self.agents}
             execution_graph = await self._compute_execution_graph(messages, agents)
             if execution_graph is None:
@@ -560,10 +492,6 @@ class DependencyResolver(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
                 "response_model": make_agent_model,
-            },
-            "check_validity": {
-                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-                "response_model": Validity,
             },
         },
     )
@@ -656,10 +584,6 @@ class Planner(Coordinator):
 
     prompts = param.Dict(
         default={
-            "check_validity": {
-                "template": PROMPTS_DIR / "Coordinator" / "check_validity.jinja2",
-                "response_model": Validity,
-            },
             "context": {
                 "template":  PROMPTS_DIR / "Planner" / "context.jinja2",
                 "response_model": make_context_model

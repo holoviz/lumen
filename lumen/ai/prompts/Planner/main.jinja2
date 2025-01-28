@@ -23,8 +23,6 @@ Agent Rules:
 Note that you previously decided that you required additional context and got the following responses DO NOT invoke the same tools again: {{ tool_context }}
 {% endif %}
 
-{%- if 'table' in memory %}- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.{% endif -%}
-
 {%- if table_info %}
 Here are tables and schemas that are available to you:
 {{ table_info }}
@@ -54,6 +52,15 @@ Here's a list of tools:
   Provides: {{ tool.provides }}
   Description: {{ tool.purpose.strip().split() | join(' ') }}
 {%- endfor -%}
+{%- endif %}
+
+{%- if 'sql' in memory %}
+- Consider carefully if the following SQL contains all the information you need, i.e. only invoke the SQL agent if some other calculation needs to be performed! If not, do not use the SQLAgent!
+```sql
+{{ memory['sql'] }}
+```
+{%- elif 'table' in memory %}
+- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.
 {%- endif %}
 
 {%- if unmet_dependencies %}
