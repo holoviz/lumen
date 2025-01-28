@@ -338,6 +338,9 @@ class TableListAgent(Agent):
 
 
 class DocumentListAgent(Agent):
+    """
+    The DocumentListAgent lists all available documents provided by the user.
+    """
 
     purpose = param.String(default="""
         Renders a list of all availables documents to the user and lets the user
