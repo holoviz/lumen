@@ -578,7 +578,7 @@ class SQLAgent(LumenBaseAgent):
             content = (
                 f"\n\nYou are a world-class SQL user. Identify why this query failed:\n```sql\n{last_query}\n```\n\n"
                 f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors}\n```\n\n"
-                f"You previously incorrectly thought: {chain_of_thought!r}. Please note, a penalty of $100 will be incurred "
+                f"Please build upon your previous thought: {chain_of_thought!r}, but note, a penalty of $100 will be incurred "
                 f"for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
                 f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
                 f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
