@@ -163,7 +163,7 @@ class FunctionTool(Tool):
         Formats the return value for inclusion in the global context.
         Accepts the 'function', 'arguments' and 'output' as formatting variables.""")
 
-    function = param.Callable(default=None, doc="""
+    function = param.Callable(default=None, allow_refs=False, doc="""
         The function to call.""")
 
     provides = param.List(default=[], readonly=False, constant=True, doc="""
