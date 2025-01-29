@@ -140,7 +140,7 @@ class DuckDBSource(BaseSQLSource):
                 abs_path = os.path.abspath(file_path)
                 # Replace the old path with the absolute path in the SQL
                 processed_sql = processed_sql.replace(
-                f"'{file_path}'", f"'{abs_path}'"
+                    f"'{file_path}'", f"'{abs_path}'"
                 )
 
         return processed_sql
