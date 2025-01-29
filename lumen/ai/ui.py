@@ -403,13 +403,18 @@ class ExplorerUI(UI):
             c.cleanup()
 
     def _global_export_notebook(self):
-        cells = make_preamble(self.notebook_preamble)
+        cells, extensions = [], []
         for i, objects in enumerate(self._conversations):
             title = self._titles[i]
             header = make_md_cell(f'## {title}')
             cells.append(header)
-            cells += render_cells(objects)
-        return StringIO(write_notebook(cells))
+            msg_cells, msg_exts = render_cells(objects)
+            cells += msg_cells
+            for ext in msg_exts:
+                if ext not in extensions:
+                    extensions.append(ext)
+        preamble = make_preamble(self.notebook_preamble, extensions=extensions)
+        return StringIO(write_notebook(preamble+cells))
 
     async def _update_conversation(self, event=None, tab=None):
         active = self._explorations.active

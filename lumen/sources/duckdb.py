@@ -104,9 +104,16 @@ class DuckDBSource(BaseSQLSource):
         mirrors = spec.pop('mirrors', {})
         spec, refs = super()._recursive_resolve(spec, source_type)
         resolved_mirrors = {}
-        for table, (src_spec, src_table) in mirrors.items():
-            source = cls.from_spec(src_spec)
-            resolved_mirrors[table] = (source, src_table)
+        for table, mirror in mirrors.items():
+            if isinstance(mirror, tuple):
+                src_spec, src_table = mirror
+                source = cls.from_spec(src_spec)
+                resolved_mirrors[table] = (source, src_table)
+            elif mirror.get('type') == 'pipeline':
+                from ..pipeline import Pipeline
+                resolved_mirrors[table] = Pipeline.from_spec(mirror)
+            else:
+                resolved_mirrors[table] = Serializer.deserialize(mirror)
         spec['mirrors'] = resolved_mirrors
         return spec, refs
 
@@ -124,10 +131,19 @@ class DuckDBSource(BaseSQLSource):
             spec['tables'] = self._serialize_tables()
         if 'mirrors' not in spec:
             return spec
+
+        from ..pipeline import Pipeline
         mirrors = {}
-        for table, (source, src_table) in spec['mirrors'].items():
-            src_spec = source.to_spec(context=context)
-            mirrors[table] = (src_spec, src_table)
+        for table, mirror in spec['mirrors'].items():
+            if isinstance(mirror, pd.DataFrame):
+                serializer = Serializer._get_type(config.serializer)()
+                mirrors[table] = serializer.serialize(mirror)
+            elif isinstance(mirror, tuple):
+                source, src_table = mirror
+                src_spec = source.to_spec(context=context)
+                mirrors[table] = (src_spec, src_table)
+            elif isinstance(mirror, Pipeline):
+                mirrors[table] = mirror.to_spec(context=context)
         spec['mirrors'] = mirrors
         return spec
 
@@ -203,7 +219,6 @@ class DuckDBSource(BaseSQLSource):
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             params['_connection'] = self._connection
         params.pop('name', None)
-        params["ephemeral"] = True
         source = type(self)(**params)
         if not materialize:
             return source
