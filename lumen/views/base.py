@@ -1271,4 +1271,55 @@ class YdataProfilingView(View):
         return pn.Column(download_button, ydata_pane)
 
 
+class GraphicWalker(View):
+    """
+    Renders the data using the GraphicWalker panel extension.
+    """
+
+    kernel_computation = param.Boolean(
+        default=False,
+        doc="""If True the computations will take place on the server or in the Jupyter kernel
+        instead of the client to scale to larger datasets. Default is False. In Pyodide this will
+        always be set to False. The 'chart' renderer will only work with client side rendering.""",
+    )
+
+    renderer = param.Selector(
+        default="profiler",
+        objects=["explorer", "profiler", "viewer", "chart"],
+        doc="""How to display the data. One of 'explorer' (default), 'profiler,
+        'viewer' or 'chart'.""",
+    )
+
+    tab = param.Selector(
+        default="data",
+        objects=["data", "vis"],
+        doc="""Set the active tab to 'data' or 'vis' (default). Only applicable for the 'explorer' renderer. Not bi-directionally synced with client.""",
+    )
+
+    view_type = 'graphic_walker'
+
+    @classproperty
+    def _panel_type(cls):
+        try:
+            from panel_gwalker import GraphicWalker
+        except Exception:
+            GraphicWalker = None
+        return GraphicWalker
+
+    def _get_params(self) -> dict[str, Any]:
+        pipeline = self.pipeline
+        if pipeline.pipeline is not None or pipeline.transforms or pipeline.sql_transforms or pipeline.filters:
+            data = self.get_data()
+        elif isinstance(pipeline.source.source_type == 'duckdb'):
+            sql = pipeline.source.get_sql_expr(pipeline.table)
+            data = pipeline.source._connection.execute(sql)
+        return dict(
+            object=data, tab=self.tab, renderer=self.renderer,
+            kernel_computation=self.kernel_computation,
+            **self.kwargs
+        )
+
+    def get_panel(self):
+        return self._panel_type(**self._normalize_params(self._get_params()))
+
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]
