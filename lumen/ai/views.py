@@ -104,7 +104,7 @@ class LumenOutput(Viewer):
         if GraphicWalker._panel_type:
             table = GraphicWalker(
                 pipeline=pipeline, tab='data', renderer='profiler',
-                kernel_computation=True, sizing_mode="stretch_both"
+                kernel_computation=True, sizing_mode="stretch_both",
             )
         else:
             table = Table(

@@ -1276,6 +1276,9 @@ class GraphicWalker(View):
     Renders the data using the GraphicWalker panel extension.
     """
 
+    ignore_limit = param.Boolean(default=False, doc="""
+        Ignore any SQLLimit transform defined on the input pipeline.""")
+
     kernel_computation = param.Boolean(
         default=False,
         doc="""If True the computations will take place on the server or in the Jupyter kernel
@@ -1307,12 +1310,19 @@ class GraphicWalker(View):
         return GraphicWalker
 
     def _get_params(self) -> dict[str, Any]:
+        from ..transforms.sql import SQLLimit
         pipeline = self.pipeline
-        if pipeline.pipeline is not None or pipeline.transforms or pipeline.sql_transforms or pipeline.filters:
-            data = self.get_data()
-        elif isinstance(pipeline.source.source_type == 'duckdb'):
+        if (
+            pipeline.source.source_type == 'duckdb' and
+            pipeline.pipeline is None and
+            not pipeline.transforms and
+            not any(t for t in pipeline.sql_transforms if not isinstance(t, SQLLimit) or not self.ignore_limit) and
+            not pipeline.filters
+        ):
             sql = pipeline.source.get_sql_expr(pipeline.table)
-            data = pipeline.source._connection.execute(sql)
+            data = pipeline.source._connection.query(sql)
+        else:
+            data = self.get_data()
         return dict(
             object=data, tab=self.tab, renderer=self.renderer,
             kernel_computation=self.kernel_computation,
