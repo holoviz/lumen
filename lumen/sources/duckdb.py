@@ -178,23 +178,6 @@ class DuckDBSource(BaseSQLSource):
         spec['mirrors'] = mirrors
         return spec
 
-
-
-        from ..pipeline import Pipeline
-        mirrors = {}
-        for table, mirror in spec['mirrors'].items():
-            if isinstance(mirror, pd.DataFrame):
-                serializer = Serializer._get_type(config.serializer)()
-                mirrors[table] = serializer.serialize(mirror)
-            elif isinstance(mirror, tuple):
-                source, src_table = mirror
-                src_spec = source.to_spec(context=context)
-                mirrors[table] = (src_spec, src_table)
-            elif isinstance(mirror, Pipeline):
-                mirrors[table] = mirror.to_spec(context=context)
-        spec['mirrors'] = mirrors
-        return spec
-
     @classmethod
     def from_df(cls, tables: dict[str, pd.DataFrame], **kwargs):
         """
