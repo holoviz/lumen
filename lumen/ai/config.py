@@ -49,4 +49,4 @@ UNRECOVERABLE_ERRORS = (
 
 SOURCE_TABLE_SEPARATOR = "<->"
 
-pn.chat.ChatStep.min_width = 450
+pn.chat.ChatStep.min_width = 375
