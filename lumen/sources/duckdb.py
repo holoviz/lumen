@@ -203,7 +203,6 @@ class DuckDBSource(BaseSQLSource):
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             params['_connection'] = self._connection
         params.pop('name', None)
-        params["ephemeral"] = True
         source = type(self)(**params)
         if not materialize:
             return source
