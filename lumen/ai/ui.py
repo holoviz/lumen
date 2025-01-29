@@ -703,6 +703,7 @@ class ExplorerUI(UI):
                 with self._coordinator.param.update(memory=local_memory):
                     await callback(contents, user, instance)
             finally:
+                self._conversations[index] = self.interface.objects
                 self._idle.set()
                 local_memory.remove_on_change('plan', render_plan)
                 local_memory.remove_on_change('__error__', remove_output)
