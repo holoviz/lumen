@@ -575,8 +575,8 @@ class ExplorerUI(UI):
         )
         return Column(
             self._overview_intro,
-            tabs,
             input_row,
+            tabs,
             sizing_mode='stretch_both',
         )
 
