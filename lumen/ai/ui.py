@@ -351,7 +351,10 @@ class ExplorerUI(UI):
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
-        self._explorations = Tabs(sizing_mode='stretch_both', closable=True, tabs_location="left")
+        self._explorations = Tabs(
+            sizing_mode='stretch_both', closable=True, tabs_location="left",
+            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 0px; padding-right: 2px; }']
+        )
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
         self._global_notebook_export = FileDownload(
