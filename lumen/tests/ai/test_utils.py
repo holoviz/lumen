@@ -202,19 +202,19 @@ class TestGetSchema:
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
             "field1": {"type": "integer"},
-            "__count__": 1000,
+            "__len__": 1000,
         }
         schema = await get_schema(mock_source, include_count=True)
-        assert schema["__count___"] == 1000
+        assert schema["__len___"] == 1000
 
     async def test_no_count(self):
         mock_source = MagicMock()
         mock_source.get_schema.return_value = {
             "field1": {"type": "integer"},
-            "__count__": 1000,
+            "__len__": 1000,
         }
         schema = await get_schema(mock_source, include_count=False)
-        assert "__count__" not in schema
+        assert "__len__" not in schema
 
     async def test_table(self):
         mock_source = MagicMock()
