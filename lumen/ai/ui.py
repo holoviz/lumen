@@ -351,7 +351,10 @@ class ExplorerUI(UI):
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
-        self._explorations = Tabs(sizing_mode='stretch_both', closable=True)
+        self._explorations = Tabs(
+            sizing_mode='stretch_both', closable=True, tabs_location="left",
+            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 0px; padding-right: 2px; text-align: left; }']
+        )
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
         self._global_notebook_export = FileDownload(
@@ -382,7 +385,7 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto'}, sizing_mode='stretch_both'),
+                left=Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'clip'}, sizing_mode='stretch_both'),
                 right=Column(self._exports, self._coordinator),
                 sizing_mode='stretch_both'
             )
@@ -557,7 +560,7 @@ class ExplorerUI(UI):
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )
-                    table_label = f"{table[:15]}..." if len(table) > 15 else table
+                    table_label = f"{table[:25]}..." if len(table) > 25 else table
                     walker = GraphicWalker(
                         pipeline.param.data, sizing_mode='stretch_both', min_height=800,
                         kernel_computation=True, name=table_label, tab='data'
@@ -575,8 +578,8 @@ class ExplorerUI(UI):
         )
         return Column(
             self._overview_intro,
-            tabs,
             input_row,
+            tabs,
             sizing_mode='stretch_both',
         )
 
@@ -587,7 +590,7 @@ class ExplorerUI(UI):
         self._contexts.append(memory)
         self.interface.objects = conversation = list(self.interface.objects)
         self._conversations.append(conversation)
-        tab_title = f"{title[:15]}..." if len(title) > 15 else title
+        tab_title = f"{title[:25]}..." if len(title) > 25 else title
         self._explorations.append((tab_title, Column(name=title, sizing_mode='stretch_both', loading=True)))
         self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
         if n:
@@ -629,8 +632,8 @@ class ExplorerUI(UI):
             )
         for out in outputs:
             title = out.title or type(out).__name__.replace('Output', '')
-            if len(title) > 15:
-                title = f"{title[:15]}..."
+            if len(title) > 25:
+                title = f"{title[:25]}..."
             content.append((title, ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')))
         if exploration.loading:
             tabs = Tabs(*content, dynamic=True, active=len(outputs))
