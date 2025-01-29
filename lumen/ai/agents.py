@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import traceback
 
 from copy import deepcopy
 from functools import partial
@@ -981,11 +982,18 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ('vega',)
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
-        memory['view'] = dict(await self._extract_spec({"json_spec": json.dumps(spec)}), type=self.view_type)
+        try:
+            spec = await self._extract_spec({"yaml_spec": event.new})
+        except Exception as e:
+            traceback.print_exception(e)
+            raise e
+        memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
-        vega_spec = json.loads(spec['json_spec'])
+        if yaml_spec:= spec.get('yaml_spec'):
+            vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
+        elif json_spec:= spec.get('json_spec'):
+            vega_spec = json.loads(json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
