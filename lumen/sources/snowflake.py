@@ -32,6 +32,9 @@ class SnowflakeSource(BaseSQLSource):
     user = param.String(default=None, doc="""
         The user to authenticate as.""")
 
+    password = param.String(default=None, doc="""
+        The password to authenticate with (if authenticator is set to "snowflake").""")
+
     schema = param.String(default=None, doc="""
         The database schema to load data from.""")
 
@@ -63,6 +66,8 @@ class SnowflakeSource(BaseSQLSource):
             conn_kwargs['host'] = self.host
         if self.token is not None:
             conn_kwargs['token'] = self.token
+        if self.password is not None:
+            conn_kwargs['password'] = self.password
         if self.schema is not None:
             conn_kwargs['schema'] = self.schema
         if self.user is not None:
