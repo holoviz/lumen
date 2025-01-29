@@ -5,7 +5,7 @@ import traceback
 
 from io import StringIO
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -22,6 +22,7 @@ from panel.pane import SVG, Alert, Markdown
 from panel.param import ParamMethod
 from panel.template import FastListTemplate
 from panel.theme import Material
+from panel.util import edit_readonly
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
@@ -440,8 +441,15 @@ class ExplorerUI(UI):
             # We must mark the last synced as None to ensure
             # we do not resync with the Overview tab conservation
             active = None
-        self.interface.objects = conversation
+        self._set_conversation(conversation)
+        self.interface._chat_log.scroll_to_latest()
         self._last_synced = active
+
+    def _set_conversation(self, conversation: list[Any]):
+        feed = self.interface._chat_log
+        with edit_readonly(feed):
+            feed.visible_range = None
+        self.interface.objects = conversation
 
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
@@ -468,12 +476,13 @@ class ExplorerUI(UI):
         else:
             self._conversations[event.old if old is None else old] = self._snapshot_messages()
         conversation = self._conversations[active]
-        self.interface.objects = conversation
+        with hold():
+            self._set_conversation(conversation)
+            self._notebook_export.param.update(
+                filename = f"{self._titles[active].replace(' ', '_')}.ipynb"
+            )
+            self._exports.visible = True
         self.interface._chat_log.scroll_to_latest()
-        self._notebook_export.param.update(
-            filename = f"{self._titles[active].replace(' ', '_')}.ipynb"
-        )
-        self._exports.visible = True
         self._last_synced = active
 
     def _snapshot_messages(self, new=False):
