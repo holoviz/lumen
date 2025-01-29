@@ -60,8 +60,10 @@ Here's a list of tools:
 ```sql
 {{ memory['sql'] }}
 ```
-{%- elif 'table' in memory %}
-- The result of the previous step was the `{{ memory['table'] }}` table. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.
+{%- endif %}
+{%- if 'table' in memory %}
+- The result of the previous step was the `{{ memory['table'] }}` table. If the user is referencing a previous result this is probably what they're referring to. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.
+- If you are invoking a SQL agent and reusing the table, tell it to reference that table by name rather than re-stating the query.
 {%- endif %}
 
 {%- if unmet_dependencies %}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import traceback
 
 from copy import deepcopy
 from functools import partial
@@ -566,18 +567,25 @@ class SQLAgent(LumenBaseAgent):
         errors=None
     ):
         if errors:
-            last_query = self.interface.serialize()[-1]["content"]
-            sql_code_match = re.search(r'(?s)```sql\s*(.*?)```', last_query, re.DOTALL)
+            last_content = self.interface.objects[-1].object[-1][-1].object
+            sql_code_match = re.search(r'(?s)```sql\s*(.*?)```', last_content, re.DOTALL)
+            chain_of_thought = last_content.split("```")[0]
             if sql_code_match:
                 last_query = sql_code_match.group(1)
-            errors = '\n'.join(errors)
-            system += (
-                f"\n\nYour last query did not work as intended:\n```sql\n{last_query}\n```\n\n"
-                f"Your priority is to expertly revise these errors:\n\n```\n{errors}\n```\n\n"
-                f"If the error is `syntax error at or near \")\"`, double check you used "
+            else:
+                return
+            num_errors = len(errors)
+            errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
+            content = (
+                f"\n\nYou are a world-class SQL user. Identify why this query failed:\n```sql\n{last_query}\n```\n\n"
+                f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors}\n```\n\n"
+                f"Please build upon your previous thought: {chain_of_thought!r}, but note, a penalty of $100 will be incurred "
+                f"for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
+                f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
                 f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
             )
-            log_debug(f"\n\033[90m{system}\033[0m", suffix="\033[91mRetry SQLAgent\033[0m")
+            messages = mutate_user_message(content, messages)
+            log_debug("\033[91mRetry SQLAgent\033[0m")
 
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", "default")
@@ -773,7 +781,7 @@ class SQLAgent(LumenBaseAgent):
                 table_schema = await get_schema(source, source_table, include_min_max=True)
 
             # Look up underlying table name
-            table_name = source_table
+            table_name = source.normalize_table(source_table)
             if (
                 'tables' in source.param and
                 isinstance(source.tables, dict) and
@@ -837,9 +845,10 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
             errors = '\n'.join(errors)
             if self._last_output:
-                system += (
-                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n\n"
-                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n"
+                messages = mutate_user_message(
+                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n"
+                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n",
+                    messages
                 )
         model_spec = self.prompts["main"].get("llm_spec", "default")
         output = await self.llm.invoke(
@@ -973,11 +982,18 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ('vega',)
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
-        memory['view'] = dict(await self._extract_spec({"json_spec": json.dumps(spec)}), type=self.view_type)
+        try:
+            spec = await self._extract_spec({"yaml_spec": event.new})
+        except Exception as e:
+            traceback.print_exception(e)
+            raise e
+        memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
-        vega_spec = json.loads(spec['json_spec'])
+        if yaml_spec:= spec.get('yaml_spec'):
+            vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
+        elif json_spec:= spec.get('json_spec'):
+            vega_spec = json.loads(json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
