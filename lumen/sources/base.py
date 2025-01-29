@@ -722,6 +722,13 @@ class BaseSQLSource(Source):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
+    def normalize_table(self, table: str) -> str:
+        """
+        Allows implementing table name normalization to allow fuzze matching
+        of the table name for minor variations such as quoting differences.
+        """
+        return table
+
     def get_sql_expr(self, table: str):
         """
         Returns the SQL expression corresponding to a particular table.
