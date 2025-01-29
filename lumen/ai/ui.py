@@ -469,6 +469,7 @@ class ExplorerUI(UI):
             self._conversations[event.old if old is None else old] = self._snapshot_messages()
         conversation = self._conversations[active]
         self.interface.objects = conversation
+        self.interface._chat_log.scroll_to_latest()
         self._notebook_export.param.update(
             filename = f"{self._titles[active].replace(' ', '_')}.ipynb"
         )
