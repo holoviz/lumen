@@ -162,7 +162,7 @@ async def get_schema(
 
     # first pop regardless to prevent
     # argument of type 'numpy.int64' is not iterable
-    count = schema.pop("count", None)
+    count = schema.pop("__count__", None)
 
     if include_min_max:
         for field, spec in schema.items():
@@ -220,7 +220,7 @@ async def get_schema(
         ]
 
     if count and include_count:
-        schema["count"] = count
+        schema["__count__"] = count
     return schema
 
 
