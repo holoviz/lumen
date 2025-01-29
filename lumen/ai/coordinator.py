@@ -73,6 +73,9 @@ class Coordinator(Viewer, Actor):
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
         List of instructions to demo the Coordinator.""")
 
+    history = param.Integer(default=3, doc="""
+        Number of previous user-assistant interactions to include in the chat history.""")
+
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
@@ -422,31 +425,27 @@ class Coordinator(Viewer, Actor):
 
     def _fuse_messages(self, messages: list[Message], max_user_messages: int = 2) -> list[Message]:
         """
-        Fuse consecutive messages from the same user and limit the
-        the number of user messages to `max_user_messages`.
+        Fuses the chat history into a single system message, followed by the last user message.
         """
-        user_count = 0
-        input_messages = []
-        previous_role = None
-        for message in messages[::-1]:
-            role = message["role"]
-            content = message["content"].strip()
-            if (user_count == 0 and role == "assistant"):
-                # the first message should be user
-                continue
-
-            if role == previous_role and input_messages:
-                # remember it's in reverse order
-                input_messages[-1]["content"] = f"{content}\n---\n{input_messages[-1]['content']}"
-            else:
-                input_messages.append({"role": role, "content": content})
-
-            previous_role = role
-            if role == "user":
-                user_count += 1
-                if user_count >= max_user_messages:
-                    break
-        return input_messages[::-1]
+        user_indices = [i for i, msg in enumerate(messages) if msg['role'] == 'user']
+        if user_indices:
+            first_user_index = user_indices[0] if len(user_indices) <= max_user_messages else user_indices[-max_user_messages]
+            last_user_index = user_indices[-1]
+            last_user_message = messages[last_user_index]
+        else:
+            first_user_index = 0
+            last_user_index = -1
+        history_messages = messages[first_user_index:last_user_index]
+        if not history_messages:
+            return [last_user_message] if user_indices else []
+        formatted_history = "\n\n".join(
+            f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_messages if msg['content'].strip()
+        )
+        system_prompt = {
+            "role": "system",
+            "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        }
+        return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tool_context"] = ""
@@ -459,7 +458,7 @@ class Coordinator(Viewer, Actor):
 
             messages = self._fuse_messages(
                 self.interface.serialize(custom_serializer=self._serialize, limit=10),
-                max_user_messages=3
+                max_user_messages=self.history
             )
 
             agents = {agent.name[:-5]: agent for agent in self.agents}
@@ -472,7 +471,7 @@ class Coordinator(Viewer, Actor):
                 self.interface.stream(msg, user='Lumen')
                 return msg
             for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages[-3:])
+                succeeded = await self._execute_graph_node(node, messages)
                 if not succeeded:
                     break
             if "pipeline" in self._memory:
