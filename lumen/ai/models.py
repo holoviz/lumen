@@ -63,6 +63,10 @@ class Sql(BaseModel):
 
 class VegaLiteSpec(BaseModel):
 
+    chain_of_thought: str = Field(
+        description="Explain how you will use the data to create a vegalite plot."
+    )
+
     json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
 
 
