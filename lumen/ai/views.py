@@ -7,7 +7,7 @@ import yaml
 
 from panel.config import config
 from panel.layout import Column, Row, Tabs
-from panel.pane import Alert
+from panel.pane import Alert, Markdown
 from panel.param import ParamMethod
 from panel.viewable import Viewer
 from panel.widgets import (
@@ -20,7 +20,7 @@ from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..views.base import Table
+from ..views.base import GraphicWalker, Table
 from .utils import get_data
 
 
@@ -101,9 +101,15 @@ class LumenOutput(Viewer):
         self._last_output = {}
 
     async def _render_pipeline(self, pipeline):
-        table = Table(
-            pipeline=pipeline, pagination='remote',
-            min_height=500, sizing_mode="stretch_both", stylesheets=[
+        if GraphicWalker._panel_type:
+            table = GraphicWalker(
+                pipeline=pipeline, tab='data', renderer='profiler',
+                kernel_computation=True, sizing_mode="stretch_both",
+            )
+        else:
+            table = Table(
+                pipeline=pipeline, pagination='remote',
+                min_height=500, sizing_mode="stretch_both", stylesheets=[
                 """
                 .tabulator-footer {
                 display: flex;
@@ -111,8 +117,8 @@ class LumenOutput(Viewer):
                 padding: 0px;
                 }
                 """
-            ]
-        )
+                ]
+            )
         download = Download(
             view=table, hide=False, filename=f'{pipeline.table}',
             format='csv'
@@ -139,7 +145,11 @@ class LumenOutput(Viewer):
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.insert(0, full_data)
-        return Column(controls, table)
+        return Column(
+            controls,
+            Markdown(f'### Table: {pipeline.table}', margin=0),
+            table
+        )
 
     @param.depends('spec', 'active')
     async def render(self):
