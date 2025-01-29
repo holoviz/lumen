@@ -385,7 +385,7 @@ class ExplorerUI(UI):
         )
         self._main = Column(
             SplitJS(
-                left=Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto'}, sizing_mode='stretch_both'),
+                left=Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'clip'}, sizing_mode='stretch_both'),
                 right=Column(self._exports, self._coordinator),
                 sizing_mode='stretch_both'
             )
