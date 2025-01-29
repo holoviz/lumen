@@ -175,7 +175,7 @@ class LumenOutput(Viewer):
         except Exception as e:
             traceback.print_exc()
             yield Alert(
-                f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
+                f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
                 alert_type="danger",
             )
 
