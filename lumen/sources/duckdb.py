@@ -239,12 +239,16 @@ class DuckDBSource(BaseSQLSource):
             return list(self.tables)
         return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
 
+    def normalize_table(self, table: str):
+        tables = self.get_tables()
+        if table not in tables and 'read_' in table:
+            table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
+        return table
+
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             try:
-                if table not in self.tables and 'read_' in table:
-                    table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
-                table = self.tables[table]
+                table = self.tables[self.normalize_table(table)]
             except KeyError:
                 raise KeyError(f"Table {table} not found in {self.tables.keys()}")
         if '(' not in table and ')' not in table:

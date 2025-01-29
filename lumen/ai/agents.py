@@ -780,7 +780,7 @@ class SQLAgent(LumenBaseAgent):
                 table_schema = await get_schema(source, source_table, include_min_max=True)
 
             # Look up underlying table name
-            table_name = source_table
+            table_name = source.normalize_table(source_table)
             if (
                 'tables' in source.param and
                 isinstance(source.tables, dict) and

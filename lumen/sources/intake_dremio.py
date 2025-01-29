@@ -25,13 +25,17 @@ class IntakeBaseDremioSource(IntakeBaseSQLSource):
 
     dialect = 'dremio'
 
-    def _get_source(self, table):
+    def normalize_table(self, table: str):
         # Fuzzy matching to ignore quoting issues
-        normalized_table = table.replace('"', '').lower()
         tables = self.get_tables()
+        normalized_table = table.replace('"', '').lower()
         normalized_tables = [t.replace('"', '').lower() for t in tables]
         if table not in tables and normalized_table in normalized_tables:
             table = tables[normalized_tables.index(normalized_table)]
+        return table
+
+    def _get_source(self, table):
+        table = self.normalize_table(table)
         return super()._get_source(table)
 
     def __contains__(self, table):
