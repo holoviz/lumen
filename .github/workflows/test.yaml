@@ -60,6 +60,8 @@ jobs:
       img_change: ${{ steps.filter.outputs.img }}
       matrix: ${{ env.MATRIX }}
     steps:
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request'
       - name: Check for code changes
         uses: dorny/paths-filter@v3
         id: filter
