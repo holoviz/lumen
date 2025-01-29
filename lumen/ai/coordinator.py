@@ -29,7 +29,9 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import Llama, Llm, Message
 from .logs import ChatLogs
-from .models import make_agent_model, make_context_model, make_plan_models
+from .models import (
+    Solved, make_agent_model, make_context_model, make_plan_models,
+)
 from .tools import FunctionTool, Tool
 from .utils import (
     gather_table_sources, get_schema, log_debug, mutate_user_message,
@@ -81,6 +83,12 @@ class Coordinator(Viewer, Actor):
 
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
+
+    reattempts = param.Integer(default=0, doc="""
+        If set to more than zero, this determines how many times
+        the Coordinator should re-attempt solving the user query
+        if it determines previous attempts didn't solve the problem.
+    """)
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -447,6 +455,26 @@ class Coordinator(Viewer, Actor):
         }
         return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
+    async def _validate_query(self, messages: list[Message], **kwargs) -> [str, bool | None]:
+        question, answers = '', []
+        for msg in self.interface.serialize(custom_serializer=self._serialize, limit=10)[::-1]:
+            if msg['role'] == 'assistant' and question:
+                answers.append(msg['content'])
+            elif msg['role'] == 'user':
+                question = msg['content']
+        system_prompt = await self._render_prompt(
+            "solved", messages, question=question, answers=answers[::-1],
+            plan=self._memory.get('plan'), **kwargs
+        )
+        model_spec = self.prompts["solved"].get("llm_spec", "default")
+        output = await self.llm.invoke(
+            messages,
+            system=system_prompt,
+            model_spec=model_spec,
+            response_model=self._get_model("solved"),
+        )
+        return output.is_solved if output.is_solvable or output.is_solved else None, output.chain_of_thought
+
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
@@ -461,19 +489,38 @@ class Coordinator(Viewer, Actor):
                 max_user_messages=self.history
             )
 
-            agents = {agent.name[:-5]: agent for agent in self.agents}
-            execution_graph = await self._compute_execution_graph(messages, agents)
-            if execution_graph is None:
-                msg = (
-                    "Assistant could not settle on a plan of action to perform the requested query. "
-                    "Please restate your request."
-                )
-                self.interface.stream(msg, user='Lumen')
-                return msg
-            for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages)
-                if not succeeded:
+            old_data = self._memory.get('data')
+            old_sql = self._memory.get('sql')
+
+            solved = False
+            attempts = 0
+            while not solved:
+                attempts += 1
+                agents = {agent.name[:-5]: agent for agent in self.agents}
+                execution_graph = await self._compute_execution_graph(messages, agents)
+                if execution_graph is None:
+                    msg = (
+                        "Assistant could not settle on a plan of action to perform the requested query. "
+                        "Please restate your request."
+                    )
+                    self.interface.stream(msg, user='Lumen')
+                    return msg
+                for node in execution_graph:
+                    succeeded = await self._execute_graph_node(node, messages)
+                    if not succeeded:
+                        break
+                if not self.reattempts:
+                    return
+                new_data = self._memory.get('data')
+                new_sql = self._memory.get('sql')
+                data = '' if new_data is old_data else new_data
+                sql = '' if new_sql is old_sql else new_sql
+                solved, cot = await self._validate_query(messages, data=data, attempts=attempts, sql=sql)
+                if attempts > self.reattempts or solved is None:
                     break
+                elif solved is not None and not solved:
+                    self.interface.send(f'Task was not solved, replanning:\n\n{cot}', user='Assistant', respond=False)
+                    messages.append({"role": "assistant", "content": cot})
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
@@ -492,6 +539,10 @@ class DependencyResolver(Coordinator):
                 "template": PROMPTS_DIR / "DependencyResolver" / "main.jinja2",
                 "response_model": make_agent_model,
             },
+            "solved": {
+                "template": PROMPTS_DIR / "Coordinator" / "solved.jinja2",
+                "response_model": Solved,
+            }
         },
     )
 
@@ -590,6 +641,10 @@ class Planner(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
+            },
+            "solved": {
+                "template": PROMPTS_DIR / "Coordinator" / "solved.jinja2",
+                "response_model": Solved,
             }
         }
     )
@@ -698,7 +753,7 @@ class Planner(Coordinator):
                 tables_schema_str=tables_schema_str,
                 tool_context=tool_context
             )
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", "reasoning")
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
