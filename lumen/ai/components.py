@@ -45,7 +45,7 @@ class SplitJS(JSComponent):
       splitDiv.append(split0, split1);
 
       const splitInstance = Split([split0, split1], {
-        sizes: [50, 50],
+        sizes: [65, 35],
         minSize: [300, 200],
         gutterSize: 10,
         onDragEnd: (sizes) => {
