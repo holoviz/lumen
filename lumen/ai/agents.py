@@ -1000,7 +1000,7 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
-        return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 500}
+        return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 300}
 
 
 class AnalysisAgent(LumenBaseAgent):
