@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 
 from typing import TYPE_CHECKING, Any
@@ -125,10 +126,39 @@ class DuckDBSource(BaseSQLSource):
             tables[t] = serializer.serialize(tdf)
         return tables
 
+    def _process_sql_paths(self, sql_expr: str) -> str:
+        # Look for read_* patterns like read_parquet, read_csv etc.
+        matches = re.finditer(r"read_\w+\('([^']+)'\)", sql_expr)
+        processed_sql = sql_expr
+
+        for match in matches:
+            file_path = match.group(1)
+            # Ensure it isn't a URL and convert to absolute path if it's not already
+            if re.match(r'^(?:http|ftp)s?://', file_path):
+                continue
+            if not os.path.isabs(file_path):
+                abs_path = os.path.abspath(file_path)
+                # Replace the old path with the absolute path in the SQL
+                processed_sql = processed_sql.replace(
+                    f"'{file_path}'", f"'{abs_path}'"
+                )
+
+        return processed_sql
+
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context)
         if self.ephemeral:
             spec['tables'] = self._serialize_tables()
+        # Handle tables that are either a list or dictionary
+        elif isinstance(self.tables, list):
+            spec['tables'] = [self._process_sql_paths(table_name) for table_name in self.tables]
+        else:
+            # For dictionary case, process each SQL expression
+            processed_tables = {}
+            for table_name, sql_expr in self.tables.items():
+                processed_tables[table_name] = self._process_sql_paths(sql_expr)
+            spec['tables'] = processed_tables
+
         if 'mirrors' not in spec:
             return spec
 
