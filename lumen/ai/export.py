@@ -8,6 +8,7 @@ import nbformat
 
 from panel import Column
 from panel.chat import ChatMessage, ChatStep
+from panel.pane import SVG
 
 from lumen.ai.views import LumenOutput
 from lumen.config import config
@@ -67,7 +68,7 @@ def format_output(msg: ChatMessage):
 def render_cells(messages: list[ChatMessage]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
     for msg in messages:
-        if msg.user == 'Help':
+        if msg.user == 'Help' or (isinstance(msg.avatar, SVG) and msg.user == " "):
             continue
         elif isinstance(msg.object, str):
             cells += format_markdown(msg)
