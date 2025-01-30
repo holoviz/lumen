@@ -17,7 +17,11 @@ from bokeh.command.util import die
 from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
-from lumen.ai.config import THIS_DIR
+try:
+    from lumen.ai.config import THIS_DIR
+except ImportError:
+    print('You need to install lumen-ai with "lumen[ai]"')
+    sys.exit(1)
 
 from ..ai import agents as lumen_agents  # Aliased here
 from ..ai.utils import render_template
