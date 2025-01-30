@@ -174,15 +174,6 @@ class AIHandler(CodeHandler):
 
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
-        if config.get("provider") is None:
-            raise RuntimeError(
-                "No LLM provider was detected. To resolve this specify a provider "
-                "using the --provider CLI argument along with an API key (using --api-key) "
-                "or configure environment variable(s) for your favorite LLM cloud provider "
-                "(e.g. OPENAI_API_KEY or ANTHROPIC_API_KEY). If you are running an OpenAI "
-                "compatible API specify a custom endpoint with --provider-endpoint."
-            )
-
         context = {
             "llm_provider": LLM_PROVIDERS[config['provider']],
             "tables": [repr(t) for t in tables],
