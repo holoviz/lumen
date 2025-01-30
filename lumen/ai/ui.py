@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 
 from io import StringIO
@@ -149,7 +150,8 @@ class UI(Viewer):
             self.interface = ChatInterface(
                 load_buffer=5,
             )
-        if self.log_level == "DEBUG":
+        levels = logging.getLevelNamesMapping()
+        if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
         self._coordinator = self.coordinator(
             agents=agents,
