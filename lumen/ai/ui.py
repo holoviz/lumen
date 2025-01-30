@@ -281,7 +281,10 @@ class UI(Viewer):
             template.config.css_files.append(
                 'https://fonts.googleapis.com/css2?family=Nunito:wght@700'
             )
-            template.config.raw_css = ["#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"]
+            template.config.raw_css = [
+                "#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"
+                "#main { padding: 0 } .main .card-margin.stretch_both { margin: 0.5em 0 0 0; height: calc(100% - 0.5em); }"
+            ]
             template.main.append(self._main)
             return template
         return super()._create_view()
@@ -355,7 +358,7 @@ class ExplorerUI(UI):
         self.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(
             sizing_mode='stretch_both', closable=True, tabs_location="left",
-            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 0px; padding-right: 2px; text-align: left; }']
+            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 5px; padding-right: 2px; text-align: left; }']
         )
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
@@ -376,7 +379,7 @@ class ExplorerUI(UI):
 
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
-            margin=(0, 0, 10, 0),
+            margin=(0, 0, 10, 10),
             sizing_mode='stretch_width',
             visible=self._explorations.param["objects"].rx.bool().rx.not_()
         )
@@ -511,7 +514,7 @@ class ExplorerUI(UI):
 
         table_select = MultiChoice(
             placeholder="Select table(s)", sizing_mode='stretch_width',
-            max_height=200, margin=(5, 0), max_items=5
+            max_height=200, max_items=5
         )
         explore_button = Button(
             name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
@@ -610,16 +613,15 @@ class ExplorerUI(UI):
         await self._update_conversation(tab=1)
 
     def _add_outputs(self, exploration: Column, outputs: list[LumenOutput] | str, memory: _Memory):
-        from panel_gwalker import GraphicWalker
         if "sql" in memory:
             sql = memory.rx("sql")
             sql_pane = Markdown(
                 param.rx('```sql\n{sql}\n```').format(sql=sql),
-                margin=0, sizing_mode='stretch_width', name='SQL'
+                margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
             )
             if sql.count('\n') > 10:
                 sql_pane = Column(
-                    sql_pane, max_height=250, scroll='y-auto', name='SQL'
+                    sql_pane, max_height=275, scroll='y-auto', name='SQL'
                 )
             if len(exploration) and exploration[0].name == 'SQL':
                 exploration[0] = sql_pane
@@ -627,16 +629,6 @@ class ExplorerUI(UI):
                 exploration.insert(0, sql_pane)
 
         content = []
-        if exploration.loading:
-            pipeline = memory['pipeline']
-            content.append(
-                ('Overview', GraphicWalker(
-                    pipeline.param.data,
-                    kernel_computation=True,
-                    tab='data',
-                    sizing_mode='stretch_both'
-                ))
-            )
         for out in outputs:
             title = out.title or type(out).__name__.replace('Output', '')
             if len(title) > 25:
