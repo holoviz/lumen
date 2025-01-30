@@ -92,6 +92,7 @@ class Llm(param.Parameterized):
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
+    @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """
         Allows LLM provider to perform actions that ensure that
