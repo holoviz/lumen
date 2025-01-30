@@ -1,3 +1,11 @@
+import sys
+
+from importlib.util import find_spec
+
+if find_spec("pydantic") is None:
+    print('You need to install lumen-ai with "lumen[ai]"')
+    sys.exit(1)
+
 import panel as pn
 
 from . import agents, embeddings, llm  # noqa
