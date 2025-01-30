@@ -3,7 +3,7 @@
 {%- block instructions %}
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
 Try not to take the query too literally, but instead focus on the user's intent and the data transformations required.
-Use `SELECT * FROM table` if there is no specific column selection mentioned in the query.
+Use `SELECT * FROM table` if there is no specific column selection mentioned in the query; no alias required.
 {%- endblock -%}
 
 {% block context -%}
@@ -14,17 +14,7 @@ Here are YAML schemas for currently relevant tables:
 ```yaml
 {{ details.schema }}
 ```
-
 {% endfor -%}
-{%- endif -%}
-
-{%- if not join_required -%}
-It was already determined that no join is required, so only use the existing table '{{ table }}' to calculate the
-result.
-{% else %}
-Please perform a join between the necessary tables.
-If the join's values do not align based on the min/max lowest common denominator, then perform a join based on the
-closest match, or resample and aggregate the data to align the values.
 {%- endif -%}
 
 Checklist:
@@ -42,7 +32,12 @@ CAST or TO_DATE
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
 - Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT to focus on the most relevant results.
-{% if dialect == 'duckdb' %}
+{%- if join_required -%}
+- Please perform a join between the necessary tables.
+- If the join's values do not align based on the min/max lowest common denominator, then perform a join based on the closest match, or resample and aggregate the data to align the values.
+- Very important to transform the values to ensure they align correctly, especially for acronyms and dates.
+{%- endif -%}
+{%- if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table' or 'table.csv'
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
@@ -50,9 +45,13 @@ CAST or TO_DATE
 double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted
 identifiers.
 {% endif %}
-{% if dialect == 'snowflake' %}
+{%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif -%}
+{% if comments is defined -%}
+Here's additional guidance:
+{{ comments }}
+{%- endif -%}
 {%- endblock -%}
 
 {%- block examples %}

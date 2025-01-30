@@ -1,19 +1,15 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-Correctly assess and list the tables that need to be joined.
+Correctly assess and consider which tables are necessary to answer the user query.
 
 Use table names verbatim:
 - if the table is read_csv('table.csv'), then use read_csv('table.csv') and not 'table' or 'table.csv'
 - if the table is table.csv, then use table.csv and not read_csv('table.csv')
-
-If there are delimiters, '{{ separator }}', be sure to include them:
-'{{ separator }}source{{ separator }}table{{ separator }}''
+- Be sure to include the delimiters: '{{ separator }}source{{ separator }}table{{ separator }}'
 {% endblock %}
 
 {% block context %}
-Here are the available tables:
-{% for table in tables %}
-- {{ table }}
-{% endfor %}
+Available tables and schemas:
+{{ tables_schema_str }}
 {% endblock %}
