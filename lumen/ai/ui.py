@@ -167,6 +167,7 @@ class UI(Viewer):
             callback=self._export_notebook,
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             stylesheets=['.bk-btn a { padding: 0 6px; }'],
+            styles={'z-index': '1000'}
         )
         self._exports = Row(
             HSpacer(),
@@ -178,7 +179,7 @@ class UI(Viewer):
                 )
                 for label, e in self.export_functions.items()
             ),
-            styles={'position': 'relative', 'right': '20px', 'top': '-5px'},
+            styles={'position': 'relative', 'right': '20px', 'top': '-1px'},
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
@@ -283,7 +284,7 @@ class UI(Viewer):
             )
             template.config.raw_css = [
                 "#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"
-                "#main { padding: 0 } .main .card-margin.stretch_both { margin: 0.5em 0 0 0; height: calc(100% - 0.5em); }"
+                "#main { padding: 0 } .main .card-margin.stretch_both { margin: 0; height: 100%; }"
             ]
             template.main.append(self._main)
             return template
@@ -369,7 +370,7 @@ class ExplorerUI(UI):
             callback=self._global_export_notebook,
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             stylesheets=['.bk-btn a { padding: 0 6px; }'],
-            styles={'position': 'absolute', 'right': '0px', 'top': '-5px', 'z-index': '100'},
+            styles={'position': 'absolute', 'right': '0px', 'top': '-1px', 'z-index': '100'},
         )
         self._exports.visible = False
         self._titles = []
