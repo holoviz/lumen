@@ -128,7 +128,7 @@ class SourceControls(Viewer):
         self._file_input = FileDropper(
             height=100,
             multiple=self.param.multiple,
-            margin=(0, 10, 0, 0),
+            margin=(10, 10, 0, 10),
             sizing_mode="stretch_width",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
