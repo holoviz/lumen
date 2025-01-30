@@ -17,7 +17,11 @@ from bokeh.command.util import die
 from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
-from lumen.ai.config import THIS_DIR
+try:
+    from lumen.ai.config import THIS_DIR
+except ImportError:
+    print('You need to install lumen-ai with "lumen[ai]"')
+    sys.exit(1)
 
 from ..ai import agents as lumen_agents  # Aliased here
 from ..ai.utils import render_template
@@ -207,12 +211,23 @@ class AIHandler(CodeHandler):
 def main(args=None):
     parser = argparse.ArgumentParser(
         prog="lumen-ai",
-        description=dedent(
-            """
+        description=dedent("""\
             Lumen AI - Launch Lumen AI applications with customizable LLM configuration.
             To start the application without any data, simply run 'lumen-ai' with no additional arguments.
-        """
-        ),
+
+            First time running Lumen AI take a look at getting started documentation:
+            https://lumen.holoviz.org/lumen_ai/getting_started/
+
+            Found a Bug or Have a Feature Request?
+            Open an issue at: https://github.com/holoviz/lumen/issues
+
+            Have a Question?
+            Ask on our Discord chat server: https://discord.gg/rb6gPXbdAr
+
+            Need Help?
+            Ask a question on our forum: https://discourse.holoviz.org
+        """),
+        formatter_class=argparse.RawTextHelpFormatter,
         epilog="See '<command> --help' to read about a specific subcommand.",
     )
 
