@@ -3,10 +3,7 @@
 {% block instructions %}
 Correctly assess and consider which tables are necessary to answer the user query.
 
-Use table names verbatim:
-- if the table is read_csv('table.csv'), then use read_csv('table.csv') and not 'table' or 'table.csv'
-- if the table is table.csv, then use table.csv and not read_csv('table.csv')
-- Be sure to include the delimiters: '{{ separator }}source{{ separator }}table{{ separator }}'
+Use table names verbatim, and be sure to include the delimiters {{ separator }}, like '{{ separator }}source{{ separator }}table{{ separator }}'
 {% endblock %}
 
 {% block context %}

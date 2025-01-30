@@ -607,6 +607,8 @@ class SQLAgent(LumenBaseAgent):
             f"{SOURCE_TABLE_SEPARATOR}{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
             for a_table in a_source.get_tables()
         ]
+        print(tables_schema_str, "SCHEMA")
+        print(tables, "TABLES")
         system = await self._render_prompt(
             "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, tables_schema_str=tables_schema_str
         )
@@ -620,8 +622,6 @@ class SQLAgent(LumenBaseAgent):
                 response_model=tables_model,
             )
             relevant_tables = output.relevant_tables
-            if isinstance(relevant_tables, str):
-                relevant_tables = [relevant_tables]
             chain_of_thought = output.chain_of_thought
             chain_of_thought += " " + output.potential_join_issues
             step.stream(
