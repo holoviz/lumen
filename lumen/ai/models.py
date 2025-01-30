@@ -144,7 +144,8 @@ def make_tables_model(tables):
         )),
        potential_join_issues=(str, FieldInfo(
            description="""
-           List potential join issues between tables:
+           If no join is necessary, return an empty string--else
+           list potential join issues between tables:
            - Data type mismatches (int vs string, numeric precision)
            - Format differences (case, leading zeros, dates/times, timezones)
            - Semantic differences (IDs vs names, codes vs full text)
