@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import logging
 import os
 import sys
 import traceback
@@ -243,7 +244,8 @@ def main(args=None):
     try:
         ret = args.invoke(args)
     except Exception as e:
-        if args.log_level.upper() == 'DEBUG':
+        levels = logging.getLevelNamesMapping()
+        if levels.get(args.log_level.upper(), 30) < 20:
             traceback.print_exc()
         die("ERROR: " + str(e))
 
