@@ -470,12 +470,13 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
 
     purpose = param.String(default="""
-        Responsible for generating, modifying and executing SQL queries to
-        answer user queries about the data, such querying subsets of the
-        data, aggregating the data and calculating results. If the current
-        table does not contain all the available data the SQL agent is
-        also capable of joining it with other tables. Will generate and
-        execute a query in a single step.""")
+        Responsible for displaying tables, generating, modifying and
+        executing SQL queries to answer user queries about the data,
+        such querying subsets of the data, aggregating the data and
+        calculating results. If the current table does not contain all
+        the available data the SQL agent is also capable of joining it
+        with other tables. Will generate and execute a query in a single
+        step.""")
 
     prompts = param.Dict(
         default={
