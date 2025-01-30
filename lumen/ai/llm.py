@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 
 from functools import partial
@@ -90,6 +91,13 @@ class Llm(param.Parameterized):
         if system:
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
+
+    def warmup(cls, model_kwargs: dict | None):
+        """
+        Allows LLM provider to perform actions that ensure that
+        the model(s) are ready to run, e.g. downloading the model
+        files.
+        """
 
     async def invoke(
         self,
@@ -293,14 +301,33 @@ class Llama(Llm):
         pn.state.cache[model_spec] = client_callable
         return client_callable
 
+    @classmethod
+    def warmup(cls, model_kwargs: dict | None):
+        model_kwargs = model_kwargs or cls.model_kwargs
+        if 'default' not in model_kwargs:
+            model_kwargs['default'] = cls.model_kwargs['default']
+        huggingface_models = {
+            model: llm_spec for model, llm_spec in model_kwargs.items()
+            if 'repo' in llm_spec or 'repo_id' in llm_spec
+        }
+        if not huggingface_models:
+            return
+
+        from huggingface_hub import hf_hub_download
+        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")
+        for model, kwargs in model_kwargs.items():
+            repo = kwargs.get('repo', kwargs.get('repo_id'))
+            model_file = kwargs.get('model_file')
+            hf_hub_download(repo, model_file)
+
     async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
         if client_callable := pn.state.cache.get(model_spec):
             return client_callable
         model_kwargs = self._get_model_kwargs(model_spec)
         if 'repo' in model_kwargs:
             from huggingface_hub import hf_hub_download
-            repo = model_kwargs.pop("repo")
-            model_file = model_kwargs.pop("model_file")
+            repo = model_kwargs.pop('repo', model_kwargs.get('repo_id'))
+            model_file = model_kwargs.pop('model_file')
             model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
         elif 'model_path' in model_kwargs:
             model_path = model_kwargs['model_path']
