@@ -128,21 +128,23 @@ class DuckDBSource(BaseSQLSource):
 
     def _process_sql_paths(self, sql_expr: str) -> str:
         # Look for read_* patterns like read_parquet, read_csv etc.
-        matches = re.finditer(r"read_\w+\('([^']+)'\)", sql_expr)
         processed_sql = sql_expr
+        try:
+            matches = re.finditer(r"read_\w+\('([^']+)'\)", sql_expr)
 
-        for match in matches:
-            file_path = match.group(1)
-            # Ensure it isn't a URL and convert to absolute path if it's not already
-            if re.match(r'^(?:http|ftp)s?://', file_path):
-                continue
-            if not os.path.isabs(file_path):
-                abs_path = os.path.abspath(file_path)
-                # Replace the old path with the absolute path in the SQL
-                processed_sql = processed_sql.replace(
-                    f"'{file_path}'", f"'{abs_path}'"
-                )
-
+            for match in matches:
+                file_path = match.group(1)
+                # Ensure it isn't a URL and convert to absolute path if it's not already
+                if re.match(r'^(?:http|ftp)s?://', file_path):
+                    continue
+                if not os.path.isabs(file_path):
+                    abs_path = os.path.abspath(file_path)
+                    # Replace the old path with the absolute path in the SQL
+                    processed_sql = processed_sql.replace(
+                        f"'{file_path}'", f"'{abs_path}'"
+                    )
+        except Exception:
+            pass
         return processed_sql
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
