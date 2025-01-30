@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import sys
+import traceback
 
 from textwrap import dedent
 
@@ -242,9 +243,8 @@ def main(args=None):
     try:
         ret = args.invoke(args)
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        if args.log_level.upper() == 'DEBUG':
+            traceback.print_exc()
         die("ERROR: " + str(e))
 
     if ret is False:
