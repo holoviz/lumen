@@ -6,6 +6,21 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 
+class Solved(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="""
+        Determine whether your previous replies solved the user's question.
+        If not describe in a short sentence what else needs to be done, or
+        that you don't think that the user request can be satisfied.
+        """
+    )
+
+    is_solved: bool = Field(description="Did the reply solve the user's query?")
+
+    is_solvable: bool = Field(description="Is the user's query actually solvable?")
+
+
 class JoinRequired(BaseModel):
 
     chain_of_thought: str = Field(

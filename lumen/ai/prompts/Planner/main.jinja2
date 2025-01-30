@@ -7,6 +7,7 @@ Ground Rules:
 - Each of these experts requires certain information and has the ability to provide certain information.
 - Do not perform tasks the user didn't ask for, e.g. do not plot the data unless requested or compute things if the user asked you to summarize the results in words.
 - Ensure that you provide each expert the context they need to ensure they do not repeat previous steps.
+- If you don't think you can make a plan to solve the problem you can solve part of the problem and then replan.
 {%- if tools %}
 - Tools do not interact with a user, assign an expert to report, summarize or use the results.
 - When looking up information with a tool ensure the expert comes AFTER the tool.
