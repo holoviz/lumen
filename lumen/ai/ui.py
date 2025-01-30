@@ -630,6 +630,17 @@ class ExplorerUI(UI):
                 exploration.insert(0, sql_pane)
 
         content = []
+        if exploration.loading:
+            from panel_gwalker import GraphicWalker
+            pipeline = memory['pipeline']
+            content.append(
+                ('Overview', GraphicWalker(
+                    pipeline.param.data,
+                    kernel_computation=True,
+                    tab='data',
+                    sizing_mode='stretch_both'
+                ))
+            )
         for out in outputs:
             title = out.title or type(out).__name__.replace('Output', '')
             if len(title) > 25:
