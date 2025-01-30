@@ -653,17 +653,6 @@ class SQLAgent(LumenBaseAgent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        """
-        Steps:
-        1. Retrieve the current source and table from memory.
-        2. If the source lacks a `get_sql_expr` method, return `None`.
-        3. Fetch the schema for the current table using `get_schema` without min/max values.
-        5. If required, find additional tables via `find_tables`; otherwise, use the current source and table.
-        6. For each source and table, get the schema and SQL expression, storing them in `table_schemas`.
-        7. Render the SQL prompt using the table schemas, dialect, join status, and table.
-        8. If a join is required, remove source/table prefixes from the last message.
-        9. Construct the SQL query with `_create_valid_sql`.
-        """
         sources = self._memory["sources"]
         tables_to_source, tables_schema_str = await gather_table_sources(sources, include_sep=True)
         tables_to_source, comments = await self._find_tables(messages, tables_schema_str)
