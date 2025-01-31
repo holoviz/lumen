@@ -796,7 +796,7 @@ class Planner(Coordinator):
         tool_names = [tool.name for tool in self._tools["__main__"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
 
-        tables, tables_schema_str = await gather_table_sources(self._memory['sources'])
+        tables, tables_schema_str = await gather_table_sources(self._memory['sources'], include_provided=False)
 
         reason_model, plan_model = self._get_model(
             "main",

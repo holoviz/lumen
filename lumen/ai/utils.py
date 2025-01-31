@@ -27,7 +27,10 @@ from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
 
 from ..util import log
-from .config import PROMPTS_DIR, UNRECOVERABLE_ERRORS, RetriesExceededError
+from .config import (
+    PROMPTS_DIR, PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR,
+    UNRECOVERABLE_ERRORS, RetriesExceededError,
+)
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -342,22 +345,33 @@ def report_error(exc: Exception, step: ChatStep):
     step.status = "failed"
 
 
-async def gather_table_sources(sources: list[Source]) -> tuple[dict[str, Source], str]:
+async def gather_table_sources(sources: list[Source], include_provided: bool = True, include_sep: bool = False) -> tuple[dict[str, Source], str]:
     """
     Get a dictionary of tables to their respective sources
     and a markdown string of the tables and their schemas.
+    Parameters
+    ----------
+    sources : list[Source]
+        A list of sources to gather tables from.
+    include_provided : bool
+        Whether to include the provided source in the string; will always be included in the dictionary.
+    include_sep : bool
+        Whether to include the source separator in the string.
     """
     tables_to_source = {}
     tables_schema_str = ""
     for source in sources:
         for table in source.get_tables():
             tables_to_source[table] = source
-            if isinstance(source, DuckDBSource) and source.ephemeral:
+            if source.name == PROVIDED_SOURCE_NAME and not include_provided:
+                continue
+            label = f"{SOURCE_TABLE_SEPARATOR}{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
+            if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
                 sql = source.get_sql_expr(table)
                 schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=3)
-                tables_schema_str += f"- {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
+                tables_schema_str += f"- {label}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
             else:
-                tables_schema_str += f"- {table}\n\n"
+                tables_schema_str += f"- {label}\n\n"
     return tables_to_source, tables_schema_str.strip()
 
 
