@@ -356,7 +356,7 @@ class Coordinator(Viewer, Actor):
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
                 mutate_user_message(
-                    f"-- For context, here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it",
+                    f"-- For context, here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues.",
                     mutated_messages, suffix=True, wrap=True
                 )
 

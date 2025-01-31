@@ -61,8 +61,10 @@ Here's a list of tools:
 {{ memory['sql'] }}
 ```
 {%- endif %}
+
 {%- if 'table' in memory %}
 - The result of the previous step was the `{{ memory['table'] }}` table. If the user is referencing a previous result this is probably what they're referring to. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.
+- However, if the user requests to see all the columns, they might be referring to the table that `{{ memory['table'] }} was derived from.
 - If you are invoking a SQL agent and reusing the table, tell it to reference that table by name rather than re-stating the query.
 {%- endif %}
 

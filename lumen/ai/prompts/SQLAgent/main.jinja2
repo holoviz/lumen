@@ -42,11 +42,12 @@ identifiers.
 Additionally, only if applicable:
 - Specify data types explicitly to avoid type mismatches.
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.
-- Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts.
+- Use Common Table Expressions (CTEs) and subqueries to break down into manageable parts, only if the query requires more than one transformation.
 - Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (greater than 1) to focus on the most relevant results.
+- If the date columns are separated, e.g. year, month, day, then join them into a single date column.
 
-If there are issues with the query, here are some common fixes:
 {%- if has_errors %}
+If there are issues with the query, here are some common fixes:
 - Handle NULL values using functions like COALESCE or IS NULL.
 - If it's a date column (excluding individual year/month/day integers) date, cast to date using appropriate syntax, e.g.
 CAST or TO_DATE
