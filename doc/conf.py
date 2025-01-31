@@ -69,7 +69,7 @@ extensions = [
 
 PANEL_ROOT = pathlib.Path(panel.__file__).parent
 
-pn_version = release = base_version(panel.__version__)
+pn_version = base_version(panel.__version__)
 js_version = json.loads((PANEL_ROOT / 'package.json').read_text())['version']
 
 if panel.__version__ != pn_version and (PANEL_ROOT / 'dist' / 'wheels').is_dir():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 
 from io import StringIO
@@ -99,7 +100,7 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
-    log_level = param.ObjectSelector(default='DEBUG', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
     logs_db_path = param.String(default=None, doc="""
@@ -149,7 +150,8 @@ class UI(Viewer):
             self.interface = ChatInterface(
                 load_buffer=5,
             )
-        if self.log_level == "DEBUG":
+        levels = logging.getLevelNamesMapping()
+        if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
         self._coordinator = self.coordinator(
             agents=agents,
@@ -165,6 +167,7 @@ class UI(Viewer):
             callback=self._export_notebook,
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             stylesheets=['.bk-btn a { padding: 0 6px; }'],
+            styles={'z-index': '1000'}
         )
         self._exports = Row(
             HSpacer(),
@@ -176,7 +179,7 @@ class UI(Viewer):
                 )
                 for label, e in self.export_functions.items()
             ),
-            styles={'position': 'relative', 'right': '20px', 'top': '-5px'},
+            styles={'position': 'relative', 'right': '20px', 'top': '-1px'},
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
@@ -279,7 +282,10 @@ class UI(Viewer):
             template.config.css_files.append(
                 'https://fonts.googleapis.com/css2?family=Nunito:wght@700'
             )
-            template.config.raw_css = ["#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"]
+            template.config.raw_css = [
+                "#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"
+                "#main { padding: 0 } .main .card-margin.stretch_both { margin: 0; height: 100%; }"
+            ]
             template.main.append(self._main)
             return template
         return super()._create_view()
@@ -353,7 +359,7 @@ class ExplorerUI(UI):
         self.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(
             sizing_mode='stretch_both', closable=True, tabs_location="left",
-            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 0px; padding-right: 2px; text-align: left; }']
+            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 5px; padding-right: 2px; text-align: left; }']
         )
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
@@ -364,7 +370,7 @@ class ExplorerUI(UI):
             callback=self._global_export_notebook,
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             stylesheets=['.bk-btn a { padding: 0 6px; }'],
-            styles={'position': 'absolute', 'right': '0px', 'top': '-5px', 'z-index': '100'},
+            styles={'position': 'absolute', 'right': '0px', 'top': '-1px', 'z-index': '100'},
         )
         self._exports.visible = False
         self._titles = []
@@ -374,7 +380,7 @@ class ExplorerUI(UI):
 
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
-            margin=(0, 0, 10, 0),
+            margin=(0, 0, 10, 10),
             sizing_mode='stretch_width',
             visible=self._explorations.param["objects"].rx.bool().rx.not_()
         )
@@ -509,7 +515,7 @@ class ExplorerUI(UI):
 
         table_select = MultiChoice(
             placeholder="Select table(s)", sizing_mode='stretch_width',
-            max_height=200, margin=(5, 0), max_items=5
+            max_height=200, max_items=5
         )
         explore_button = Button(
             name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
@@ -608,16 +614,15 @@ class ExplorerUI(UI):
         await self._update_conversation(tab=1)
 
     def _add_outputs(self, exploration: Column, outputs: list[LumenOutput] | str, memory: _Memory):
-        from panel_gwalker import GraphicWalker
         if "sql" in memory:
             sql = memory.rx("sql")
             sql_pane = Markdown(
                 param.rx('```sql\n{sql}\n```').format(sql=sql),
-                margin=0, sizing_mode='stretch_width', name='SQL'
+                margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
             )
             if sql.count('\n') > 10:
                 sql_pane = Column(
-                    sql_pane, max_height=250, scroll='y-auto', name='SQL'
+                    sql_pane, max_height=275, scroll='y-auto', name='SQL'
                 )
             if len(exploration) and exploration[0].name == 'SQL':
                 exploration[0] = sql_pane
@@ -626,6 +631,7 @@ class ExplorerUI(UI):
 
         content = []
         if exploration.loading:
+            from panel_gwalker import GraphicWalker
             pipeline = memory['pipeline']
             content.append(
                 ('Overview', GraphicWalker(

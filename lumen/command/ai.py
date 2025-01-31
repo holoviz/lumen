@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import logging
 import os
 import sys
+import traceback
 
 from textwrap import dedent
 
@@ -15,9 +17,13 @@ from bokeh.command.util import die
 from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
-from lumen.ai.config import THIS_DIR
+try:
+    from lumen.ai.config import THIS_DIR
+except ImportError:
+    print('You need to install lumen-ai with "lumen[ai]"')
+    sys.exit(1)
 
-from ..ai import agents as lumen_agents  # Aliased here
+from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.utils import render_template
 
 CMD_DIR = THIS_DIR / ".." / "command"
@@ -92,6 +98,23 @@ class LumenAIServe(Serve):
         if not provider:
             provider = LLMConfig.detect_provider()
 
+        try:
+            provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
+        except (KeyError, AttributeError):
+            raise ValueError(
+                f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
+            )
+
+        if provider is None:
+            raise RuntimeError(
+                "It looks like a Language Model provider isn't set up yet.\n"
+                "You have a few options to resolve this:\n\n"
+                "- Set environment variables with an API key: For example, OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"
+                "- Specify a provider and API key directly: For example, set `--provider openai` with your API key via --api-key.\n"
+                "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
+                "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
+            )
+
         model_kwargs = None
         if args.model_kwargs:
             try:
@@ -99,6 +122,8 @@ class LumenAIServe(Serve):
             except json.JSONDecodeError as e:
                 die(f"Invalid JSON format for --model-kwargs: {e}\n"
                     f"Ensure the argument is properly escaped. Example: --model-kwargs '{{\"key\": \"value\"}}'")
+
+        provider_cls.warmup(model_kwargs)
 
         agent_classes = [
             (name, cls) for name, cls in inspect.getmembers(lumen_agents, inspect.isclass)
@@ -174,15 +199,6 @@ class AIHandler(CodeHandler):
 
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
-        if config.get("provider") is None:
-            raise RuntimeError(
-                "No LLM provider was detected. To resolve this specify a provider "
-                "using the --provider CLI argument along with an API key (using --api-key) "
-                "or configure environment variable(s) for your favorite LLM cloud provider "
-                "(e.g. OPENAI_API_KEY or ANTHROPIC_API_KEY). If you are running an OpenAI "
-                "compatible API specify a custom endpoint with --provider-endpoint."
-            )
-
         context = {
             "llm_provider": LLM_PROVIDERS[config['provider']],
             "tables": [repr(t) for t in tables],
@@ -205,12 +221,23 @@ class AIHandler(CodeHandler):
 def main(args=None):
     parser = argparse.ArgumentParser(
         prog="lumen-ai",
-        description=dedent(
-            """
+        description=dedent("""\
             Lumen AI - Launch Lumen AI applications with customizable LLM configuration.
             To start the application without any data, simply run 'lumen-ai' with no additional arguments.
-        """
-        ),
+
+            First time running Lumen AI take a look at getting started documentation:
+            https://lumen.holoviz.org/lumen_ai/getting_started/
+
+            Found a Bug or Have a Feature Request?
+            Open an issue at: https://github.com/holoviz/lumen/issues
+
+            Have a Question?
+            Ask on our Discord chat server: https://discord.gg/rb6gPXbdAr
+
+            Need Help?
+            Ask a question on our forum: https://discourse.holoviz.org
+        """),
+        formatter_class=argparse.RawTextHelpFormatter,
         epilog="See '<command> --help' to read about a specific subcommand.",
     )
 
@@ -242,9 +269,9 @@ def main(args=None):
     try:
         ret = args.invoke(args)
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        levels = logging.getLevelNamesMapping()
+        if levels.get((args.log_level or 'warn').upper(), 30) < 20:
+            traceback.print_exc()
         die("ERROR: " + str(e))
 
     if ret is False:

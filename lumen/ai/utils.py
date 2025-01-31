@@ -29,8 +29,8 @@ from lumen.sources.duckdb import DuckDBSource
 
 from ..util import log
 from .config import (
-    PROMPTS_DIR, PROVIDED_SOURCE_NAME, UNRECOVERABLE_ERRORS,
-    RetriesExceededError,
+    PROMPTS_DIR, PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR,
+    UNRECOVERABLE_ERRORS, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
