@@ -6,6 +6,8 @@
 :gutter: 1
 
 :::{grid-item-card} Windturbines
+:link: ai_windturbines
+:link-type: doc
 
 ```{image} ../_static/ai_windturbines.png
 ```
