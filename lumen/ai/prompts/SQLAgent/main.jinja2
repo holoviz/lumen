@@ -18,15 +18,10 @@ Here are YAML schemas for currently relevant tables:
 {%- endif -%}
 
 Checklist:
+- Use only `{{ dialect }}` SQL syntax.
+- Do NOT include inlined comments in the SQL code, e.g. `-- comment`
 - Quote column names to ensure they do not clash with valid identifiers.
-- Do not include comments in the SQL code
-- Mention example data enums from the schema to ensure the data type and format if necessary
-- Use only `{{ dialect }}` SQL syntax
-- Try to pretty print the SQL output with newlines and indentation.
-- Specify data types explicitly to avoid type mismatches.
-- Be sure to remove suspiciously large or small values that may be invalid, like -9999.
-- Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts if complexity warrants it.
-- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (greater than 1) to focus on the most relevant results.
+- Pretty print the SQL output with newlines and indentation.
 {%- if join_required -%}
 - Please perform a join between the necessary tables.
 - If the join's values do not align based on the min/max lowest common denominator, then perform a join based on the closest match, or resample and aggregate the data to align the values.
@@ -43,10 +38,12 @@ identifiers.
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif -%}
-{% if comments is defined -%}
-Here's additional guidance:
-{{ comments }}
-{%- endif -%}
+
+Additionally, only if applicable:
+- Specify data types explicitly to avoid type mismatches.
+- Be sure to remove suspiciously large or small values that may be invalid, like -9999.
+- Use Common Table Expressions (CTEs) and subqueries to break down complex queries into manageable parts.
+- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (greater than 1) to focus on the most relevant results.
 
 If there are issues with the query, here are some common fixes:
 {%- if has_errors %}
@@ -57,6 +54,11 @@ CAST or TO_DATE
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
 {% endif %}
 {%- endblock -%}
+
+{% if comments is defined -%}
+Here's additional guidance:
+{{ comments }}
+{%- endif -%}
 
 {%- block examples %}
 {%- if has_errors -%}
