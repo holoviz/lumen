@@ -841,5 +841,5 @@ class Planner(Coordinator):
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
-            istep.success_title = "Successfully came up with a plan"
+            istep.success_title = f"Plan with {len(plan.steps)} steps created"
         return execution_graph
