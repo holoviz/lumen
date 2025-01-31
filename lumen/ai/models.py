@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from typing import Literal
 
+from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
+
+
+class PartialBaseModel(BaseModel, PartialLiteralMixin):
+    ...
 
 
 class Sql(BaseModel):
@@ -73,7 +78,7 @@ def make_context_model(tools: list[str], tables: list[str]):
                 description="A list of tools to call to provide context before launching into the planning stage. Use tools to gather additional context or clarification, tools should NEVER be used to obtain the actual data you will be working with."
             )
         )
-    return create_model("Context", **fields)
+    return create_model("Context", __base__=PartialBaseModel, **fields)
 
 
 def make_plan_models(agents: list[str], tools: list[str]):
@@ -154,6 +159,7 @@ def make_tables_model(tables):
            Return specific issues found in current tables, and how you plan to address them
            in the most easiest, but accurate way possible.
            """
-       ))
+       )),
+        __base__=PartialBaseModel
     )
     return table_model

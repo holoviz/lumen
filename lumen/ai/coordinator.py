@@ -646,30 +646,31 @@ class Planner(Coordinator):
             title="Obtaining additional context...",
             user="Assistant"
         ) as istep:
-            context = await self.llm.invoke(
+            response = self.llm.stream(
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=context_model,
                 max_retries=3,
             )
-            if getattr(context, 'tables', None):
-                requested = [t for t in context.tables if t not in provided]
-                loaded = '\n'.join([f'- {table}' for table in requested])
-                istep.stream(f'Looking up schemas for following tables:\n\n{loaded}')
-                table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
-            if getattr(context, 'tools', None):
-                for tool in context.tools:
-                    tool_messages = list(messages)
-                    if tool.instruction:
-                        mutate_user_message(
-                            f"-- Here are instructions of the context you are to provide: {tool.instruction!r}",
-                            tool_messages, suffix=True, wrap=True, inplace=False
-                        )
-                    response = await tools[tool.name].respond(tool_messages)
-                    if response is not None:
-                        istep.stream(f'{response}\n')
-                        tool_context += f'\n- {response}'
+            async for output in response:
+                if getattr(output, 'tables', None):
+                    requested = [t for t in output.tables if t not in provided]
+                    loaded = '\n'.join([f'- {table}' for table in requested])
+                    istep.stream(f'Looking up schemas for following tables:\n\n{loaded}')
+                    table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
+                if getattr(output, 'tools', None):
+                    for tool in output.tools:
+                        tool_messages = list(messages)
+                        if tool.instruction:
+                            mutate_user_message(
+                                f"-- Here are instructions of the context you are to provide: {tool.instruction!r}",
+                                tool_messages, suffix=True, wrap=True, inplace=False
+                            )
+                        response = await tools[tool.name].respond(tool_messages)
+                        if response is not None:
+                            istep.stream(f'{response}\n')
+                            tool_context += f'\n- {response}'
         return table_info, tool_context
 
     async def _make_plan(
