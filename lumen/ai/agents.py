@@ -503,9 +503,10 @@ class SQLAgent(LumenBaseAgent):
     async def _create_valid_sql(
         self,
         messages: list[Message],
-        system: str,
-        tables_to_source: dict[str, BaseSQLSource],
+        dialect: str,
+        comments: str,
         title: str,
+        tables_to_source: dict[str, BaseSQLSource],
         errors=None
     ):
         if errors:
@@ -529,9 +530,20 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
             log_debug("\033[91mRetry SQLAgent\033[0m")
 
+        join_required = len(tables_to_source) > 1
+        comments = comments if join_required else ""  # comments are about joins
+        system_prompt = await self._render_prompt(
+            "main",
+            messages,
+            join_required=join_required,
+            tables_sql_schemas=self._memory["tables_sql_schemas"],
+            dialect=dialect,
+            comments=comments,
+            has_errors=bool(errors),
+        )
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", "default")
-            response = self.llm.stream(messages, system=system, model_spec=model_spec, response_model=self._get_model("main"))
+            response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             try:
                 async for output in response:
@@ -671,7 +683,7 @@ class SQLAgent(LumenBaseAgent):
         for source_table, source in tables_to_source.items():
             # Look up underlying table name
             source_table = self._drop_source_table_separator(source_table)
-            table_schema = await get_schema(source, source_table, include_min_max=True, include_count=True)
+            table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
             if (
                 'tables' in source.param and
@@ -687,22 +699,11 @@ class SQLAgent(LumenBaseAgent):
         self._memory["tables_sql_schemas"] = tables_sql_schemas
 
         dialect = source.dialect
-        join_required = len(tables_to_source) > 1
-        comments = comments if join_required else ""  # comments are about joins
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            join_required=join_required,
-            tables_sql_schemas=tables_sql_schemas,
-            dialect=dialect,
-            comments=comments,
-        )
-        if join_required:
-            messages[-1]["content"] = self._drop_source_table_separator(messages[-1]["content"])
         try:
-            sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
+            sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
             pipeline = self._memory['pipeline']
         except RetriesExceededError as e:
+            traceback.print_exception(e)
             self._memory["__error__"] = str(e)
             return None
         self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
@@ -780,7 +781,7 @@ class BaseViewAgent(LumenBaseAgent):
         if not pipeline:
             raise ValueError("No current pipeline found in memory.")
 
-        schema = await get_schema(pipeline, include_min_max=False)
+        schema = await get_schema(pipeline)
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 

@@ -22,7 +22,6 @@ from jinja2 import (
 )
 from markupsafe import escape
 
-from lumen.ai.config import SOURCE_TABLE_SEPARATOR
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
@@ -370,7 +369,7 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
             label = f"{SOURCE_TABLE_SEPARATOR}{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
             if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
                 sql = source.get_sql_expr(table)
-                schema = await get_schema(source, table, include_min_max=False, include_enum=True, limit=3)
+                schema = await get_schema(source, table, include_min_max=True, include_enum=True, limit=3)
                 tables_schema_str += f"- {label}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
             else:
                 tables_schema_str += f"- {label}\n\n"
