@@ -126,7 +126,10 @@ class DuckDBSource(BaseSQLSource):
             tables[t] = serializer.serialize(tdf)
         return tables
 
-    def _process_sql_paths(self, sql_expr: str) -> str:
+    def _process_sql_paths(self, sql_expr: dict | str) -> str:
+        if isinstance(sql_expr, dict):
+            return {self._process_sql_paths(k): v for k, v in sql_expr.items()}
+
         # Look for read_* patterns like read_parquet, read_csv etc.
         matches = re.finditer(r"read_\w+\('([^']+)'\)", sql_expr)
         processed_sql = sql_expr
@@ -209,6 +212,7 @@ class DuckDBSource(BaseSQLSource):
             spec['tables'] = {}
         else:
             ephemeral_tables = {}
+
         source = super().from_spec(spec)
         if not ephemeral_tables:
             return source

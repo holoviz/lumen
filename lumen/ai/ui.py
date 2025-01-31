@@ -27,7 +27,7 @@ from panel.util import edit_readonly
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
-from lumen.ai.config import SOURCE_TABLE_SEPARATOR
+from lumen.ai.config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -100,7 +100,7 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
-    log_level = param.ObjectSelector(default='DEBUG', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
     logs_db_path = param.String(default=None, doc="""
@@ -258,7 +258,7 @@ class UI(Viewer):
             source = DuckDBSource(
                 tables=tables, mirrors=mirrors,
                 uri=':memory:', initializers=initializers,
-                name='ProvidedSource00000'
+                name=PROVIDED_SOURCE_NAME
             )
             sources.append(source)
         memory['sources'] = sources
