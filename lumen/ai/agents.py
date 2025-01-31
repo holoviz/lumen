@@ -602,14 +602,23 @@ class SQLAgent(LumenBaseAgent):
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory['sql'] = event.new
 
-    async def _find_tables(self, messages: list[Message], tables_schema_str: str) -> tuple[dict[str, BaseSQLSource], str]:
+    @retry_llm_output()
+    async def _find_tables(self, messages: list[Message], tables_schema_str: str, errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
+        if errors:
+            last_content = self.interface.objects[-1].object[-1][-1].object
+            chain_of_thought = last_content.split("```")[0]
+            content = (
+                "Your goal is to try to address the question while avoiding these issues:\n"
+                f"```\n{errors}\n```\n\n"
+            )
+            messages = mutate_user_message(content, messages)
+            log_debug("\033[91mRetry find_tables\033[0m")
+
         sources = {source.name: source for source in self._memory["sources"]}
         tables = [
             f"{SOURCE_TABLE_SEPARATOR}{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
             for a_table in a_source.get_tables()
         ]
-        print(tables_schema_str, "SCHEMA")
-        print(tables, "TABLES")
         system = await self._render_prompt(
             "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, tables_schema_str=tables_schema_str
         )
@@ -622,18 +631,18 @@ class SQLAgent(LumenBaseAgent):
                 model_spec=model_spec,
                 response_model=tables_model,
             )
-            relevant_tables = output.relevant_tables
+            selected_tables = output.selected_tables
             chain_of_thought = output.chain_of_thought
             chain_of_thought += " " + output.potential_join_issues
             step.stream(
-                f'{chain_of_thought}\n\nRelevant tables: {relevant_tables}',
+                f'{chain_of_thought}\n\nRelevant tables: {selected_tables}',
                 replace=True
             )
-            step.success_title = f'Found {len(relevant_tables)} relevant table(s)'
+            step.success_title = f'Found {len(selected_tables)} relevant table(s)'
 
         tables_to_source = {}
         pattern = rf"(?:^.*?{SOURCE_TABLE_SEPARATOR})?([^{SOURCE_TABLE_SEPARATOR}]+){SOURCE_TABLE_SEPARATOR}(.+)$"
-        for source_table in relevant_tables:
+        for source_table in selected_tables:
             if SOURCE_TABLE_SEPARATOR in source_table:
                 if match := re.match(pattern, source_table):
                     a_source_name, a_table = match.groups()

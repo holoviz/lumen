@@ -136,10 +136,11 @@ def make_tables_model(tables):
             Concisely consider which tables are necessary to answer the user query.
             """
         )),
-        relevant_tables=(list[Literal[tuple(tables)]], FieldInfo(
+        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
             description="""
-            The most relevant tables based on the user query; if none are relevant, select the first.
-            If a join is necessary, include all tables that will be used in the join.
+            The most relevant tables based on the user query; if none are relevant,
+            use the first table. At least one table must be provided.
+            If a join is necessary, include all the tables that will be used in the join.
             """
         )),
        potential_join_issues=(str, FieldInfo(
