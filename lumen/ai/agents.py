@@ -628,16 +628,17 @@ class SQLAgent(LumenBaseAgent):
         else:
             source = next(iter(sources))
 
+        sql_transforms = [SQLLimit(limit=1_000_000)]
+        for transform in sql_transforms:
+            sql_query = transform.apply(sql_query)
+
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
             # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
-            sql_transforms = [SQLLimit(limit=1_000_000)]
-            pipeline = await get_pipeline(
-                source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
-            )
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
         except Exception as e:
             report_error(e, step)
             raise e
