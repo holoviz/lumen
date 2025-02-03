@@ -1,3 +1,5 @@
+import param
+
 from panel.custom import Child, JSComponent
 
 CSS = """
@@ -31,6 +33,8 @@ class SplitJS(JSComponent):
 
     left = Child()
     right = Child()
+    sizes = param.List(default=[60, 40])
+    min_sizes = param.List(default=[300, 200])
 
     _esm = """
     import Split from 'https://esm.sh/split.js@1.6.5'
@@ -45,8 +49,8 @@ class SplitJS(JSComponent):
       splitDiv.append(split0, split1);
 
       const splitInstance = Split([split0, split1], {
-        sizes: [60, 40],
-        minSize: [300, 200],
+        sizes: model.sizes,
+        minSize: model.min_sizes,
         gutterSize: 10,
         onDragEnd: (sizes) => {
           view.invalidate_layout();
