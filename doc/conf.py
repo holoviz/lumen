@@ -64,7 +64,8 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx_copybutton',
-    'nbsite.pyodide'
+    'nbsite.pyodide',
+    'nbsite.analytics',
 ]
 
 PANEL_ROOT = pathlib.Path(panel.__file__).parent
@@ -113,6 +114,10 @@ html_css_files = [
     'custom.css',
     'dataframe.css'
 ]
+
+nbsite_analytics = {
+    'goatcounter_holoviz': True,
+}
 
 # -- Options for HTML output -------------------------------------------------
 
