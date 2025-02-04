@@ -7,6 +7,8 @@ import pytest
 
 from panel.chat import ChatStep
 
+from lumen.ai.utils import parse_huggingface_url
+
 try:
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.utils import (
@@ -302,3 +304,22 @@ def test_report_error():
     assert step.failed_title == "Test error"
     assert step.status == "failed"
     assert step.objects[0].object == "\n```python\nTest error\n```"
+
+
+class TestParseHuggingFaceUrl:
+
+    def test_no_query_params(self):
+        repo, file, model_kwargs = parse_huggingface_url("https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf")
+        assert repo == "unsloth/Mistral-Small-24B-Instruct-2501-GGUF"
+        assert file == "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf"
+        assert model_kwargs == {}
+
+    def test_query_params(self):
+        repo, file, model_kwargs = parse_huggingface_url("https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct&n_ctx=1028")
+        assert repo == "unsloth/Mistral-Small-24B-Instruct-2501-GGUF"
+        assert file == "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf"
+        assert model_kwargs == {"chat_format": "mistral-instruct", "n_ctx": 1028}
+
+    def test_bad_error(self):
+        with pytest.raises(ValueError):
+            parse_huggingface_url("https://huggingface.co/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct&n_ctx=1028")
