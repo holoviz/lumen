@@ -7,13 +7,12 @@ import pytest
 
 from panel.chat import ChatStep
 
-from lumen.ai.utils import parse_huggingface_url
-
 try:
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.utils import (
         UNRECOVERABLE_ERRORS, clean_sql, describe_data, format_schema,
-        get_schema, render_template, report_error, retry_llm_output,
+        get_schema, parse_huggingface_url, render_template, report_error,
+        retry_llm_output,
     )
 except ImportError:
     pytest.skip("Skipping tests that require lumen.ai", allow_module_level=True)
