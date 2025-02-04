@@ -51,3 +51,4 @@ SOURCE_TABLE_SEPARATOR = ":::"
 PROVIDED_SOURCE_NAME = 'ProvidedSource00000'
 
 pn.chat.ChatStep.min_width = 375
+pn.chat.ChatStep.collapsed_on_success = False
