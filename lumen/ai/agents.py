@@ -202,14 +202,20 @@ class SourceAgent(Agent):
         source_controls = SourceControls(
             multiple=True, replace_controls=True, select_existing=False, memory=self.memory
         )
-        self.interface.send(source_controls, respond=False, user="SourceAgent")
+
+        output = pn.Column(source_controls)
+        if "source" not in self._memory:
+            help_message = "No datasets or documents were found, **please upload at least one to continue**..."
+        else:
+            help_message = "**Please upload new dataset(s)/document(s) to continue**, or click cancel if this was unintended..."
+        output.insert(0, help_message)
+        self.interface.send(output, respond=False, user="SourceAgent")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
                 self.interface.undo()
                 return None
         return source_controls
-
 
 class ChatAgent(Agent):
     """
