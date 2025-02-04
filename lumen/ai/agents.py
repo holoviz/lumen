@@ -36,7 +36,7 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    RetrySpec, Sql, VegaLiteSpec, make_tables_model,
+    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
 )
 from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
@@ -637,19 +637,23 @@ class SQLAgent(LumenBaseAgent):
         tables_model = self._get_model("find_tables", tables=tables)
         model_spec = self.prompts["find_tables"].get("llm_spec", "default")
         with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
-            output = await self.llm.invoke(
+            response = self.llm.stream(
                 messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=tables_model,
             )
-            selected_tables = output.selected_tables
-            chain_of_thought = output.chain_of_thought
-            chain_of_thought += " " + output.potential_join_issues
-            step.stream(
-                f'{chain_of_thought}\n\nRelevant tables: {selected_tables}',
-                replace=True
-            )
+            async for output in response:
+                chain_of_thought = output.chain_of_thought or ""
+                selected_tables = output.selected_tables
+                if output.potential_join_issues is not None:
+                    chain_of_thought += output.potential_join_issues
+                if selected_tables is not None:
+                    chain_of_thought = chain_of_thought + f"\n\nRelevant tables: {selected_tables}"
+                step.stream(
+                    f'{chain_of_thought}',
+                    replace=True
+                )
             step.success_title = f'Found {len(selected_tables)} relevant table(s)'
 
         tables_to_source = {}
@@ -744,21 +748,21 @@ class BaseViewAgent(LumenBaseAgent):
                     messages
                 )
         model_spec = self.prompts["main"].get("llm_spec", "default")
-        output = await self.llm.invoke(
+        response = self.llm.stream(
             messages,
             system=system,
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
+        with self.interface.add_step(
+            title=step_title or "Generating view...",
+            steps_layout=self._steps_layout
+        ) as step:
+            async for output in response:
+                chain_of_thought = output.chain_of_thought or ""
+                step.stream(chain_of_thought, replace=True)
         self._last_output = dict(output)
         spec = await self._extract_spec(self._last_output)
-        chain_of_thought = spec.pop("chain_of_thought", None)
-        if chain_of_thought:
-            with self.interface.add_step(
-                title=step_title or "Generating view...",
-                steps_layout=self._steps_layout
-            ) as step:
-                step.stream(chain_of_thought)
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
@@ -827,7 +831,7 @@ class hvPlotAgent(BaseViewAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(self.view_type, excluded=excluded, schema=schema, extra_fields={
+        model = param_to_pydantic(self.view_type, base_model=PartialBaseModel, excluded=excluded, schema=schema, extra_fields={
             "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
         })
         return model[self.view_type.__name__]
