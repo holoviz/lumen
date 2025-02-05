@@ -89,7 +89,7 @@ class LumenAIServe(Serve):
             type=str,
             help="""
             Huggingface URL to the GGUF file and model kwargs as query params.
-            Example --huggingface-url 'https://huggingface.co/RE/PO/blob/main/FILE.gguf?chat_format=chat_format'
+            Example --llm-model-url 'https://huggingface.co/RE/PO/blob/main/FILE.gguf?chat_format=chat_format'
             """,
         )
 
@@ -106,8 +106,8 @@ class LumenAIServe(Serve):
         llm_model_url = args.llm_model_url
         if llm_model_url and provider and provider != "llama":
             raise ValueError(
-                f"Cannot specify both --huggingface-url and --provider {provider!r}. "
-                f"Use --huggingface-url to load a model from HuggingFace."
+                f"Cannot specify both --llm-model-url and --provider {provider!r}. "
+                f"Use --llm-model-url to load a model from HuggingFace."
             )
         elif llm_model_url:
             provider = "llama"
