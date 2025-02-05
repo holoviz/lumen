@@ -361,7 +361,7 @@ class ExplorerUI(UI):
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(
-            sizing_mode='stretch_both', closable=True, tabs_location="left",
+            sizing_mode='stretch_both', closable=True, tabs_location="left" if self.chat_ui_position == "right" else "right",
             stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 5px; padding-right: 2px; text-align: left; }']
         )
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
