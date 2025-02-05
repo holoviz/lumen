@@ -345,6 +345,9 @@ class ExplorerUI(UI):
         lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
+    chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
+        The position of the chat interface panel relative to the exploration area.""")
+
     title = param.String(default='Lumen Explorer', doc="Title of the app.")
 
     def __init__(
@@ -389,13 +392,17 @@ class ExplorerUI(UI):
             ('Explorations', Column(self._explorations_intro, self._explorations)),
             design=Material
         )
-        self._main = Column(
-            SplitJS(
-                left=Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'clip'}, sizing_mode='stretch_both'),
-                right=Column(self._exports, self._coordinator),
-                sizing_mode='stretch_both'
-            )
-        )
+        output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'clip'}, sizing_mode='stretch_both')
+        chat = Column(self._exports, self._coordinator)
+        if self.chat_ui_position == 'left':
+            left, right = chat, output
+            sizes = (40, 60)
+            min_sizes = (200, 300)
+        else:
+            left, right = output, chat
+            sizes = (60, 40)
+            min_sizes = (300, 200)
+        self._main = Column(SplitJS(left=left, right=right, sizes=sizes, min_sizes=min_sizes, sizing_mode='stretch_both'))
         self._idle = asyncio.Event()
         self._idle.set()
         self._last_synced = None
