@@ -24,7 +24,7 @@ except ImportError:
     sys.exit(1)
 
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
-from ..ai.utils import render_template
+from ..ai.utils import parse_huggingface_url, render_template
 
 CMD_DIR = THIS_DIR / ".." / "command"
 
@@ -35,7 +35,7 @@ LLM_PROVIDERS = {
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
     "ai-navigator": "AINavigator",
-    'llama': 'Llama',
+    'llama-cpp': 'LlamaCpp',
 }
 
 
@@ -82,7 +82,15 @@ class LumenAIServe(Serve):
         group.add_argument(
             "--model-kwargs",
             type=str,
-            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"repo\": \"abcdef\"}'",
+            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"default\": {\"repo\": \"abcdef\"}}'",
+        )
+        group.add_argument(
+            "--llm-model-url",
+            type=str,
+            help="""
+            Huggingface URL to the GGUF file and model kwargs as query params.
+            Example --huggingface-url 'https://huggingface.co/RE/PO/blob/main/FILE.gguf?chat_format=chat_format'
+            """,
         )
 
     def invoke(self, args: argparse.Namespace) -> bool:
@@ -95,7 +103,15 @@ class LumenAIServe(Serve):
         agents = args.agents
         log_level = args.log_level
 
-        if not provider:
+        llama_url = args.llama_url
+        if llama_url and provider and provider != "llama":
+            raise ValueError(
+                f"Cannot specify both --huggingface-url and --provider {provider!r}. "
+                f"Use --huggingface-url to load a model from HuggingFace."
+            )
+        elif llama_url:
+            provider = "llama"
+        elif not provider:
             provider = LLMConfig.detect_provider()
 
         try:
@@ -116,13 +132,29 @@ class LumenAIServe(Serve):
             )
 
         model_kwargs = None
-        if args.model_kwargs:
-            try:
-                model_kwargs = json.loads(args.model_kwargs)
-            except json.JSONDecodeError as e:
-                die(f"Invalid JSON format for --model-kwargs: {e}\n"
-                    f"Ensure the argument is properly escaped. Example: --model-kwargs '{{\"key\": \"value\"}}'")
+        if args.model_kwargs or llama_url:
+            model_kwargs = {}
+            if args.model_kwargs:
+                try:
+                    model_kwargs = json.loads(args.model_kwargs)
+                except json.JSONDecodeError as e:
+                    die(f"Invalid JSON format for --model-kwargs: {e}\n"
+                        f"Ensure the argument is properly escaped. Example: --model-kwargs '{{\"key\": \"value\"}}'")
 
+            # Handle huggingface URL if provided
+            if llama_url:
+                try:
+                    repo, model_file, query_kwargs = parse_huggingface_url(llama_url)
+                    # Initialize default dict if not exists
+                    if 'default' not in model_kwargs:
+                        model_kwargs['default'] = {}
+                    model_kwargs['default'].update({
+                        'repo': repo,
+                        'model_file': model_file,
+                        **query_kwargs
+                    })
+                except ValueError as e:
+                    die(str(e))
         provider_cls.warmup(model_kwargs)
 
         agent_classes = [

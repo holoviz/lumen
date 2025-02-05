@@ -27,7 +27,7 @@ from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
-from .llm import Llama, Llm, Message
+from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import make_agent_model, make_context_model, make_plan_models
 from .tools import FunctionTool, Tool
@@ -453,8 +453,8 @@ class Coordinator(Viewer, Actor):
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tool_context"] = ""
         with self.interface.param.update(loading=True):
-            if isinstance(self.llm, Llama):
-                with self.interface.add_step(title="Loading Llama model...", success_title="Using the cached Llama model", user="Assistant") as step:
+            if isinstance(self.llm, LlamaCpp):
+                with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
                     step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     await self.llm.get_client("default")  # caches the model for future use
@@ -480,6 +480,11 @@ class Coordinator(Viewer, Actor):
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
+
+        for message_obj in self.interface.objects[::-1]:
+            if isinstance(message_obj.object, Card):
+                message_obj.object.collapsed = True
+                break
 
 
 class DependencyResolver(Coordinator):
@@ -843,5 +848,5 @@ class Planner(Coordinator):
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
-            istep.success_title = "Successfully came up with a plan"
+            istep.success_title = f"Plan with {len(plan.steps)} steps created"
         return execution_graph

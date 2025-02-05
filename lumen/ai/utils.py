@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import inspect
+import json
 import math
 import re
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 from shutil import get_terminal_size
 from textwrap import dedent
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qs
 
 import pandas as pd
 import yaml
@@ -447,3 +449,43 @@ def format_exception(exc: Exception, limit: int = 0) -> str:
     e_msg = str(exc).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
     tb = html.escape('\n'.join(traceback.format_exception(exc, limit=limit))).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
     return f'<b>{type(exc).__name__}</b>: {e_msg}\n<pre style="overflow-y: auto">{tb}</pre>'
+
+
+def cast_value(value):
+    if len(value) == 1:
+        value = value[0]
+        if ',' in value and value.replace(',', '').isdigit():
+            return [cast_value(v) for v in value.split(",")]
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return [cast_value(v) for v in value]
+
+
+def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
+    """Parse a HuggingFace URL to extract repo, model file, and model_kwargs.
+
+    Args:
+        url: HuggingFace URL in format https://huggingface.co/org/repo/blob/main/file.gguf?param1=value1&param2=value2
+
+    Returns:
+        tuple: (repo, model_file, model_kwargs)
+
+    Raises:
+        ValueError: If URL format is invalid
+    """
+    parts = url.split('/')
+    hf_index = parts.index('huggingface.co')
+    if len(parts) < hf_index + 4:  # Need at least org/repo after huggingface.co
+        raise ValueError
+    repo = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
+    model_file = parts[-1]  # Last component is the filename
+
+    # Parse query parameters
+    model_kwargs = {}
+    if "?" in model_file:
+        model_file, query_params = model_file.split('?')
+        for key, value in parse_qs(query_params).items():
+            model_kwargs[key] = cast_value(value)
+    return repo, model_file, model_kwargs

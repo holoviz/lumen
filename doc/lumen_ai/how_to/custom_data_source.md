@@ -20,14 +20,14 @@ You can download the standard penguins data set
 command (replacing the path where you downloaded the data to).
 
 ```bash
-lumen-ai serve penguins.csv --provider llama --show
+lumen-ai serve penguins.csv --provider llama-cpp --show
 ```
 
 If instead you do not want to download data, you can tell Lumen where the data is on the web, and
 start a chat.
 
 ```bash
-lumen-ai serve "https://datasets.holoviz.org/penguins/v1/penguins.csv" --provider llama --show
+lumen-ai serve "https://datasets.holoviz.org/penguins/v1/penguins.csv" --provider llama-cpp --show
 ```
 
 ## Local and remote files using a Panel app
@@ -43,7 +43,7 @@ import lumen.ai as lmai
 import panel as pn
 
 pn.extension("vega")
-llm = lmai.llm.Llama()
+llm = lmai.llm.LlamaCpp()
 
 lmai.ExplorerUI(
     data=[
@@ -113,7 +113,7 @@ you are not required to specify data files when starting Lumen AI. You can run t
 in your terminal.
 
 ```bash
-lumen-ai serve --provider llama --show
+lumen-ai serve --provider llama-cpp --show
 ```
 
 Lumen AI will start up in your default browser with no data available. You can use the `Drag & Drop`

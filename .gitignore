@@ -111,6 +111,8 @@ ENV/
 doc/**/*.rst
 doc/**/*.ipynb
 doc/**/*.json
+doc/_build/
+doc/reference/*
 
 docs/**/*.rst
 docs/**/*.ipynb
