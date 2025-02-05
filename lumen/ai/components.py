@@ -33,8 +33,8 @@ class SplitJS(JSComponent):
 
     left = Child()
     right = Child()
-    sizes = param.NumericTuple(default=[60, 40], length=2)
-    min_sizes = param.NumericTuple(default=[300, 200], length=2)
+    sizes = param.NumericTuple(default=(60, 40), length=2)
+    min_sizes = param.NumericTuple(default=(300, 200), length=2)
 
     _esm = """
     import Split from 'https://esm.sh/split.js@1.6.5'
