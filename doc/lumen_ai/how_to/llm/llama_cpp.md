@@ -1,6 +1,6 @@
 # Use Llama.cpp
 
-Lumen AI supports running models in-process using the {py:class}`lumen.ai.llm.Llama` class with Llama.cpp, enabling you to leverage local models without external API calls. By default the Llama.cpp provider will fetch and use the `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF` model, which strikes a good balance between hardware requirements and performance. For working with larger models we recommend using [https://llama-cpp-python.readthedocs.io/en/latest/server/] and using its [OpenAI compatible endpoints](https://llama-cpp-python.readthedocs.io/en/latest/server/).
+Lumen AI supports running models in-process using the {py:class}`lumen.ai.llm.LlamaCpp` class with Llama.cpp, enabling you to leverage local models without external API calls. By default the Llama.cpp provider will fetch and use the `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF` model, which strikes a good balance between hardware requirements and performance. For working with larger models we recommend using [https://llama-cpp-python.readthedocs.io/en/latest/server/] and using its [OpenAI compatible endpoints](https://llama-cpp-python.readthedocs.io/en/latest/server/).
 
 :::{note}
 When using the Llama.cpp provider the first time it will download the specified model, which may take some time.
@@ -17,17 +17,17 @@ When using the Llama.cpp provider the first time it will download the specified 
 Once configured you can select llama.cpp as the provider using a CLI argument:
 
 ```bash
-lumen-ai serve <your-data-file-or-url> --provider llama
+lumen-ai serve <your-data-file-or-url> --provider llama-cpp
 ```
 
 ## Using Python
 
-In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.Llama` and pass it to the {py:class}`lumen.ai.ui.ExplorerUI`:
+In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.LlamaCpp` and pass it to the {py:class}`lumen.ai.ui.ExplorerUI`:
 
 ```python
 import lumen.ai as lmai
 
-openai_llm = lmai.llm.Llama()
+openai_llm = lmai.llm.LlamaCpp()
 
 ui = lmai.ui.ExplorerUI(llm=openai_llm)
 ui.servable()
@@ -37,7 +37,7 @@ ui.servable()
 
 If you do not want to use the default model (`Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`) you can override it by providing a model configuration via the `model_kwargs` parameter. This allows specifying different models for different scenarios, currently a `default` and a `reasoning` model can be provided. If no reasoning model is provided it will always use the `default` model.
 
-As an example you can override the model configuration by providing the `repo` and `model_file` to look up on [Huggingface](https://huggingface.co/) or a `model_path` pointing to a model on disk. Any other configuration are passed through to the `llama.cpp` [`Llama`](https://llama-cpp-python.readthedocs.io/en/latest/api-reference/#high-level-api) object.
+As an example you can override the model configuration by providing the `repo` and `model_file` to look up on [Huggingface](https://huggingface.co/) or a `model_path` pointing to a model on disk. Any other configuration are passed through to the `llama.cpp` [`LlamaCpp`](https://llama-cpp-python.readthedocs.io/en/latest/api-reference/#high-level-api) object.
 
 As an example, let's replace Qwen 2.5 Coder with a quantized DeepSeek model we found by searching for it on [Huggingface] and then providing the repo name, model file, chat format and other configuration options:
 
@@ -53,7 +53,7 @@ config = {
     }
 }
 
-llm = lmai.llm.Llama(model_kwargs=config)
+llm = lmai.llm.LlamaCpp(model_kwargs=config)
 
 lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm).servable()
 ```
