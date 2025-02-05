@@ -85,7 +85,7 @@ class LumenAIServe(Serve):
             help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"default\": {\"repo\": \"abcdef\"}}'",
         )
         group.add_argument(
-            "--llama-url",
+            "--llm-model-url",
             type=str,
             help="""
             Huggingface URL to the GGUF file and model kwargs as query params.

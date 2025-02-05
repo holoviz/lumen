@@ -74,12 +74,12 @@ lumen-ai serve --provider llama --model-kwargs '{
 }'
 ```
 
-Providing these arguments via the CLI can be cumbersome. Instead, paste the quantized model file's `llama-url` and pass `model_kwargs` as query parameters. If `llama-url` is set, `provider` automatically defaults to `llama`, and will error if another `provider` is set.
+Providing these arguments via the CLI can be cumbersome. Instead, paste the quantized model file's `llm-model-url` and pass `model_kwargs` as query parameters. If `llm-model-url` is set, `provider` automatically defaults to `llama`, and will error if another `provider` is set.
 
 ```bash
-lumen-ai serve --llama-url https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct
+lumen-ai serve --llm-model-url https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct
 ```
 
 ```bash
-lumen-ai serve --llama-url https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF/blob/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf?chat_format=qwen&n_ctx=131072
+lumen-ai serve --llm-model-url https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF/blob/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf?chat_format=qwen&n_ctx=131072
 ```
