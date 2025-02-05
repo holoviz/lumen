@@ -659,9 +659,11 @@ class Planner(Coordinator):
                 max_retries=3,
             )
             async for output in response:
-                if getattr(output, 'tables', None):
-                    requested = [t for t in output.tables if t not in provided]
-                    loaded = '\n'.join([f'- {table}' for table in requested])
+                if not getattr(output, 'tables', None):
+                    continue
+                requested = [t for t in output.tables if t not in provided]
+                loaded = '\n'.join([f'- {table}' for table in requested])
+                if loaded:
                     istep.stream(f'Looking up schemas for following tables:\n\n{loaded}', replace=True)
             table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             if getattr(output, 'tools', None):
