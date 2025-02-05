@@ -246,7 +246,7 @@ class Llm(param.Parameterized):
         return await client(messages=messages, **kwargs)
 
 
-class Llama(Llm):
+class LlamaCpp(Llm):
     """
     A LLM implementation using Llama.cpp Python wrapper together
     with huggingface_hub to fetch the models.
@@ -334,7 +334,7 @@ class Llama(Llm):
             model_path = model_kwargs['model_path']
         else:
             raise ValueError(
-                "Llama.model_kwargs must contain either a 'repo' and 'model_file' "
+                "LlamaCpp.model_kwargs must contain either a 'repo' and 'model_file' "
                 "(to fetch a model using `huggingface_hub` or a 'model_path' pointing "
                 "to a model on disk."
             )
