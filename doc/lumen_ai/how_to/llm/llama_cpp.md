@@ -39,7 +39,7 @@ If you do not want to use the default model (`Qwen/Qwen2.5-Coder-7B-Instruct-GGU
 
 As an example you can override the model configuration by providing the `repo` and `model_file` to look up on [Huggingface](https://huggingface.co/) or a `model_path` pointing to a model on disk. Any other configuration are passed through to the `llama.cpp` [`LlamaCpp`](https://llama-cpp-python.readthedocs.io/en/latest/api-reference/#high-level-api) object.
 
-As an example, let's replace Qwen 2.5 Coder with a quantized DeepSeek model we found by searching for it on [Huggingface] and then providing the repo name, model file, chat format and other configuration options:
+As an example, let's replace Qwen 2.5 Coder with a quantized DeepSeek model we found by searching for it on [Huggingface] and then providing the repo name, model file, chat format and other configuration options in Python:
 
 ```python
 import lumen.ai as lmai
@@ -61,3 +61,25 @@ lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm).servable()
 :::{note}
 Find all valid configuration options in the [Llama.cpp API reference](https://llama-cpp-python.readthedocs.io/en/latest/api-reference/#high-level-api).
 :::
+
+Using another model can be done in the CLI as well:
+
+```bash
+lumen-ai serve --provider llama --model-kwargs '{
+  "default": {
+    "repo": "unsloth/Mistral-Small-24B-Instruct-2501-GGUF",
+    "model_file": "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf",
+    "chat_format": "mistral-instruct"
+  }
+}'
+```
+
+Providing these arguments via the CLI can be cumbersome. Instead, paste the quantized model file's `llm-model-url` and pass `model_kwargs` as query parameters. If `llm-model-url` is set, `provider` automatically defaults to `llama`, and will error if another `provider` is set.
+
+```bash
+lumen-ai serve --llm-model-url https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct
+```
+
+```bash
+lumen-ai serve --llm-model-url https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF/blob/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf?chat_format=qwen&n_ctx=131072
+```

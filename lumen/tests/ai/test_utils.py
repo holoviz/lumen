@@ -11,7 +11,8 @@ try:
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.utils import (
         UNRECOVERABLE_ERRORS, clean_sql, describe_data, format_schema,
-        get_schema, render_template, report_error, retry_llm_output,
+        get_schema, parse_huggingface_url, render_template, report_error,
+        retry_llm_output,
     )
 except ImportError:
     pytest.skip("Skipping tests that require lumen.ai", allow_module_level=True)
@@ -302,3 +303,22 @@ def test_report_error():
     assert step.failed_title == "Test error"
     assert step.status == "failed"
     assert step.objects[0].object == "\n```python\nTest error\n```"
+
+
+class TestParseHuggingFaceUrl:
+
+    def test_no_query_params(self):
+        repo, file, model_kwargs = parse_huggingface_url("https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf")
+        assert repo == "unsloth/Mistral-Small-24B-Instruct-2501-GGUF"
+        assert file == "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf"
+        assert model_kwargs == {}
+
+    def test_query_params(self):
+        repo, file, model_kwargs = parse_huggingface_url("https://huggingface.co/unsloth/Mistral-Small-24B-Instruct-2501-GGUF/blob/main/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct&n_ctx=1028")
+        assert repo == "unsloth/Mistral-Small-24B-Instruct-2501-GGUF"
+        assert file == "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf"
+        assert model_kwargs == {"chat_format": "mistral-instruct", "n_ctx": 1028}
+
+    def test_bad_error(self):
+        with pytest.raises(ValueError):
+            parse_huggingface_url("https://huggingface.co/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct&n_ctx=1028")
