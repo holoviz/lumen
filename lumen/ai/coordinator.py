@@ -481,6 +481,11 @@ class Coordinator(Viewer, Actor):
                 await self._add_analysis_suggestions()
             log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
 
+        for message_obj in self.interface.objects[::-1]:
+            if isinstance(message_obj.object, Card):
+                message_obj.object.collapsed = True
+                break
+
 
 class DependencyResolver(Coordinator):
     """

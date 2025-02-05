@@ -622,7 +622,7 @@ class ExplorerUI(UI):
             )
             if sql.count('\n') > 10:
                 sql_pane = Column(
-                    sql_pane, max_height=275, scroll='y-auto', name='SQL'
+                    sql_pane, max_height=325, scroll='y-auto', name='SQL'
                 )
             if len(exploration) and exploration[0].name == 'SQL':
                 exploration[0] = sql_pane
