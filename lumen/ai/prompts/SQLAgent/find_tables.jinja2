@@ -1,0 +1,12 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Correctly assess and consider which tables are necessary to answer the user query.
+
+Use table names verbatim, and be sure to include the delimiters {{ separator }}, like '{{ separator }}source{{ separator }}table{{ separator }}'
+{% endblock %}
+
+{% block context %}
+Available tables and schemas:
+{{ tables_schema_str }}
+{% endblock %}

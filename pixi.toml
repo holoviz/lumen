@@ -52,7 +52,7 @@ COVERAGE_CORE = "sysmon"
 [feature.ai.dependencies]
 duckdb = "*"
 griffe = "*"
-instructor = ">=1.4.3"
+instructor = ">=1.6.4"
 markitdown = "*"
 nbformat = "*"
 openai = "*"

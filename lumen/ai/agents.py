@@ -36,7 +36,7 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    JoinRequired, RetrySpec, Sql, TableJoins, VegaLiteSpec, make_table_model,
+    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
 )
 from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
@@ -490,18 +490,9 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
-            "select_table": {
-                "response_model": make_table_model,
-                "template": PROMPTS_DIR / "SQLAgent" / "select_table.jinja2",
-                "tools": [TableLookup]
-            },
-            "require_joins": {
-                "response_model": JoinRequired,
-                "template": PROMPTS_DIR / "SQLAgent" / "require_joins.jinja2"
-            },
-            "find_joins": {
-                "response_model": TableJoins,
-                "template": PROMPTS_DIR / "SQLAgent" / "find_joins.jinja2"
+            "find_tables": {
+                "response_model": make_tables_model,
+                "template": PROMPTS_DIR / "SQLAgent" / "find_tables.jinja2"
             },
         }
     )
@@ -514,63 +505,14 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
-    async def _select_relevant_table(self, messages: list[Message], sources: list, tables_to_source: dict, tables_schema_str: str) -> tuple[str, BaseSQLSource, bool]:
-        """Select the most relevant table based on the user query."""
-        join_required = None
-        tables = tuple(tables_to_source)
-
-        user_message = ""
-        for message in messages[::-1]:
-            if message["role"] == "user":
-                user_message = message["content"]
-                break
-
-        if messages and "Show the table: " in user_message:
-            # Handle the case where explicitly requested a table
-            table = re.search(r"Show the table: '([^']+)'", user_message).group(1)
-            join_required = False
-        elif len(tables) == 1:
-            table = tables[0]
-            join_required = False
-        else:
-            with self.interface.add_step(title="Choosing the most relevant table...", steps_layout=self._steps_layout) as step:
-                if len(tables) > 1:
-                    system_prompt = await self._render_prompt(
-                        "select_table", messages, tables_schema_str=tables_schema_str
-                    )
-                    if "closest_tables" in self._memory:
-                        tables = self._memory["closest_tables"]
-                    model_spec = self.prompts["select_table"].get("llm_spec", "default")
-                    table_model = self._get_model("select_table", tables=tables)
-                    result = await self.llm.invoke(
-                        messages,
-                        system=system_prompt,
-                        model_spec=model_spec,
-                        response_model=table_model,
-                        allow_partial=False,
-                        max_retries=3,
-                    )
-                    table = result.relevant_table
-                    step.stream(f"{result.chain_of_thought}\n\nSelected table: {table}")
-                else:
-                    table = tables[0]
-                    step.stream(f"Selected table: {table}")
-
-        if table in tables_to_source:
-            source = tables_to_source[table]
-        else:
-            sources = [src for src in sources if table in src]
-            source = sources[0] if sources else self._memory["source"]
-
-        return table, source, join_required
-
     @retry_llm_output()
     async def _create_valid_sql(
         self,
         messages: list[Message],
-        system: str,
-        tables_to_source,
+        dialect: str,
+        comments: str,
         title: str,
+        tables_to_source: dict[str, BaseSQLSource],
         errors=None
     ):
         if errors:
@@ -589,14 +531,25 @@ class SQLAgent(LumenBaseAgent):
                 f"Please build upon your previous thought: {chain_of_thought!r}, but note, a penalty of $100 will be incurred "
                 f"for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
                 f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
-                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`."
+                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present."
             )
             messages = mutate_user_message(content, messages)
             log_debug("\033[91mRetry SQLAgent\033[0m")
 
+        join_required = len(tables_to_source) > 1
+        comments = comments if join_required else ""  # comments are about joins
+        system_prompt = await self._render_prompt(
+            "main",
+            messages,
+            join_required=join_required,
+            tables_sql_schemas=self._memory["tables_sql_schemas"],
+            dialect=dialect,
+            comments=comments,
+            has_errors=bool(errors),
+        )
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", "default")
-            response = self.llm.stream(messages, system=system, model_spec=model_spec, response_model=self._get_model("main"))
+            response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             try:
                 async for output in response:
@@ -637,6 +590,7 @@ class SQLAgent(LumenBaseAgent):
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
+            # TODO: if original sql expr matches, don't recreate a new one!
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
             # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
@@ -663,88 +617,67 @@ class SQLAgent(LumenBaseAgent):
         self._memory["sql"] = sql_query
         return sql_query
 
-    async def _check_requires_joins(
-        self,
-        messages: list[Message],
-        table: str,
-        schema: str,
-        tables_schema_str: str,
-    ):
-        requires_joins = None
-        with self.interface.add_step(title="Checking if join is required", steps_layout=self._steps_layout) as step:
-            join_prompt = await self._render_prompt(
-                "require_joins",
-                messages,
-                table=table,
-                schema=schema,  # this contains current table schema
-                tables_schema_str=tables_schema_str  # this may not be populated with any schemas
-            )
-            model_spec = self.prompts["require_joins"].get("llm_spec", "default")
-            response = self.llm.stream(
-                messages[-1:],
-                system=join_prompt,
-                model_spec=model_spec,
-                response_model=self._get_model("require_joins"),
-            )
-            try:
-                async for output in response:
-                    step.stream(output.chain_of_thought, replace=True)
-            except asyncio.CancelledError as e:
-                step.failed_title = "SQLAgent cancelled while determining required joins"
-                raise e
-            requires_joins = output.requires_joins
-            step.success_title = 'Query requires join' if requires_joins else 'No join required'
-        return requires_joins
-
-    async def find_join_tables(self, messages: list[Message]):
-        multi_source = len(self._memory['sources']) > 1
-        if multi_source:
-            tables = [
-                f"{SOURCE_TABLE_SEPARATOR}{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in self._memory["sources"]
-                for a_table in a_source.get_tables()
-            ]
-        else:
-            tables = self._memory['source'].get_tables()
-
-        find_joins_prompt = await self._render_prompt("find_joins", messages, tables=tables, separator=SOURCE_TABLE_SEPARATOR)
-        model_spec = self.prompts["find_joins"].get("llm_spec", "default")
-        with self.interface.add_step(title="Determining tables required for join", steps_layout=self._steps_layout) as step:
-            output = await self.llm.invoke(
-                messages,
-                system=find_joins_prompt,
-                model_spec=model_spec,
-                response_model=self._get_model("find_joins"),
-            )
-            tables_to_join = output.tables_to_join
-            step.stream(
-                f'{output.chain_of_thought}\nJoin requires following tables: {tables_to_join}',
-                replace=True
-            )
-            step.success_title = 'Found tables required for join'
-
-        tables_to_source = {}
-        for source_table in tables_to_join:
-            sources = self._memory["sources"]
-            if multi_source and SOURCE_TABLE_SEPARATOR in source_table:
-                try:
-                    _, a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=2)
-                except ValueError:
-                    a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                for source in sources:
-                    if source.name == a_source_name:
-                        a_source = source
-                        break
-                if a_table in tables_to_source:
-                    a_table = f"{SOURCE_TABLE_SEPARATOR}{a_source_name}{SOURCE_TABLE_SEPARATOR}{a_table}"
-            else:
-                a_source = next(iter(sources))
-                a_table = source_table
-
-            tables_to_source[a_table] = a_source
-        return tables_to_source
-
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory['sql'] = event.new
+
+    @retry_llm_output()
+    async def _find_tables(self, messages: list[Message], tables_schema_str: str, errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
+        if errors:
+            last_content = self.interface.objects[-1].object[-1][-1].object
+            chain_of_thought = last_content.split("```")[0]
+            content = (
+                "Your goal is to try to address the question while avoiding these issues:\n"
+                f"```\n{errors}\n```\n\n"
+            )
+            messages = mutate_user_message(content, messages)
+            log_debug("\033[91mRetry find_tables\033[0m")
+
+        sources = {source.name: source for source in self._memory["sources"]}
+        tables = [
+            f"{SOURCE_TABLE_SEPARATOR}{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
+            for a_table in a_source.get_tables()
+        ]
+        system = await self._render_prompt(
+            "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, tables_schema_str=tables_schema_str
+        )
+        tables_model = self._get_model("find_tables", tables=tables)
+        model_spec = self.prompts["find_tables"].get("llm_spec", "default")
+        with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+            response = self.llm.stream(
+                messages,
+                system=system,
+                model_spec=model_spec,
+                response_model=tables_model,
+            )
+            async for output in response:
+                chain_of_thought = output.chain_of_thought or ""
+                selected_tables = output.selected_tables
+                if output.potential_join_issues is not None:
+                    chain_of_thought += output.potential_join_issues
+                if selected_tables is not None:
+                    chain_of_thought = chain_of_thought + f"\n\nRelevant tables: {selected_tables}"
+                step.stream(
+                    f'{chain_of_thought}',
+                    replace=True
+                )
+            step.success_title = f'Found {len(selected_tables)} relevant table(s)'
+
+        tables_to_source = {}
+        pattern = rf"(?:^.*?{SOURCE_TABLE_SEPARATOR})?([^{SOURCE_TABLE_SEPARATOR}]+){SOURCE_TABLE_SEPARATOR}(.+)$"
+        for source_table in selected_tables:
+            if SOURCE_TABLE_SEPARATOR in source_table:
+                if match := re.match(pattern, source_table):
+                    a_source_name, a_table = match.groups()
+                    a_source_obj = sources.get(a_source_name)
+                    a_table = f"{SOURCE_TABLE_SEPARATOR}{a_source_name}{SOURCE_TABLE_SEPARATOR}{a_table}"
+            else:
+                a_source_obj = next(iter(sources.values()))
+                a_table = source_table
+            tables_to_source[a_table] = a_source_obj
+        return tables_to_source, chain_of_thought
+
+    def _drop_source_table_separator(self, content: str) -> str:
+        return re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", content)
 
     async def respond(
         self,
@@ -752,42 +685,15 @@ class SQLAgent(LumenBaseAgent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        """
-        Steps:
-        1. Retrieve the current source and table from memory.
-        2. If the source lacks a `get_sql_expr` method, return `None`.
-        3. Fetch the schema for the current table using `get_schema` without min/max values.
-        4. Determine if a join is required by calling `_check_requires_joins`.
-        5. If required, find additional tables via `find_join_tables`; otherwise, use the current source and table.
-        6. For each source and table, get the schema and SQL expression, storing them in `table_schemas`.
-        7. Render the SQL prompt using the table schemas, dialect, join status, and table.
-        8. If a join is required, remove source/table prefixes from the last message.
-        9. Construct the SQL query with `_create_valid_sql`.
-        """
         sources = self._memory["sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(sources)
-        table, source, join_required = await self._select_relevant_table(messages, sources, tables_to_source, tables_schema_str)
-        if not hasattr(source, "get_sql_expr"):
-            return None
-
-        schema = await get_schema(source, table, include_min_max=True)
-        tables_to_source = {table: source}
-        if join_required is None:
-            join_required = await self._check_requires_joins(messages, table, schema, tables_schema_str)
-            if join_required is None:
-                # Bail if query was cancelled or errored out
-                return None
-            if join_required:
-                tables_to_source = await self.find_join_tables(messages)
+        tables_to_source, tables_schema_str = await gather_table_sources(sources, include_sep=True)
+        tables_to_source, comments = await self._find_tables(messages, tables_schema_str)
 
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
-            if source_table == table:
-                table_schema = schema
-            else:
-                table_schema = await get_schema(source, source_table, include_min_max=True)
-
             # Look up underlying table name
+            source_table = self._drop_source_table_separator(source_table)
+            table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
             if (
                 'tables' in source.param and
@@ -803,21 +709,11 @@ class SQLAgent(LumenBaseAgent):
         self._memory["tables_sql_schemas"] = tables_sql_schemas
 
         dialect = source.dialect
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            tables_sql_schemas=tables_sql_schemas,
-            dialect=dialect,
-            join_required=join_required,
-            table=table,
-        )
-        if join_required:
-            # Remove source prefixes message, e.g. SOURCE_TABLE_SEPARATOR<source>SOURCE_TABLE_SEPARATOR<table>
-            messages[-1]["content"] = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", messages[-1]["content"])
         try:
-            sql_query = await self._create_valid_sql(messages, system_prompt, tables_to_source, step_title)
+            sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
             pipeline = self._memory['pipeline']
         except RetriesExceededError as e:
+            traceback.print_exception(e)
             self._memory["__error__"] = str(e)
             return None
         self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
@@ -858,21 +754,21 @@ class BaseViewAgent(LumenBaseAgent):
                     messages
                 )
         model_spec = self.prompts["main"].get("llm_spec", "default")
-        output = await self.llm.invoke(
+        response = self.llm.stream(
             messages,
             system=system,
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
+        with self.interface.add_step(
+            title=step_title or "Generating view...",
+            steps_layout=self._steps_layout
+        ) as step:
+            async for output in response:
+                chain_of_thought = output.chain_of_thought or ""
+                step.stream(chain_of_thought, replace=True)
         self._last_output = dict(output)
         spec = await self._extract_spec(self._last_output)
-        chain_of_thought = spec.pop("chain_of_thought", None)
-        if chain_of_thought:
-            with self.interface.add_step(
-                title=step_title or "Generating view...",
-                steps_layout=self._steps_layout
-            ) as step:
-                step.stream(chain_of_thought)
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
@@ -895,7 +791,7 @@ class BaseViewAgent(LumenBaseAgent):
         if not pipeline:
             raise ValueError("No current pipeline found in memory.")
 
-        schema = await get_schema(pipeline, include_min_max=False)
+        schema = await get_schema(pipeline)
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
@@ -941,7 +837,7 @@ class hvPlotAgent(BaseViewAgent):
             "field",
             "selection_group",
         ]
-        model = param_to_pydantic(self.view_type, excluded=excluded, schema=schema, extra_fields={
+        model = param_to_pydantic(self.view_type, base_model=PartialBaseModel, excluded=excluded, schema=schema, extra_fields={
             "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
         })
         return model[self.view_type.__name__]

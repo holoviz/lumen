@@ -2,38 +2,13 @@ from __future__ import annotations
 
 from typing import Literal
 
+from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 
-class JoinRequired(BaseModel):
-
-    chain_of_thought: str = Field(
-        description="""
-        Concisely explain whether a table join is required to answer the user's query, or
-        if the user is requesting a join or merge.
-        """
-    )
-
-    requires_joins: bool = Field(description="Whether a table join is required to answer the user's query.")
-
-
-class TableJoins(BaseModel):
-
-    chain_of_thought: str = Field(
-        description="""
-        Concisely consider the tables that need to be joined to answer the user's query.
-        """
-    )
-
-    tables_to_join: list[str] = Field(
-        description=(
-            "List of tables that need to be joined to answer the user's query. "
-            "Use table names verbatim; e.g. if table is `read_csv('table.csv')` "
-            "then use `read_csv('table.csv')` and not `table`, but if the table has "
-            "no extension, i.e. `table`, then use only `table`."
-        ),
-    )
+class PartialBaseModel(BaseModel, PartialLiteralMixin):
+    ...
 
 
 class Sql(BaseModel):
@@ -103,7 +78,7 @@ def make_context_model(tools: list[str], tables: list[str]):
                 description="A list of tools to call to provide context before launching into the planning stage. Use tools to gather additional context or clarification, tools should NEVER be used to obtain the actual data you will be working with."
             )
         )
-    return create_model("Context", **fields)
+    return create_model("Context", __base__=PartialBaseModel, **fields)
 
 
 def make_plan_models(agents: list[str], tools: list[str]):
@@ -158,14 +133,33 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
     )
 
 
-def make_table_model(tables):
+def make_tables_model(tables):
     table_model = create_model(
         "Table",
         chain_of_thought=(str, FieldInfo(
-            description="A concise, one sentence decision-tree-style analysis on choosing a table."
+            description="""
+            Concisely consider which tables are necessary to answer the user query.
+            """
         )),
-        relevant_table=(Literal[tuple(tables)], FieldInfo(
-            description="The most relevant table based on the user query; if none are relevant, select the first. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
-        ))
+        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
+            description="""
+            The most relevant tables based on the user query; if none are relevant,
+            use the first table. At least one table must be provided.
+            If a join is necessary, include all the tables that will be used in the join.
+            """
+        )),
+       potential_join_issues=(str, FieldInfo(
+           description="""
+           If no join is necessary, return an empty string--else
+           list potential join issues between tables:
+           - Data type mismatches (int vs string, numeric precision)
+           - Format differences (case, leading zeros, dates/times, timezones)
+           - Semantic differences (IDs vs names, codes vs full text)
+           - Quality issues (nulls, duplicates, validation rules)
+           Return specific issues found in current tables, and how you plan to address them
+           in the most easiest, but accurate way possible.
+           """
+       )),
+        __base__=PartialBaseModel
     )
     return table_model
