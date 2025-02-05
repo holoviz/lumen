@@ -345,10 +345,10 @@ class ExplorerUI(UI):
         lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
-    title = param.String(default='Lumen Explorer', doc="Title of the app.")
+    chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
+        The position of the chat interface panel relative to the exploration area.""")
 
-    chat_loc = param.Selector(default='left', objects=['left', 'right'], doc="""
-        The location of the chat panel.""")
+    title = param.String(default='Lumen Explorer', doc="Title of the app.")
 
     def __init__(
         self,
@@ -394,7 +394,7 @@ class ExplorerUI(UI):
         )
         output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'clip'}, sizing_mode='stretch_both')
         chat = Column(self._exports, self._coordinator)
-        if self.chat_loc == 'left':
+        if self.chat_ui_position == 'left':
             left, right = chat, output
             sizes = [40, 60]
             min_sizes = [200, 300]
