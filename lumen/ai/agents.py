@@ -578,9 +578,9 @@ class SQLAgent(LumenBaseAgent):
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
                     renamed_table = a_table
+                # Remove source prefixes from table names
                 if SOURCE_TABLE_SEPARATOR in renamed_table:
-                    # Remove source prefixes from table names
-                    renamed_table = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", renamed_table)
+                    _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
                 sql_query = sql_query.replace(a_table, renamed_table)
                 mirrors[renamed_table] = (a_source, renamed_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
@@ -633,12 +633,17 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        tables = [
-            f"{SOURCE_TABLE_SEPARATOR}{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
-            for a_table in a_source.get_tables()
-        ]
+        if len(sources) > 1:
+            tables = [
+                f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
+                for a_table in a_source.get_tables()
+            ]
+            sep = SOURCE_TABLE_SEPARATOR
+        else:
+            tables = self._memory["sources"][0].get_tables()
+            sep = None
         system = await self._render_prompt(
-            "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, tables_schema_str=tables_schema_str
+            "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
         )
         tables_model = self._get_model("find_tables", tables=tables)
         model_spec = self.prompts["find_tables"].get("llm_spec", "default")
@@ -663,21 +668,15 @@ class SQLAgent(LumenBaseAgent):
             step.success_title = f'Found {len(selected_tables)} relevant table(s)'
 
         tables_to_source = {}
-        pattern = rf"(?:^.*?{SOURCE_TABLE_SEPARATOR})?([^{SOURCE_TABLE_SEPARATOR}]+){SOURCE_TABLE_SEPARATOR}(.+)$"
         for source_table in selected_tables:
             if SOURCE_TABLE_SEPARATOR in source_table:
-                if match := re.match(pattern, source_table):
-                    a_source_name, a_table = match.groups()
-                    a_source_obj = sources.get(a_source_name)
-                    a_table = f"{SOURCE_TABLE_SEPARATOR}{a_source_name}{SOURCE_TABLE_SEPARATOR}{a_table}"
+                a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+                a_source_obj = sources.get(a_source_name)
             else:
                 a_source_obj = next(iter(sources.values()))
                 a_table = source_table
             tables_to_source[a_table] = a_source_obj
         return tables_to_source, chain_of_thought
-
-    def _drop_source_table_separator(self, content: str) -> str:
-        return re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", content)
 
     async def respond(
         self,
@@ -692,7 +691,8 @@ class SQLAgent(LumenBaseAgent):
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
             # Look up underlying table name
-            source_table = self._drop_source_table_separator(source_table)
+            if SOURCE_TABLE_SEPARATOR in source_table:
+                _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
             table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
             if (

@@ -47,7 +47,7 @@ UNRECOVERABLE_ERRORS = (
     asyncio.CancelledError
 )
 
-SOURCE_TABLE_SEPARATOR = ":::"
+SOURCE_TABLE_SEPARATOR = "__@__"
 PROVIDED_SOURCE_NAME = 'ProvidedSource00000'
 
 pn.chat.ChatStep.min_width = 375
