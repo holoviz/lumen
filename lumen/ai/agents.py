@@ -582,7 +582,7 @@ class SQLAgent(LumenBaseAgent):
                     # Remove source prefixes from table names
                     renamed_table = re.sub(rf".*?{SOURCE_TABLE_SEPARATOR}", "", renamed_table)
                 sql_query = sql_query.replace(a_table, renamed_table)
-                mirrors[renamed_table] = (a_source, a_table)
+                mirrors[renamed_table] = (a_source, renamed_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
         else:
             source = next(iter(sources))
