@@ -668,7 +668,7 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source = {}
         for source_table in selected_tables:
             if SOURCE_TABLE_SEPARATOR in source_table:
-                _, a_source_name = source_table.split(SOURCE_TABLE_SEPARATOR)
+                a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR)
                 a_source_obj = sources.get(a_source_name)
             else:
                 a_source_obj = next(iter(sources.values()))
