@@ -580,7 +580,7 @@ class SQLAgent(LumenBaseAgent):
                     renamed_table = a_table
                 # Remove source prefixes from table names
                 if SOURCE_TABLE_SEPARATOR in renamed_table:
-                    renamed_table, _ = renamed_table.split(SOURCE_TABLE_SEPARATOR)
+                    _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR)
                 sql_query = sql_query.replace(a_table, renamed_table)
                 mirrors[renamed_table] = (a_source, renamed_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
@@ -668,7 +668,7 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source = {}
         for source_table in selected_tables:
             if SOURCE_TABLE_SEPARATOR in source_table:
-                a_source_name, _ = source_table.split(SOURCE_TABLE_SEPARATOR)
+                _, a_source_name = source_table.split(SOURCE_TABLE_SEPARATOR)
                 a_source_obj = sources.get(a_source_name)
             else:
                 a_source_obj = next(iter(sources.values()))
@@ -689,7 +689,7 @@ class SQLAgent(LumenBaseAgent):
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
             # Look up underlying table name
-            source_table, _ = source_table.split(SOURCE_TABLE_SEPARATOR)
+            _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR)
             table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
             if (
