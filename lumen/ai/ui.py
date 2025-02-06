@@ -592,7 +592,7 @@ class ExplorerUI(UI):
             OVERVIEW_INTRO,
             margin=(0, 0, 10, 0),
             sizing_mode='stretch_width',
-            visible=self.interface.param["objects"].rx.len() <= 1
+            visible=self.interface.param["objects"].rx.len() <= 2
         )
         return Column(
             self._overview_intro,
