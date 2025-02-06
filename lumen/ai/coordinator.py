@@ -633,11 +633,10 @@ class Planner(Coordinator):
         elif len(tables) == 1:
             requested.append(next(iter(tables)))
         table_info = await self._lookup_schemas(tables, requested, provided, cache=schemas)
-        available = [table for table in tables if table not in requested]
         tools = {tool.name: tool for tool in self._tools["__main__"]}
-        if not tools and not available:
+        if not tools and not tables:
             return table_info, ''
-        context_model = make_context_model(tools=list(tools), tables=available)
+        context_model = make_context_model(tools=list(tools), tables=tables)
         model_spec = self.prompts["context"].get("llm_spec", "default")
         system = await self._render_prompt(
             "context",
