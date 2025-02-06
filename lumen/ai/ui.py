@@ -540,7 +540,7 @@ class ExplorerUI(UI):
                 for t in source_tables:
                     if deduplicate:
                         t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
-                    if t.rsplit(SOURCE_TABLE_SEPARATOR, 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
+                    if t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
                         selected.append(t)
                     new[t] = source
             source_map.clear()
@@ -573,8 +573,8 @@ class ExplorerUI(UI):
                 explorers = []
                 for table in table_select.value:
                     source = source_map[table]
-                    if len(memory['sources']) > 1 and SOURCE_TABLE_SEPARATOR in table:
-                        _, table = table.rsplit(SOURCE_TABLE_SEPARATOR, 1)
+                    if SOURCE_TABLE_SEPARATOR in table:
+                        _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
                     pipeline = Pipeline(
                         source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
                     )

@@ -368,7 +368,7 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
             tables_to_source[table] = source
             if source.name == PROVIDED_SOURCE_NAME and not include_provided:
                 continue
-            label = f"{SOURCE_TABLE_SEPARATOR}{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
+            label = f"{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
             if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
                 sql = source.get_sql_expr(table)
                 schema = await get_schema(source, table, include_enum=True, limit=3)

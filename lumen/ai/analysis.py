@@ -106,8 +106,8 @@ class Join(Analysis):
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
             content = (
                 "Join these tables: "
-                f"'{SOURCE_TABLE_SEPARATOR}{self._previous_source}{SOURCE_TABLE_SEPARATOR}{self._previous_table}' "
-                f"and '{SOURCE_TABLE_SEPARATOR}{memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
+                f"'{self._previous_source}{SOURCE_TABLE_SEPARATOR}{self._previous_table}' "
+                f"and '{memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
             )
             if self.index_col:
                 content += f" left join on {self.index_col}"
