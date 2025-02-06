@@ -96,6 +96,16 @@ class LumenAIServe(Serve):
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
         provider = args.provider
+        if provider is None:
+            raise RuntimeError(
+                "It looks like a Language Model provider isn't set up yet.\n"
+                "You have a few options to resolve this:\n\n"
+                "- Set environment variables with an API key: For example, OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"
+                "- Specify a provider and API key directly: For example, set `--provider openai` with your API key via --api-key.\n"
+                "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
+                "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
+            )
+
         api_key = args.api_key
         endpoint = args.provider_endpoint
         mode = args.validation_mode
@@ -119,16 +129,6 @@ class LumenAIServe(Serve):
         except (KeyError, AttributeError):
             raise ValueError(
                 f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
-            )
-
-        if provider is None:
-            raise RuntimeError(
-                "It looks like a Language Model provider isn't set up yet.\n"
-                "You have a few options to resolve this:\n\n"
-                "- Set environment variables with an API key: For example, OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"
-                "- Specify a provider and API key directly: For example, set `--provider openai` with your API key via --api-key.\n"
-                "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
-                "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
             )
 
         model_kwargs = None
