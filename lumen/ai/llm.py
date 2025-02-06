@@ -16,7 +16,6 @@ import param
 
 from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
-from instructor.utils import disable_pydantic_error_url
 from pydantic import BaseModel
 
 from lumen.ai.utils import log_debug
@@ -34,8 +33,6 @@ class Message(TypedDict):
 
 
 BASE_MODES = list(Mode)
-
-disable_pydantic_error_url()
 
 
 class Llm(param.Parameterized):
