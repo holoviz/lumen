@@ -540,12 +540,14 @@ class ExplorerUI(UI):
                 for t in source_tables:
                     if deduplicate:
                         t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
-                    if t.rsplit(SOURCE_TABLE_SEPARATOR, 1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
+                    table_name = t.rsplit(SOURCE_TABLE_SEPARATOR, 1)[-1]
+                    is_new_table = table_name not in source_map
+                    can_add_more = not len(selected) > table_select.max_items
+                    if is_new_table and can_add_more:
                         selected.append(t)
                     new[t] = source
             source_map.clear()
             source_map.update(new)
-            selected = selected if len(selected) == 1 else []
             table_select.param.update(options=list(source_map), value=selected)
             input_row.visible = bool(source_map)
         memory.on_change('sources', update_source_map)
@@ -590,10 +592,12 @@ class ExplorerUI(UI):
 
         self._overview_intro = Markdown(
             OVERVIEW_INTRO,
-            margin=(0, 0, 10, 0),
+            margin=(0, 0, 10, 10),
             sizing_mode='stretch_width',
-            visible=self.interface.param["objects"].rx.len() <= 1
+            visible=self.interface.param["objects"].rx.len() <= 2
         )
+        if table_select.value:
+            explore_button.param.trigger("value")
         return Column(
             self._overview_intro,
             input_row,
