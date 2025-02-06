@@ -1,9 +1,10 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-Correctly assess and consider which tables are necessary to answer the user query.
-
+Determine which tables are necessary to answer the user query, paying special attention to the available columns.
+{% if separator %}
 Use table names verbatim, and be sure to include the delimiters {{ separator }}, like '<source>{{ separator }}<table>'
+{% endif %}
 {% endblock %}
 
 {% block context %}

@@ -638,10 +638,12 @@ class SQLAgent(LumenBaseAgent):
                 f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
                 for a_table in a_source.get_tables()
             ]
+            sep = SOURCE_TABLE_SEPARATOR
         else:
             tables = self._memory["sources"][0].get_tables()
+            sep = None
         system = await self._render_prompt(
-            "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, tables_schema_str=tables_schema_str
+            "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
         )
         tables_model = self._get_model("find_tables", tables=tables)
         model_spec = self.prompts["find_tables"].get("llm_spec", "default")
