@@ -650,7 +650,6 @@ class Planner(Coordinator):
             title="Obtaining additional context...",
             user="Assistant"
         ) as istep:
-            print(messages, system)
             response = self.llm.stream(
                 messages=messages,
                 system=system,
