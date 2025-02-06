@@ -633,7 +633,7 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        if sources > 1:
+        if len(sources) > 1:
             tables = [
                 f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
                 for a_table in a_source.get_tables()
