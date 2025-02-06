@@ -689,7 +689,8 @@ class SQLAgent(LumenBaseAgent):
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
             # Look up underlying table name
-            _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR)
+            if SOURCE_TABLE_SEPARATOR in source_table:
+                _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR)
             table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
             if (
