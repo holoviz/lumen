@@ -6,6 +6,8 @@ from pathlib import Path
 
 import panel as pn
 
+from instructor.utils import disable_pydantic_error_url
+
 
 class LlmSetupError(Exception):
     """
@@ -52,3 +54,5 @@ PROVIDED_SOURCE_NAME = 'ProvidedSource00000'
 
 pn.chat.ChatStep.min_width = 375
 pn.chat.ChatStep.collapsed_on_success = False
+
+disable_pydantic_error_url()
