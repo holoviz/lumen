@@ -218,6 +218,7 @@ class VegaLiteOutput(LumenOutput):
         """Format JSONSchema validation errors into a readable message."""
         errors = {}
         last_path = ""
+        rejected_paths = set()
 
         def process_error(err):
             nonlocal last_path
@@ -225,13 +226,20 @@ class VegaLiteOutput(LumenOutput):
             if errors and path == "$":
                 return  # these $ downstream errors are due to upstream errors
             if err.validator != "anyOf":
-                # if we have a more specific error message, e.g. enum, don't overwrite it
-                if (path in errors and err.validator in ("const", "type")) or (
-                    path in last_path and err.validator == "additionalProperties"
+                # other downstream errors that are due to upstream errors
+                # $.encoding.x.sort: '-host_count' is not one of ..
+                #$.encoding.x: 'value' is a required property
+                if (
+                    last_path != path
+                    and last_path.split(path)[-1].count(".") <= 1
+                    or path in rejected_paths
                 ):
+                    rejected_paths.add(path)
+                # if we have a more specific error message, e.g. enum, don't overwrite it
+                elif path in errors and err.validator in ("const", "type"):
                     pass
                 else:
-                    errors[path] = f"{path}: {err.message} {err.validator}"
+                    errors[path] = f"{path}: {err.message}"
             last_path = path
             if err.context:
                 for e in err.context:
@@ -242,6 +250,8 @@ class VegaLiteOutput(LumenOutput):
 
     @classmethod
     def _validate_spec(cls, spec):
+        if "spec" in spec:
+            spec = spec["spec"]
         vega_lite_schema = cls._load_vega_lite_schema(
             spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
         )
