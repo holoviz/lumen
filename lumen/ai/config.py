@@ -5,6 +5,7 @@ import asyncio
 from pathlib import Path
 
 import panel as pn
+import yaml
 
 from instructor.utils import disable_pydantic_error_url
 
@@ -46,13 +47,21 @@ UNRECOVERABLE_ERRORS = (
     ImportError,
     LlmSetupError,
     RecursionError,
-    asyncio.CancelledError
+    asyncio.CancelledError,
 )
 
 SOURCE_TABLE_SEPARATOR = "__@__"
-PROVIDED_SOURCE_NAME = 'ProvidedSource00000'
+PROVIDED_SOURCE_NAME = "ProvidedSource00000"
+
+
+def str_presenter(dumper, data):
+    if "\n" in data:  # Only use literal block for strings containing newlines
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data.strip(), style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
 
 pn.chat.ChatStep.min_width = 375
 pn.chat.ChatStep.collapsed_on_success = False
 
 disable_pydantic_error_url()
+yaml.add_representer(str, str_presenter)

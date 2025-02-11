@@ -1,13 +1,14 @@
 import base64
 import datetime as dt
-import json
 import os
+import re
 
 from io import BytesIO
-from textwrap import dedent, indent
+from textwrap import dedent
 from typing import Any
 
 import nbformat
+import yaml
 
 from panel import Column
 from panel.chat import ChatMessage, ChatStep
@@ -30,6 +31,8 @@ def make_preamble(preamble: str, extensions: list[str]):
     exts = ', '.join([repr(ext) for ext in extensions])
     source = (preamble + dedent(
         f"""
+        import yaml
+
         import lumen as lm
         import panel as pn
 
@@ -79,43 +82,28 @@ def format_markdown(msg: ChatMessage):
     return [nbformat.v4.new_markdown_cell(source=f'{header}\n{prefix}{content}')]
 
 
-def indent_spec(spec: str):
-    lines = []
-    for line in spec.splitlines():
-        # Check for "SELECT * FROM table\\nWHERE condition" and split into multiple lines
-        if "\\n" in line and "select" in line.lower() and (line.count('"') >= 2 or line.count("'") >= 2):
-            indent_length = len(line) - len(line.lstrip())
-            base_indentation = ' ' * indent_length
-            extra_indentation = ' ' * 4
-            # Properly indent the SQL query on multiple lines
-            sql = line.replace(': "', ': """\n' + extra_indentation).replace("\\n", "\n" + extra_indentation).replace('\\"', '"')
-            if sql.endswith('"'):
-                # do not use rstrip here; sometimes it removes too many quotation marks
-                sql = sql[:-1]
-            # move the closing triple quote to a new line
-            lines.append(indent(sql.lstrip(), base_indentation) + "\n" + indent('"""', base_indentation))
-        else:
-            lines.append(line)
-    spec = '\n'.join(lines)
-    return spec
-
-
 def format_output(msg: ChatMessage):
     output = msg.object
     ext = None
     code = []
     with config.param.update(serializer='csv'):
-        spec = json.dumps(output.component.to_spec(), indent=2).replace('true', 'True').replace('false', 'False')
-    spec = indent_spec(spec)
+        # replace |2- |3- |4-... etc with | for a cleaner look
+        spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(output.component.to_spec(), sort_keys=False))
+    read_code = [
+        f'yaml_spec = """\n{spec}"""',
+        'spec = yaml.safe_load(yaml_spec)',
+    ]
     if isinstance(output.component, Pipeline):
         code.extend([
-            f'pipeline = lm.Pipeline.from_spec({spec})',
+            *read_code,
+            'pipeline = lm.Pipeline.from_spec(spec)',
             'pipeline'
         ])
     elif isinstance(output.component, View):
         ext = output.component._extension
         code.extend([
-            f'view = lm.View.from_spec({spec})',
+            *read_code,
+            'view = lm.View.from_spec(spec)',
             'view'
         ])
     return [nbformat.v4.new_code_cell(source='\n'.join(code))], ext

@@ -145,7 +145,6 @@ class DuckDBSource(BaseSQLSource):
                 processed_sql = processed_sql.replace(
                     f"'{file_path}'", f"'{abs_path}'"
                 )
-
         return processed_sql
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
