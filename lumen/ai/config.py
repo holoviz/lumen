@@ -35,7 +35,7 @@ DEMO_MESSAGES = [
     "Show me the the first dataset and its columns.",
     "What are some interesting analyses I can do?",
     "Perform an analysis using the first suggestion.",
-    "Create a scatter plot of the results.",
+    "Show me a plot of these results.",
 ]
 
 DEFAULT_EMBEDDINGS_PATH = Path("embeddings")
