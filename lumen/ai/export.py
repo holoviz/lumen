@@ -83,7 +83,7 @@ def indent_spec(spec: str):
     lines = []
     for line in spec.splitlines():
         # Check for "SELECT * FROM table\\nWHERE condition" and split into multiple lines
-        if "\\n" in line and line.count('"') >= 2:
+        if "\\n" in line and "select" in line.lower() and (line.count('"') >= 2 or line.count("'") >= 2):
             indent_length = len(line) - len(line.lstrip())
             base_indentation = ' ' * indent_length
             extra_indentation = ' ' * 4
