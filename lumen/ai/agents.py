@@ -632,17 +632,12 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
             log_debug("\033[91mRetry find_tables\033[0m")
 
+        sep = SOURCE_TABLE_SEPARATOR
         sources = {source.name: source for source in self._memory["sources"]}
-        if len(sources) > 1:
-            tables = [
-                f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
-                for a_table in a_source.get_tables()
-            ]
-            sep = SOURCE_TABLE_SEPARATOR
-        else:
-            tables = self._memory["sources"][0].get_tables()
-            sep = None
-
+        tables = [
+            f"{a_source}{sep}{a_table}" for a_source in sources.values()
+            for a_table in a_source.get_tables()
+        ]
         if len(tables) == 1:
             # if only one source and one table, return it directly
             return {tables[0]: next(iter(sources.values()))}, ""
