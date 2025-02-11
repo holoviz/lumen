@@ -25,10 +25,9 @@ THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
 GETTING_STARTED_SUGGESTIONS = [
-    "What datasets do you have?",
-    "Tell me about the dataset.",
-    "Create a plot of the dataset.",
-    "Find the min and max of the values.",
+    "What datasets are available?",
+    "What's interesting to analyze?",
+    "Can you show me a plot of the data?",
 ]
 
 DEMO_MESSAGES = [
