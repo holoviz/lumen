@@ -31,12 +31,11 @@ GETTING_STARTED_SUGGESTIONS = [
 ]
 
 DEMO_MESSAGES = [
-    "What data is available?",
-    "Can I see the first one?",
-    "Tell me about the dataset.",
-    "What could be interesting to analyze?",
-    "Perform a SQL query on one of these.",
-    "Show it to me as a scatter plot.",
+    "What datasets are available?",
+    "Show me the the first dataset and its columns.",
+    "What are some interesting analyses I can do?",
+    "Perform an analysis using the first suggestion.",
+    "Create a scatter plot of the results.",
 ]
 
 DEFAULT_EMBEDDINGS_PATH = Path("embeddings")
