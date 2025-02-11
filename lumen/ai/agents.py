@@ -642,6 +642,11 @@ class SQLAgent(LumenBaseAgent):
         else:
             tables = self._memory["sources"][0].get_tables()
             sep = None
+
+        if len(tables) == 1:
+            # if only one source and one table, return it directly
+            return {tables[0]: next(iter(sources.values()))}, ""
+
         system = await self._render_prompt(
             "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
         )
@@ -710,7 +715,8 @@ class SQLAgent(LumenBaseAgent):
 
         dialect = source.dialect
         try:
-            sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
+            sql_query = await self._create_valid_sql(
+                messages, dialect, comments, step_title, tables_to_source)
             pipeline = self._memory['pipeline']
         except RetriesExceededError as e:
             traceback.print_exception(e)
