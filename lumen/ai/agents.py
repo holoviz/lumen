@@ -182,7 +182,8 @@ class SourceAgent(Agent):
         The SourceAgent allows a user to upload unavailable, new datasets, tables, or documents.
 
         Only use this if the user is requesting to add a completely new table.
-        Not useful for answering what's available or loading existing datasets.
+        Not useful for answering what is available or loading existing datasets
+        so use other agents for these.
         """)
 
     requires = param.List(default=[], readonly=True)
