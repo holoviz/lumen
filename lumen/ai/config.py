@@ -27,7 +27,7 @@ PROMPTS_DIR = THIS_DIR / "prompts"
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets are available?",
     "What's interesting to analyze?",
-    "Can you show me a plot of the data?",
+    "Can you visualize the data?",
 ]
 
 DEMO_MESSAGES = [
