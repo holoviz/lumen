@@ -12,10 +12,8 @@ from typing import Any, Literal
 import pandas as pd
 import panel as pn
 import param
-import requests
 import yaml
 
-from jsonschema import Draft7Validator, ValidationError
 from panel.chat import ChatInterface
 from panel.layout import Column
 from panel.viewable import Viewable, Viewer
@@ -46,7 +44,9 @@ from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
     get_schema, log_debug, mutate_user_message, report_error, retry_llm_output,
 )
-from .views import AnalysisOutput, LumenOutput, SQLOutput
+from .views import (
+    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
+)
 
 
 class Agent(Viewer, Actor, ContextProvider):
@@ -886,43 +886,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     _extensions = ('vega',)
 
-    @pn.cache
-    def get_vega_lite_schema():
-        return requests.get("https://vega.github.io/schema/vega-lite/v5.json").json()
-
-    @staticmethod
-    def format_validation_error(error: ValidationError) -> str:
-        """Format JSONSchema validation errors into a readable message."""
-        errors = {}
-        last_path = ""
-
-        def process_error(err):
-            nonlocal last_path
-            path = err.json_path
-            if errors and path == "$":
-                return  # these $ downstream errors are due to upstream errors
-            if err.validator != "anyOf":
-                # if we have a more specific error message, e.g. enum, don't overwrite it
-                if (path in errors and err.validator in ("const", "type")) or (
-                    path in last_path and err.validator == "additionalProperties"
-                ):
-                    pass
-                else:
-                    errors[path] = f"{path}: {err.message} {err.validator}"
-            last_path = path
-            if err.context:
-                for e in err.context:
-                    process_error(e)
-
-        process_error(error)
-        return "\n".join(errors.values())
-
-    def _validate_spec(self, spec):
-        vega_lite_schema = self.get_vega_lite_schema()
-        try:
-            Draft7Validator(vega_lite_schema).validate(spec)
-        except ValidationError as e:
-            raise ValidationError(self.format_validation_error(e))
+    _output_type = VegaLiteOutput
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
@@ -937,9 +901,9 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
         elif json_spec:= spec.get('json_spec'):
             vega_spec = json.loads(json_spec)
+        self._output_type._validate_spec(vega_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
-        self._validate_spec(vega_spec)
         if "width" not in vega_spec:
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
