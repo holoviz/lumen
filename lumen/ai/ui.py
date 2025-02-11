@@ -392,7 +392,7 @@ class ExplorerUI(UI):
             ('Explorations', Column(self._explorations_intro, self._explorations)),
             design=Material
         )
-        output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'clip'}, sizing_mode='stretch_both')
+        output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'auto'}, sizing_mode='stretch_both')
         chat = Column(self._exports, self._coordinator)
         if self.chat_ui_position == 'left':
             left, right = chat, output
