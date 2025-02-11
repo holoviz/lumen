@@ -710,8 +710,7 @@ class SQLAgent(LumenBaseAgent):
 
         dialect = source.dialect
         try:
-            sql_query = await self._create_valid_sql(
-                messages, dialect, comments, step_title, tables_to_source)
+            sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
             pipeline = self._memory['pipeline']
         except RetriesExceededError as e:
             traceback.print_exception(e)
