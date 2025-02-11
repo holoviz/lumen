@@ -193,7 +193,7 @@ class LumenOutput(Viewer):
             )
 
     @classmethod
-    def _validate_spec(self, spec):
+    def _validate_spec(cls, spec):
         return spec
 
     def __panel__(self):
