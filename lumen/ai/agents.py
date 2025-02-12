@@ -44,7 +44,9 @@ from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
     get_schema, log_debug, mutate_user_message, report_error, retry_llm_output,
 )
-from .views import AnalysisOutput, LumenOutput, SQLOutput
+from .views import (
+    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
+)
 
 
 class Agent(Viewer, Actor, ContextProvider):
@@ -885,12 +887,14 @@ class VegaLiteAgent(BaseViewAgent):
 
     _extensions = ('vega',)
 
+    _output_type = VegaLiteOutput
+
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
             spec = await self._extract_spec({"yaml_spec": event.new})
         except Exception as e:
             traceback.print_exception(e)
-            raise e
+            return
         memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
@@ -898,6 +902,7 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
         elif json_spec:= spec.get('json_spec'):
             vega_spec = json.loads(json_spec)
+        self._output_type._validate_spec(vega_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:

@@ -3,8 +3,10 @@ import traceback
 
 import panel as pn
 import param
+import requests
 import yaml
 
+from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Column, Row, Tabs
 from panel.pane import Alert, Markdown
@@ -173,6 +175,7 @@ class LumenOutput(Viewer):
         try:
             if self._rendered:
                 yaml_spec = load_yaml(self.spec)
+                self._validate_spec(yaml_spec)
                 self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
@@ -189,6 +192,10 @@ class LumenOutput(Viewer):
                 alert_type="danger",
             )
 
+    @classmethod
+    def _validate_spec(cls, spec):
+        return spec
+
     def __panel__(self):
         return self._main
 
@@ -197,6 +204,63 @@ class LumenOutput(Viewer):
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
+
+
+class VegaLiteOutput(LumenOutput):
+
+    @pn.cache
+    @staticmethod
+    def _load_vega_lite_schema(schema_url: str | None = None):
+        return requests.get(schema_url).json()
+
+    @staticmethod
+    def _format_validation_error(error: ValidationError) -> str:
+        """Format JSONSchema validation errors into a readable message."""
+        errors = {}
+        last_path = ""
+        rejected_paths = set()
+
+        def process_error(err):
+            nonlocal last_path
+            path = err.json_path
+            if errors and path == "$":
+                return  # these $ downstream errors are due to upstream errors
+            if err.validator != "anyOf":
+                # other downstream errors that are due to upstream errors
+                # $.encoding.x.sort: '-host_count' is not one of ..
+                #$.encoding.x: 'value' is a required property
+                if (
+                    last_path != path
+                    and last_path.split(path)[-1].count(".") <= 1
+                    or path in rejected_paths
+                ):
+                    rejected_paths.add(path)
+                # if we have a more specific error message, e.g. enum, don't overwrite it
+                elif path in errors and err.validator in ("const", "type"):
+                    pass
+                else:
+                    errors[path] = f"{path}: {err.message}"
+            last_path = path
+            if err.context:
+                for e in err.context:
+                    process_error(e)
+
+        process_error(error)
+        return "\n".join(errors.values())
+
+    @classmethod
+    def _validate_spec(cls, spec):
+        if "spec" in spec:
+            spec = spec["spec"]
+        vega_lite_schema = cls._load_vega_lite_schema(
+            spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
+        )
+        vega_lite_validator = Draft7Validator(vega_lite_schema)
+        try:
+            vega_lite_validator.validate(spec)
+        except ValidationError as e:
+            raise ValidationError(cls._format_validation_error(e))
+        return super()._validate_spec(spec)
 
 
 class AnalysisOutput(LumenOutput):
