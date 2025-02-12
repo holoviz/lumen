@@ -1,13 +1,14 @@
 import base64
 import datetime as dt
-import json
 import os
+import re
 
 from io import BytesIO
 from textwrap import dedent
 from typing import Any
 
 import nbformat
+import yaml
 
 from panel import Column
 from panel.chat import ChatMessage, ChatStep
@@ -30,6 +31,8 @@ def make_preamble(preamble: str, extensions: list[str]):
     exts = ', '.join([repr(ext) for ext in extensions])
     source = (preamble + dedent(
         f"""
+        import yaml
+
         import lumen as lm
         import panel as pn
 
@@ -78,21 +81,29 @@ def format_markdown(msg: ChatMessage):
     content = prefix.join(msg.serialize().split('\n'))
     return [nbformat.v4.new_markdown_cell(source=f'{header}\n{prefix}{content}')]
 
+
 def format_output(msg: ChatMessage):
     output = msg.object
     ext = None
     code = []
     with config.param.update(serializer='csv'):
-        spec = json.dumps(output.component.to_spec(), indent=2).replace('true', 'True').replace('false', 'False')
+        # replace |2- |3- |4-... etc with | for a cleaner look
+        spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(output.component.to_spec(), sort_keys=False))
+    read_code = [
+        f'yaml_spec = """\n{spec}"""',
+        'spec = yaml.safe_load(yaml_spec)',
+    ]
     if isinstance(output.component, Pipeline):
         code.extend([
-            f'pipeline = lm.Pipeline.from_spec({spec})',
+            *read_code,
+            'pipeline = lm.Pipeline.from_spec(spec)',
             'pipeline'
         ])
     elif isinstance(output.component, View):
         ext = output.component._extension
         code.extend([
-            f'view = lm.View.from_spec({spec})',
+            *read_code,
+            'view = lm.View.from_spec(spec)',
             'view'
         ])
     return [nbformat.v4.new_code_cell(source='\n'.join(code))], ext
