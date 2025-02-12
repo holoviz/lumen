@@ -59,9 +59,12 @@ def str_presenter(dumper, data):
         return dumper.represent_scalar("tag:yaml.org,2002:str", data.strip(), style="|")
     return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
+def tuple_presenter(dumper, data):
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data)
 
 pn.chat.ChatStep.min_width = 375
 pn.chat.ChatStep.collapsed_on_success = False
 
 disable_pydantic_error_url()
 yaml.add_representer(str, str_presenter)
+yaml.add_representer(tuple, tuple_presenter)
