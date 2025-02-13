@@ -593,6 +593,14 @@ class SQLAgent(LumenBaseAgent):
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
+            import sqlglot
+            sql_clean = sqlglot.transpile(sql_query, write=source.dialect, pretty=True)[0]
+            if sql_query != sql_clean:
+                step.stream(f'\n\nSQL was cleaned up and prettified:\n\n```sql\n{sql_clean}\n```')
+                sql_query = sql_clean
+        except Exception:
+            pass
+        try:
             # TODO: if original sql expr matches, don't recreate a new one!
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
             # Get validated query
