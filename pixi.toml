@@ -72,6 +72,10 @@ duckdb = "*"
 intake-sql = "*"
 sqlalchemy = "*"
 
+[feature.bigquery.dependencies]
+google-cloud-bigquery = "*"
+google-cloud-sdk = "*"
+
 # =============================================
 # =================== TESTS ===================
 # =============================================

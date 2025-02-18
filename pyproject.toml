@@ -54,6 +54,7 @@ ai-openai = ['lumen[ai]', 'openai']
 ai-mistralai = ['lumen[ai]', 'mistralai']
 ai-anthropic = ['lumen[ai]', 'anthropic']
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.0']
+bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 
 [project.scripts]
 lumen = "lumen.command:main"
@@ -96,6 +97,7 @@ filterwarnings = [
 
 [tool.ruff]
 fix = true
+line-length = 165
 
 [tool.ruff.lint]
 select = [
