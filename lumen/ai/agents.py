@@ -778,8 +778,8 @@ class BaseViewAgent(LumenBaseAgent):
             async for output in response:
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
-        self._last_output = dict(output)
-        spec = await self._extract_spec(self._last_output)
+            self._last_output = dict(output)
+            spec = await self._extract_spec(self._last_output)
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
