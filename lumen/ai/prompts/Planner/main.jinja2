@@ -16,6 +16,7 @@ Ground Rules:
 Important Agent Rules:
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
+- Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - The ChatAgent usually can be used alone, but if the query is related to the data tables, please use AnalystAgent instead.
 {% endblock -%}
 
@@ -56,7 +57,7 @@ Here's a list of tools:
 {%- endif %}
 
 {%- if 'sql' in memory %}
-- Consider carefully if the following SQL contains all the information you need, i.e. only invoke the SQL agent if some other calculation needs to be performed! If not, do not use the SQLAgent!
+The following is the current SQL.
 ```sql
 {{ memory['sql'] }}
 ```
