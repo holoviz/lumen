@@ -37,8 +37,10 @@ Lumen works with Python 3 and above on Linux, Windows, or Mac. The recommended w
 
 or using PyPI:
 
-    pip install lumen[ai]
+    pip install 'lumen[ai]'
 
-Once installed you will be able to start a Lumen Explorer server by running:
+Once installed you will be able to start a Lumen Explorer server by running (replace `data.csv` with your data):
 
     lumen-ai serve data.csv
+
+Check out the [docs](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html) for more details!
