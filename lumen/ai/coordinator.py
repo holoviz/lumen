@@ -12,7 +12,7 @@ import param
 import yaml
 
 from panel import bind
-from panel.chat import ChatInterface, ChatStep
+from panel.chat import ChatInterface, ChatMessage, ChatStep
 from panel.layout import (
     Card, Column, FlexBox, Tabs,
 )
@@ -100,7 +100,8 @@ class Coordinator(Viewer, Actor):
         logs_db_path: str = "",
         **params,
     ):
-        def on_message(message, instance):
+        def on_message(message: ChatMessage, instance: ChatInterface):
+            """Handle new messages and updates to existing messages."""
             def update_on_reaction(reactions):
                 if not self._logs:
                     return
@@ -110,32 +111,44 @@ class Coordinator(Viewer, Actor):
                     disliked="dislike" in reactions,
                 )
 
+            # Bind reaction updates
             bind(update_on_reaction, message.param.reactions, watch=True)
-            message_id = id(message)
+            message_id = str(id(message))
             message_index = instance.objects.index(message)
+            if instance._placeholder in instance._chat_log:
+                # disregard placeholder message
+                message_index -= 1
+            # Log the message
             self._logs.upsert(
-                session_id=self._session_id,
                 message_id=message_id,
                 message_index=message_index,
                 message_user=message.user,
-                message_content=message.serialize(),
+                message=message,
             )
 
         def on_undo(instance, _):
+            """Handle undo operations."""
             if not self._logs:
                 return
             count = instance._get_last_user_entry_index()
             messages = instance[-count:]
             for message in messages:
-                self._logs.update_status(message_id=id(message), removed=True)
+                self._logs.update_status(
+                    message_id=str(id(message)),
+                    state="undone"
+                )
 
         def on_rerun(instance, _):
+            """Handle rerun operations."""
             if not self._logs:
                 return
             count = instance._get_last_user_entry_index() - 1
             messages = instance[-count:]
             for message in messages:
-                self._logs.update_status(message_id=id(message), removed=True)
+                self._logs.update_status(
+                    message_id=str(id(message)),
+                    state="retried"
+                )
 
         if interface is None:
             interface = ChatInterface(
@@ -143,8 +156,6 @@ class Coordinator(Viewer, Actor):
             )
         else:
             interface.callback = self._chat_invoke
-
-        self._session_id = id(self)
 
         if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
@@ -471,7 +482,7 @@ class Coordinator(Viewer, Actor):
                     "Assistant could not settle on a plan of action to perform the requested query. "
                     "Please restate your request."
                 )
-                self.interface.stream(msg, user='Lumen')
+                self.interface.stream(msg, user='Lumen', trigger_post_hook=True)
                 return msg
             for node in execution_graph:
                 succeeded = await self._execute_graph_node(node, messages)

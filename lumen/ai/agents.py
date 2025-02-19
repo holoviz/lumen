@@ -132,7 +132,7 @@ class Agent(Viewer, Actor, ContextProvider):
             messages, system=system_prompt, model_spec=model_spec, field="output"
         ):
             message = self.interface.stream(
-                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
+                output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width, trigger_post_hook=True
             )
         return message
 
@@ -342,7 +342,7 @@ class TableListAgent(Agent):
             header_filters=len(tables) > 10
         )
         table_list.on_click(self._use_table)
-        self.interface.stream(table_list, user="Lumen")
+        self.interface.stream(table_list, user="Lumen", trigger_post_hook=True)
         self._memory["closest_tables"] = tables[:5]
         return table_list
 
@@ -396,7 +396,7 @@ class DocumentListAgent(Agent):
             header_filters=True
         )
         document_list.on_click(self._use_document)
-        self.interface.stream(document_list, user="Lumen")
+        self.interface.stream(document_list, user="Lumen", trigger_post_hook=True)
         return document_list
 
 
@@ -472,7 +472,7 @@ class LumenBaseAgent(Agent):
             self._memory['outputs'] = self._memory['outputs']+[out]
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(
-            message=message, **message_kwargs, replace=True, max_width=self._max_width
+            message=message, **message_kwargs, replace=True, max_width=self._max_width, trigger_post_hook=True
         )
 
 
@@ -1025,7 +1025,7 @@ class AnalysisAgent(LumenBaseAgent):
         analysis = self._memory["analysis"]
         pipeline = self._memory['pipeline']
         if view is None and analysis.autorun:
-            self.interface.stream('Failed to find an analysis that applies to this data')
+            self.interface.stream('Failed to find an analysis that applies to this data', trigger_post_hook=True)
         else:
             self._render_lumen(
                 view,
