@@ -14,6 +14,8 @@ from panel.widgets import (
     ToggleIcon,
 )
 
+from lumen.ai.logs import ChatLogs
+
 from ..sources.duckdb import DuckDBSource
 from .memory import _Memory, memory
 
@@ -384,6 +386,10 @@ class RetryControls(Viewer):
 
     reason = param.String(doc="Reason for retry")
 
+    chat_logs = param.ClassSelector(class_=ChatLogs, doc="Chat logs")
+
+    message_id = param.String(doc="Message ID")
+
     def __init__(self, **params):
         super().__init__(**params)
         icon = ToggleIcon.from_param(
@@ -410,6 +416,14 @@ class RetryControls(Viewer):
             reason=self._text_input.value,
             active=False,
         )
+
+        if self.chat_logs and self.message_id:
+            self.chat_logs.edit_message(
+                message_id=self.message_id,
+                new_content=self.reason,
+                revision_type='retry',
+                metadata={'retry_reason': self.reason}
+            )
 
     def __panel__(self):
         return self._row

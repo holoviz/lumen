@@ -4,6 +4,10 @@ import sqlite3
 
 import param
 
+from panel import Card
+from panel.chat import ChatMessage
+from panel.widgets import Tabulator
+
 from lumen.ai.utils import log_debug
 
 
@@ -11,7 +15,10 @@ class ChatLogs(param.Parameterized):
 
     filename = param.String(default="chat_logs.db")
 
+    session_id = param.String(constant=True)
+
     def __init__(self, **params):
+        params["session_id"] = str(id(self))
         super().__init__(**params)
         self.conn = sqlite3.connect(self.filename)
         self.cursor = self.conn.cursor()
@@ -25,20 +32,37 @@ class ChatLogs(param.Parameterized):
                 message_content TEXT,
                 liked BOOLEAN DEFAULT FALSE,
                 disliked BOOLEAN DEFAULT FALSE,
-                removed BOOLEAN DEFAULT FALSE,
+                state TEXT DEFAULT 'active',
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         self.conn.commit()
 
+    def _serialize_message(self, message: ChatMessage | str) -> str:
+        """Serialize a message object into a string."""
+        if isinstance(message, str):
+            return message
+        if isinstance(message.object, Card):
+            steps = message.object
+            serialized = "# Steps"
+            for step in steps.objects:
+                content = "\n".join([obj.object for obj in step.objects])
+                serialized += f"## {step.title}\n{content}"
+            return serialized
+        if isinstance(message.object, Tabulator):
+            tabulator = message.object
+            serialized = "# Table\n"
+            serialized += tabulator.value.to_markdown()
+            return serialized
+        return message.serialize()
+
     def upsert(
         self,
-        session_id,
         message_id,
         message_index,
         message_user,
-        message_content,
+        message,
     ):
         UPSERT_SCHEMA = """
         INSERT INTO logs (session_id, message_id, message_index, message_user, message_content)
@@ -51,6 +75,8 @@ class ChatLogs(param.Parameterized):
         message_user = excluded.message_user,
         message_content = excluded.message_content
         """
+        session_id = self.session_id
+        message_content = self._serialize_message(message)
         try:
             self.cursor.execute(
                 UPSERT_SCHEMA,
@@ -62,30 +88,18 @@ class ChatLogs(param.Parameterized):
                     message_content,
                 ),
             )
-        except Exception:
-            try:
-                self.cursor.execute(
-                    UPSERT_SCHEMA,
-                    (
-                        session_id,
-                        message_id,
-                        message_index,
-                        message_user,
-                        str(message_content),
-                    ),
-                )
-            except Exception:
-                log_debug("Failed to insert message")
-                return
             self.conn.commit()
+        except Exception:
+            log_debug("Failed to insert message")
+            return
 
-    def update_status(self, message_id, liked=None, disliked=None, removed=None):
+    def update_status(self, message_id, liked=None, disliked=None, state=None):
         self.cursor.execute(
             """
             UPDATE logs
-            SET liked = COALESCE(?, liked), disliked = COALESCE(?, disliked), removed = COALESCE(?, removed)
+            SET liked = COALESCE(?, liked), disliked = COALESCE(?, disliked), state = COALESCE(?, state)
             WHERE message_id = ?
             """,
-            (liked, disliked, removed, message_id),
+            (liked, disliked, state, message_id),
         )
         self.conn.commit()
