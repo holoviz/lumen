@@ -103,9 +103,9 @@ class Coordinator(Viewer, Actor):
         def on_message(message: ChatMessage, instance: ChatInterface):
             """Handle new messages and updates to existing messages."""
             def update_on_reaction(reactions):
-                if not self._logs:
+                if not instance._logs:
                     return
-                self._logs.update_status(
+                instance._logs.update_status(
                     message_id=message_id,
                     liked="like" in reactions,
                     disliked="dislike" in reactions,
@@ -115,11 +115,11 @@ class Coordinator(Viewer, Actor):
             bind(update_on_reaction, message.param.reactions, watch=True)
             message_id = str(id(message))
             message_index = instance.objects.index(message)
-            if instance._placeholder in instance._chat_log:
+            if instance._placeholder in instance._chat_log:  # NOT _logs; is Feed!
                 # disregard placeholder message
                 message_index -= 1
             # Log the message
-            self._logs.upsert(
+            instance._logs.upsert(
                 message_id=message_id,
                 message_index=message_index,
                 message_user=message.user,
@@ -128,26 +128,34 @@ class Coordinator(Viewer, Actor):
 
         def on_undo(instance, _):
             """Handle undo operations."""
-            if not self._logs:
+            if not instance._logs:
                 return
             count = instance._get_last_user_entry_index()
             messages = instance[-count:]
             for message in messages:
-                self._logs.update_status(
+                instance._logs.update_status(
                     message_id=str(id(message)),
                     state="undone"
                 )
 
+        def on_clear(instance, _):
+            messages = instance.objects
+            for message in messages:
+                instance._logs.update_status(
+                    message_id=str(id(message)),
+                    state="cleared"
+                )
+
         def on_rerun(instance, _):
             """Handle rerun operations."""
-            if not self._logs:
+            if not instance._logs:
                 return
             count = instance._get_last_user_entry_index() - 1
             messages = instance[-count:]
             for message in messages:
-                self._logs.update_status(
+                instance._logs.update_status(
                     message_id=str(id(message)),
-                    state="retried"
+                    state="reran"
                 )
 
         if interface is None:
@@ -159,11 +167,11 @@ class Coordinator(Viewer, Actor):
 
         if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            self._logs = ChatLogs(filename=logs_db_path)
+            interface._logs = ChatLogs(filename=logs_db_path)
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
-            self._logs = None
+            interface._logs = None
 
         llm = llm or self.llm
         instantiated = []
