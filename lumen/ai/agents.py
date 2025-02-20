@@ -780,7 +780,6 @@ class BaseViewAgent(LumenBaseAgent):
                 step.stream(chain_of_thought, replace=True)
             self._last_output = dict(output)
             spec = await self._extract_spec(self._last_output)
-        log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
     async def _extract_spec(self, spec: dict[str, Any]):
@@ -816,6 +815,7 @@ class BaseViewAgent(LumenBaseAgent):
             doc=doc,
         )
         spec = await self._create_valid_spec(messages, system_prompt, schema, step_title)
+        log_debug(f"{self.name} settled on spec: {spec!r}.")
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
@@ -898,7 +898,11 @@ class VegaLiteAgent(BaseViewAgent):
     _output_type = VegaLiteOutput
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        spec = await self._extract_spec({"yaml_spec": event.new})
+        try:
+            spec = await self._extract_spec({"yaml_spec": event.new})
+        except Exception as e:
+            traceback.print_exception(e)
+            return
         memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
