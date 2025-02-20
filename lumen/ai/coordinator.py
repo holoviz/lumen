@@ -32,8 +32,8 @@ from .logs import ChatLogs
 from .models import make_agent_model, make_context_model, make_plan_models
 from .tools import FunctionTool, Tool
 from .utils import (
-    gather_table_sources, get_schema, log_debug, mutate_user_message,
-    retry_llm_output,
+    gather_table_sources, get_schema, hash_config, log_debug,
+    mutate_user_message, normalize_dict, retry_llm_output,
 )
 from .views import LumenOutput
 
@@ -121,6 +121,7 @@ class Coordinator(Viewer, Actor):
             # Log the message
             instance._logs.upsert(
                 message_id=message_id,
+                session_id=instance._session_id,
                 message_index=message_index,
                 message_user=message.user,
                 message=message,
@@ -168,6 +169,7 @@ class Coordinator(Viewer, Actor):
         if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
             interface._logs = ChatLogs(filename=logs_db_path)
+            interface._session_id = hex(id(interface))[:8]
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
@@ -206,6 +208,17 @@ class Coordinator(Viewer, Actor):
                 self._tools["__main__"].append(FunctionTool(tool, llm=llm))
             else:
                 self._tools["__main__"].append(tool(llm=llm))
+
+        # Register coordinator with logs if available
+        if logs_db_path and interface._logs:
+            try:
+                interface._logs.register_coordinator(self)
+            except Exception as e:
+                raise RuntimeError(
+                    "Failed to register coordinator with logs. "
+                    "Please ensure the logs database is accessible."
+                ) from e
+
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
@@ -504,6 +517,22 @@ class Coordinator(Viewer, Actor):
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
                 break
+
+    @property
+    def hash(self) -> str:
+        """Hash of coordinator's configuration."""
+        config = {
+            'name': self.__class__.__name__,
+            'prompts': normalize_dict({**self.param.prompts.default, **self.prompts}),
+            'agents': [agent.hash for agent in self.agents],
+            'demo_inputs': self.demo_inputs,
+            'history': self.history,
+            'suggestions': self.suggestions,
+            'render_output': self.render_output,
+            'template_overrides': normalize_dict(self.template_overrides),
+            'llm_id': self.llm.hash if self.llm else None
+        }
+        return hash_config(config)
 
 
 class DependencyResolver(Coordinator):

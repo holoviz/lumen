@@ -903,11 +903,7 @@ class VegaLiteAgent(BaseViewAgent):
     _output_type = VegaLiteOutput
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        try:
-            spec = await self._extract_spec({"yaml_spec": event.new})
-        except Exception as e:
-            traceback.print_exception(e)
-            return
+        spec = await self._extract_spec({"yaml_spec": event.new})
         memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):

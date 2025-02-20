@@ -9,7 +9,10 @@ from pydantic import BaseModel
 
 from .llm import Llm, Message
 from .memory import _Memory, memory
-from .utils import log_debug, render_template, warn_on_unused_variables
+from .utils import (
+    hash_config, log_debug, normalize_dict, render_template,
+    warn_on_unused_variables,
+)
 
 
 class Actor(param.Parameterized):
@@ -172,6 +175,32 @@ class Actor(param.Parameterized):
         """
         return cls._lookup_prompt_key(cls, key, "template").read_text()
 
+    @property
+    def hash(self) -> str:
+        """
+        A deterministic hash of this actor's configuration, including prompts,
+        requires/provides, template overrides, and LLM settings.
+        """
+        # Get complete prompts combining class defaults and instance overrides
+        prompts = {**self.param.prompts.default, **self.prompts}
+
+        # Build configuration dictionary
+        config = {
+            'agent_type': self.__class__.__name__,
+            'prompts': normalize_dict(prompts),
+            'requires': sorted(self.requires),
+            'provides': sorted(self.provides),
+            'template_overrides': normalize_dict(self.template_overrides)
+        }
+
+        # Add LLM configuration if present
+        if self.llm is not None:
+            config['llm'] = {
+                'mode': str(self.llm.mode),
+                'model_kwargs': normalize_dict(self.llm.model_kwargs),
+                'temperature': getattr(self.llm, 'temperature', None)
+            }
+        return hash_config(config)
 
 class ContextProvider(param.Parameterized):
     """
