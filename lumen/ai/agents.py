@@ -771,6 +771,7 @@ class BaseViewAgent(LumenBaseAgent):
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
+        error = ""
         with self.interface.add_step(
             title=step_title or "Generating view...",
             steps_layout=self._steps_layout
@@ -779,7 +780,13 @@ class BaseViewAgent(LumenBaseAgent):
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
             self._last_output = dict(output)
-            spec = await self._extract_spec(self._last_output)
+            try:
+                spec = await self._extract_spec(self._last_output)
+            except Exception as e:
+                error = str(e)
+                report_error(e, step)
+        if error:
+            raise ValueError(error)
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
