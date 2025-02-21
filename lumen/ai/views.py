@@ -196,7 +196,7 @@ class LumenOutput(Viewer):
             self._last_output[self.spec] = output
             yield output
 
-            self.interface._logs.update_retry(
+            self.interface._telemetry.update_retry(
                 message_id=str(id(self.parent_message)),
                 message=self.parent_message
             )
@@ -355,7 +355,7 @@ class SQLOutput(LumenOutput):
             self._last_output[self.spec] = output
             yield output
 
-            self.interface._logs.update_retry(
+            self.interface._telemetry.update_retry(
                 message_id=str(id(self.parent_message)),
                 message=self.parent_message
             )
