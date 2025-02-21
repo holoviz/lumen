@@ -272,7 +272,6 @@ class ChatAgent(Agent):
                 for table in self._memory["closest_tables"] if table in source_tables
             ]
             context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
-        print(messages, "MESSAGES...")
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
 
