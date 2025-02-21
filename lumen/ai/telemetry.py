@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from lumen.ai.coordinator import Coordinator
 
 
-class ChatLogs(param.Parameterized):
+class ChatTelemetry(param.Parameterized):
     """A class for managing and storing chat message logs in SQLite.
 
     The class handles storage, retrieval, and versioning of chat messages,
@@ -27,7 +27,7 @@ class ChatLogs(param.Parameterized):
     LLM configurations, agents, coordinators, and sessions.
     """
 
-    filename: str = param.String(default="lumen_chat_logs.db")
+    filename: str = param.String(default="lumen_telemetry.db")
 
     def __init__(self, **params) -> None:
         super().__init__(**params)

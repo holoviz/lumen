@@ -28,8 +28,8 @@ from .agents import (
 )
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
-from .logs import ChatLogs
 from .models import make_agent_model, make_context_model, make_plan_models
+from .telemetry import ChatTelemetry
 from .tools import FunctionTool, Tool
 from .utils import (
     gather_table_sources, get_schema, hash_config, log_debug,
@@ -103,9 +103,9 @@ class Coordinator(Viewer, Actor):
         def on_message(message: ChatMessage, instance: ChatInterface):
             """Handle new messages and updates to existing messages."""
             def update_on_reaction(reactions):
-                if not instance._logs:
+                if not instance._telemetry:
                     return
-                instance._logs.update_status(
+                instance._telemetry.update_status(
                     message_id=message_id,
                     liked="like" in reactions,
                     disliked="dislike" in reactions,
@@ -115,11 +115,11 @@ class Coordinator(Viewer, Actor):
             bind(update_on_reaction, message.param.reactions, watch=True)
             message_id = str(id(message))
             message_index = instance.objects.index(message)
-            if instance._placeholder in instance._chat_log:  # NOT _logs; is Feed!
+            if instance._placeholder in instance._chat_log:  # NOT _telemetry; is Feed!
                 # disregard placeholder message
                 message_index -= 1
             # Log the message
-            instance._logs.upsert(
+            instance._telemetry.upsert(
                 message_id=message_id,
                 session_id=instance._session_id,
                 message_index=message_index,
@@ -129,12 +129,12 @@ class Coordinator(Viewer, Actor):
 
         def on_undo(instance, _):
             """Handle undo operations."""
-            if not instance._logs:
+            if not instance._telemetry:
                 return
             count = instance._get_last_user_entry_index()
             messages = instance[-count:]
             for message in messages:
-                instance._logs.update_status(
+                instance._telemetry.update_status(
                     message_id=str(id(message)),
                     state="undone"
                 )
@@ -142,19 +142,19 @@ class Coordinator(Viewer, Actor):
         def on_clear(instance, _):
             messages = instance.objects
             for message in messages:
-                instance._logs.update_status(
+                instance._telemetry.update_status(
                     message_id=str(id(message)),
                     state="cleared"
                 )
 
         def on_rerun(instance, _):
             """Handle rerun operations."""
-            if not instance._logs:
+            if not instance._telemetry:
                 return
             count = instance._get_last_user_entry_index() - 1
             messages = instance[-count:]
             for message in messages:
-                instance._logs.update_status(
+                instance._telemetry.update_status(
                     message_id=str(id(message)),
                     state="reran"
                 )
@@ -168,12 +168,12 @@ class Coordinator(Viewer, Actor):
 
         if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            interface._logs = ChatLogs(filename=logs_db_path)
+            interface._telemetry = ChatTelemetry(filename=logs_db_path)
             interface._session_id = hex(id(interface))[:8]
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
-            interface._logs = None
+            interface._telemetry = None
 
         llm = llm or self.llm
         instantiated = []
@@ -210,9 +210,9 @@ class Coordinator(Viewer, Actor):
                 self._tools["__main__"].append(tool(llm=llm))
 
         # Register coordinator with logs if available
-        if logs_db_path and interface._logs:
+        if logs_db_path and interface._telemetry:
             try:
-                interface._logs.register_coordinator(self)
+                interface._telemetry.register_coordinator(self)
             except Exception as e:
                 raise RuntimeError(
                     "Failed to register coordinator with logs. "
