@@ -950,15 +950,15 @@ class ChatLogs(param.Parameterized):
             SELECT
                 AVG(CASE
                     WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
+                    THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
                 END) as avg_lumen_after_assistant_seconds,
                 MIN(CASE
                     WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
+                    THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
                 END) as min_lumen_after_assistant_seconds,
                 MAX(CASE
                     WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
+                    THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
                 END) as max_lumen_after_assistant_seconds
             FROM messages m1
             LEFT JOIN messages m2 ON m2.message_index = m1.message_index - 1
