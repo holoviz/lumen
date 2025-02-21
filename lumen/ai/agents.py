@@ -771,7 +771,6 @@ class BaseViewAgent(LumenBaseAgent):
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
-        spec = ""
         error = ""
         with self.interface.add_step(
             title=step_title or "Generating view...",
@@ -788,6 +787,7 @@ class BaseViewAgent(LumenBaseAgent):
                 report_error(e, step)
         if error:
             raise ValueError(error)
+        log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
     async def _extract_spec(self, spec: dict[str, Any]):
@@ -823,7 +823,6 @@ class BaseViewAgent(LumenBaseAgent):
             doc=doc,
         )
         spec = await self._create_valid_spec(messages, system_prompt, schema, step_title)
-        log_debug(f"{self.name} settled on spec: {spec!r}.")
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
