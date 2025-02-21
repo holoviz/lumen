@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import inspect
 import json
@@ -13,10 +14,11 @@ from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs
 
 import pandas as pd
+import param
 import yaml
 
 from jinja2 import (
@@ -489,3 +491,32 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
         for key, value in parse_qs(query_params).items():
             model_kwargs[key] = cast_value(value)
     return repo, model_file, model_kwargs
+
+
+def normalize_dict(d: dict[str, Any]) -> dict[str, Any]:
+    """Normalizes dictionary values for consistent hashing."""
+    def normalize_value(v):
+        if hasattr(v, 'read_text'):
+            try:
+                return v.read_text()
+            except Exception:
+                return str(v)
+        if callable(v):
+            return f"{v.__module__}.{v.__name__}"
+        if isinstance(v, type):
+            return f"{v.__module__}.{v.__name__}"
+        if isinstance(v, param.Parameterized):
+            return f"{v.__class__.__module__}.{v.__class__.__name__}"
+        if isinstance(v, dict):
+            return {k: normalize_value(val) for k, val in sorted(v.items())}
+        if isinstance(v, (list, tuple)):
+            return sorted(normalize_value(x) for x in v)
+        return str(v)
+
+    return {k: normalize_value(v) for k, v in sorted(d.items())}
+
+
+def hash_config(config: dict[str, Any]) -> str:
+    """Creates a deterministic hash from a configuration dictionary."""
+    config_str = json.dumps(config, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(config_str.encode('utf-8')).hexdigest()[:16]
