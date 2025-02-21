@@ -639,7 +639,7 @@ class ChatLogs(param.Parameterized):
         return df_history
 
     def get_sessions(
-        self, session_id: str | None = None, username: str | None = None
+        self, session_id: str | None = "all", username: str | None = None
     ) -> pd.DataFrame:
         """Retrieve sessions from the database.
 
@@ -900,29 +900,29 @@ class ChatLogs(param.Parameterized):
                 AVG(CASE
                     WHEN m1.message_user != 'User' AND m2.message_user = 'User'
                     THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as avg_assistant_response_seconds,
+                END) as avg_assistant_response_s,
                 MIN(CASE
                     WHEN m1.message_user != 'User' AND m2.message_user = 'User'
                     THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as min_assistant_response_seconds,
+                END) as min_assistant_response_s,
                 MAX(CASE
                     WHEN m1.message_user != 'User' AND m2.message_user = 'User'
                     THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as max_assistant_response_seconds,
+                END) as max_assistant_response_s,
 
                 -- User response times
                 AVG(CASE
                     WHEN m1.message_user = 'User' AND m2.message_user != 'User'
                     THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as avg_user_response_seconds,
+                END) as avg_user_response_s,
                 MIN(CASE
                     WHEN m1.message_user = 'User' AND m2.message_user != 'User'
                     THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as min_user_response_seconds,
+                END) as min_user_response_s,
                 MAX(CASE
                     WHEN m1.message_user = 'User' AND m2.message_user != 'User'
                     THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as max_user_response_seconds
+                END) as max_user_response_s
             FROM messages m1
             LEFT JOIN messages m2 ON m2.message_index = m1.message_index - 1
             AND m2.session_id = m1.session_id
@@ -935,12 +935,12 @@ class ChatLogs(param.Parameterized):
         # Add response time metrics
         metrics.update(
             {
-                "avg_assistant_response_seconds": row[0],
-                "min_assistant_response_seconds": row[1],
-                "max_assistant_response_seconds": row[2],
-                "avg_user_response_seconds": row[3],
-                "min_user_response_seconds": row[4],
-                "max_user_response_seconds": row[5],
+                "avg_assistant_response_s": row[0],
+                "min_assistant_response_s": row[1],
+                "max_assistant_response_s": row[2],
+                "avg_user_response_s": row[3],
+                "min_user_response_s": row[4],
+                "max_user_response_s": row[5],
             }
         )
 
@@ -951,15 +951,15 @@ class ChatLogs(param.Parameterized):
                 AVG(CASE
                     WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
                     THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as avg_lumen_after_assistant_seconds,
+                END) as avg_lumen_response_s,
                 MIN(CASE
                     WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
                     THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as min_lumen_after_assistant_seconds,
+                END) as min_lumen_response_s,
                 MAX(CASE
                     WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
                     THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as max_lumen_after_assistant_seconds
+                END) as max_lumen_response_s
             FROM messages m1
             LEFT JOIN messages m2 ON m2.message_index = m1.message_index - 1
             AND m2.session_id = m1.session_id
@@ -972,9 +972,9 @@ class ChatLogs(param.Parameterized):
         # Add Assistant-to-Lumen response time metrics
         metrics.update(
             {
-                "avg_lumen_after_assistant_seconds": row[0],
-                "min_lumen_after_assistant_seconds": row[1],
-                "max_lumen_after_assistant_seconds": row[2],
+                "avg_lumen_response_s": row[0],
+                "min_lumen_response_s": row[1],
+                "max_lumen_response_s": row[2],
             }
         )
 
