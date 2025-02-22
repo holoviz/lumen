@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from dataclasses import dataclass
 from datetime import datetime
+from pprint import pprint
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
@@ -18,7 +20,8 @@ from lumen.ai.utils import log_debug, normalize_value
 if TYPE_CHECKING:
     from lumen.ai.coordinator import Coordinator
 
-from dataclasses import dataclass
+
+PPRINT_WIDTH = 360
 
 
 @dataclass
@@ -30,6 +33,9 @@ class LLMConfig:
     model_kwargs: dict[str, Any]
     temperature: float
     created_at: datetime
+
+    def pprint(self):
+        pprint(self.__dict__, width=PPRINT_WIDTH)
 
 
 @dataclass
@@ -47,6 +53,9 @@ class AgentConfig:
     llm: LLMConfig | None
     created_at: datetime
 
+    def pprint(self):
+        pprint(self.__dict__, width=PPRINT_WIDTH)
+
 
 @dataclass
 class CoordinatorConfig:
@@ -62,6 +71,9 @@ class CoordinatorConfig:
     llm: LLMConfig | None
     created_at: datetime
 
+    def pprint(self):
+        pprint(self.__dict__, width=PPRINT_WIDTH)
+
 
 @dataclass
 class SessionInfo:
@@ -74,6 +86,9 @@ class SessionInfo:
     created_at: datetime
     last_active: datetime
     metrics: dict
+
+    def pprint(self):
+        pprint(self.__dict__, width=PPRINT_WIDTH)
 
 
 class ChatLogs(param.Parameterized):
@@ -874,7 +889,9 @@ class ChatLogs(param.Parameterized):
         # Set session_id as index
         return df.set_index("session_id")
 
-    def view_coordinator_agents(self, coordinator_id: str | None = None) -> pd.DataFrame:
+    def view_coordinator_agents(
+        self, coordinator_id: str | None = None
+    ) -> pd.DataFrame:
         """View detailed information about all agents in a coordinator.
 
         Parameters
@@ -905,23 +922,23 @@ class ChatLogs(param.Parameterized):
         agents_data = []
         for agent in coordinator.agents:
             # Extract response_model if it exists in prompts
-            response_model = agent.prompts.get('response_model', None)
-            prompts = {k: v for k, v in agent.prompts.items() if k != 'response_model'}
+            response_model = agent.prompts.get("response_model", None)
+            prompts = {k: v for k, v in agent.prompts.items() if k != "response_model"}
 
             agent_data = {
-                'agent_id': agent.agent_id,
-                'name': agent.name,
-                'purpose': agent.purpose.strip() if agent.purpose else None,
-                'requires': agent.requires,
-                'provides': agent.provides,
-                'tools': agent.tools,
-                'llm_id': agent.llm.llm_id if agent.llm else None,
-                'llm_mode': agent.llm.mode if agent.llm else None,
-                'llm_model_args': agent.llm.model_kwargs if agent.llm else None,
-                'llm_temperature': agent.llm.temperature if agent.llm else None,
-                'response_model': response_model,
-                'prompts': prompts,
-                'template_overrides': agent.template_overrides
+                "agent_id": agent.agent_id,
+                "name": agent.name,
+                "purpose": agent.purpose.strip() if agent.purpose else None,
+                "requires": agent.requires,
+                "provides": agent.provides,
+                "tools": agent.tools,
+                "llm_id": agent.llm.llm_id if agent.llm else None,
+                "llm_mode": agent.llm.mode if agent.llm else None,
+                "llm_model_args": agent.llm.model_kwargs if agent.llm else None,
+                "llm_temperature": agent.llm.temperature if agent.llm else None,
+                "response_model": response_model,
+                "prompts": prompts,
+                "template_overrides": agent.template_overrides,
             }
             agents_data.append(agent_data)
 
@@ -929,9 +946,19 @@ class ChatLogs(param.Parameterized):
 
         # Define column order
         columns = [
-            'agent_id', 'name', 'purpose', 'requires', 'provides', 'tools',
-            'llm_id', 'llm_mode', 'llm_model_args', 'llm_temperature',
-            'response_model', 'prompts', 'template_overrides'
+            "agent_id",
+            "name",
+            "purpose",
+            "requires",
+            "provides",
+            "tools",
+            "llm_id",
+            "llm_mode",
+            "llm_model_args",
+            "llm_temperature",
+            "response_model",
+            "prompts",
+            "template_overrides",
         ]
 
         # Ensure all columns exist
@@ -1081,7 +1108,7 @@ class ChatLogs(param.Parameterized):
             "min_lumen_resp_s",
             "max_lumen_resp_s",
         ]
-        metrics = df[metrics_columns].to_dict()
+        metrics = df[metrics_columns].iloc[0].to_dict()
 
         return SessionInfo(
             session_id=session_data.name,  # Index is session_id
