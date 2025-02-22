@@ -12,7 +12,7 @@ import param
 import yaml
 
 from panel import bind
-from panel.chat import ChatInterface, ChatStep
+from panel.chat import ChatInterface, ChatMessage, ChatStep
 from panel.layout import (
     Card, Column, FlexBox, Tabs,
 )
@@ -32,8 +32,8 @@ from .logs import ChatLogs
 from .models import make_agent_model, make_context_model, make_plan_models
 from .tools import FunctionTool, Tool
 from .utils import (
-    gather_table_sources, get_schema, log_debug, mutate_user_message,
-    retry_llm_output,
+    gather_table_sources, get_schema, hash_config, log_debug,
+    mutate_user_message, normalize_value, retry_llm_output,
 )
 from .views import LumenOutput
 
@@ -100,42 +100,64 @@ class Coordinator(Viewer, Actor):
         logs_db_path: str = "",
         **params,
     ):
-        def on_message(message, instance):
+        def on_message(message: ChatMessage, instance: ChatInterface):
+            """Handle new messages and updates to existing messages."""
             def update_on_reaction(reactions):
-                if not self._logs:
+                if not instance._logs:
                     return
-                self._logs.update_status(
+                instance._logs.update_status(
                     message_id=message_id,
                     liked="like" in reactions,
                     disliked="dislike" in reactions,
                 )
 
+            # Bind reaction updates
             bind(update_on_reaction, message.param.reactions, watch=True)
-            message_id = id(message)
+            message_id = str(id(message))
             message_index = instance.objects.index(message)
-            self._logs.upsert(
-                session_id=self._session_id,
+            if instance._placeholder in instance._chat_log:  # NOT _logs; is Feed!
+                # disregard placeholder message
+                message_index -= 1
+            # Log the message
+            instance._logs.upsert(
                 message_id=message_id,
+                session_id=instance._session_id,
                 message_index=message_index,
                 message_user=message.user,
-                message_content=message.serialize(),
+                message=message,
             )
 
         def on_undo(instance, _):
-            if not self._logs:
+            """Handle undo operations."""
+            if not instance._logs:
                 return
             count = instance._get_last_user_entry_index()
             messages = instance[-count:]
             for message in messages:
-                self._logs.update_status(message_id=id(message), removed=True)
+                instance._logs.update_status(
+                    message_id=str(id(message)),
+                    state="undone"
+                )
+
+        def on_clear(instance, _):
+            messages = instance.objects
+            for message in messages:
+                instance._logs.update_status(
+                    message_id=str(id(message)),
+                    state="cleared"
+                )
 
         def on_rerun(instance, _):
-            if not self._logs:
+            """Handle rerun operations."""
+            if not instance._logs:
                 return
             count = instance._get_last_user_entry_index() - 1
             messages = instance[-count:]
             for message in messages:
-                self._logs.update_status(message_id=id(message), removed=True)
+                instance._logs.update_status(
+                    message_id=str(id(message)),
+                    state="reran"
+                )
 
         if interface is None:
             interface = ChatInterface(
@@ -144,15 +166,14 @@ class Coordinator(Viewer, Actor):
         else:
             interface.callback = self._chat_invoke
 
-        self._session_id = id(self)
-
         if logs_db_path:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            self._logs = ChatLogs(filename=logs_db_path)
+            interface._logs = ChatLogs(filename=logs_db_path)
+            interface._session_id = hex(id(interface))[:8]
             interface.post_hook = on_message
         else:
             interface.message_params["show_reaction_icons"] = False
-            self._logs = None
+            interface._logs = None
 
         llm = llm or self.llm
         instantiated = []
@@ -187,6 +208,17 @@ class Coordinator(Viewer, Actor):
                 self._tools["__main__"].append(FunctionTool(tool, llm=llm))
             else:
                 self._tools["__main__"].append(tool(llm=llm))
+
+        # Register coordinator with logs if available
+        if logs_db_path and interface._logs:
+            try:
+                interface._logs.register_coordinator(self)
+            except Exception as e:
+                raise RuntimeError(
+                    "Failed to register coordinator with logs. "
+                    "Please ensure the logs database is accessible."
+                ) from e
+
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
@@ -471,7 +503,7 @@ class Coordinator(Viewer, Actor):
                     "Assistant could not settle on a plan of action to perform the requested query. "
                     "Please restate your request."
                 )
-                self.interface.stream(msg, user='Lumen')
+                self.interface.stream(msg, user='Lumen', trigger_post_hook=True)
                 return msg
             for node in execution_graph:
                 succeeded = await self._execute_graph_node(node, messages)
@@ -485,6 +517,22 @@ class Coordinator(Viewer, Actor):
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
                 break
+
+    @property
+    def hash(self) -> str:
+        """Hash of coordinator's configuration."""
+        config = {
+            'name': self.__class__.__name__,
+            'prompts': normalize_value({**self.param.prompts.default, **self.prompts}),
+            'agents': [agent.hash for agent in self.agents],
+            'demo_inputs': self.demo_inputs,
+            'history': self.history,
+            'suggestions': self.suggestions,
+            'render_output': self.render_output,
+            'template_overrides': normalize_value(self.template_overrides),
+            'llm_id': self.llm.hash if self.llm else None
+        }
+        return hash_config(config)
 
 
 class DependencyResolver(Coordinator):
