@@ -33,7 +33,7 @@ from .models import make_agent_model, make_context_model, make_plan_models
 from .tools import FunctionTool, Tool
 from .utils import (
     gather_table_sources, get_schema, hash_config, log_debug,
-    mutate_user_message, normalize_dict, retry_llm_output,
+    mutate_user_message, normalize_value, retry_llm_output,
 )
 from .views import LumenOutput
 
@@ -523,13 +523,13 @@ class Coordinator(Viewer, Actor):
         """Hash of coordinator's configuration."""
         config = {
             'name': self.__class__.__name__,
-            'prompts': normalize_dict({**self.param.prompts.default, **self.prompts}),
+            'prompts': normalize_value({**self.param.prompts.default, **self.prompts}),
             'agents': [agent.hash for agent in self.agents],
             'demo_inputs': self.demo_inputs,
             'history': self.history,
             'suggestions': self.suggestions,
             'render_output': self.render_output,
-            'template_overrides': normalize_dict(self.template_overrides),
+            'template_overrides': normalize_value(self.template_overrides),
             'llm_id': self.llm.hash if self.llm else None
         }
         return hash_config(config)

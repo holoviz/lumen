@@ -13,10 +13,67 @@ from panel import Card
 from panel.chat import ChatMessage
 from panel.widgets import Tabulator
 
-from lumen.ai.utils import log_debug, normalize_dict
+from lumen.ai.utils import log_debug, normalize_value
 
 if TYPE_CHECKING:
     from lumen.ai.coordinator import Coordinator
+
+from dataclasses import dataclass
+
+
+@dataclass
+class LLMConfig:
+    """Configuration for a language model."""
+
+    llm_id: str
+    mode: str
+    model_kwargs: dict[str, Any]
+    temperature: float
+    created_at: datetime
+
+
+@dataclass
+class AgentConfig:
+    """Configuration for an agent in the system."""
+
+    agent_id: str
+    name: str
+    purpose: str | None
+    requires: list[str]
+    provides: list[str]
+    tools: list[str]
+    prompts: dict[str, Any]
+    template_overrides: dict[str, Any]
+    llm: LLMConfig | None
+    created_at: datetime
+
+
+@dataclass
+class CoordinatorConfig:
+    """Configuration for a coordinator managing multiple agents."""
+
+    coordinator_id: str
+    name: str
+    agents: list[AgentConfig]
+    prompts: dict[str, Any]
+    template_overrides: dict[str, Any]
+    tools: list[str]
+    history: int
+    llm: LLMConfig | None
+    created_at: datetime
+
+
+@dataclass
+class SessionInfo:
+    """Information about a chat session."""
+
+    session_id: str
+    username: str
+    user_info: dict[str, Any] | None
+    coordinator: CoordinatorConfig
+    created_at: datetime
+    last_active: datetime
+    metrics: dict
 
 
 class ChatLogs(param.Parameterized):
@@ -112,6 +169,7 @@ class ChatLogs(param.Parameterized):
                 agents JSON NOT NULL,
                 prompts JSON NOT NULL,
                 template_overrides JSON DEFAULT '{}',
+                tools JSON DEFAULT '[]',
                 history INTEGER DEFAULT 3,
                 llm_id TEXT REFERENCES llm_configs(llm_id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -214,10 +272,10 @@ class ChatLogs(param.Parameterized):
                     "purpose": getattr(agent, "purpose", None),
                     "requires": json.dumps(list(agent.requires)),
                     "provides": json.dumps(list(agent.provides)),
-                    "tools": json.dumps([t.name for t in getattr(agent, "tools", [])]),
-                    "prompts": json.dumps(normalize_dict(agent.prompts)),
+                    "tools": json.dumps(normalize_value(getattr(agent, "tools", []))),
+                    "prompts": json.dumps(normalize_value(agent.prompts)),
                     "template_overrides": json.dumps(
-                        normalize_dict(agent.template_overrides)
+                        normalize_value(agent.template_overrides)
                     ),
                     "llm_id": llm_id,
                 }
@@ -240,10 +298,11 @@ class ChatLogs(param.Parameterized):
                 "coordinator_id": coordinator.hash,
                 "name": type(coordinator).__name__,
                 "agents": json.dumps(agent_ids),
-                "prompts": json.dumps(normalize_dict(coordinator.prompts)),
+                "prompts": json.dumps(normalize_value(coordinator.prompts)),
                 "template_overrides": json.dumps(
-                    normalize_dict(coordinator.template_overrides)
+                    normalize_value(coordinator.template_overrides)
                 ),
+                "tools": json.dumps(normalize_value(getattr(coordinator, "tools", []))),
                 "history": coordinator.history,
                 "llm_id": llm_id,
             }
@@ -251,10 +310,10 @@ class ChatLogs(param.Parameterized):
                 """
                 INSERT OR IGNORE INTO coordinators
                 (coordinator_id, name, agents, prompts, template_overrides,
-                 history, llm_id)
+                 tools, history, llm_id)
                 VALUES (
                     :coordinator_id, :name, :agents, :prompts, :template_overrides,
-                    :history, :llm_id
+                    :tools, :history, :llm_id
                 )
                 """,
                 coordinator_data,
@@ -569,7 +628,7 @@ class ChatLogs(param.Parameterized):
             self.conn.rollback()
             log_debug(f"Failed to update status: {e!s}")
 
-    def get_messages(self, session_id: str | None = None) -> pd.DataFrame:
+    def view_messages(self, session_id: str | None = None) -> pd.DataFrame:
         """Retrieve messages from the database.
 
         Parameters
@@ -608,7 +667,7 @@ class ChatLogs(param.Parameterized):
         )
         return df
 
-    def get_message_history(self, message_id: str) -> pd.DataFrame:
+    def view_message_history(self, message_id: str) -> pd.DataFrame:
         """Get the complete history of a message including all retries.
 
         Parameters
@@ -638,10 +697,10 @@ class ChatLogs(param.Parameterized):
         df_history = pd.read_sql(query, self.conn, params=(message_id,))
         return df_history
 
-    def get_sessions(
+    def view_sessions(
         self, session_id: str | None = "all", username: str | None = None
     ) -> pd.DataFrame:
-        """Retrieve sessions from the database.
+        """View sessions with their associated metrics from the database.
 
         Parameters
         ----------
@@ -655,23 +714,112 @@ class ChatLogs(param.Parameterized):
         -------
         pandas.DataFrame
             DataFrame containing sessions with columns:
-            session_id, username, coordinator_id, created_at, last_active,
-            plus associated user_info if available
+            - Basic session info: session_id, username, coordinator_id, created_at, last_active
+            - User info (if available)
+            - Message metrics: user_msgs, asst_msgs, etc.
+            - Response time metrics
+            - Interaction metrics
         """
+        base_query = """
+            WITH SessionMetrics AS (
+                SELECT
+                    m.session_id,
+                    -- Drop column first_message and last_message from final output
+                    MIN(m.timestamp) as _first_message,
+                    MAX(m.timestamp) as _last_message,
+                    -- Basic counts
+                    CAST(SUM(CASE WHEN m.message_user = 'User' THEN 1 ELSE 0 END) AS INTEGER) as user_msgs,
+                    CAST(SUM(CASE WHEN m.message_user != 'User' THEN 1 ELSE 0 END) AS INTEGER) as asst_msgs,
+                    CAST(SUM(CASE WHEN m.liked = TRUE THEN 1 ELSE 0 END) AS INTEGER) as total_likes,
+                    CAST(SUM(CASE WHEN m.disliked = TRUE THEN 1 ELSE 0 END) AS INTEGER) as total_dislikes,
+
+                    -- Message complexity
+                    CAST(ROUND(AVG(CASE WHEN m.message_user = 'User'
+                        THEN LENGTH(m.message_content) - LENGTH(REPLACE(m.message_content, ' ', '')) + 1
+                        END)) AS INTEGER) as avg_user_words,
+                    CAST(ROUND(AVG(CASE WHEN m.message_user != 'User'
+                        THEN LENGTH(m.message_content) - LENGTH(REPLACE(m.message_content, ' ', '')) + 1
+                        END)) AS INTEGER) as avg_asst_words,
+                    CAST(ROUND(AVG(LENGTH(m.message_content))) AS INTEGER) as avg_chars_per_msg,
+
+                    -- Interaction patterns
+                    CAST(COUNT(DISTINCT CASE WHEN m.state != 'initial' THEN m.message_id END) AS INTEGER) as edited_msgs,
+                    CAST(COUNT(DISTINCT CASE WHEN m.state = 'retried' THEN m.message_id END) AS INTEGER) as retried_msgs,
+                    CAST(COUNT(DISTINCT CASE WHEN m.state = 'undone' THEN m.message_id END) AS INTEGER) as undone_msgs,
+
+                    -- Response times
+                    CAST(ROUND(AVG(CASE
+                        WHEN m.message_user != 'User' AND m2.message_user = 'User'
+                        THEN (julianday(m.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60
+                    END)) AS INTEGER) as avg_asst_resp_s,
+                    CAST(MIN(CASE
+                        WHEN m.message_user != 'User' AND m2.message_user = 'User'
+                        THEN (julianday(m.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60
+                    END) AS INTEGER) as min_asst_resp_s,
+                    CAST(MAX(CASE
+                        WHEN m.message_user != 'User' AND m2.message_user = 'User'
+                        THEN (julianday(m.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60
+                    END) AS INTEGER) as max_asst_resp_s,
+                    CAST(ROUND(AVG(CASE
+                        WHEN m.message_user = 'User' AND m2.message_user != 'User'
+                        THEN (julianday(m.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60
+                    END)) AS INTEGER) as avg_user_resp_s,
+
+                    -- Lumen-specific metrics
+                    CAST(ROUND(AVG(CASE
+                        WHEN m.message_user = 'Lumen' AND m2.message_user = 'Assistant'
+                        THEN (julianday(m2.timestamp) - julianday(m.timestamp)) * 24 * 60 * 60
+                    END)) AS INTEGER) as avg_lumen_resp_s,
+                    CAST(MIN(CASE
+                        WHEN m.message_user = 'Lumen' AND m2.message_user = 'Assistant'
+                        THEN (julianday(m2.timestamp) - julianday(m.timestamp)) * 24 * 60 * 60
+                    END) AS INTEGER) as min_lumen_resp_s,
+                    CAST(MAX(CASE
+                        WHEN m.message_user = 'Lumen' AND m2.message_user = 'Assistant'
+                        THEN (julianday(m2.timestamp) - julianday(m.timestamp)) * 24 * 60 * 60
+                    END) AS INTEGER) as max_lumen_resp_s
+                FROM messages m
+                LEFT JOIN messages m2 ON m2.message_index = m.message_index - 1
+                    AND m2.session_id = m.session_id
+                GROUP BY m.session_id
+            )
+            SELECT
+                s.session_id,
+                s.username,
+                s.coordinator_id,
+                s.created_at,
+                s.last_active,
+                s.user_info,
+                CAST(ROUND((julianday(sm._last_message) - julianday(sm._first_message)) * 24 * 60 * 60) AS INTEGER) as duration_s,
+                sm.user_msgs,
+                sm.asst_msgs,
+                sm.total_likes,
+                sm.total_dislikes,
+                sm.avg_user_words,
+                sm.avg_asst_words,
+                sm.avg_chars_per_msg,
+                sm.edited_msgs,
+                sm.retried_msgs,
+                sm.undone_msgs,
+                sm.avg_asst_resp_s,
+                sm.min_asst_resp_s,
+                sm.max_asst_resp_s,
+                sm.avg_user_resp_s,
+                sm.avg_lumen_resp_s,
+                sm.min_lumen_resp_s,
+                sm.max_lumen_resp_s
+            FROM sessions s
+            LEFT JOIN SessionMetrics sm ON s.session_id = sm.session_id
+        """
+
+        # Handle different session_id scenarios
         if session_id == "all":
-            query = """
-                SELECT session_id, username, coordinator_id,
-                    created_at, last_active, user_info
-                FROM sessions
-            """
-            params = []
-
             if username is not None:
-                query += " WHERE username = ?"
-                params.append(username)
-
-            query += " ORDER BY created_at DESC"
-
+                query = base_query + " WHERE s.username = ? ORDER BY s.created_at DESC"
+                params = [username]
+            else:
+                query = base_query + " ORDER BY s.created_at DESC"
+                params = []
         else:
             if session_id is None:
                 # Get the most recent session
@@ -680,6 +828,7 @@ class ChatLogs(param.Parameterized):
                 )
                 result = self.cursor.fetchone()
                 if result is None:
+                    # Return empty DataFrame with correct columns
                     return pd.DataFrame(
                         columns=[
                             "session_id",
@@ -688,18 +837,32 @@ class ChatLogs(param.Parameterized):
                             "created_at",
                             "last_active",
                             "user_info",
+                            "duration_s",
+                            "user_msgs",
+                            "asst_msgs",
+                            "total_likes",
+                            "total_dislikes",
+                            "avg_user_words",
+                            "avg_asst_words",
+                            "avg_chars_per_msg",
+                            "edited_msgs",
+                            "retried_msgs",
+                            "undone_msgs",
+                            "avg_asst_resp_s",
+                            "min_asst_resp_s",
+                            "max_asst_resp_s",
+                            "avg_user_resp_s",
+                            "avg_lumen_resp_s",
+                            "min_lumen_resp_s",
+                            "max_lumen_resp_s",
                         ]
                     )
                 session_id = result[0]
 
-            query = """
-                SELECT session_id, username, coordinator_id,
-                    created_at, last_active, user_info
-                FROM sessions
-                WHERE session_id = ?
-            """
+            query = base_query + " WHERE s.session_id = ?"
             params = [session_id]
 
+        # Execute query and get results
         df = pd.read_sql(query, self.conn, params=params)
 
         # Parse JSON user_info if present
@@ -708,84 +871,107 @@ class ChatLogs(param.Parameterized):
                 lambda x: json.loads(x) if pd.notna(x) else None
             )
 
-        return df
+        # Set session_id as index
+        return df.set_index("session_id")
 
-    def get_coordinator(self, coordinator_id: str) -> dict[str, Any] | None:
-        """Retrieve coordinator details including associated agents and LLM config.
+    def view_coordinator_agents(self, coordinator_id: str | None = None) -> pd.DataFrame:
+        """View detailed information about all agents in a coordinator.
 
         Parameters
         ----------
-        coordinator_id : str
-            ID of the coordinator to retrieve
+        coordinator_id : str or None, optional
+            The coordinator ID to retrieve information for.
+            If None, returns information for the most recent coordinator.
 
         Returns
         -------
-        dict or None
-            Dictionary containing coordinator details including:
-            - Basic coordinator info (name, prompts, etc.)
-            - Associated agents list
-            - LLM configuration
-            Returns None if coordinator not found
+        pandas.DataFrame
+            DataFrame containing detailed agent information with prompts as dictionaries.
         """
+        if coordinator_id is None:
+            self.cursor.execute(
+                "SELECT coordinator_id FROM coordinators ORDER BY created_at DESC LIMIT 1"
+            )
+            result = self.cursor.fetchone()
+            if result is None:
+                return pd.DataFrame()
+            coordinator_id = result[0]
+
+        coordinator = self.get_coordinator_config(coordinator_id)
+        if not coordinator:
+            return pd.DataFrame()
+
+        # Create agent rows with prompts as dictionaries
+        agents_data = []
+        for agent in coordinator.agents:
+            # Extract response_model if it exists in prompts
+            response_model = agent.prompts.get('response_model', None)
+            prompts = {k: v for k, v in agent.prompts.items() if k != 'response_model'}
+
+            agent_data = {
+                'agent_id': agent.agent_id,
+                'name': agent.name,
+                'purpose': agent.purpose.strip() if agent.purpose else None,
+                'requires': agent.requires,
+                'provides': agent.provides,
+                'tools': agent.tools,
+                'llm_id': agent.llm.llm_id if agent.llm else None,
+                'llm_mode': agent.llm.mode if agent.llm else None,
+                'llm_model_args': agent.llm.model_kwargs if agent.llm else None,
+                'llm_temperature': agent.llm.temperature if agent.llm else None,
+                'response_model': response_model,
+                'prompts': prompts,
+                'template_overrides': agent.template_overrides
+            }
+            agents_data.append(agent_data)
+
+        df = pd.DataFrame(agents_data)
+
+        # Define column order
+        columns = [
+            'agent_id', 'name', 'purpose', 'requires', 'provides', 'tools',
+            'llm_id', 'llm_mode', 'llm_model_args', 'llm_temperature',
+            'response_model', 'prompts', 'template_overrides'
+        ]
+
+        # Ensure all columns exist
+        for col in columns:
+            if col not in df.columns:
+                df[col] = None
+
+        return df[columns]
+
+    def get_llm_config(self, llm_id: str) -> LLMConfig | None:
+        """Retrieve LLM configuration."""
         self.cursor.execute(
             """
-            SELECT c.*, l.mode, l.model_kwargs, l.temperature
-            FROM coordinators c
-            LEFT JOIN llm_configs l ON c.llm_id = l.llm_id
-            WHERE c.coordinator_id = ?
+            SELECT llm_id, mode, model_kwargs, temperature, created_at
+            FROM llm_configs
+            WHERE llm_id = ?
             """,
-            (coordinator_id,),
+            (llm_id,),
         )
         row = self.cursor.fetchone()
 
         if not row:
             return None
 
-        # Convert row to dict and parse JSON fields
-        coordinator_info = {
-            "coordinator_id": row[0],
-            "name": row[1],
-            "agents": json.loads(row[2]),
-            "prompts": json.loads(row[3]),
-            "template_overrides": json.loads(row[4]),
-            "history": row[5],
-            "llm_id": row[6],
-            "created_at": row[7],
-            "llm_config": (
-                {
-                    "mode": row[8],
-                    "model_kwargs": json.loads(row[9]) if row[9] else None,
-                    "temperature": row[10],
-                }
-                if row[8]
-                else None
-            ),
-        }
+        return LLMConfig(
+            llm_id=row[0],
+            mode=row[1],
+            model_kwargs=json.loads(row[2]) if row[2] else {},
+            temperature=row[3],
+            created_at=datetime.fromisoformat(row[4]),
+        )
 
-        return coordinator_info
-
-    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
-        """Retrieve agent details including associated LLM config.
-
-        Parameters
-        ----------
-        agent_id : str
-            ID of the agent to retrieve
-
-        Returns
-        -------
-        dict or None
-            Dictionary containing agent details including:
-            - Basic agent info (name, purpose, requires, provides, etc.)
-            - LLM configuration
-            Returns None if agent not found
-        """
+    def get_agent_config(self, agent_id: str) -> AgentConfig | None:
+        """Retrieve agent configuration."""
         self.cursor.execute(
             """
-            SELECT a.*, l.mode, l.model_kwargs, l.temperature
-            FROM agents a
-            LEFT JOIN llm_configs l ON a.llm_id = l.llm_id
-            WHERE a.agent_id = ?
+            SELECT agent_id, name, purpose, requires, provides, tools,
+                prompts, template_overrides, llm_id, created_at
+            FROM agents
+            WHERE agent_id = ?
             """,
             (agent_id,),
         )
@@ -794,188 +980,115 @@ class ChatLogs(param.Parameterized):
         if not row:
             return None
 
-        # Convert row to dict and parse JSON fields
-        agent_info = {
-            "agent_id": row[0],
-            "name": row[1],
-            "purpose": row[2],
-            "requires": json.loads(row[3]),
-            "provides": json.loads(row[4]),
-            "tools": json.loads(row[5]),
-            "prompts": json.loads(row[6]),
-            "template_overrides": json.loads(row[7]),
-            "llm_id": row[8],
-            "created_at": row[9],
-            "llm_config": (
-                {
-                    "mode": row[10],
-                    "model_kwargs": json.loads(row[11]) if row[11] else None,
-                    "temperature": row[12],
-                }
-                if row[10]
-                else None
-            ),
-        }
+        llm_config = self.get_llm_config(row[8]) if row[8] else None
 
-        return agent_info
+        return AgentConfig(
+            agent_id=row[0],
+            name=row[1],
+            purpose=row[2],
+            requires=json.loads(row[3]),
+            provides=json.loads(row[4]),
+            tools=json.loads(row[5]),
+            prompts=json.loads(row[6]),
+            template_overrides=json.loads(row[7]),
+            llm=llm_config,
+            created_at=datetime.fromisoformat(row[9]),
+        )
 
-    def get_session_metrics(self, session_id: str | None = None) -> pd.DataFrame:
-        """Get metrics for a specific chat session."""
-        if session_id is None:
-            self.cursor.execute(
-                "SELECT session_id FROM sessions ORDER BY created_at DESC LIMIT 1"
-            )
-            result = self.cursor.fetchone()
-            if result is None:
-                return pd.DataFrame()
-            session_id = result[0]
-        elif session_id == "all":
-            return pd.concat(
-                [
-                    self.get_session_metrics(session_id=session_id)
-                    for session_id in self.get_sessions(session_id="all")[
-                        "session_id"
-                    ].tolist()
-                ]
-            )
-
-        # Get basic message metrics
+    def get_coordinator_config(self, coordinator_id: str) -> CoordinatorConfig | None:
+        """Retrieve coordinator configuration."""
         self.cursor.execute(
             """
-            SELECT
-                -- Basic counts
-                SUM(CASE WHEN message_user = 'User' THEN 1 ELSE 0 END) as user_messages,
-                SUM(CASE WHEN message_user != 'User' THEN 1 ELSE 0 END) as assistant_messages,
-                MIN(timestamp) as session_start,
-                MAX(timestamp) as session_end,
-                SUM(CASE WHEN liked = TRUE THEN 1 ELSE 0 END) as total_likes,
-                SUM(CASE WHEN disliked = TRUE THEN 1 ELSE 0 END) as total_dislikes,
-
-                -- Message complexity
-                AVG(CASE WHEN message_user = 'User'
-                    THEN LENGTH(message_content) - LENGTH(REPLACE(message_content, ' ', '')) + 1
-                    END) as avg_user_words,
-                AVG(CASE WHEN message_user != 'User'
-                    THEN LENGTH(message_content) - LENGTH(REPLACE(message_content, ' ', '')) + 1
-                    END) as avg_assistant_words,
-                AVG(LENGTH(message_content)) as avg_chars_per_message,
-
-                -- Interaction patterns
-                COUNT(DISTINCT CASE WHEN state != 'initial' THEN message_id END) as edited_messages,
-                COUNT(DISTINCT CASE WHEN state = 'retried' THEN message_id END) as retried_messages,
-                COUNT(DISTINCT CASE WHEN state = 'undone' THEN message_id END) as undone_messages
-            FROM messages
-            WHERE session_id = ?
+            SELECT coordinator_id, name, agents, prompts,
+                template_overrides, tools, history, llm_id, created_at
+            FROM coordinators
+            WHERE coordinator_id = ?
             """,
-            (session_id,),
+            (coordinator_id,),
         )
         row = self.cursor.fetchone()
 
-        # Build initial metrics dict
-        metrics = {
-            "user_messages": row[0],
-            "assistant_messages": row[1],
-            "session_duration": (
-                (
-                    datetime.fromisoformat(row[3]) - datetime.fromisoformat(row[2])
-                ).total_seconds()
-                if row[2] and row[3]
-                else 0
-            ),
-            "total_likes": row[4],
-            "total_dislikes": row[5],
-            "avg_user_words": row[6],
-            "avg_assistant_words": row[7],
-            "avg_chars_per_message": row[8],
-            "edited_messages": row[9],
-            "retried_messages": row[10],
-            "undone_messages": row[11],
-        }
+        if not row:
+            return None
 
-        # Get response time metrics using self-join
-        self.cursor.execute(
-            """
-            SELECT
-                -- Assistant response times
-                AVG(CASE
-                    WHEN m1.message_user != 'User' AND m2.message_user = 'User'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as avg_assistant_response_s,
-                MIN(CASE
-                    WHEN m1.message_user != 'User' AND m2.message_user = 'User'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as min_assistant_response_s,
-                MAX(CASE
-                    WHEN m1.message_user != 'User' AND m2.message_user = 'User'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as max_assistant_response_s,
+        # Get LLM config if present
+        llm_config = self.get_llm_config(row[6]) if row[6] else None
 
-                -- User response times
-                AVG(CASE
-                    WHEN m1.message_user = 'User' AND m2.message_user != 'User'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as avg_user_response_s,
-                MIN(CASE
-                    WHEN m1.message_user = 'User' AND m2.message_user != 'User'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as min_user_response_s,
-                MAX(CASE
-                    WHEN m1.message_user = 'User' AND m2.message_user != 'User'
-                    THEN CAST((julianday(m1.timestamp) - julianday(m2.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as max_user_response_s
-            FROM messages m1
-            LEFT JOIN messages m2 ON m2.message_index = m1.message_index - 1
-            AND m2.session_id = m1.session_id
-            WHERE m1.session_id = ?
-            """,
-            (session_id,),
-        )
-        row = self.cursor.fetchone()
+        # Get agent configs
+        agent_ids = json.loads(row[2])
+        agents = [
+            self.get_agent_config(agent_id)
+            for agent_id in agent_ids
+            if (_agent := self.get_agent_config(agent_id)) is not None
+        ]
 
-        # Add response time metrics
-        metrics.update(
-            {
-                "avg_assistant_response_s": row[0],
-                "min_assistant_response_s": row[1],
-                "max_assistant_response_s": row[2],
-                "avg_user_response_s": row[3],
-                "min_user_response_s": row[4],
-                "max_user_response_s": row[5],
-            }
+        return CoordinatorConfig(
+            coordinator_id=row[0],
+            name=row[1],
+            agents=agents,
+            prompts=json.loads(row[3]),
+            template_overrides=json.loads(row[4]),
+            tools=json.loads(row[5]),
+            history=row[6],
+            llm=llm_config,
+            created_at=datetime.fromisoformat(row[8]),
         )
 
-        # Get Assistant-to-Lumen response time metrics
-        self.cursor.execute(
-            """
-            SELECT
-                AVG(CASE
-                    WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
-                    THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as avg_lumen_response_s,
-                MIN(CASE
-                    WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
-                    THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as min_lumen_response_s,
-                MAX(CASE
-                    WHEN m1.message_user = 'Lumen' AND m2.message_user = 'Assistant'
-                    THEN CAST((julianday(m2.timestamp) - julianday(m1.timestamp)) * 24 * 60 * 60 AS INTEGER)
-                END) as max_lumen_response_s
-            FROM messages m1
-            LEFT JOIN messages m2 ON m2.message_index = m1.message_index - 1
-            AND m2.session_id = m1.session_id
-            WHERE m1.session_id = ?
-            """,
-            (session_id,),
-        )
-        row = self.cursor.fetchone()
+    def get_session_info(self, session_id: str | None = None) -> SessionInfo | None:
+        """Retrieve session information with all related configurations.
 
-        # Add Assistant-to-Lumen response time metrics
-        metrics.update(
-            {
-                "avg_lumen_response_s": row[0],
-                "min_lumen_response_s": row[1],
-                "max_lumen_response_s": row[2],
-            }
-        )
+        Parameters
+        ----------
+        session_id : str, optional
+            The session ID to retrieve. If None, returns the most recent session.
 
-        return pd.DataFrame([metrics], index=[session_id]).rename_axis("session_id")
+        Returns
+        -------
+        Optional[SessionInfo]
+            Complete session information including coordinator and agent configs.
+        """
+        # Use existing get_sessions() method to get session info and metrics
+        df = self.view_sessions(session_id=session_id)
+        if df.empty:
+            return None
+
+        # Get the single row of session data
+        session_data = df.iloc[0]
+
+        # Get coordinator config
+        coordinator = self.get_coordinator_config(session_data.coordinator_id)
+        if not coordinator:
+            return None
+
+        # Create metrics DataFrame with just the metrics columns
+        metrics_columns = [
+            "duration_s",
+            "user_msgs",
+            "asst_msgs",
+            "total_likes",
+            "total_dislikes",
+            "avg_user_words",
+            "avg_asst_words",
+            "avg_chars_per_msg",
+            "edited_msgs",
+            "retried_msgs",
+            "undone_msgs",
+            "avg_asst_resp_s",
+            "min_asst_resp_s",
+            "max_asst_resp_s",
+            "avg_user_resp_s",
+            "avg_lumen_resp_s",
+            "min_lumen_resp_s",
+            "max_lumen_resp_s",
+        ]
+        metrics = df[metrics_columns].to_dict()
+
+        return SessionInfo(
+            session_id=session_data.name,  # Index is session_id
+            username=session_data.username,
+            user_info=session_data.user_info,
+            coordinator=coordinator,
+            created_at=datetime.fromisoformat(session_data.created_at),
+            last_active=datetime.fromisoformat(session_data.last_active),
+            metrics=metrics,
+        )

@@ -18,7 +18,7 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from lumen.ai.utils import hash_config, log_debug, normalize_dict
+from lumen.ai.utils import hash_config, log_debug, normalize_value
 
 from .interceptor import Interceptor
 
@@ -250,7 +250,7 @@ class Llm(param.Parameterized):
         """Hash of LLM's configuration."""
         config = {
             'mode': str(self.mode),
-            'model_kwargs': normalize_dict(self.model_kwargs),
+            'model_kwargs': normalize_value(self.model_kwargs),
             'temperature': getattr(self, 'temperature', None)
         }
         return hash_config(config)

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import (
-    hash_config, log_debug, normalize_dict, render_template,
+    hash_config, log_debug, normalize_value, render_template,
     warn_on_unused_variables,
 )
 
@@ -187,17 +187,17 @@ class Actor(param.Parameterized):
         # Build configuration dictionary
         config = {
             'agent_type': self.__class__.__name__,
-            'prompts': normalize_dict(prompts),
+            'prompts': normalize_value(prompts),
             'requires': sorted(self.requires),
             'provides': sorted(self.provides),
-            'template_overrides': normalize_dict(self.template_overrides)
+            'template_overrides': normalize_value(self.template_overrides)
         }
 
         # Add LLM configuration if present
         if self.llm is not None:
             config['llm'] = {
                 'mode': str(self.llm.mode),
-                'model_kwargs': normalize_dict(self.llm.model_kwargs),
+                'model_kwargs': normalize_value(self.llm.model_kwargs),
                 'temperature': getattr(self.llm, 'temperature', None)
             }
         return hash_config(config)
