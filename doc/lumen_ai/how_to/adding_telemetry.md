@@ -98,16 +98,17 @@ all_sessions_df = chat_logs.view_sessions("all")
 
 **Example Output**:
 
-| session_id | username | coordinator_id | created_at | duration_s | user_msgs | asst_msgs | total_likes | avg_asst_resp_s |
-|------------|----------|----------------|------------|------------|-----------|-----------|-------------|-----------------|
-| 0x14f724 | anonymous | dfaa453b101ed3c8 | 2025-02-24 19:14:35 | 113 | 2 | 7 | 2 | 10 |
+| session_id | username | coordinator_id | created_at | last_active | user_info | duration_s | user_msgs | asst_msgs | total_likes | total_dislikes | avg_user_words | avg_asst_words | avg_chars_per_msg | edited_msgs | retried_msgs | undone_msgs | avg_asst_resp_s | min_asst_resp_s | max_asst_resp_s | avg_user_resp_s | avg_lumen_resp_s | min_lumen_resp_s | max_lumen_resp_s |
+|------------|----------|----------------|------------|-------------|-----------|------------|-----------|-----------|-------------|----------------|----------------|----------------|-------------------|-------------|--------------|-------------|-----------------|-----------------|-----------------|-----------------|------------------|------------------|------------------|
+| 0x14f724 | anonymous | dfaa453b101ed3c8 | 2025-02-24 19:14:35 | 2025-02-24 19:14:35 | None | 113 | 2 | 7 | 2 | 0 | 5 | 74 | 404 | 1 | 0 | 0 | 10 | 6 | 13 | 47 | 2 | 0 | 4 |
 
 **Tracked Metrics**:
 
 - Session duration (duration_s)
 - Message counts (user_msgs, asst_msgs)
 - User feedback (total_likes, total_dislikes)
-- Response times (avg_asst_resp_s, min_asst_resp_s, max_asst_resp_s)
+- Message content metrics (avg_user_words, avg_asst_words, avg_chars_per_msg)
+- Response times (avg_asst_resp_s, min_asst_resp_s, max_asst_resp_s, avg_lumen_resp_s)
 - User engagement metrics (avg_user_resp_s)
 - Message modifications (edited_msgs, retried_msgs, undone_msgs)
 
