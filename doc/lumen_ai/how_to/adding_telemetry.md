@@ -6,6 +6,12 @@ This guide explains how to add telemetry capabilities to your Lumen AI applicati
 
 The `ChatLogs` class provides a comprehensive system for tracking and analyzing interactions in Lumen AI applications. It stores data in a SQLite database that you can query for insights into performance, usage patterns, and quality of AI responses.
 
+:::{admonition} Privacy Notice
+:class: warning
+
+All telemetry data is stored locally in your own SQLite database and remains with you, the deployer of the application. No data is sent to Lumen, HoloViz, Anaconda, or any third parties. You maintain full control and ownership of all collected telemetry data.
+:::
+
 Key capabilities:
 
 - Message tracking (including revisions and feedback)
