@@ -130,8 +130,8 @@ class DuckDBSource(BaseSQLSource):
         if isinstance(sql_expr, dict):
             return {self._process_sql_paths(k): v for k, v in sql_expr.items()}
 
-        # Look for read_* patterns like read_parquet, read_csv etc.
-        matches = re.finditer(r"read_\w+\('([^']+)'\)", sql_expr)
+        # Look for read_* patterns (case insensitive) like read_parquet, READ_CSV etc.
+        matches = re.finditer(r"(?i)read_\w+\('([^']+)'\)", sql_expr)
         processed_sql = sql_expr
 
         for match in matches:
