@@ -9,7 +9,7 @@ The `ChatLogs` class provides a comprehensive system for tracking and analyzing 
 :::{admonition} Privacy Notice
 :class: warning
 
-All telemetry data is stored locally in your own SQLite database and remains with you, the deployer of the application. No data is sent to Lumen, HoloViz, Anaconda, or any third parties. You maintain full control and ownership of all collected telemetry data.
+All telemetry data is stored locally in your own SQLite database and remains with you, the deployer of the application. No telemetry data is sent to the Lumen maintainers, the HoloViz organization, or to any other third party. You maintain full control and ownership of all collected telemetry data.
 :::
 
 Key capabilities:
