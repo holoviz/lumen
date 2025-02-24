@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import param
 import yaml
 
-from panel import bind
+from panel import bind, state as pn_state
 from panel.chat import ChatInterface, ChatMessage, ChatStep
 from panel.layout import (
     Card, Column, FlexBox, Tabs,
@@ -211,8 +211,10 @@ class Coordinator(Viewer, Actor):
 
         # Register coordinator with logs if available
         if logs_db_path and interface._logs:
+            username = pn_state.user if pn_state.user else "anonymous"
+            user_info = pn_state.user_info if pn_state.user_info else {}
             try:
-                interface._logs.register_coordinator(self)
+                interface._logs.register_coordinator(self, username=username, user_info=user_info)
             except Exception as e:
                 raise RuntimeError(
                     "Failed to register coordinator with logs. "
