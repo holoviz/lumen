@@ -28,7 +28,11 @@ lmai.ExplorerUI(
 
 ## Telemetry Data & Analysis
 
-The `ChatLogs` system automatically tracks various metrics about your app's usage. Here's how to access and interpret this data:
+The `ChatLogs` system automatically tracks various metrics about your app's usage.
+
+<img src="../../_static/chat_logs_tables.png" width="100%">
+
+Here's how to access and interpret this data.
 
 ### Messages & Message History
 
@@ -67,6 +71,16 @@ Message Revision History:
 | 0 | SQLOutput:\n```sql\nSELECT\n *\nFROM READ_PAR... | 0 | 0 | 2025-02-24 19:16:37 | edited |
 | 1 | SQLOutput:\n```sql\nSELECT\n p_cap\nFROM READ... | 0 | 0 | 2025-02-24 19:16:37 | edited |
 | 2 | SQLOutput:\n```sql\nSELECT\n easting,\n north... | 1 | 0 | 2025-02-24 19:17:00 | edited |
+
+States:
+
+| State | Description |
+|-------|-------------|
+| `initial` | Default state for new messages when first created |
+| `edited` | Message was manually edited by a user or agent |
+| `reran` | The rerun button was clicked |
+| `undone` | The undo button was clicked |
+| `cleared` | The clear button was clicked |
 
 ### Session Information
 
