@@ -7,6 +7,7 @@ import requests
 import yaml
 
 from jsonschema import Draft7Validator, ValidationError
+from panel.chat import ChatInterface, ChatMessage
 from panel.config import config
 from panel.layout import Column, Row, Tabs
 from panel.pane import Alert, Markdown
@@ -32,9 +33,13 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
+    footer = param.List()
+
+    interface = param.ClassSelector(class_=ChatInterface)
+
     loading = param.Boolean()
 
-    footer = param.List()
+    parent_message = param.ClassSelector(class_=ChatMessage, default=None)
 
     render_output = param.Boolean(default=True)
 
@@ -82,7 +87,12 @@ class LumenOutput(Viewer):
             """,
         )
         icons = Row(copy_icon, download_icon, *self.footer)
-        code_col = Column(code_editor, icons, sizing_mode="stretch_both")
+        code_col = Column(
+            code_editor,
+            pn.pane.Markdown(f"**{self.title}**", margin=0, styles={"color": "gray", "font-size": "small"}),
+            icons,
+            sizing_mode="stretch_both"
+        )
         if self.render_output:
             placeholder = Column(
                 ParamMethod(self.render, inplace=True),
@@ -185,6 +195,11 @@ class LumenOutput(Viewer):
             self._last_output.clear()
             self._last_output[self.spec] = output
             yield output
+
+            self.interface._logs.update_retry(
+                message_id=str(id(self.parent_message)),
+                message=self.parent_message
+            )
         except Exception as e:
             traceback.print_exc()
             yield Alert(
@@ -339,6 +354,11 @@ class SQLOutput(LumenOutput):
             self._last_output.clear()
             self._last_output[self.spec] = output
             yield output
+
+            self.interface._logs.update_retry(
+                message_id=str(id(self.parent_message)),
+                message=self.parent_message
+            )
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -351,4 +371,4 @@ class SQLOutput(LumenOutput):
         return self._main
 
     def __str__(self):
-        return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"
+        return f"{self.__class__.__name__ }:\n```sql\n{self.spec}\n```"
