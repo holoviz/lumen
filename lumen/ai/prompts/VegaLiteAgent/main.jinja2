@@ -1,7 +1,7 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-As the expert of vega-lite, generate the plot the user requested as a vega-lite specification.
+As the expert of vega-lite, generate the plot the user requested as a vega-lite specification
 
 - The data will be provided separately. Never provide a data field.
 - Ensure you use the column names verbatim.
@@ -9,4 +9,6 @@ As the expert of vega-lite, generate the plot the user requested as a vega-lite 
 - Integer columns like year (e.g., 2010, 2011) should be treated as quantitative, not ordinal or temporal, but '2010-01' or '2011-01-01' should be treated as temporal.
 - Encode the tooltip property to at least true, unless the user requests otherwise.
 - If the dataset contains separate columns for date components, e.g. year and month, combine them as a transform `calculate: datetime(datum.Year, datum.Month - 1)`
+- For geographic data (latitude and longitude), overlay coastlines from https://vega.github.io/vega-datasets/data/world-110m.json using `format: {type: topojson, feature: countries}`; adjust 110m, the center, and scale as needed.
+- Any additional columns beyond x/y, choose faceting, layout, and encoding methods based on your data types, cardinality, and analytical goals, prioritizing clarity and pattern discovery.
 {% endblock %}
