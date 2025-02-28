@@ -44,7 +44,7 @@ Additionally, only if applicable:
 - Specify data types explicitly to avoid type mismatches.
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.
 - Use Common Table Expressions (CTEs) and subqueries to break down into manageable parts, only if the query requires more than one transformation.
-- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (greater than 1) to focus on the most relevant results.
+- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (greater than 1), especially if the data is large, but the lower limit should be at least 100k
 - If the date columns are separated, e.g. year, month, day, then join them into a single date column.
 
 {%- if has_errors %}

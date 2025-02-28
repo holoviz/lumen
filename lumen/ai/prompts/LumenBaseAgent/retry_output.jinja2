@@ -1,16 +1,20 @@
-The user is unsatisfied with the output; your goal is to update the specification in {{ language }}:
+Your previous output requires revision. Please update the {{ language }} code below based on user feedback:
 
-Here is the original specification to be corrected:
+Original output:
 ```{{ language }}
 {{ spec }}
 ```
 
-Here are YAML schemas for currently relevant tables:
+{% if memory["tables_sql_schemas"] %}
+Reference these database schemas for your corrections:
 {% for table, details in memory["tables_sql_schemas"].items() %}
 - `{{ table }}`:
 ```yaml
 {{ details.schema }}
 ```
-{% endfor -%}
+{% endfor %}
+{% endif %}
 
-Respond in the same format as the original specification. The query may include multiple tasks, your job is merely to correct the specification, ignore any instructions unrelated to that and do not add any comments or code examples.
+Provide only the corrected {{ language }} code with no additional comments or explanations.
+
+Focus solely on addressing the issues while maintaining the original format.

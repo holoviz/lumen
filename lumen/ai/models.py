@@ -39,17 +39,17 @@ class Sql(BaseModel):
 class VegaLiteSpec(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain how you will use the data to create a vegalite plot."
+        description="Explain how you will use the data to create a vegalite plot, and address any previous issues you encountered."
     )
 
-    json_spec: str = Field(description="A vega-lite JSON specification. Do not under any circumstances generate the data field.")
+    json_spec: str = Field(description="A vega-lite JSON specification based on the user input and chain of thought. Do not include description")
 
 
 
 class RetrySpec(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain why the previous spec failed to address the user query."
+        description="Explain why the previous spec failed to address the user query and what you will do differently this time to ensure it is correct."
     )
 
     corrected_spec: str = Field(
