@@ -263,7 +263,6 @@ class LlamaCpp(Llm):
             "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
             "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
             "chat_format": "qwen",
-            "n_ctx": 131072,
         },
     })
 
@@ -283,6 +282,10 @@ class LlamaCpp(Llm):
                 model_file = model_spec
             model_kwargs["repo"] = repo
             model_kwargs["model_file"] = model_file
+
+        if "n_ctx" not in model_kwargs:
+            # 0 = from model
+            model_kwargs["n_ctx"] = 0
         return dict(model_kwargs)
 
     @property
