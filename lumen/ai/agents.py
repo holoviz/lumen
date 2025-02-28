@@ -760,8 +760,9 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
            errors = '\n'.join(errors)
            if self._last_output:
+               json_spec = load_json(self._last_output["json_spec"])
                messages = mutate_user_message(
-                   f"\nNote, your last specification did not work as intended:\n```json\n{load_json(self._last_output["json_spec"])}\n```\n\n"
+                   f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
                    f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
                    messages
                )
