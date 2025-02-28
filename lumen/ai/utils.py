@@ -338,9 +338,11 @@ def clean_sql(sql_expr):
     return sql_expr.replace("```sql", "").replace("```", "").replace('`', '"').strip().rstrip(";")
 
 
-def report_error(exc: Exception, step: ChatStep):
+def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = ""):
     error_msg = str(exc)
-    step.stream(f'\n```python\n{error_msg}\n```')
+    step.stream(f'\n```{language}\n{error_msg}\n```\n')
+    if context:
+        step.stream(context)
     if len(error_msg) > 50:
         error_msg = error_msg[:50] + "..."
     step.failed_title = error_msg
@@ -489,3 +491,10 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
         for key, value in parse_qs(query_params).items():
             model_kwargs[key] = cast_value(value)
     return repo, model_file, model_kwargs
+
+
+def load_json(json_spec: str) -> dict:
+    """
+    Load a JSON string, handling unicode escape sequences.
+    """
+    return json.loads(json_spec.encode().decode('unicode_escape'))
