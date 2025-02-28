@@ -355,8 +355,12 @@ class Coordinator(Viewer, Actor):
                     )
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
+                content = "-- For context...\n"
+                if self._memory.get("tool_context"):
+                    content += f"{self._memory['tool_context']}"
+                content += f"Here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues."
                 mutate_user_message(
-                    f"-- For context, here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues.",
+                    content,
                     mutated_messages, suffix=True, wrap=True
                 )
 
@@ -677,6 +681,7 @@ class Planner(Coordinator):
                     if response is not None:
                         istep.stream(f'{response}\n')
                         tool_context += f'\n- {response}'
+        self._memory["tool_context"] = tool_context
         return table_info, tool_context
 
     async def _make_plan(
@@ -849,5 +854,8 @@ class Planner(Coordinator):
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
-            istep.success_title = f"Plan with {len(plan.steps)} steps created"
+            if attempts > 0:
+                istep.success_title = f"Plan with {len(plan.steps)} steps created after {attempts + 1} attempts"
+            else:
+                istep.success_title = f"Plan with {len(plan.steps)} steps created"
         return execution_graph
