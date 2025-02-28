@@ -924,6 +924,9 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
+        if "projection" not in vega_spec:
+            # add pan/zoom controls to all plots except geographic maps
+            vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
 
 
