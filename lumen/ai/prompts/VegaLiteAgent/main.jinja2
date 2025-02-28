@@ -22,7 +22,7 @@ DATA HANDLING:
 - Date formats ('2010-01'): use temporal type
 - Split date components: combine with `calculate: datetime(datum.Year, datum.Month - 1)`
 - Time encoding: select appropriate `timeUnit` granularity
-- Sorting: use "ascending"/"descending" or reference encoding (e.g., `sort: y` or `sort: -y`)
+- Sorting: use "ascending"/"descending" or reference encoding (e.g., `sort: y` or `sort: -y`), especially for bar charts
 - Categorical variables: use `detail` for generation without visual channel, `facet` for moderate cardinality
 - Part-to-whole relationships: use `stack` with normalization when percentages matter more than values
 

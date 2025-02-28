@@ -843,7 +843,7 @@ class hvPlotAgent(BaseViewAgent):
 
     purpose = param.String(default="""
         Generates a plot of the data given a user prompt.
-        If the user asks to plot, visualize or render the data this is your best best.""")
+        If the user asks to plot, visualize or render the data this is your best bet.""")
 
     prompts = param.Dict(
         default={
@@ -897,7 +897,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     purpose = param.String(default="""
         Generates a vega-lite specification of the plot the user requested.
-        If the user asks to plot, visualize or render the data this is your best best.""")
+        If the user asks to plot, visualize or render the data this is your best bet.""")
 
     prompts = param.Dict(
         default={
