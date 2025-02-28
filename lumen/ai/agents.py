@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import traceback
 
@@ -42,7 +41,8 @@ from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, log_debug, mutate_user_message, report_error, retry_llm_output,
+    get_schema, load_json, log_debug, mutate_user_message, report_error,
+    retry_llm_output,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -442,7 +442,7 @@ class LumenBaseAgent(Agent):
             with self.param.update(memory=memory):
                 system = await self._render_prompt(
                     "retry_output", messages=modified_messages, spec=out.spec,
-                    language=out.language
+                    language=out.language,
                 )
             retry_model = self._lookup_prompt_key("retry_output", "response_model")
             with out.param.update(loading=True):
@@ -747,23 +747,37 @@ class BaseViewAgent(LumenBaseAgent):
         self._last_output = None
         super().__init__(**params)
 
+
     @retry_llm_output()
     async def _create_valid_spec(
         self,
         messages: list[Message],
-        system: str,
+        pipeline: Pipeline,
         schema: dict[str, Any],
         step_title: str | None = None,
         errors: list[str] | None = None,
     ) -> dict[str, Any]:
         if errors:
-            errors = '\n'.join(errors)
-            if self._last_output:
-                messages = mutate_user_message(
-                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n"
-                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n",
-                    messages
-                )
+           errors = '\n'.join(errors)
+           if self._last_output:
+               json_spec = load_json(self._last_output["json_spec"])
+               messages = mutate_user_message(
+                   f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
+                   f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
+                   messages
+               )
+
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        system = await self._render_prompt(
+            "main",
+            messages,
+            schema=yaml.dump(schema),
+            table=pipeline.table,
+            view=self._memory.get('view'),
+            has_errors=bool(errors),
+            doc=doc,
+        )
+
         model_spec = self.prompts["main"].get("llm_spec", "default")
         response = self.llm.stream(
             messages,
@@ -771,6 +785,7 @@ class BaseViewAgent(LumenBaseAgent):
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
+
         error = ""
         with self.interface.add_step(
             title=step_title or "Generating view...",
@@ -779,14 +794,18 @@ class BaseViewAgent(LumenBaseAgent):
             async for output in response:
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
+
             self._last_output = dict(output)
             try:
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
-                report_error(e, step)
+                context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                report_error(e, step, language="json", context=context)
+
         if error:
             raise ValueError(error)
+
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
@@ -813,16 +832,7 @@ class BaseViewAgent(LumenBaseAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            schema=yaml.dump(schema),
-            table=pipeline.table,
-            view=self._memory.get('view'),
-            doc=doc,
-        )
-        spec = await self._create_valid_spec(messages, system_prompt, schema, step_title)
+        spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
@@ -913,17 +923,20 @@ class VegaLiteAgent(BaseViewAgent):
         memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
+        # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
+        # where it's expecting property names enclosed in double quotes
+        # by properly handling the escaped characters in your JSON string
         if yaml_spec:= spec.get('yaml_spec'):
             vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
         elif json_spec:= spec.get('json_spec'):
-            vega_spec = json.loads(json_spec)
-        self._output_type._validate_spec(vega_spec)
+            vega_spec = load_json(json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
+        self._output_type._validate_spec(vega_spec)
         if "projection" not in vega_spec:
             # add pan/zoom controls to all plots except geographic maps
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
