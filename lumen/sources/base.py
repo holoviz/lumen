@@ -31,7 +31,7 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax,
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLShuffle,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -760,7 +760,7 @@ class BaseSQLSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = True
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table is None:
             tables = self.get_tables()
@@ -769,13 +769,19 @@ class BaseSQLSource(Source):
 
         schemas = {}
         sql_limit = SQLLimit(limit=limit or 1)
+        sql_transforms = [sql_limit]
+        if shuffle:
+            sql_transforms.insert(0, SQLShuffle())
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
-            data = self.execute(sql_limit.apply(sql_expr))
+            for sql_transform in sql_transforms:
+                sql_expr = sql_transform.apply(sql_expr)
+            data = self.execute(sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+            print(schema)
             if limit:
                 continue
 

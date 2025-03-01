@@ -264,4 +264,29 @@ class SQLOverride(SQLTransform):
         return self.override
 
 
+class SQLShuffle(SQLTransform):
+    """
+    Performs a random shuffle of the query results
+    """
+
+    seed = param.Integer(default=None, allow_None=True, doc="Random seed for reproducible shuffling")
+
+    transform_type: ClassVar[str] = 'sql_shuffle'
+
+    def apply(self, sql_in):
+        sql_in = super().apply(sql_in)
+        if self.seed is not None:
+            template = """
+                SELECT *
+                FROM ({{sql_in}})
+                ORDER BY random() SEED({{seed}})"""
+            return self._render_template(template, sql_in=sql_in, seed=self.seed)
+        else:
+            template = """
+                SELECT *
+                FROM ({{sql_in}})
+                ORDER BY random()"""
+            return self._render_template(template, sql_in=sql_in)
+
+
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]
