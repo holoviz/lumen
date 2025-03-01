@@ -781,7 +781,6 @@ class BaseSQLSource(Source):
                 sql_expr = sql_transform.apply(sql_expr)
             data = self.execute(sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
-            print(schema)
             if limit:
                 continue
 
