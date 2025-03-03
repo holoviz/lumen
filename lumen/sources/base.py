@@ -100,7 +100,7 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table: str | None = None, limit: int | None = None):
+    def wrapped(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
         if self in locks:
             main_lock = locks[self]['main']
         else:
@@ -109,7 +109,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
         with main_lock:
             schema = self._get_schema_cache() or {}
         tables = self.get_tables() if table is None else [table]
-        if all(table in schema for table in tables) and limit is None:
+        if all(table in schema for table in tables) and limit is None and shuffle is False:
             return schema if table is None else schema[table]
         for missing in tables:
             if missing in schema:
@@ -122,10 +122,10 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
             with lock:
                 with main_lock:
                     new_schema = self._get_schema_cache() or {}
-                if missing in new_schema and limit is None:
+                if missing in new_schema and limit is None and shuffle is False:
                     schema[missing] = new_schema[missing]
                 else:
-                    schema[missing] = method(self, missing, limit)
+                    schema[missing] = method(self, missing, limit, shuffle)
             with main_lock:
                 self._set_schema_cache(schema)
         return schema if table is None else schema[table]
@@ -428,7 +428,7 @@ class Source(MultiTypeComponent):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         """
         Returns JSON schema describing the tables returned by the
@@ -497,7 +497,7 @@ class RESTSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
@@ -523,7 +523,7 @@ class InMemorySource(Source):
         return list(self.tables)
 
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table:
             df = self.get(table)
@@ -722,6 +722,14 @@ class BaseSQLSource(Source):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
+    def _apply_transforms(self, source, sql_transforms):
+        if not sql_transforms:
+            return source
+        sql_expr = source._sql_expr
+        for sql_transform in sql_transforms:
+            sql_expr = sql_transform.apply(sql_expr)
+        return type(source)(**dict(source._init_args, sql_expr=sql_expr))
+
     def normalize_table(self, table: str) -> str:
         """
         Allows implementing table name normalization to allow fuzze matching
@@ -769,20 +777,22 @@ class BaseSQLSource(Source):
 
         schemas = {}
         sql_limit = SQLLimit(limit=limit or 1)
-        sql_transforms = [sql_limit]
-        if shuffle:
-            sql_transforms.insert(0, SQLShuffle())
+        sql_transforms = [SQLShuffle(), sql_limit] if shuffle else [sql_limit]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
+            data_sql_expr = sql_expr
             for sql_transform in sql_transforms:
-                sql_expr = sql_transform.apply(sql_expr)
-            data = self.execute(sql_expr)
+                data_sql_expr = sql_transform.apply(data_sql_expr)
+            data = self.execute(data_sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+            print(schema)
             if limit:
+                # the min/max and enums will be computed on the limited dataset
                 continue
+            # else, patch the min/max and enums from the full dataset
 
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
@@ -951,7 +961,7 @@ class PanelSessionSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schema = {
             "summary": {
@@ -1093,7 +1103,7 @@ class JoinedSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schemas: dict[str, dict[str, Any]] = {}
         for name, specs in self.tables.items():

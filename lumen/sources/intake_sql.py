@@ -29,14 +29,6 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     __abstract = True
 
-    def _apply_transforms(self, source, sql_transforms):
-        if not sql_transforms:
-            return source
-        sql_expr = source._sql_expr
-        for sql_transform in sql_transforms:
-            sql_expr = sql_transform.apply(sql_expr)
-        return type(source)(**dict(source._init_args, sql_expr=sql_expr))
-
     def _get_source(self, table):
         try:
             source = self.cat[table]
