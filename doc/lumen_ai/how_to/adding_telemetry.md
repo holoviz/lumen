@@ -59,7 +59,7 @@ history_df = chat_logs.view_message_history(message_id)
 
 Messages in a Session:
 
-| message_id | message_index | message_user | message_content (truncated) | attempt_number | liked | disliked | state | timestamp |
+| message_id | message_index | message_user | message_json (truncated) | attempt_number | liked | disliked | state | timestamp |
 |------------|---------------|--------------|----------------------------|----------------|-------|----------|-------|-----------|
 | 5627391168 | 0 | Help | Welcome to LumenAI; get started by... | 0 | 0 | 0 | initial | 2025-02-24 19:14:35 |
 | 5800069216 | 1 | System | Alert='Initializing LLM ⌛' | 0 | 0 | 0 | initial | 2025-02-24 19:14:36 |
@@ -73,7 +73,7 @@ Messages in a Session:
 
 Message Revision History:
 
-| version | message_content (truncated) | liked | disliked | timestamp | revision_type |
+| version | message_json (truncated) | liked | disliked | timestamp | revision_type |
 |---------|----------------------------|-------|----------|-----------|---------------|
 | 0 | SQLOutput:\n```sql\nSELECT\n *\nFROM READ_PAR... | 0 | 0 | 2025-02-24 19:16:37 | edited |
 | 1 | SQLOutput:\n```sql\nSELECT\n p_cap\nFROM READ... | 0 | 0 | 2025-02-24 19:16:37 | edited |

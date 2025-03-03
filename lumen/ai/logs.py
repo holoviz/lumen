@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from lumen.ai.coordinator import Coordinator
 
 
+# Schema version allows tracking changes and implementing migrations
 SCHEMA_VERSION = "1.0.0"
 PPRINT_WIDTH = 360
 
@@ -100,6 +101,113 @@ class ChatLogs(param.Parameterized):
     Concrete subclasses must implement these methods to provide specific
     persistence mechanisms.
     """
+
+    def _serialize_message(self, message: ChatMessage | str) -> dict:
+        """Serialize a message object into a structured dictionary representation.
+
+        Parameters
+        ----------
+        message : ChatMessage or str
+            The message to serialize. Can be either a ChatMessage object
+            or a string
+
+        Returns
+        -------
+        dict
+            The serialized message content as a structured dictionary
+
+        Notes
+        -----
+        This method handles various message types and objects within ChatMessage objects,
+        converting them to a structured format that can be easily stored and restored.
+        """
+        if isinstance(message, str):
+            return {"type": "text", "content": message}
+
+        if isinstance(message.object, Card):
+            steps = []
+            for step in message.object.objects:
+                if hasattr(step, 'objects'):
+                    content = "\n".join([str(obj.object) for obj in step.objects])
+                else:
+                    content = str(step.object) if hasattr(step, 'object') else ""
+
+                step_dict = {
+                    "title": step.title if hasattr(step, 'title') else "",
+                    "content": content,
+                }
+                steps.append(step_dict)
+
+            return {
+                "type": "card",
+                "steps": steps,
+                "title": message.object.title if hasattr(message.object, 'title') else ""
+            }
+
+        elif isinstance(message.object, Tabulator):
+            data = message.object.value.to_dict(orient="records")
+            return {
+                "type": "table",
+                "data": data,
+                "markdown": message.object.value.to_markdown()
+            }
+
+        return {
+            "type": "message",
+            "content": message.serialize(),
+            "user": message.user,
+            "name": message.name if hasattr(message, 'name') else None
+        }
+
+    def _serialize_message_to_string(self, message: ChatMessage | str | dict) -> str:
+        """Convert a serialized message dictionary back to a string representation.
+
+        This is used for backward compatibility and for displaying messages in text format.
+
+        Parameters
+        ----------
+        message : ChatMessage or str or dict
+            The message to serialize to string
+
+        Returns
+        -------
+        str
+            String representation of the message
+        """
+        # If already a string, return as is
+        if isinstance(message, str):
+            return message
+
+        # If the message is a ChatMessage, serialize it first
+        if isinstance(message, ChatMessage):
+            message_dict = self._serialize_message(message)
+        elif isinstance(message, dict):
+            message_dict = message
+        else:
+            return str(message)
+
+        # Convert dict to string based on type
+        msg_type = message_dict.get("type", "message")
+
+        if msg_type == "text":
+            return message_dict["content"]
+
+        elif msg_type == "card":
+            serialized = "# Steps"
+            for step in message_dict.get("steps", []):
+                title = step.get("title", "")
+                content = step.get("content", "")
+                serialized += f"## {title}\n{content}"
+            return serialized
+
+        elif msg_type == "table":
+            return message_dict.get("markdown", "# Table\n(Table data not available)")
+
+        elif msg_type == "message":
+            return message_dict.get("content", "")
+
+        # Fallback
+        return json.dumps(message_dict)
 
     @abstractmethod
     def register_coordinator(
@@ -316,7 +424,7 @@ class SQLiteChatLogs(ChatLogs):
                 session_id TEXT,
                 message_index INTEGER,
                 message_user TEXT,
-                message_content TEXT,
+                message_json TEXT,
                 attempt_number INTEGER DEFAULT 0,
                 liked BOOLEAN DEFAULT FALSE,
                 disliked BOOLEAN DEFAULT FALSE,
@@ -333,7 +441,7 @@ class SQLiteChatLogs(ChatLogs):
                 retry_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id TEXT NOT NULL,
                 attempt_number INTEGER NOT NULL,
-                message_content TEXT NOT NULL,
+                message_json TEXT NOT NULL,
                 liked BOOLEAN DEFAULT FALSE,
                 disliked BOOLEAN DEFAULT FALSE,
                 revision_type TEXT DEFAULT 'edited',
@@ -427,41 +535,6 @@ class SQLiteChatLogs(ChatLogs):
         )
 
         self.conn.commit()
-
-    def _serialize_message(self, message: ChatMessage | str) -> str:
-        """Serialize a message object into a string representation.
-
-        Parameters
-        ----------
-        message : ChatMessage or str
-            The message to serialize. Can be either a ChatMessage object
-            or a string
-
-        Returns
-        -------
-        str
-            The serialized message content
-
-        Notes
-        -----
-        Handles special cases for Card and Tabulator objects within
-        ChatMessage objects
-        """
-        if isinstance(message, str):
-            return message
-        if isinstance(message.object, Card):
-            steps = message.object
-            serialized = "# Steps"
-            for step in steps.objects:
-                content = "\n".join([obj.object for obj in step.objects])
-                serialized += f"## {step.title}\n{content}"
-            return serialized
-        if isinstance(message.object, Tabulator):
-            tabulator = message.object
-            serialized = "# Table\n"
-            serialized += tabulator.value.to_markdown()
-            return serialized
-        return message.serialize()
 
     def register_coordinator(
         self,
@@ -628,21 +701,22 @@ class SQLiteChatLogs(ChatLogs):
         If a message with the same message_id exists, it will be updated
         with the new content and timestamp
         """
-        content = self._serialize_message(message)
+        content_dict = self._serialize_message(message)
+        content_json = json.dumps(content_dict)
         try:
             self.cursor.execute(
                 """
                 INSERT INTO messages (
                     message_id, session_id, message_index,
-                    message_user, message_content
+                    message_user, message_json
                 ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(message_id) DO UPDATE SET
-                    message_content = excluded.message_content,
+                    message_json = excluded.message_json,
                     message_index = excluded.message_index,
                     message_user = excluded.message_user,
                     timestamp = CURRENT_TIMESTAMP
                 """,
-                (message_id, session_id, message_index, message_user, content),
+                (message_id, session_id, message_index, message_user, content_json),
             )
             self.conn.commit()
         except Exception as e:
@@ -675,12 +749,13 @@ class SQLiteChatLogs(ChatLogs):
         ValueError
             If no original message is found for the given message_id
         """
-        content = self._serialize_message(message)
+        content_dict = self._serialize_message(message)
+        content_json = json.dumps(content_dict)
 
         # Check if message exists and get original content before starting transaction
         self.cursor.execute(
             """
-            SELECT COUNT(*), message_content, liked, disliked
+            SELECT COUNT(*), message_json, liked, disliked
             FROM messages
             WHERE message_id = ?
             """,
@@ -693,9 +768,15 @@ class SQLiteChatLogs(ChatLogs):
         if count == 0:
             raise ValueError(f"No original message found for message_id: {message_id}")
 
-        if content == original_content:
-            log_debug("Matching content; no need to insert update")
-            return
+        # Compare as dictionaries to avoid false negatives due to JSON formatting
+        try:
+            original_dict = json.loads(original_content) if original_content else {}
+            if content_dict == original_dict:
+                log_debug("Matching content; no need to insert update")
+                return
+        except json.JSONDecodeError:
+            # If original content is not valid JSON, it's definitely different
+            pass
 
         try:
             # Get the latest attempt number before starting transaction
@@ -719,7 +800,7 @@ class SQLiteChatLogs(ChatLogs):
                     INSERT INTO retries (
                         message_id,
                         attempt_number,
-                        message_content,
+                        message_json,
                         liked,
                         disliked
                     )
@@ -747,13 +828,13 @@ class SQLiteChatLogs(ChatLogs):
                 INSERT INTO retries (
                     message_id,
                     attempt_number,
-                    message_content,
+                    message_json,
                     liked,
                     disliked
                 )
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (message_id, next_attempt, content, prev_liked, prev_disliked),
+                (message_id, next_attempt, content_json, prev_liked, prev_disliked),
             )
 
             # Update original message state and contents
@@ -761,11 +842,11 @@ class SQLiteChatLogs(ChatLogs):
                 """
                 UPDATE messages
                 SET state = 'edited',
-                    message_content = ?,
+                    message_json = ?,
                     attempt_number = ?
                 WHERE message_id = ?
                 """,
-                (content, next_attempt, message_id),
+                (content_json, next_attempt, message_id),
             )
 
             self.conn.commit()
@@ -858,30 +939,35 @@ class SQLiteChatLogs(ChatLogs):
         -------
         pandas.DataFrame
             DataFrame containing the messages with columns:
-            message_id, message_index, message_user, message_content,
+            message_id, message_index, message_user, message_json,
             attempt_number, liked, disliked, state, timestamp
         """
         if session_id == "all":
             df = pd.read_sql("SELECT * FROM messages ORDER BY timestamp ASC", self.conn)
-            return df
+        else:
+            if session_id is None:
+                self.cursor.execute(
+                    "SELECT session_id FROM messages ORDER BY timestamp LIMIT 1"
+                )
+                session_id = self.cursor.fetchone()[0]
 
-        if session_id is None:
-            self.cursor.execute(
-                "SELECT session_id FROM messages ORDER BY timestamp LIMIT 1"
+            df = pd.read_sql(
+                """
+                SELECT message_id, message_index, message_user,
+                        message_json, attempt_number, liked, disliked, state, timestamp
+                FROM messages
+                WHERE session_id = ?
+                ORDER BY message_index ASC
+                """,
+                self.conn,
+                params=(session_id,),
             )
-            session_id = self.cursor.fetchone()[0]
 
-        df = pd.read_sql(
-            """
-            SELECT message_id, message_index, message_user,
-                    message_content, attempt_number, liked, disliked, state, timestamp
-            FROM messages
-            WHERE session_id = ?
-            ORDER BY message_index ASC
-            """,
-            self.conn,
-            params=(session_id,),
-        )
+        # Parse JSON message content
+        if 'message_json' in df.columns:
+            df['message_json'] = df['message_json'].apply(
+                lambda x: json.loads(x) if pd.notna(x) and isinstance(x, str) and x.strip().startswith('{') else x
+            )
         return df
 
     def view_message_history(self, message_id: str) -> pd.DataFrame:
@@ -896,12 +982,12 @@ class SQLiteChatLogs(ChatLogs):
         -------
         pandas.DataFrame
             DataFrame containing message history with columns:
-            version, message_content, liked, disliked, timestamp, revision_type
+            version, message_json, liked, disliked, timestamp, revision_type
         """
         query = """
             SELECT
                 attempt_number as version,
-                message_content,
+                message_json,
                 liked,
                 disliked,
                 timestamp,
@@ -912,6 +998,13 @@ class SQLiteChatLogs(ChatLogs):
         """
 
         df_history = pd.read_sql(query, self.conn, params=(message_id,))
+
+        # Parse JSON message content
+        if 'message_json' in df_history.columns:
+            df_history['message_json'] = df_history['message_json'].apply(
+                lambda x: json.loads(x) if pd.notna(x) and isinstance(x, str) and x.strip().startswith('{') else x
+            )
+
         return df_history
 
     def view_sessions(
@@ -952,12 +1045,12 @@ class SQLiteChatLogs(ChatLogs):
 
                     -- Message complexity
                     CAST(ROUND(AVG(CASE WHEN m.message_user = 'User'
-                        THEN LENGTH(m.message_content) - LENGTH(REPLACE(m.message_content, ' ', '')) + 1
+                        THEN LENGTH(m.message_json) - LENGTH(REPLACE(m.message_json, ' ', '')) + 1
                         END)) AS INTEGER) as avg_user_words,
                     CAST(ROUND(AVG(CASE WHEN m.message_user != 'User'
-                        THEN LENGTH(m.message_content) - LENGTH(REPLACE(m.message_content, ' ', '')) + 1
+                        THEN LENGTH(m.message_json) - LENGTH(REPLACE(m.message_json, ' ', '')) + 1
                         END)) AS INTEGER) as avg_asst_words,
-                    CAST(ROUND(AVG(LENGTH(m.message_content))) AS INTEGER) as avg_chars_per_msg,
+                    CAST(ROUND(AVG(LENGTH(m.message_json))) AS INTEGER) as avg_chars_per_msg,
 
                     -- Interaction patterns
                     CAST(COUNT(DISTINCT CASE WHEN m.state != 'initial' THEN m.message_id END) AS INTEGER) as edited_msgs,

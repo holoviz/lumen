@@ -1,3 +1,4 @@
+import json
 import os
 
 from unittest.mock import MagicMock
@@ -162,7 +163,11 @@ class TestSQLiteChatLogs:
         assert len(messages) == 1
         assert messages[0][2] == 0  # message_index
         assert messages[0][3] == "User"  # message_user
-        assert messages[0][4] == "Hello, world!"  # message_content
+
+        # Verify the message is stored as JSON
+        message_json = json.loads(messages[0][4])  # message_json as JSON
+        assert message_json["type"] == "text"
+        assert message_json["content"] == "Hello, world!"
 
         # Update the message
         chat_logs.upsert(
@@ -179,7 +184,11 @@ class TestSQLiteChatLogs:
             ("test_msg_1",)
         ).fetchall()
         assert len(messages) == 1
-        assert messages[0][4] == "Updated message"  # message_content
+
+        # Verify the message content was updated
+        message_json = json.loads(messages[0][4])  # message_json as JSON
+        assert message_json["type"] == "text"
+        assert message_json["content"] == "Updated message"
 
     def test_update_retry(self, chat_logs):
         """Test creating retry versions of messages."""
@@ -204,7 +213,12 @@ class TestSQLiteChatLogs:
             ("test_msg_retry",)
         ).fetchall()
         assert len(messages) == 1
-        assert messages[0][4] == "Retry response"  # message_content
+
+        # Verify the message content was updated
+        message_json = json.loads(messages[0][4])  # message_json as JSON
+        assert message_json["type"] == "text"
+        assert message_json["content"] == "Retry response"
+
         assert messages[0][5] == 1  # attempt_number
         assert messages[0][8] == "edited"  # state
 
@@ -226,7 +240,11 @@ class TestSQLiteChatLogs:
             "SELECT * FROM messages WHERE message_id = ?",
             ("test_msg_retry",)
         ).fetchall()
-        assert messages[0][4] == "Second retry"  # message_content
+
+        # Verify the message content was updated
+        message_json = json.loads(messages[0][4])  # message_json as JSON
+        assert message_json["type"] == "text"
+        assert message_json["content"] == "Second retry"
         assert messages[0][5] == 2  # attempt_number
 
         # Check that all retries were recorded
@@ -322,9 +340,14 @@ class TestSQLiteChatLogs:
         # Verify dataframe content
         assert len(df) == 3
         assert list(df["message_user"]) == ["User", "Assistant", "User"]
-        assert list(df["message_content"]) == [
-            "User message 1", "Assistant reply 1", "User message 2"
-        ]
+
+        # Check message content in the structured format
+        assert df["message_json"][0]["type"] == "text"
+        assert df["message_json"][0]["content"] == "User message 1"
+        assert df["message_json"][1]["type"] == "text"
+        assert df["message_json"][1]["content"] == "Assistant reply 1"
+        assert df["message_json"][2]["type"] == "text"
+        assert df["message_json"][2]["content"] == "User message 2"
 
     def test_view_message_history(self, chat_logs):
         """Test retrieving message history including retries."""
@@ -360,9 +383,15 @@ class TestSQLiteChatLogs:
         # Verify dataframe content
         assert len(df_history) == 3
         assert list(df_history["version"]) == [0, 1, 2]
-        assert list(df_history["message_content"]) == [
-            "Original response", "First retry", "Second retry"
-        ]
+
+        # Check message content in each version
+        assert df_history["message_json"][0]["type"] == "text"
+        assert df_history["message_json"][0]["content"] == "Original response"
+        assert df_history["message_json"][1]["type"] == "text"
+        assert df_history["message_json"][1]["content"] == "First retry"
+        assert df_history["message_json"][2]["type"] == "text"
+        assert df_history["message_json"][2]["content"] == "Second retry"
+
         # Latest version should be liked
         assert df_history.iloc[2]["liked"] == True
 
@@ -496,7 +525,8 @@ class TestSQLiteChatLogs:
     def test_serialize_message_string(self, chat_logs):
         """Test serializing string messages."""
         result = chat_logs._serialize_message("Simple text message")
-        assert result == "Simple text message"
+        assert result["type"] == "text"
+        assert result["content"] == "Simple text message"
 
     def test_serialize_message_chat_message(self, chat_logs):
         """Test serializing ChatMessage objects."""
@@ -505,7 +535,8 @@ class TestSQLiteChatLogs:
 
         # Test serialization
         result = chat_logs._serialize_message(msg)
-        assert result == "Test message content"
+        assert result["type"] == "message"
+        assert "Test message content" in result["content"]
 
     def test_serialize_message_card(self, chat_logs):
         """Test serializing Card objects within ChatMessage."""
@@ -525,11 +556,12 @@ class TestSQLiteChatLogs:
 
         # Test serialization
         result = chat_logs._serialize_message(msg)
-        assert "# Steps" in result
-        assert "## Step 1" in result
-        assert "Step 1 content" in result
-        assert "## Step 2" in result
-        assert "Step 2 content" in result
+        assert result["type"] == "card"
+        assert len(result["steps"]) == 2
+        assert result["steps"][0]["title"] == "Step 1"
+        assert "Step 1 content" in result["steps"][0]["content"]
+        assert result["steps"][1]["title"] == "Step 2"
+        assert "Step 2 content" in result["steps"][1]["content"]
 
     def test_serialize_message_tabulator(self, chat_logs):
         """Test serializing Tabulator objects within ChatMessage."""
@@ -545,9 +577,31 @@ class TestSQLiteChatLogs:
 
         # Test serialization
         result = chat_logs._serialize_message(msg)
-        assert "# Table" in result
-        assert "col1" in result
-        assert "col2" in result
+        assert result["type"] == "table"
+        assert "data" in result
+        assert "markdown" in result
+        assert len(result["data"]) == 3  # 3 rows
+        assert "col1" in result["markdown"]
+        assert "col2" in result["markdown"]
+
+    def test_serialize_message_to_string(self, chat_logs):
+        """Test converting serialized message back to string."""
+        # Test text message
+        msg = "Simple text message"
+        message_dict = chat_logs._serialize_message(msg)
+        string_result = chat_logs._serialize_message_to_string(message_dict)
+        assert string_result == "Simple text message"
+
+        # Test card message
+        step1 = ChatStep(title="Step 1")
+        step1.append("Step 1 content")
+        card = Card(title="Test Card")
+        card.append(step1)
+        msg = ChatMessage(card)
+        message_dict = chat_logs._serialize_message(msg)
+        string_result = chat_logs._serialize_message_to_string(message_dict)
+        assert "Step 1" in string_result
+        assert "Step 1 content" in string_result
 
     def test_view_message_all_sessions(self, chat_logs):
         """Test retrieving messages from all sessions."""
