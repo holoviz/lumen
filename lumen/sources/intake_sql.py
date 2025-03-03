@@ -6,7 +6,7 @@ import param  # type: ignore
 
 from ..transforms.base import Filter
 from ..transforms.sql import (
-    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
+    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLShuffle,
 )
 from ..util import get_dataframe_schema
 from .base import (
@@ -76,7 +76,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table is None:
             tables = self.get_tables()
@@ -85,6 +85,9 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
         schemas = {}
         sql_limit = SQLLimit(limit=limit or 1)
+        sql_transforms = [sql_limit]
+        if shuffle:
+            sql_transforms.insert(0, SQLShuffle())
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -93,7 +96,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             if not hasattr(source, '_sql_expr'):
                 schemas[entry] = Source.get_schema(self, table)
                 continue
-            data = self._read(self._apply_transforms(source, [sql_limit]))
+            data = self._read(self._apply_transforms(source, sql_transforms))
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 continue

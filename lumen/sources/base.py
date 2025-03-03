@@ -760,7 +760,7 @@ class BaseSQLSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None, shuffle: bool = True
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table is None:
             tables = self.get_tables()
@@ -902,7 +902,7 @@ class WebsiteSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schema = {
             "status": {
