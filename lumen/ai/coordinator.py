@@ -79,8 +79,8 @@ class Coordinator(Viewer, Actor):
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
 
-    logs_db_path = param.String(default=None, doc="""
-        The path to the log file that will store the messages exchanged with the LLM.""")
+    logs = param.ClassSelector(class_=ChatLogs, default=None, allow_None=True, doc="""
+        The logs instance to use for storing chat logs. If None, logs will not be stored.""")
 
     render_output = param.Boolean(default=True, doc="""
         Whether to write outputs to the ChatInterface.""")
@@ -97,7 +97,7 @@ class Coordinator(Viewer, Actor):
         llm: Llm | None = None,
         interface: ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
-        logs_db_path: str = "",
+        logs: ChatLogs | None = None,
         **params,
     ):
         def on_message(message: ChatMessage, instance: ChatInterface):
@@ -166,9 +166,9 @@ class Coordinator(Viewer, Actor):
         else:
             interface.callback = self._chat_invoke
 
-        if logs_db_path:
+        if logs:
             interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            interface._logs = ChatLogs(filename=logs_db_path)
+            interface._logs = logs
             interface._session_id = hex(id(interface))[:8]
             interface.post_hook = on_message
         else:
@@ -196,7 +196,7 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs=logs, **params)
 
         self._tools["__main__"] = []
         for tool in self.tools:
@@ -210,7 +210,7 @@ class Coordinator(Viewer, Actor):
                 self._tools["__main__"].append(tool(llm=llm))
 
         # Register coordinator with logs if available
-        if logs_db_path and interface._logs:
+        if interface._logs:
             username = pn_state.user if pn_state.user else "anonymous"
             user_info = pn_state.user_info if pn_state.user_info else {}
             try:

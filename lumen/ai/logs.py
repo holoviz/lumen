@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pprint import pprint
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from lumen.ai.coordinator import Coordinator
 
 
+SCHEMA_VERSION = "1.0.0"
 PPRINT_WIDTH = 360
 
 
@@ -92,6 +94,186 @@ class SessionInfo:
 
 
 class ChatLogs(param.Parameterized):
+    """Abstract base class for chat logging implementations.
+
+    This class defines the interface for all chat logging implementations.
+    Concrete subclasses must implement these methods to provide specific
+    persistence mechanisms.
+    """
+
+    @abstractmethod
+    def register_coordinator(
+        self,
+        coordinator: Coordinator,
+        username: str = "anonymous",
+        user_info: dict | None = None,
+    ) -> str:
+        """Register a coordinator and its components in the database.
+
+        Parameters
+        ----------
+        coordinator : Coordinator
+            The coordinator instance to register
+        username : str
+            Username associated with the session
+        user_info : dict, optional
+            Additional user information
+
+        Returns
+        -------
+        str
+            The session ID for the registered coordinator
+        """
+
+    @abstractmethod
+    def upsert(
+        self,
+        message_id: str,
+        session_id: str,
+        message_index: int,
+        message_user: str,
+        message: ChatMessage | str,
+    ) -> None:
+        """Insert or update a message.
+
+        Parameters
+        ----------
+        message_id : str
+            Unique identifier for the message
+        session_id : str
+            Identifier for the session to which the message belongs.
+        message_index : int
+            Index position of the message in the conversation
+        message_user : str
+            Identifier of the user who sent the message
+        message : ChatMessage or str
+            The message content to store
+        """
+
+    @abstractmethod
+    def update_retry(
+        self,
+        message_id: str,
+        message: ChatMessage | str,
+    ) -> None:
+        """Create a retry version of a message.
+
+        Parameters
+        ----------
+        message_id : str
+            The ID of the message to retry
+        message : ChatMessage or str
+            The new message content
+        """
+
+    @abstractmethod
+    def update_status(
+        self,
+        message_id: str,
+        liked: bool | None = None,
+        disliked: bool | None = None,
+        state: (
+            Literal["initial", "reran", "undone", "cleared", "edited", "retried"] | None
+        ) = None,
+    ) -> None:
+        """Update message status.
+
+        Parameters
+        ----------
+        message_id : str
+            The ID of the message to update
+        liked : bool, optional
+            Whether the message was liked
+        disliked : bool, optional
+            Whether the message was disliked
+        state : str, optional
+            New state for the message
+        """
+
+    @abstractmethod
+    def view_messages(self, session_id: str | None = None) -> pd.DataFrame:
+        """Retrieve messages.
+
+        Parameters
+        ----------
+        session_id : str or None, optional
+            The session ID to filter messages by
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing the messages
+        """
+
+    @abstractmethod
+    def view_message_history(self, message_id: str) -> pd.DataFrame:
+        """Get the complete history of a message including all retries.
+
+        Parameters
+        ----------
+        message_id : str
+            The ID of the message to get history for
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing message history
+        """
+
+    @abstractmethod
+    def view_sessions(
+        self, session_id: str | None = "all", username: str | None = None
+    ) -> pd.DataFrame:
+        """View sessions with their associated metrics.
+
+        Parameters
+        ----------
+        session_id : str or None, optional
+            Session ID to retrieve
+        username : str or None, optional
+            Username to filter sessions by
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing sessions
+        """
+
+    @abstractmethod
+    def view_coordinator_agents(
+        self, coordinator_id: str | None = None
+    ) -> pd.DataFrame:
+        """View detailed information about all agents in a coordinator.
+
+        Parameters
+        ----------
+        coordinator_id : str or None, optional
+            The coordinator ID to retrieve information for
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing detailed agent information
+        """
+
+    @abstractmethod
+    def get_llm_config(self, llm_id: str) -> LLMConfig | None:
+        """Retrieve LLM configuration."""
+
+    @abstractmethod
+    def get_agent_config(self, agent_id: str) -> AgentConfig | None:
+        """Retrieve agent configuration."""
+
+    @abstractmethod
+    def get_coordinator_config(self, coordinator_id: str) -> CoordinatorConfig | None:
+        """Retrieve coordinator configuration."""
+
+    @abstractmethod
+    def get_session_info(self, session_id: str | None = None) -> SessionInfo | None:
+        """Retrieve session information with all related configurations."""
+
+
+class SQLiteChatLogs(ChatLogs):
     """A class for managing and storing chat message logs in SQLite.
 
     The class handles storage, retrieval, and versioning of chat messages,
@@ -105,6 +287,26 @@ class ChatLogs(param.Parameterized):
         super().__init__(**params)
         self.conn: sqlite3.Connection = sqlite3.connect(self.filename)
         self.cursor: sqlite3.Cursor = self.conn.cursor()
+
+        # Create schema_version table first to track schema changes
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_info (
+                version TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
+        # Check if schema_version exists, if not insert current version
+        self.cursor.execute("SELECT version FROM schema_info")
+        version_row = self.cursor.fetchone()
+        if not version_row:
+            self.cursor.execute(
+                "INSERT INTO schema_info (version) VALUES (?)",
+                (SCHEMA_VERSION,)
+            )
 
         # Create messages table
         self.cursor.execute(
@@ -225,6 +427,41 @@ class ChatLogs(param.Parameterized):
         )
 
         self.conn.commit()
+
+    def _serialize_message(self, message: ChatMessage | str) -> str:
+        """Serialize a message object into a string representation.
+
+        Parameters
+        ----------
+        message : ChatMessage or str
+            The message to serialize. Can be either a ChatMessage object
+            or a string
+
+        Returns
+        -------
+        str
+            The serialized message content
+
+        Notes
+        -----
+        Handles special cases for Card and Tabulator objects within
+        ChatMessage objects
+        """
+        if isinstance(message, str):
+            return message
+        if isinstance(message.object, Card):
+            steps = message.object
+            serialized = "# Steps"
+            for step in steps.objects:
+                content = "\n".join([obj.object for obj in step.objects])
+                serialized += f"## {step.title}\n{content}"
+            return serialized
+        if isinstance(message.object, Tabulator):
+            tabulator = message.object
+            serialized = "# Table\n"
+            serialized += tabulator.value.to_markdown()
+            return serialized
+        return message.serialize()
 
     def register_coordinator(
         self,
@@ -362,41 +599,6 @@ class ChatLogs(param.Parameterized):
             self.conn.rollback()
             log_debug(f"Failed to register coordinator: {e!s}")
             raise
-
-    def _serialize_message(self, message: ChatMessage | str) -> str:
-        """Serialize a message object into a string representation.
-
-        Parameters
-        ----------
-        message : ChatMessage or str
-            The message to serialize. Can be either a ChatMessage object
-            or a string
-
-        Returns
-        -------
-        str
-            The serialized message content
-
-        Notes
-        -----
-        Handles special cases for Card and Tabulator objects within
-        ChatMessage objects
-        """
-        if isinstance(message, str):
-            return message
-        if isinstance(message.object, Card):
-            steps = message.object
-            serialized = "# Steps"
-            for step in steps.objects:
-                content = "\n".join([obj.object for obj in step.objects])
-                serialized += f"## {step.title}\n{content}"
-            return serialized
-        if isinstance(message.object, Tabulator):
-            tabulator = message.object
-            serialized = "# Table\n"
-            serialized += tabulator.value.to_markdown()
-            return serialized
-        return message.serialize()
 
     def upsert(
         self,
@@ -1039,7 +1241,7 @@ class ChatLogs(param.Parameterized):
             return None
 
         # Get LLM config if present
-        llm_config = self.get_llm_config(row[6]) if row[6] else None
+        llm_config = self.get_llm_config(row[7]) if row[7] else None
 
         # Get agent configs
         agent_ids = json.loads(row[2])
@@ -1119,3 +1321,38 @@ class ChatLogs(param.Parameterized):
             last_active=datetime.fromisoformat(session_data.last_active),
             metrics=metrics,
         )
+
+    def get_schema_version(self) -> str:
+        """Get the current schema version from the database."""
+        self.cursor.execute("SELECT version FROM schema_info LIMIT 1")
+        result = self.cursor.fetchone()
+        return result[0] if result else SCHEMA_VERSION
+
+
+# Schema migration function for future use
+def migrate_schema(from_version: str, to_version: str, db_connection: Any) -> bool:
+    """Migrate database schema from one version to another.
+
+    Parameters
+    ----------
+    from_version : str
+        Current schema version
+    to_version : str
+        Target schema version
+    db_connection : Any
+        Database connection to apply migrations to
+
+    Returns
+    -------
+    bool
+        True if migration was successful, False otherwise
+    """
+    if from_version == to_version:
+        return True
+
+    # Example migrations could be implemented here
+    # if from_version == "1.0.0" and to_version == "1.1.0":
+    #     # Apply migration steps for 1.0.0 -> 1.1.0
+    #     return True
+
+    return False

@@ -11,7 +11,8 @@ from panel.widgets import Tabulator
 
 try:
     from lumen.ai.logs import (
-        AgentConfig, ChatLogs, CoordinatorConfig, LLMConfig, SessionInfo,
+        SCHEMA_VERSION, AgentConfig, CoordinatorConfig, LLMConfig, SessionInfo,
+        SQLiteChatLogs,
     )
 except ImportError:
     pytest.skip("Skipping tests that require lumen.ai", allow_module_level=True)
@@ -25,8 +26,8 @@ def temp_db_path(tmp_path):
 
 @pytest.fixture
 def chat_logs(temp_db_path):
-    """Create a ChatLogs instance with a temporary database."""
-    logs = ChatLogs(filename=temp_db_path)
+    """Create a SQLiteChatLogs instance with a temporary database."""
+    logs = SQLiteChatLogs(filename=temp_db_path)
     yield logs
     # Close connection to prevent "database is locked" issues
     logs.conn.close()
@@ -81,7 +82,7 @@ def mock_coordinator():
     return coordinator
 
 
-class TestChatLogs:
+class TestSQLiteChatLogs:
     """Tests for the ChatLogs class."""
 
     def test_initialization(self, chat_logs, temp_db_path):
@@ -96,11 +97,15 @@ class TestChatLogs:
         table_names = [table[0] for table in tables]
 
         expected_tables = [
-            "messages", "retries", "llm_configs", "agents",
+            "schema_info", "messages", "retries", "llm_configs", "agents",
             "coordinators", "sessions"
         ]
         for table in expected_tables:
             assert table in table_names
+
+        # Check schema version
+        version = chat_logs.get_schema_version()
+        assert version == SCHEMA_VERSION
 
     def test_register_coordinator(self, chat_logs, mock_coordinator):
         """Test registering a coordinator and its components."""

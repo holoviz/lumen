@@ -45,6 +45,7 @@ from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
 )
 from .llm import Llm, OpenAI
+from .logs import ChatLogs
 from .memory import _Memory, memory
 from .utils import format_exception
 
@@ -103,8 +104,8 @@ class UI(Viewer):
     log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
-    logs_db_path = param.String(default=None, doc="""
-        The path to the log file that will store the messages exchanged with the LLM.""")
+    logs = param.ClassSelector(class_=ChatLogs, default=None, allow_None=True, doc="""
+        The logs instance to use for storing chat logs. If None, logs will not be stored.""")
 
     interface = param.ClassSelector(class_=ChatInterface, doc="""
         The ChatInterface for the Coordinator to interact with.""")
@@ -158,7 +159,7 @@ class UI(Viewer):
             interface=self.interface,
             llm=self.llm,
             tools=self.tools,
-            logs_db_path=self.logs_db_path
+            logs=self.logs,
         )
         self._notebook_export = FileDownload(
             icon="notebook",
