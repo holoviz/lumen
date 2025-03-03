@@ -165,7 +165,6 @@ async def get_schema(
             get_kwargs["limit"] = 100
         schema = await asyncio.to_thread(source.get_schema, table, shuffle=shuffle, **get_kwargs)
     schema = dict(schema)
-    print(schema["BASIN"])
 
     # first pop regardless to prevent
     # argument of type 'numpy.int64' is not iterable
@@ -189,9 +188,6 @@ async def get_schema(
                 spec.pop("max")
 
     for field, spec in schema.items():
-        if field == "BASIN":
-            print(traceback.print_stack(limit=3))
-            print(field, spec)
         if "type" in spec:
             if spec["type"] == "string":
                 spec["type"] = "str"

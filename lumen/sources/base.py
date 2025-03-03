@@ -788,7 +788,6 @@ class BaseSQLSource(Source):
                 data_sql_expr = sql_transform.apply(data_sql_expr)
             data = self.execute(data_sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
-            print(schema)
             if limit:
                 # the min/max and enums will be computed on the limited dataset
                 continue
