@@ -2,6 +2,7 @@ import datetime as dt
 
 from lumen.transforms.sql import (
     SQLColumns, SQLDistinct, SQLFilter, SQLGroupBy, SQLLimit, SQLMinMax,
+    SQLShuffle,
 )
 
 
@@ -39,6 +40,12 @@ def test_sql_min_max():
     assert (
         SQLMinMax.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
         """SELECT\n    MIN("A") as "A_min", MAX("A") as "A_max", MIN("B") as "B_min", MAX("B") as "B_max"\nFROM ( SELECT * FROM TABLE )"""
+    )
+
+def test_sql_shuffle():
+    assert (
+        SQLShuffle.apply_to('SELECT * FROM TABLE') ==
+        """SELECT *\nFROM (SELECT * FROM TABLE)\nORDER BY random()"""
     )
 
 def test_sql_filter_none():
