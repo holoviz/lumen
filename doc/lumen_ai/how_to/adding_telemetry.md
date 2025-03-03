@@ -25,10 +25,11 @@ Here's how to activate telemetry in your Lumen AI app:
 
 ```python
 from lumen.ai.ui.explorer import ExplorerUI
+from lumen.ai.logs import SQLiteChatLogs
 
 # Quick integration for ExplorerUI
 lmai.ExplorerUI(
-    logs_db_path="lumen.db",
+    logs=SQLiteChatLogs(filename="lumen_app.db")
 ).servable()
 ```
 
@@ -186,11 +187,11 @@ You can also integrate with the ChatLogs class directly for more control:
 
 ```python
 from lumen.ai.coordinator import Coordinator
-from lumen.ai.logs import ChatLogs
+from lumen.ai.logs import SQLiteChatLogs
 
 # Setup
 coordinator = Coordinator(...)
-chat_logs = ChatLogs(filename="lumen_app.db")
+chat_logs = SQLiteChatLogs(filename="lumen_app.db")
 session_id = chat_logs.register_coordinator(coordinator)
 
 # In your message handlers
