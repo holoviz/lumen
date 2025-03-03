@@ -427,7 +427,7 @@ class AzureOpenAI(Llm):
 
     mode = param.Selector(default=Mode.TOOLS)
 
-    temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
+    temperature = param.Number(default=1, bounds=(0, None), constant=True)
 
     @property
     def _client_kwargs(self):
