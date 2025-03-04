@@ -54,11 +54,11 @@ Understand how to define and manage model-specific prompts for replacing respons
 Learn to create and use template prompts for influencing the AI's responses.
 :::
 
-:::{grid-item-card} {octicon}`graph;2.5em;sd-mr-1` Adding Telemetry
-:link: adding_telemetry
+:::{grid-item-card} {octicon}`graph;2.5em;sd-mr-1` Adding Logging
+:link: adding_logging
 :link-type: doc
 
-Learn how to incorporate telemetry capabilities to track usage and performance in your Lumen AI applications.
+Learn how to incorporate logging capabilities to track usage and performance in your Lumen AI applications.
 :::
 
 ::::
@@ -74,5 +74,5 @@ custom_data_source
 custom_tools
 model_prompts
 template_prompts
-adding_telemetry
+adding_logging
 ```
