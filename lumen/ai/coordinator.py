@@ -125,6 +125,7 @@ class Coordinator(Viewer, Actor):
                 message_index=message_index,
                 message_user=message.user,
                 message=message,
+                memory=self._memory,
             )
 
         def on_undo(instance, _):

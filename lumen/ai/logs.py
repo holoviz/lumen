@@ -18,8 +18,16 @@ from panel.widgets import Tabulator
 
 from lumen.ai.utils import log_debug, normalize_value
 
+try:
+    from .views import LumenOutput
+except ImportError:
+    # For testing where views might not be available
+    LumenOutput = None
+
 if TYPE_CHECKING:
     from lumen.ai.coordinator import Coordinator
+
+    from .views import LumenOutput
 
 
 # Schema version allows tracking changes and implementing migrations
@@ -136,6 +144,13 @@ class ChatLogs(param.Parameterized):
                     "title": step.title if hasattr(step, 'title') else "",
                     "content": content,
                 }
+
+                if hasattr(step, 'status'):
+                    step_dict["status"] = step.status
+                if hasattr(step, 'success_title'):
+                    step_dict["success_title"] = step.success_title
+                if hasattr(step, 'failed_title'):
+                    step_dict["failed_title"] = step.failed_title
                 steps.append(step_dict)
 
             return {
@@ -144,12 +159,28 @@ class ChatLogs(param.Parameterized):
                 "title": message.object.title if hasattr(message.object, 'title') else ""
             }
 
+        elif isinstance(message.object, LumenOutput):
+            output = message.object
+            output_data = {
+                "type": "lumen_output",
+                "output_type": output.__class__.__name__,
+                "title": output.title,
+                "spec": output.spec,
+                "language": output.language,
+                "active": output.active
+            }
+
+            if output.__class__.__name__ == "AnalysisOutput":
+                # TODO: double check if this is the right way to do it
+                output_data["analysis_type"] = output.analysis.to_spec()
+                output_data["pipeline"] = output.pipeline.to_spec()
+            return output_data
+
         elif isinstance(message.object, Tabulator):
             data = message.object.value.to_dict(orient="records")
             return {
                 "type": "table",
                 "data": data,
-                "markdown": message.object.value.to_markdown()
             }
 
         return {
@@ -200,6 +231,18 @@ class ChatLogs(param.Parameterized):
                 serialized += f"## {title}\n{content}"
             return serialized
 
+        elif msg_type == "lumen_output":
+            output_type = message_dict.get("output_type", "LumenOutput")
+            title = message_dict.get("title", "")
+            spec = message_dict.get("spec", "")
+
+            if output_type == "SQLOutput":
+                return f"SQLOutput:\n```sql\n{spec}\n```"
+            elif "analysis_type" in message_dict:
+                return f"{output_type} ({message_dict['analysis_type']}):\n```yaml\n{spec}\n```"
+            else:
+                return f"{output_type}:\n```yaml\n{spec}\n```"
+
         elif msg_type == "table":
             return message_dict.get("markdown", "# Table\n(Table data not available)")
 
@@ -241,6 +284,7 @@ class ChatLogs(param.Parameterized):
         message_index: int,
         message_user: str,
         message: ChatMessage | str,
+        memory: dict | None = None,
     ) -> None:
         """Insert or update a message.
 
@@ -256,6 +300,8 @@ class ChatLogs(param.Parameterized):
             Identifier of the user who sent the message
         message : ChatMessage or str
             The message content to store
+        memory : dict, optional
+            Memory state at the time of the message
         """
 
     @abstractmethod
@@ -263,6 +309,7 @@ class ChatLogs(param.Parameterized):
         self,
         message_id: str,
         message: ChatMessage | str,
+        memory: dict | None = None,
     ) -> None:
         """Create a retry version of a message.
 
@@ -272,6 +319,8 @@ class ChatLogs(param.Parameterized):
             The ID of the message to retry
         message : ChatMessage or str
             The new message content
+        memory : dict, optional
+            Memory state at the time of the retry
         """
 
     @abstractmethod
@@ -425,6 +474,7 @@ class SQLiteChatLogs(ChatLogs):
                 message_index INTEGER,
                 message_user TEXT,
                 message_json TEXT,
+                memory_json TEXT,
                 attempt_number INTEGER DEFAULT 0,
                 liked BOOLEAN DEFAULT FALSE,
                 disliked BOOLEAN DEFAULT FALSE,
@@ -442,6 +492,7 @@ class SQLiteChatLogs(ChatLogs):
                 message_id TEXT NOT NULL,
                 attempt_number INTEGER NOT NULL,
                 message_json TEXT NOT NULL,
+                memory_json TEXT,
                 liked BOOLEAN DEFAULT FALSE,
                 disliked BOOLEAN DEFAULT FALSE,
                 revision_type TEXT DEFAULT 'edited',
@@ -680,6 +731,7 @@ class SQLiteChatLogs(ChatLogs):
         message_index: int,
         message_user: str,
         message: ChatMessage | str,
+        memory: dict | None = None,
     ) -> None:
         """Insert or update a message in the messages table.
 
@@ -695,6 +747,8 @@ class SQLiteChatLogs(ChatLogs):
             Identifier of the user who sent the message
         message : ChatMessage or str
             The message content to store
+        memory : dict, optional
+            Memory state at the time of the message
 
         Notes
         -----
@@ -703,20 +757,23 @@ class SQLiteChatLogs(ChatLogs):
         """
         content_dict = self._serialize_message(message)
         content_json = json.dumps(content_dict)
+        memory_json = json.dumps(normalize_value(dict(memory))) if memory else None
+
         try:
             self.cursor.execute(
                 """
                 INSERT INTO messages (
                     message_id, session_id, message_index,
-                    message_user, message_json
-                ) VALUES (?, ?, ?, ?, ?)
+                    message_user, message_json, memory_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(message_id) DO UPDATE SET
                     message_json = excluded.message_json,
                     message_index = excluded.message_index,
                     message_user = excluded.message_user,
+                    memory_json = excluded.memory_json,
                     timestamp = CURRENT_TIMESTAMP
                 """,
-                (message_id, session_id, message_index, message_user, content_json),
+                (message_id, session_id, message_index, message_user, content_json, memory_json),
             )
             self.conn.commit()
         except Exception as e:
@@ -726,6 +783,7 @@ class SQLiteChatLogs(ChatLogs):
         self,
         message_id: str,
         message: ChatMessage | str,
+        memory: dict | None = None,
     ) -> None:
         """Create a retry version of a message.
 
@@ -735,6 +793,8 @@ class SQLiteChatLogs(ChatLogs):
             The ID of the message to retry
         message : ChatMessage or str
             The new message content
+        memory : dict, optional
+            Memory state at the time of the retry
 
         Notes
         -----
@@ -752,16 +812,19 @@ class SQLiteChatLogs(ChatLogs):
         content_dict = self._serialize_message(message)
         content_json = json.dumps(content_dict)
 
+        # Serialize memory if provided
+        memory_json = json.dumps(normalize_value(memory)) if memory else None
+
         # Check if message exists and get original content before starting transaction
         self.cursor.execute(
             """
-            SELECT COUNT(*), message_json, liked, disliked
+            SELECT COUNT(*), message_json, memory_json, liked, disliked
             FROM messages
             WHERE message_id = ?
             """,
             (message_id,),
         )
-        count, original_content, original_liked, original_disliked = (
+        count, original_content, original_memory, original_liked, original_disliked = (
             self.cursor.fetchone()
         )
 
@@ -771,8 +834,12 @@ class SQLiteChatLogs(ChatLogs):
         # Compare as dictionaries to avoid false negatives due to JSON formatting
         try:
             original_dict = json.loads(original_content) if original_content else {}
-            if content_dict == original_dict:
-                log_debug("Matching content; no need to insert update")
+            if content_dict == original_dict and (
+                (memory is None and original_memory is None) or
+                (memory is not None and original_memory is not None and
+                 json.loads(original_memory) == normalize_value(memory))
+            ):
+                log_debug("Matching content and memory; no need to insert update")
                 return
         except json.JSONDecodeError:
             # If original content is not valid JSON, it's definitely different
@@ -801,12 +868,13 @@ class SQLiteChatLogs(ChatLogs):
                         message_id,
                         attempt_number,
                         message_json,
+                        memory_json,
                         liked,
                         disliked
                     )
-                    VALUES (?, 0, ?, ?, ?)
+                    VALUES (?, 0, ?, ?, ?, ?)
                     """,
-                    (message_id, original_content, original_liked, original_disliked),
+                    (message_id, original_content, original_memory, original_liked, original_disliked),
                 )
                 last_attempt = 0
 
@@ -829,12 +897,13 @@ class SQLiteChatLogs(ChatLogs):
                     message_id,
                     attempt_number,
                     message_json,
+                    memory_json,
                     liked,
                     disliked
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (message_id, next_attempt, content_json, prev_liked, prev_disliked),
+                (message_id, next_attempt, content_json, memory_json, prev_liked, prev_disliked),
             )
 
             # Update original message state and contents
@@ -843,10 +912,11 @@ class SQLiteChatLogs(ChatLogs):
                 UPDATE messages
                 SET state = 'edited',
                     message_json = ?,
+                    memory_json = ?,
                     attempt_number = ?
                 WHERE message_id = ?
                 """,
-                (content_json, next_attempt, message_id),
+                (content_json, memory_json, next_attempt, message_id),
             )
 
             self.conn.commit()
@@ -939,7 +1009,7 @@ class SQLiteChatLogs(ChatLogs):
         -------
         pandas.DataFrame
             DataFrame containing the messages with columns:
-            message_id, message_index, message_user, message_json,
+            message_id, message_index, message_user, message_json, memory_json,
             attempt_number, liked, disliked, state, timestamp
         """
         if session_id == "all":
@@ -954,7 +1024,7 @@ class SQLiteChatLogs(ChatLogs):
             df = pd.read_sql(
                 """
                 SELECT message_id, message_index, message_user,
-                        message_json, attempt_number, liked, disliked, state, timestamp
+                        message_json, memory_json, attempt_number, liked, disliked, state, timestamp
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY message_index ASC
@@ -968,6 +1038,13 @@ class SQLiteChatLogs(ChatLogs):
             df['message_json'] = df['message_json'].apply(
                 lambda x: json.loads(x) if pd.notna(x) and isinstance(x, str) and x.strip().startswith('{') else x
             )
+
+        # Parse JSON memory content
+        if 'memory_json' in df.columns:
+            df['memory_json'] = df['memory_json'].apply(
+                lambda x: json.loads(x) if pd.notna(x) and isinstance(x, str) and x.strip().startswith('{') else None
+            )
+
         return df
 
     def view_message_history(self, message_id: str) -> pd.DataFrame:
@@ -982,12 +1059,13 @@ class SQLiteChatLogs(ChatLogs):
         -------
         pandas.DataFrame
             DataFrame containing message history with columns:
-            version, message_json, liked, disliked, timestamp, revision_type
+            version, message_json, memory_json, liked, disliked, timestamp, revision_type
         """
         query = """
             SELECT
                 attempt_number as version,
                 message_json,
+                memory_json,
                 liked,
                 disliked,
                 timestamp,
@@ -1003,6 +1081,12 @@ class SQLiteChatLogs(ChatLogs):
         if 'message_json' in df_history.columns:
             df_history['message_json'] = df_history['message_json'].apply(
                 lambda x: json.loads(x) if pd.notna(x) and isinstance(x, str) and x.strip().startswith('{') else x
+            )
+
+        # Parse JSON memory content
+        if 'memory_json' in df_history.columns:
+            df_history['memory_json'] = df_history['memory_json'].apply(
+                lambda x: json.loads(x) if pd.notna(x) and isinstance(x, str) and x.strip().startswith('{') else None
             )
 
         return df_history

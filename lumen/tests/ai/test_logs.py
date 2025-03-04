@@ -219,8 +219,8 @@ class TestSQLiteChatLogs:
         assert message_json["type"] == "text"
         assert message_json["content"] == "Retry response"
 
-        assert messages[0][5] == 1  # attempt_number
-        assert messages[0][8] == "edited"  # state
+        assert messages[0][6] == 1  # attempt_number
+        assert messages[0][9] == "edited"  # state
 
         # Check that retry was recorded
         retries = chat_logs.cursor.execute(
@@ -245,7 +245,7 @@ class TestSQLiteChatLogs:
         message_json = json.loads(messages[0][4])  # message_json as JSON
         assert message_json["type"] == "text"
         assert message_json["content"] == "Second retry"
-        assert messages[0][5] == 2  # attempt_number
+        assert messages[0][6] == 2  # attempt_number
 
         # Check that all retries were recorded
         retries = chat_logs.cursor.execute(
@@ -279,7 +279,7 @@ class TestSQLiteChatLogs:
             "SELECT * FROM messages WHERE message_id = ?",
             ("test_msg_status",)
         ).fetchall()
-        assert messages[0][6] == True  # liked
+        assert messages[0][7] == True  # liked
 
         # Update disliked status
         chat_logs.update_status(
@@ -292,7 +292,7 @@ class TestSQLiteChatLogs:
             "SELECT * FROM messages WHERE message_id = ?",
             ("test_msg_status",)
         ).fetchall()
-        assert messages[0][7] == True  # disliked
+        assert messages[0][8] == True  # disliked
 
         # Update state
         chat_logs.update_status(
@@ -305,7 +305,7 @@ class TestSQLiteChatLogs:
             "SELECT * FROM messages WHERE message_id = ?",
             ("test_msg_status",)
         ).fetchall()
-        assert messages[0][8] == "retried"  # state
+        assert messages[0][9] == "retried"  # state
 
     def test_view_messages(self, chat_logs):
         """Test retrieving messages for a session."""
@@ -579,10 +579,7 @@ class TestSQLiteChatLogs:
         result = chat_logs._serialize_message(msg)
         assert result["type"] == "table"
         assert "data" in result
-        assert "markdown" in result
         assert len(result["data"]) == 3  # 3 rows
-        assert "col1" in result["markdown"]
-        assert "col2" in result["markdown"]
 
     def test_serialize_message_to_string(self, chat_logs):
         """Test converting serialized message back to string."""

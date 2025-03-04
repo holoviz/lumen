@@ -27,6 +27,7 @@ from jinja2 import (
 from markupsafe import escape
 from pydantic import BaseModel
 
+from lumen.base import Component
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
@@ -543,6 +544,8 @@ def normalize_value(v):
             return v.read_text()
         except Exception:
             return str(v)
+    if isinstance(v, Component):
+        return v.to_spec()
     if isinstance(v, BaseModel):
         return v.model_dump()
     if isinstance(v, param.Parameterized):
@@ -552,7 +555,7 @@ def normalize_value(v):
     if isinstance(v, dict):
         return {k: normalize_value(val) for k, val in sorted(v.items())}
     if isinstance(v, (list, tuple)):
-        return sorted(normalize_value(x) for x in v)
+        return sorted((normalize_value(x) for x in v), key=lambda item: json.dumps(item, sort_keys=True))
 
     if callable(v):
         return format_function_signature(v)

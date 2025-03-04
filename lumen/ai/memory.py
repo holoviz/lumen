@@ -51,5 +51,4 @@ class _Memory(SessionCache):
         if key in self._rx:
             self._rx[key].rx.value = new
 
-
 memory = _Memory()
