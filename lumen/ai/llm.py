@@ -44,6 +44,10 @@ class Llm(param.Parameterized):
     models.
     """
 
+    create_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments to pass to the LLM provider
+        when calling chat.completions.create.""")
+
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES, doc="""
         The calling mode used by instructor to guide the LLM towards generating
         outputs matching the schema.""")
@@ -408,7 +412,7 @@ class OpenAI(Llm):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
 
         if self.use_logfire:
             import logfire
@@ -459,7 +463,7 @@ class AzureOpenAI(Llm):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
 
@@ -506,7 +510,7 @@ class MistralAI(Llm):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
     @classmethod
@@ -555,7 +559,7 @@ class AzureMistralAI(MistralAI):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
 
@@ -594,9 +598,9 @@ class AnthropicAI(Llm):
 
         if response_model:
             client = instructor.from_anthropic(llm)
-            return partial(client.messages.create, model=model)
+            return partial(client.messages.create, model=model, **self.create_kwargs)
         else:
-            return partial(llm.messages.create, model=model)
+            return partial(llm.messages.create, model=model, **self.create_kwargs)
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
