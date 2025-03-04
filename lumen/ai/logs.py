@@ -144,19 +144,13 @@ class ChatLogs(param.Parameterized):
                     "title": step.title if hasattr(step, 'title') else "",
                     "content": content,
                 }
-
-                if hasattr(step, 'status'):
-                    step_dict["status"] = step.status
-                if hasattr(step, 'success_title'):
-                    step_dict["success_title"] = step.success_title
-                if hasattr(step, 'failed_title'):
-                    step_dict["failed_title"] = step.failed_title
+                step_dict["status"] = step.status
                 steps.append(step_dict)
 
             return {
                 "type": "card",
                 "steps": steps,
-                "title": message.object.title if hasattr(message.object, 'title') else ""
+                "user": message.user,
             }
 
         elif isinstance(message.object, LumenOutput):
@@ -167,7 +161,8 @@ class ChatLogs(param.Parameterized):
                 "title": output.title,
                 "spec": output.spec,
                 "language": output.language,
-                "active": output.active
+                "active": output.active,
+                "user": message.user,
             }
 
             if output.__class__.__name__ == "AnalysisOutput":
@@ -181,13 +176,13 @@ class ChatLogs(param.Parameterized):
             return {
                 "type": "table",
                 "data": data,
+                "user": message.user,
             }
 
         return {
             "type": "message",
             "content": message.serialize(),
             "user": message.user,
-            "name": message.name if hasattr(message, 'name') else None
         }
 
     def _serialize_message_to_string(self, message: ChatMessage | str | dict) -> str:
