@@ -20,6 +20,9 @@ class SnowflakeSource(BaseSQLSource):
         'externalbrowser', 'oauth', 'snowflake', 'username_password_mfa'], doc="""
         The authentication approach to use.""")
 
+    conn_kwargs = param.Dict(default={}, doc="""
+        Additional connection parameters to pass to the Snowflake connector.""")
+
     database = param.String(default=None, doc="""
         The database to connect to.""")
 
@@ -55,7 +58,7 @@ class SnowflakeSource(BaseSQLSource):
     def __init__(self, **params):
         conn = params.pop('conn', None)
         super().__init__(**params)
-        conn_kwargs = {}
+        conn_kwargs = self.conn_kwargs.copy()
         if self.account is not None:
             conn_kwargs['account'] = self.account
         if self.authenticator is not None:
