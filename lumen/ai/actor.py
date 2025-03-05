@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import (
-    hash_spec, log_debug, render_template, serialize_to_spec,
-    warn_on_unused_variables,
+    deserialize_from_spec, hash_spec, log_debug, render_template,
+    serialize_to_spec, serialize_value, warn_on_unused_variables,
 )
 
 
@@ -177,8 +177,12 @@ class Actor(param.Parameterized):
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = serialize_to_spec(self)
-        spec["prompts"] = {**self.param.prompts.default, **self.prompts}
+        spec["prompts"] = serialize_value({**self.param.prompts.default, **self.prompts})
         return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any]) -> "Actor":
+        return deserialize_from_spec(spec)
 
     @property
     def hash(self) -> str:

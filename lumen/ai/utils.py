@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import importlib
 import inspect
 import json
 import math
@@ -10,6 +11,7 @@ import re
 import time
 import traceback
 
+from enum import Enum
 from functools import wraps
 from pathlib import Path, PosixPath
 from shutil import get_terminal_size
@@ -538,6 +540,7 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
             model_kwargs[key] = cast_value(value)
     return repo, model_file, model_kwargs
 
+
 def serialize_value(v: Any) -> Any:
     """
     Serializes a value to a **consistent** JSON-serializable format.
@@ -563,7 +566,17 @@ def serialize_value(v: Any) -> Any:
         return sorted((serialize_value(x) for x in v), key=lambda item: json.dumps(item, sort_keys=True))
     if callable(v):
         return f"{v.__module__}.{v.__name__}"
-    return str(v)
+    if isinstance(v, Enum):
+        return {
+            "type": f"{v.__class__.__module__}.{v.__class__.__name__}",
+            "value": v.value
+        }
+    try:
+        json.dumps(v)
+        return v
+    except TypeError:
+        return str(v)
+
 
 def serialize_to_spec(parameterized: param.Parameterized) -> dict[str, Any]:
     """
@@ -571,13 +584,55 @@ def serialize_to_spec(parameterized: param.Parameterized) -> dict[str, Any]:
     """
     excluded_keys = ["name", "interface", "logs"]
     spec = {
-        "class_type": serialize_value(type(parameterized)),
+        "type": serialize_value(type(parameterized)),
         **serialize_value({
             k: v for k, v in parameterized.param.values().items()
             if not k.startswith("_") and k not in excluded_keys
         }),
     }
     return spec
+
+
+def deserialize_value(value: Any) -> Any:
+    if isinstance(value, dict) and "type" in value:
+        return deserialize_from_spec(value)
+    elif isinstance(value, dict):
+        return {k: deserialize_value(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [deserialize_value(v) for v in value]
+    elif isinstance(value, str) and "." in value and not value.startswith("/"):
+        try:
+            module_name, class_name = value.rsplit(".", 1)
+            module = importlib.import_module(module_name)
+            return getattr(module, class_name)
+        except (ImportError, AttributeError, ValueError):
+            return value
+    elif isinstance(value, str) and (value.startswith("/", ".")):
+        return Path(value)
+    else:
+        return value
+
+
+def deserialize_from_spec(spec: dict[str, Any]) -> Any:
+    if not isinstance(spec, dict) or "type" not in spec:
+        raise ValueError("Invalid specification format: missing type")
+
+    type_str = spec["type"]
+    try:
+        module_name, class_name = type_str.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        cls = getattr(module, class_name)
+    except (ImportError, AttributeError, ValueError) as e:
+        raise ValueError(f"Could not import class {type_str}: {e!s}")
+
+    init_params = {}
+    for key, value in spec.items():
+        if key != "type" and (hasattr(cls, "param") and not cls.param[key].constant) or not hasattr(cls, "param"):
+            init_params[key] = deserialize_value(value)
+
+    instance = cls(**init_params)
+    return instance
+
 
 def hash_spec(config: dict[str, Any]) -> str:
     """Creates a deterministic hash from a configuration dictionary."""
