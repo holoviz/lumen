@@ -26,15 +26,6 @@ class Tool(Actor, ContextProvider):
     interact with or on behalf of a user directly.
     """
 
-    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
-        actor_spec = Actor.to_spec(self)
-        context_spec = ContextProvider.to_spec(self)
-        spec = {
-            **actor_spec,
-            **context_spec,
-        }
-        return spec
-
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> Tool:
         return deserialize_from_spec(spec)
