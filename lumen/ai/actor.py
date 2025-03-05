@@ -218,5 +218,10 @@ class ContextProvider(param.Parameterized):
         spec = serialize_to_spec(self)
         return spec
 
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any]) -> "ContextProvider":
+        return deserialize_from_spec(spec)
+
+    @property
     def hash(self) -> str:
         return hash_spec(self.to_spec())

@@ -8,8 +8,6 @@ import param
 
 from panel.viewable import Viewable
 
-from lumen.ai.utils import deserialize_from_spec
-
 from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
@@ -25,10 +23,6 @@ class Tool(Actor, ContextProvider):
     context or respond to a question. Unlike an Agent they never
     interact with or on behalf of a user directly.
     """
-
-    @classmethod
-    def from_spec(cls, spec: dict[str, Any]) -> Tool:
-        return deserialize_from_spec(spec)
 
 
 class VectorLookupTool(Tool):

@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import param
 
-from .utils import hash_spec, serialize_to_spec
+from .utils import deserialize_from_spec, hash_spec, serialize_to_spec
 
 
 class Embeddings(param.Parameterized):
@@ -17,6 +17,10 @@ class Embeddings(param.Parameterized):
     def to_spec(self) -> dict[str, Any]:
         """Return a serializable specification of this embeddings configuration."""
         return serialize_to_spec(self)
+
+    def from_spec(self, spec: dict[str, Any]) -> "Embeddings":
+        """Create an embeddings configuration from a specification."""
+        return deserialize_from_spec(spec)
 
     @property
     def hash(self) -> str:
