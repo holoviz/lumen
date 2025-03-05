@@ -17,8 +17,8 @@ class SnowflakeSource(BaseSQLSource):
         The account identifier to connect to.""")
 
     authenticator = param.Selector(default=None, objects=[
-        'externalbrowser', 'oauth', 'snowflake', 'username_password_mfa'], doc="""
-        The authentication approach to use.""")
+        'externalbrowser', 'oauth', 'snowflake', 'username_password_mfa', 'SNOWFLAKE_JWT'], doc="""
+        The authentication approach to use.""", allow_None=True)
 
     database = param.String(default=None, doc="""
         The database to connect to.""")
