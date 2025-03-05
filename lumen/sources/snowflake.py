@@ -16,6 +16,9 @@ from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached
 
 # PEM certificates have the pattern:
+#   -----BEGIN PKEY-----  # renamed private... to pkey to prevent ruff from flagging
+#   <- multiple lines of encoded data->
+#   -----END PKEY-----
 #
 # The regex captures the header and footer into groups 1 and 3, the body into group 2
 # group 1: "header" captures series of hyphens followed by anything that is
