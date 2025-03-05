@@ -173,6 +173,15 @@ class Agent(Viewer, Actor, ContextProvider):
         system_prompt = await self._render_prompt("main", messages)
         return await self._stream(messages, system_prompt)
 
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        actor_spec = Actor.to_spec(self)
+        context_spec = ContextProvider.to_spec(self)
+        spec = {
+            **actor_spec,
+            **context_spec,
+        }
+        return spec
+
 
 class SourceAgent(Agent):
     """

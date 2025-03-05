@@ -1,12 +1,14 @@
 import json
 
 from abc import abstractmethod
+from typing import Any
 
 import duckdb
 import numpy as np
 import param
 
 from .embeddings import Embeddings, NumpyEmbeddings
+from .utils import hash_spec, serialize_to_spec
 
 
 class VectorStore(param.Parameterized):
@@ -206,6 +208,15 @@ class VectorStore(param.Parameterized):
     @abstractmethod
     def __len__(self) -> int:
         """Return the number of items in the vector store."""
+
+    def to_spec(self) -> dict[str, Any]:
+        """Return a serializable specification of this embeddings configuration."""
+        return serialize_to_spec(self)
+
+    @property
+    def hash(self):
+        """A deterministic hash of this vector store's configuration."""
+        return hash_spec(self.to_spec())
 
 class NumpyVectorStore(VectorStore):
     """

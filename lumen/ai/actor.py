@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import (
-    hash_config, log_debug, normalize_value, render_template,
+    hash_spec, log_debug, render_template, serialize_to_spec,
     warn_on_unused_variables,
 )
 
@@ -175,32 +175,19 @@ class Actor(param.Parameterized):
         """
         return cls._lookup_prompt_key(cls, key, "template").read_text()
 
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = serialize_to_spec(self)
+        spec["prompts"] = {**self.param.prompts.default, **self.prompts}
+        return spec
+
     @property
     def hash(self) -> str:
         """
         A deterministic hash of this actor's configuration, including prompts,
         requires/provides, template overrides, and LLM settings.
         """
-        # Get complete prompts combining class defaults and instance overrides
-        prompts = {**self.param.prompts.default, **self.prompts}
+        return hash_spec(self.to_spec())
 
-        # Build configuration dictionary
-        config = {
-            'agent_type': self.__class__.__name__,
-            'prompts': normalize_value(prompts),
-            'requires': sorted(self.requires),
-            'provides': sorted(self.provides),
-            'template_overrides': normalize_value(self.template_overrides)
-        }
-
-        # Add LLM configuration if present
-        if self.llm is not None:
-            config['llm'] = {
-                'mode': str(self.llm.mode),
-                'model_kwargs': normalize_value(self.llm.model_kwargs),
-                'temperature': getattr(self.llm, 'temperature', None)
-            }
-        return hash_config(config)
 
 class ContextProvider(param.Parameterized):
     """
@@ -222,3 +209,10 @@ class ContextProvider(param.Parameterized):
 
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = serialize_to_spec(self)
+        return spec
+
+    def hash(self) -> str:
+        return hash_spec(self.to_spec())

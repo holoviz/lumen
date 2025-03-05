@@ -16,7 +16,7 @@ from panel import Card
 from panel.chat import ChatMessage
 from panel.widgets import Tabulator
 
-from lumen.ai.utils import log_debug, normalize_value
+from lumen.ai.utils import log_debug, serialize_value
 
 try:
     from .views import LumenOutput
@@ -643,10 +643,10 @@ class SQLiteChatLogs(ChatLogs):
                     "purpose": getattr(agent, "purpose", None),
                     "requires": json.dumps(list(agent.requires)),
                     "provides": json.dumps(list(agent.provides)),
-                    "tools": json.dumps(normalize_value(getattr(agent, "tools", []))),
-                    "prompts": json.dumps(normalize_value(agent.prompts)),
+                    "tools": json.dumps(serialize_value(getattr(agent, "tools", []))),
+                    "prompts": json.dumps(serialize_value(agent.prompts)),
                     "template_overrides": json.dumps(
-                        normalize_value(agent.template_overrides)
+                        serialize_value(agent.template_overrides)
                     ),
                     "llm_id": llm_id,
                 }
@@ -669,11 +669,11 @@ class SQLiteChatLogs(ChatLogs):
                 "coordinator_id": coordinator.hash,
                 "name": type(coordinator).__name__,
                 "agents": json.dumps(agent_ids),
-                "prompts": json.dumps(normalize_value(coordinator.prompts)),
+                "prompts": json.dumps(serialize_value(coordinator.prompts)),
                 "template_overrides": json.dumps(
-                    normalize_value(coordinator.template_overrides)
+                    serialize_value(coordinator.template_overrides)
                 ),
-                "tools": json.dumps(normalize_value(getattr(coordinator, "tools", []))),
+                "tools": json.dumps(serialize_value(getattr(coordinator, "tools", []))),
                 "history": coordinator.history,
                 "llm_id": llm_id,
             }
@@ -752,7 +752,7 @@ class SQLiteChatLogs(ChatLogs):
         """
         content_dict = self._serialize_message(message)
         content_json = json.dumps(content_dict)
-        memory_json = json.dumps(normalize_value(dict(memory))) if memory else None
+        memory_json = json.dumps(serialize_value(dict(memory))) if memory else None
 
         try:
             self.cursor.execute(
@@ -808,7 +808,7 @@ class SQLiteChatLogs(ChatLogs):
         content_json = json.dumps(content_dict)
 
         # Serialize memory if provided
-        memory_json = json.dumps(normalize_value(memory)) if memory else None
+        memory_json = json.dumps(serialize_value(memory)) if memory else None
 
         # Check if message exists and get original content before starting transaction
         self.cursor.execute(
@@ -832,7 +832,7 @@ class SQLiteChatLogs(ChatLogs):
             if content_dict == original_dict and (
                 (memory is None and original_memory is None) or
                 (memory is not None and original_memory is not None and
-                 json.loads(original_memory) == normalize_value(memory))
+                 json.loads(original_memory) == serialize_value(memory))
             ):
                 log_debug("Matching content and memory; no need to insert update")
                 return

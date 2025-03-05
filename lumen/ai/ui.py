@@ -136,9 +136,9 @@ class UI(Viewer):
         log.setLevel(self.log_level)
 
         agents = self.agents
-        agent_types = {type(agent) for agent in agents}
+        actor_types = {type(agent) for agent in agents}
         for default_agent in self.default_agents:
-            if default_agent not in agent_types:
+            if default_agent not in actor_types:
                 # only add default agents if they are not already set by the user
                 agents.append(default_agent)
 

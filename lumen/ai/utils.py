@@ -11,7 +11,7 @@ import time
 import traceback
 
 from functools import wraps
-from pathlib import Path
+from pathlib import Path, PosixPath
 from shutil import get_terminal_size
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
@@ -538,37 +538,48 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
             model_kwargs[key] = cast_value(value)
     return repo, model_file, model_kwargs
 
-def normalize_value(v):
+def serialize_value(v: Any) -> Any:
+    """
+    Serializes a value to a **consistent** JSON-serializable format.
+    """
     if hasattr(v, "read_text"):
         try:
             return v.read_text()
         except Exception:
             return str(v)
-    if isinstance(v, Component):
+    if isinstance(v, Component) or (hasattr(v, "to_spec") and not isinstance(v, type)):
         return v.to_spec()
     if isinstance(v, BaseModel):
         return v.model_dump()
     if isinstance(v, param.Parameterized):
-        return f"{v.__class__.__module__}.{v!r}"
+        return serialize_to_spec(v)
     if isinstance(v, type):
         return f"{v.__module__}.{v.__name__}"
+    if isinstance(v, (Path, PosixPath)):
+        return str(v)
     if isinstance(v, dict):
-        return {k: normalize_value(val) for k, val in sorted(v.items())}
+        return {k: serialize_value(val) for k, val in sorted(v.items())}
     if isinstance(v, (list, tuple)):
-        return sorted((normalize_value(x) for x in v), key=lambda item: json.dumps(item, sort_keys=True))
-
+        return sorted((serialize_value(x) for x in v), key=lambda item: json.dumps(item, sort_keys=True))
     if callable(v):
-        return format_function_signature(v)
+        return f"{v.__module__}.{v.__name__}"
     return str(v)
 
-def format_function_signature(func) -> str:
-    """Formats a function's signature including module, name, args and return type."""
-    sig = inspect.signature(func)
-    module = func.__module__
-    name = func.__name__
-    return f"{module}.{name}{sig}"
+def serialize_to_spec(parameterized: param.Parameterized) -> dict[str, Any]:
+    """
+    Serializes a Parameterized object to a dictionary representation.
+    """
+    excluded_keys = ["name", "interface", "logs"]
+    spec = {
+        "class_type": serialize_value(type(parameterized)),
+        **serialize_value({
+            k: v for k, v in parameterized.param.values().items()
+            if not k.startswith("_") and k not in excluded_keys
+        }),
+    }
+    return spec
 
-def hash_config(config: dict[str, Any]) -> str:
+def hash_spec(config: dict[str, Any]) -> str:
     """Creates a deterministic hash from a configuration dictionary."""
     config_str = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(config_str.encode("utf-8")).hexdigest()[:16]

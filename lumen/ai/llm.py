@@ -18,7 +18,7 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from lumen.ai.utils import hash_config, log_debug, normalize_value
+from lumen.ai.utils import hash_spec, log_debug, serialize_value
 
 from .interceptor import Interceptor
 
@@ -245,15 +245,17 @@ class Llm(param.Parameterized):
         client = await self.get_client(model_spec, **kwargs)
         return await client(messages=messages, **kwargs)
 
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "mode": str(self.mode),
+            "model_kwargs": serialize_value(self.model_kwargs),
+            "temperature": getattr(self, "temperature", None)
+        }
+
     @property
     def hash(self) -> str:
         """Hash of LLM's configuration."""
-        config = {
-            'mode': str(self.mode),
-            'model_kwargs': normalize_value(self.model_kwargs),
-            'temperature': getattr(self, 'temperature', None)
-        }
-        return hash_config(config)
+        return hash_spec(self.to_spec())
 
 
 class LlamaCpp(Llm):

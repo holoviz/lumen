@@ -1,15 +1,27 @@
 import re
 
 from abc import abstractmethod
+from typing import Any
 
 import numpy as np
 import param
+
+from .utils import hash_spec, serialize_to_spec
 
 
 class Embeddings(param.Parameterized):
     @abstractmethod
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts."""
+
+    def to_spec(self) -> dict[str, Any]:
+        """Return a serializable specification of this embeddings configuration."""
+        return serialize_to_spec(self)
+
+    @property
+    def hash(self) -> str:
+        """A deterministic hash of this embeddings configuration."""
+        return hash_spec(self.to_spec())
 
 
 class NumpyEmbeddings(Embeddings):
