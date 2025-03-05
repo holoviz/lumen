@@ -6,7 +6,7 @@ import param  # type: ignore
 
 from ..transforms.base import Filter
 from ..transforms.sql import (
-    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLShuffle,
+    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLSample,
 )
 from ..util import get_dataframe_schema
 from .base import (
@@ -76,10 +76,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
-        sql_transforms = [sql_limit]
-        if shuffle:
-            sql_transforms.insert(0, SQLShuffle())
+        sql_transforms = [SQLSample(size=limit or 1)] if shuffle else [SQLLimit(limit=limit or 1)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}

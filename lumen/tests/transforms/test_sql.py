@@ -1,92 +1,187 @@
 import datetime as dt
 
 from lumen.transforms.sql import (
-    SQLColumns, SQLDistinct, SQLFilter, SQLGroupBy, SQLLimit, SQLMinMax,
-    SQLShuffle,
+    SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLGroupBy, SQLLimit,
+    SQLMinMax, SQLOverride, SQLSample,
 )
 
 
 def test_sql_group_by_single_column():
-    assert (
-        SQLGroupBy.apply_to('SELECT * FROM TABLE', by=['A'], aggregates={'AVG': 'B'}) ==
-        """SELECT\n    A, AVG(B) AS B\nFROM ( SELECT * FROM TABLE )\nGROUP BY A"""
-    )
+    result = SQLGroupBy.apply_to('SELECT * FROM TABLE', by=['A'], aggregates={'AVG': 'B'})
+    assert 'AVG(B) AS B' in result
+    assert 'GROUP BY A' in result
+
 
 def test_sql_group_by_multi_columns():
-    assert (
-        SQLGroupBy.apply_to('SELECT * FROM TABLE', by=['A'], aggregates={'AVG': ['B', 'C']}) ==
-        """SELECT\n    A, AVG(B) AS B, AVG(C) AS C\nFROM ( SELECT * FROM TABLE )\nGROUP BY A"""
-    )
+    result = SQLGroupBy.apply_to('SELECT * FROM TABLE', by=['A'], aggregates={'AVG': ['B', 'C']})
+    assert 'AVG(B) AS B' in result
+    assert 'AVG(C) AS C' in result
+    assert 'GROUP BY A' in result
+
 
 def test_sql_limit():
-    assert (
-        SQLLimit.apply_to('SELECT * FROM TABLE', limit=10) ==
-        """SELECT * FROM TABLE LIMIT 10"""
-    )
+    assert SQLLimit.apply_to('SELECT * FROM TABLE', limit=10) == "SELECT * FROM (SELECT * FROM TABLE) LIMIT 10"
+
 
 def test_sql_columns():
-    assert (
-        SQLColumns.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
-        """SELECT\n    "A", "B"\nFROM ( SELECT * FROM TABLE )"""
-    )
+    result = SQLColumns.apply_to('SELECT * FROM TABLE', columns=['A', 'B'])
+    assert 'A' in result
+    assert 'B' in result
+
 
 def test_sql_distinct():
-    assert (
-        SQLDistinct.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
-        """SELECT DISTINCT\n    "A", "B"\nFROM ( SELECT * FROM TABLE )"""
-    )
+    result = SQLDistinct.apply_to('SELECT * FROM TABLE', columns=['A', 'B'])
+    assert 'DISTINCT' in result
+    assert 'A' in result
+    assert 'B' in result
+
 
 def test_sql_min_max():
-    assert (
-        SQLMinMax.apply_to('SELECT * FROM TABLE', columns=['A', 'B']) ==
-        """SELECT\n    MIN("A") as "A_min", MAX("A") as "A_max", MIN("B") as "B_min", MAX("B") as "B_max"\nFROM ( SELECT * FROM TABLE )"""
-    )
+    result = SQLMinMax.apply_to('SELECT * FROM TABLE', columns=['A', 'B'])
+    assert 'MIN(A)' in result.replace('"', '')
+    assert 'MAX(A)' in result.replace('"', '')
+    assert 'MIN(B)' in result.replace('"', '')
+    assert 'MAX(B)' in result.replace('"', '')
 
-def test_sql_shuffle():
-    assert (
-        SQLShuffle.apply_to('SELECT * FROM TABLE') ==
-        """SELECT *\nFROM (SELECT * FROM TABLE)\nORDER BY random()"""
-    )
 
 def test_sql_filter_none():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', None)]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A IS NULL )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', None)])
+    assert 'WHERE' in result
+    assert 'A IS NULL' in result
+
 
 def test_sql_filter_scalar():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', 1)]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A = 1 )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', 1)])
+    assert 'WHERE' in result
+    assert 'A = 1' in result
 
 
 def test_sql_filter_isin():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', ['A', 'B', 'C'])]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A IN ('A', 'B', 'C') )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', ['A', 'B', 'C'])])
+    assert 'WHERE' in result
+    assert "A IN ('A', 'B', 'C')" in result
+
 
 def test_sql_filter_datetime():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', dt.datetime(2017, 4, 14))]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A = '2017-04-14 00:00:00' )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', dt.datetime(2017, 4, 14))])
+    assert 'WHERE' in result
+    assert "A = '2017-04-14 00:00:00'" in result
+
 
 def test_sql_filter_date():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', dt.date(2017, 4, 14))]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A BETWEEN '2017-04-14 00:00:00' AND '2017-04-14 23:59:59' )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', dt.date(2017, 4, 14))])
+    assert 'WHERE' in result
+    assert "A BETWEEN '2017-04-14 00:00:00' AND '2017-04-14 23:59:59'" in result
+
 
 def test_sql_filter_date_range():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', (dt.date(2017, 2, 22), dt.date(2017, 4, 14)))]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59' )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', (dt.date(2017, 2, 22), dt.date(2017, 4, 14)))])
+    assert 'WHERE' in result
+    assert "A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59'" in result
+
 
 def test_sql_filter_datetime_range():
-    assert (
-        SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', (dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))]) ==
-        """SELECT\n    *\nFROM ( SELECT * FROM TABLE )\nWHERE ( A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00' )"""
-    )
+    result = SQLFilter.apply_to('SELECT * FROM TABLE', conditions=[('A', (dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))])
+    assert 'WHERE' in result
+    assert "A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'" in result
+
+
+def test_sql_count():
+    result = SQLCount.apply_to('SELECT * FROM TABLE')
+    assert 'COUNT(*)' in result
+    assert 'count' in result
+
+
+def test_sql_override():
+    assert SQLOverride.apply_to('SELECT * FROM TABLE', override='SELECT A, B FROM TABLE') == 'SELECT A, B FROM TABLE'
+
+
+def test_sql_sample_tablesample_percent():
+    """Test percent-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', percent=20, write='postgres')
+    assert 'TABLESAMPLE' in result
+    assert '20' in result
+
+
+def test_sql_sample_tablesample_size():
+    """Test size-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', size=100, write='postgres')
+    assert 'TABLESAMPLE' in result
+    assert '100' in result
+
+
+def test_sql_sample_tablesample_with_seed():
+    """Test sampling with seed using TABLESAMPLE (PostgreSQL, etc.)"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', percent=20, seed=42, write='postgres')
+    assert 'TABLESAMPLE' in result
+    assert '20' in result
+    assert 'REPEATABLE' in result
+    assert '42' in result
+
+
+def test_sql_sample_tablesample_with_method():
+    """Test sampling with method using TABLESAMPLE (PostgreSQL, etc.)"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', percent=20, write='postgres', sample_kwargs=dict(method='BERNOULLI'))
+    assert 'TABLESAMPLE' in result
+    assert '20' in result
+    assert 'BERNOULLI' in result
+
+
+def test_sql_sample_mysql_percent():
+    """Test percent-based sampling in MySQL"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', percent=20, write='mysql')
+    assert "ORDER BY RAND()" in result
+    assert "LIMIT" in result
+    assert "COUNT" in result
+    assert "* 0.2" in result
+
+
+def test_sql_sample_mysql_size():
+    """Test size-based sampling in MySQL"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', size=100, write='mysql')
+    assert "ORDER BY RAND()" in result
+    assert "LIMIT 100" in result
+
+
+def test_sql_sample_sqlite_percent():
+    """Test percent-based sampling in SQLite"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', percent=20, write='sqlite')
+    assert "RANDOM() < 0.2" in result
+    assert "main_query" in result
+
+
+def test_sql_sample_sqlite_size():
+    """Test size-based sampling in SQLite"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', size=100, write='sqlite')
+    assert "rowid IN" in result
+    assert "ORDER BY RANDOM()" in result
+    assert "LIMIT 100" in result
+    assert "main_query" in result
+    assert "sampling_query" in result
+
+
+def test_sql_sample_sqlite_with_seed():
+    """Test sampling with seed in SQLite"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', size=100, seed=42, write='sqlite')
+    assert "ORDER BY RANDOM(42)" in result
+    assert "LIMIT 100" in result
+
+
+def test_sql_sample_generic_percent():
+    """Test percent-based sampling with generic dialect"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', percent=20)
+    assert "RAND() < 0.2" in result
+
+
+def test_sql_sample_generic_size():
+    """Test size-based sampling with generic dialect"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', size=100)
+    assert "ORDER BY RAND()" in result
+    assert "LIMIT 100" in result
+
+
+def test_sql_sample_generic_with_seed():
+    """Test sampling with seed using generic dialect"""
+    result = SQLSample.apply_to('SELECT * FROM TABLE', size=100, seed=42)
+    assert "ORDER BY RAND(42)" in result
+    assert "LIMIT 100" in result

@@ -31,7 +31,7 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLShuffle,
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -776,8 +776,7 @@ class BaseSQLSource(Source):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
-        sql_transforms = [SQLShuffle(), sql_limit] if shuffle else [sql_limit]
+        sql_transforms = [SQLSample(size=limit or 1)] if shuffle else [SQLLimit(limit=limit or 1)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}

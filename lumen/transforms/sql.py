@@ -1,32 +1,60 @@
 from __future__ import annotations
 
 import datetime as dt
-import textwrap
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
-import numpy as np
 import param  # type: ignore
+import sqlglot
 
-from jinja2 import Template
+from sqlglot import parse_one
+from sqlglot.expressions import (
+    LT, Column, Expression, Literal, Null, Select, Star, TableSample, and_,
+    func, or_, select,
+)
+from sqlglot.optimizer import optimize
 
 from .base import Transform
 
 
-def quote(string):
-    return f'"{string}"'
-
-
 class SQLTransform(Transform):
     """
-    Base class for SQL transforms.
-    Mainly for informational purposes.
+    Base class for SQL transforms using sqlglot.
     """
+
+    error_level = param.ClassSelector(
+        class_=sqlglot.ErrorLevel,
+        default=sqlglot.ErrorLevel.RAISE,
+        doc="Error level for parsing",
+    )
+
+    identify = param.Boolean(default=False, doc="""
+        Delimit all identifiers, e.g. turn `FROM database.table` into `FROM "database"."table"`.
+        This is useful for dialects that don't support unquoted identifiers.""")
+
+    optimize = param.Boolean(
+        default=False, doc="""
+        Whether to optimize the generated SQL query; may produce invalid results, especially with
+        duckdb's read_* functions.""")
+
+    pretty = param.Boolean(default=False, doc="Prettify output SQL, i.e. add newlines and indentation")
+
+    read = param.String(default=None, doc="Source dialect for parsing; if None, automatically detects")
+
+    unsupported_level = param.ClassSelector(
+        class_=sqlglot.ErrorLevel,
+        default=sqlglot.ErrorLevel.WARN,
+        doc="When using `to_sql`, how to handle unsupported dialect features.",
+    )
+
+    write = param.String(
+        default=None, doc="Target dialect for output; if None, defaults to read dialect"
+    )
 
     __abstract = True
 
     @classmethod
-    def apply_to(cls, sql_in, **kwargs):
+    def apply_to(cls, sql_in: str, **kwargs) -> str:
         """
         Calls the apply method based on keyword arguments passed to define transform.
 
@@ -40,7 +68,7 @@ class SQLTransform(Transform):
         """
         return cls(**kwargs).apply(sql_in)
 
-    def apply(self, sql_in):
+    def apply(self, sql_in: str) -> str:
         """
         Given an SQL statement, manipulate it, and return a new SQL statement.
 
@@ -54,16 +82,51 @@ class SQLTransform(Transform):
         string
             New SQL query derived from the above query.
         """
-        if sql_in.startswith('"') and sql_in.endswith('"'):
-            sql_in = sql_in[1:-1]
-        elif sql_in.startswith("'") and sql_in.endswith("'"):
-            sql_in = sql_in[1:-1]
-        return sql_in
+        return self.to_sql(self.parse_sql(sql_in))
 
-    @classmethod
-    def _render_template(cls, template: str, **params: Any) -> str:
-        template = textwrap.dedent(template).lstrip()
-        return Template(template, trim_blocks=True, lstrip_blocks=True).render(**params)
+    def parse_sql(self, sql_in: str) -> Expression:
+        """
+        Parse SQL string into sqlglot AST.
+
+        Parameters
+        ----------
+        sql_in: string
+            SQL string to parse
+
+        Returns
+        -------
+        sqlglot.Expression
+            Parsed SQL expression
+        """
+        return parse_one(
+            sql_in,
+            read=self.read,
+            error_level=self.error_level,
+        )
+
+    def to_sql(self, expression: Expression) -> str:
+        """
+        Convert sqlglot expression back to SQL string.
+
+        Parameters
+        ----------
+        expression: sqlglot.Expression
+            Expression to convert to SQL
+
+        Returns
+        -------
+        string
+            SQL string representation
+        """
+        if self.optimize:
+            expression = optimize(expression, dialect=self.read)
+
+        return expression.sql(
+            dialect=self.write,
+            identify=self.identify,
+            pretty=self.pretty,
+            unsupported_level=self.unsupported_level,
+        )
 
 
 class SQLGroupBy(SQLTransform):
@@ -71,29 +134,29 @@ class SQLGroupBy(SQLTransform):
     Performs a Group-By and aggregation
     """
 
-    by = param.List(doc="""
-        Columns to Group by""")
+    by = param.List(doc="Columns to group by.")
 
     aggregates = param.Dict(doc="""
-        mapping of Aggregate Functions to use to which column to use them on""")
+        Mapping of aggregate functions to use to which column(s) to use them on,
+        e.g. {"AVG": "col1", "SUM": ["col1", "col2"]}.""")
 
     transform_type: ClassVar[str] = 'sql_group_by'
 
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        template = """
-            SELECT
-                {{by_cols}}, {{aggs}}
-            FROM ( {{sql_in}} )
-            GROUP BY {{by_cols}}"""
-        by_cols = ', '.join(self.by)
+    def apply(self, sql_in: str) -> str:
+        if not self.aggregates:
+            raise ValueError(
+                'SQLGroupBy transform requires at least one aggregate function to be specified.'
+            )
+        elif not self.by:
+            return sql_in
+
+        subquery = self.parse_sql(sql_in).subquery()
         aggs = []
         for agg, cols in self.aggregates.items():
-            if isinstance(cols, str):
-                cols = [cols]
-            for col in cols:
+            for col in [cols] if isinstance(cols, str) else cols:
                 aggs.append(f'{agg}({col}) AS {col}')
-        return self._render_template(template, by_cols=by_cols, aggs=', '.join(aggs), sql_in=sql_in)
+        expression = select(*self.by, *aggs).from_(subquery).group_by(*self.by)
+        return self.to_sql(expression)
 
 
 class SQLLimit(SQLTransform):
@@ -105,17 +168,13 @@ class SQLLimit(SQLTransform):
 
     transform_type: ClassVar[str] = 'sql_limit'
 
-    def apply(self, sql_in):
+    def apply(self, sql_in: str) -> str:
         if self.limit is None:
             return sql_in
-        normalized = sql_in.rstrip(';').lower()
-        limited = 'limit' in normalized or 'fetch' in normalized
-        sql_in = super().apply(sql_in)
-        if limited:
-            template = "SELECT * FROM ({{sql_in}}) LIMIT {{limit}}"
-        else:
-            template = "{{sql_in}} LIMIT {{limit}}"
-        return self._render_template(template, sql_in=sql_in, limit=self.limit)
+
+        subquery = self.parse_sql(sql_in).subquery()
+        expression = select("*").from_(subquery).limit(self.limit)
+        return self.to_sql(expression)
 
 
 class SQLDistinct(SQLTransform):
@@ -124,26 +183,23 @@ class SQLDistinct(SQLTransform):
 
     transform_type: ClassVar[str] = 'sql_distinct'
 
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        template = """
-            SELECT DISTINCT
-                {{columns}}
-            FROM ( {{sql_in}} )"""
-        return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
+    def apply(self, sql_in: str) -> str:
+        if not self.columns:
+            return sql_in
+
+        subquery = self.parse_sql(sql_in).subquery()
+        expression = select(self.columns).from_(subquery).distinct()
+        return self.to_sql(expression)
 
 
 class SQLCount(SQLTransform):
 
     transform_type: ClassVar[str] = 'sql_count'
 
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        template = """
-            SELECT
-                COUNT({{column}}) as count
-            FROM ( {{sql_in}} )"""
-        return self._render_template(template, sql_in=sql_in)
+    def apply(self, sql_in: str) -> str:
+        subquery = self.parse_sql(sql_in).subquery()
+        expression = select("COUNT(*) as count").from_(subquery)
+        return self.to_sql(expression)
 
 
 class SQLMinMax(SQLTransform):
@@ -152,17 +208,17 @@ class SQLMinMax(SQLTransform):
 
     transform_type: ClassVar[str] = 'sql_minmax'
 
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        aggs = []
-        for col in self.columns:
-            aggs.append(f'MIN("{col}") as "{col}_min"')
-            aggs.append(f'MAX("{col}") as "{col}_max"')
-        template = """
-            SELECT
-                {{columns}}
-            FROM ( {{sql_in}} )"""
-        return self._render_template(template, sql_in=sql_in, columns=', '.join(aggs))
+    def apply(self, sql_in: str) -> str:
+        if not self.columns:
+            return sql_in
+
+        subquery = self.parse_sql(sql_in).subquery()
+        minmax = [
+            f'{func}({col}) AS {col}_{func.lower()}'
+            for col in self.columns for func in ('MIN', 'MAX')
+        ]
+        expression = select(*minmax).from_(subquery)
+        return self.to_sql(expression)
 
 
 class SQLColumns(SQLTransform):
@@ -171,20 +227,16 @@ class SQLColumns(SQLTransform):
 
     transform_type: ClassVar[str] = 'sql_columns'
 
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        template = """
-            SELECT
-                {{columns}}
-            FROM ( {{sql_in}} )
-        """
-        return self._render_template(template, sql_in=sql_in, columns=', '.join(map(quote, self.columns)))
+    def apply(self, sql_in: str) -> str:
+        if not self.columns:
+            return sql_in
+
+        subquery = self.parse_sql(sql_in).subquery()
+        expression = select(*self.columns).from_(subquery)
+        return self.to_sql(expression)
 
 
 class SQLFilter(SQLTransform):
-    """
-    Translates Lumen Filter query into a SQL WHERE statement.
-    """
 
     conditions = param.List(doc="""
       List of filter conditions expressed as tuples of the column
@@ -192,101 +244,234 @@ class SQLFilter(SQLTransform):
 
     transform_type: ClassVar[str] = 'sql_filter'
 
-    @classmethod
-    def _range_filter(cls, col, v1, v2):
-        start = str(v1) if isinstance(v1, dt.date) else v1
-        end = str(v2) if isinstance(v2, dt.date) else v2
-        if isinstance(v1, dt.date) and not isinstance(v1, dt.datetime):
-            start += ' 00:00:00'
-        if isinstance(v2, dt.date) and not isinstance(v2, dt.datetime):
-            end += ' 23:59:59'
-        return f'{col} BETWEEN {start!r} AND {end!r}'
-
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        conditions = []
-        for col, val in self.conditions:
-            if val is None:
-                condition = f'{col} IS NULL'
-            elif isinstance(val, str):
-                val_sanitize = val.replace("'", '\\\'')
-                condition = f"{col} = '{val_sanitize}'"
-            elif np.isscalar(val):
-                condition = f'{col} = {val!r}'
-            elif isinstance(val, dt.datetime):
-                condition = f'{col} = {str(val)!r}'
-            elif isinstance(val, dt.date):
-                condition = f"{col} BETWEEN '{val!s} 00:00:00' AND '{val!s} 23:59:59'"
-            elif (isinstance(val, list) and all(
-                    isinstance(v, tuple) and len(v) == 2 for v in val
-            )):
-                val = [v for v in val if v is not None]
-                if not val:
-                    continue
-                condition = ' OR '.join([
-                    self._range_filter(col, v1, v2) for v1, v2 in val
-                ])
-            elif isinstance(val, list):
-                if not val:
-                    continue
-                non_null = [v for v in val if v is not None]
-                str_non_null = "', '".join(n.replace("'", '\\\'') for n in non_null)
-                condition = f"{col} IN ('{str_non_null}')"
-                if not non_null:
-                    condition = f'{col} IS NULL'
-                elif len(val) != len(non_null):
-                    condition = f'({condition}) OR ({col} IS NULL)'
-            elif isinstance(val, tuple):
-                condition = self._range_filter(col, *val)
-            else:
-                self.param.warning(
-                    'Condition {val!r} on {col!r} column not understood. '
-                    'Filter query will not be applied.'
-                )
-                continue
-            conditions.append(condition)
-        if not conditions:
+    def apply(self, sql_in: str) -> str:
+        if not self.conditions:
             return sql_in
 
-        template = """
-            SELECT
-                *
-            FROM ( {{sql_in}} )
-            WHERE ( {{conditions}} )"""
-        return self._render_template(template, sql_in=sql_in, conditions=' AND '.join(conditions))
+        subquery = self.parse_sql(sql_in).subquery()
+        filters = []
+
+        for col, val in self.conditions:
+            column_expr = Column(this=col)
+
+            if val is None:
+                filters.append(column_expr.is_(Null()))
+            elif isinstance(val, (int, float)):
+                filters.append(column_expr.eq(Literal.number(val)))
+            elif isinstance(val, str):
+                filters.append(column_expr.eq(Literal.string(val)))
+            elif isinstance(val, dt.datetime):
+                filters.append(column_expr.eq(Literal.string(str(val))))
+            elif isinstance(val, dt.date):
+                start = Literal.string(f"{val} 00:00:00")
+                end = Literal.string(f"{val} 23:59:59")
+                filters.append(column_expr.between(start, end))
+            elif isinstance(val, tuple) and len(val) == 2:
+                start, end = val
+                if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+                    start_str = f"{start} 00:00:00"
+                else:
+                    start_str = str(start)
+
+                if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+                    end_str = f"{end} 23:59:59"
+                else:
+                    end_str = str(end)
+
+                filters.append(column_expr.between(Literal.string(start_str), Literal.string(end_str)))
+            elif isinstance(val, list):
+                if all(isinstance(v, tuple) and len(v) == 2 for v in val):
+                    range_filters = []
+                    for v1, v2 in val:
+                        if isinstance(v1, dt.date) and not isinstance(v1, dt.datetime):
+                            v1_str = f"{v1} 00:00:00"
+                        else:
+                            v1_str = str(v1)
+
+                        if isinstance(v2, dt.date) and not isinstance(v2, dt.datetime):
+                            v2_str = f"{v2} 23:59:59"
+                        else:
+                            v2_str = str(v2)
+
+                        range_filters.append(column_expr.between(Literal.string(v1_str), Literal.string(v2_str)))
+                    filters.append(or_(*range_filters))
+                else:
+                    filters.append(column_expr.isin(*[Literal.string(str(v)) for v in val]))
+            else:
+                self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
+                continue
+
+        expression = select("*").from_(subquery).where(and_(*filters))
+        return self.to_sql(expression)
 
 
 class SQLOverride(SQLTransform):
 
     override = param.String()
 
-    def apply(self, sql_expr):
+    def apply(self, sql_in: str) -> str:
         return self.override
 
 
-class SQLShuffle(SQLTransform):
+class SQLSample(SQLTransform):
     """
-    Performs a random shuffle of the query results
+    Samples rows from a SQL query using TABLESAMPLE or similar functionality,
+    depending on the dialect's support.
     """
 
-    seed = param.Integer(default=None, allow_None=True, doc="Random seed for reproducible shuffling")
+    percent = param.Number(default=10.0, bounds=(0.0, 100.0), doc="""
+        percent of rows to sample. Must be between 0 and 100.""")
 
-    transform_type: ClassVar[str] = 'sql_shuffle'
+    seed = param.Integer(default=None, allow_None=True, doc="""
+        Random seed for reproducible sampling.""")
 
-    def apply(self, sql_in):
-        sql_in = super().apply(sql_in)
-        if self.seed is not None:
-            template = """
-                SELECT *
-                FROM ({{sql_in}})
-                ORDER BY random() SEED({{seed}})"""
-            return self._render_template(template, sql_in=sql_in, seed=self.seed)
+    size = param.Integer(default=None, allow_None=True, doc="""
+        Absolute number of rows to sample. If specified, takes precedence over percent.""")
+
+    sample_kwargs = param.Dict(default={}, doc="""
+        Other keyword arguments, like method, bucket_numerator, bucket_denominator, bucket_field.""")
+
+    transform_type: ClassVar[str] = 'sql_sample'
+
+    def apply(self, sql_in: str) -> str:
+        if (self.percent <= 0 or self.percent >= 100) and self.size is None:
+            return sql_in
+
+        expression = self.parse_sql(sql_in)
+        dialect = self.write or self.read
+
+        if dialect in ('postgres', 'redshift', 'snowflake', 'bigquery', 'sqlserver', 'duckdb'):
+            return self._apply_tablesample_dialect(expression)
+        elif dialect in ('mysql', 'mariadb'):
+            return self._apply_mysql_dialect(expression)
+        elif dialect == 'sqlite':
+            return self._apply_sqlite_dialect(expression)
         else:
-            template = """
-                SELECT *
-                FROM ({{sql_in}})
-                ORDER BY random()"""
-            return self._render_template(template, sql_in=sql_in)
+            return self._apply_generic_dialect(expression)
+
+    def _apply_tablesample_dialect(self, expression: Expression) -> str:
+        subquery = expression.subquery("subquery")
+
+        if self.size is not None:
+            sample_clause = TableSample(size=Literal(this=str(self.size), is_string=False))
+        else:
+            sample_clause = TableSample(percent=Literal(this=str(self.percent), is_string=False))
+
+        if self.seed is not None:
+            sample_clause.args["seed"] = Literal(this=str(self.seed), is_string=False)
+
+        if "method" in self.sample_kwargs:
+            sample_clause.args["method"] = Literal(this=str(self.sample_kwargs["method"]), is_string=True)
+
+        if "bucket_numerator" in self.sample_kwargs:
+            sample_clause.args["bucket_numerator"] = Literal(this=str(self.sample_kwargs["bucket_numerator"]), is_string=False)
+
+        if "bucket_denominator" in self.sample_kwargs:
+            sample_clause.args["bucket_denominator"] = Literal(this=str(self.sample_kwargs["bucket_denominator"]), is_string=False)
+
+        if "bucket_field" in self.sample_kwargs:
+            sample_clause.args["bucket_field"] = Column(this=self.sample_kwargs["bucket_field"], is_string=True)
+
+        sample_expression = Select(
+            expressions=["*"],
+            sample=sample_clause,
+        ).from_(subquery)
+        return self.to_sql(sample_expression)
+
+    def _apply_mysql_dialect(self, expression: Expression) -> str:
+        """Handle MySQL sampling using ORDER BY RAND() with an indexed random column."""
+        subquery = expression.subquery("subquery")
+
+        if self.size is not None:
+            rand_low = func("RAND")
+            rand_high = rand_low + Literal.number(3 * self.size / 1000000)
+
+            sample_expression = (
+                select("*")
+                .from_(subquery)
+                .where(func("frozen_rand").between(rand_low, rand_high))
+                .order_by(func("RAND"))
+                .limit(self.size)
+            )
+        else:
+            sample_expression = (
+                select("*")
+                .from_(subquery)
+                .order_by(func("RAND"))
+                .limit(
+                    func("FLOOR",
+                        func("COUNT", Star()) * (self.percent / 100.0)
+                    )
+                )
+            )
+
+        return self.to_sql(sample_expression)
+
+    def _apply_sqlite_dialect(self, expression: Expression) -> str:
+        """Handle SQLite sampling which doesn't have native TABLESAMPLE support.
+
+        Uses a more efficient approach with a subquery for sample size-based sampling.
+        For percent-based sampling, uses RANDOM() < X filter.
+        """
+        main_subquery = expression.subquery("main_query")
+        sampling_subquery = expression.subquery("sampling_query")
+        if self.seed is not None:
+            random_func = func("RANDOM", Literal.number(self.seed))
+        else:
+            random_func = func("RANDOM")
+        if self.size is not None:
+            inner_query = (
+                select(Column(this="rowid"))
+                .from_(sampling_subquery)
+                .order_by(random_func)
+                .limit(self.size)
+            )
+            sample_expr = (
+                select("*")
+                .from_(main_subquery)
+                .where(Column(this="rowid").isin(inner_query))
+            )
+            return self.to_sql(sample_expr)
+        else:
+            filter_expr = LT(
+                this=random_func,
+                expression=Literal.number(self.percent/100.0)
+            )
+            sample_expr = (
+                select("*")
+                .from_(main_subquery)
+                .where(filter_expr)
+            )
+            return self.to_sql(sample_expr)
+
+    def _apply_generic_dialect(self, expression: Expression) -> str:
+        """Handle sampling for generic SQL dialects."""
+        subquery = expression.subquery("subquery")
+
+        if self.seed is not None:
+            rand_func = func("RAND", Literal.number(self.seed))
+        else:
+            rand_func = func("RAND")
+
+        if self.size is not None:
+            sample_expression = (
+                select("*")
+                .from_(subquery)
+                .order_by(rand_func)
+                .limit(self.size)
+            )
+        else:
+            filter_expr = LT(
+                this=rand_func,
+                expression=Literal.number(self.percent / 100.0)
+            )
+            sample_expression = (
+                select("*")
+                .from_(subquery)
+                .where(filter_expr)
+            )
+
+        return self.to_sql(sample_expression)
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]
