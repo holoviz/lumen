@@ -44,6 +44,10 @@ class Llm(param.Parameterized):
     models.
     """
 
+    create_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments to pass to the LLM provider
+        when calling chat.completions.create.""")
+
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES, doc="""
         The calling mode used by instructor to guide the LLM towards generating
         outputs matching the schema.""")
@@ -263,7 +267,6 @@ class LlamaCpp(Llm):
             "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
             "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
             "chat_format": "qwen",
-            "n_ctx": 131072,
         },
     })
 
@@ -283,6 +286,10 @@ class LlamaCpp(Llm):
                 model_file = model_spec
             model_kwargs["repo"] = repo
             model_kwargs["model_file"] = model_file
+
+        if "n_ctx" not in model_kwargs:
+            # 0 = from model
+            model_kwargs["n_ctx"] = 0
         return dict(model_kwargs)
 
     @property
@@ -405,7 +412,7 @@ class OpenAI(Llm):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
 
         if self.use_logfire:
             import logfire
@@ -427,7 +434,7 @@ class AzureOpenAI(Llm):
 
     mode = param.Selector(default=Mode.TOOLS)
 
-    temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
+    temperature = param.Number(default=1, bounds=(0, None), constant=True)
 
     @property
     def _client_kwargs(self):
@@ -456,7 +463,7 @@ class AzureOpenAI(Llm):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
 
@@ -503,7 +510,7 @@ class MistralAI(Llm):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
     @classmethod
@@ -552,7 +559,7 @@ class AzureMistralAI(MistralAI):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
 
@@ -591,9 +598,9 @@ class AnthropicAI(Llm):
 
         if response_model:
             client = instructor.from_anthropic(llm)
-            return partial(client.messages.create, model=model)
+            return partial(client.messages.create, model=model, **self.create_kwargs)
         else:
-            return partial(llm.messages.create, model=model)
+            return partial(llm.messages.create, model=model, **self.create_kwargs)
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
