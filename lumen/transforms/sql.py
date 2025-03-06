@@ -59,16 +59,14 @@ class SQLTransform(Transform):
     __abstract = True
 
     def __init__(self, **params):
-        read_dialect = params.get("read")
-        write_dialect = params.get("write")
-        if read_dialect == "any":
-            params["read"] = None
-        if write_dialect == "any":
-            params["write"] = None
-        if read_dialect and not write_dialect:
-            params["write"] = read_dialect
-        elif write_dialect and not read_dialect:
-            params["read"] = write_dialect
+        for key in ["read", "write"]:
+            if params.get(key) == "any":
+                params[key] = None
+
+        if params.get("read") and not params.get("write"):
+            params["write"] = params["read"]
+        elif params.get("write"):
+            params["read"] = params["write"]
         super().__init__(**params)
 
     @classmethod
