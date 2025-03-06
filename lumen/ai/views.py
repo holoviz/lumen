@@ -1,12 +1,15 @@
 import asyncio
 import traceback
 
+from typing import Any
+
 import panel as pn
 import param
 import requests
 import yaml
 
 from jsonschema import Draft7Validator, ValidationError
+from panel.chat import ChatInterface, ChatMessage
 from panel.config import config
 from panel.layout import Column, Row, Tabs
 from panel.pane import Alert, Markdown
@@ -23,7 +26,7 @@ from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import GraphicWalker, Table
-from .utils import get_data
+from .utils import deserialize_from_spec, get_data, serialize_to_spec
 
 
 class LumenOutput(Viewer):
@@ -32,9 +35,13 @@ class LumenOutput(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
+    footer = param.List()
+
+    interface = param.ClassSelector(class_=ChatInterface)
+
     loading = param.Boolean()
 
-    footer = param.List()
+    parent_message = param.ClassSelector(class_=ChatMessage, default=None)
 
     render_output = param.Boolean(default=True)
 
@@ -43,6 +50,8 @@ class LumenOutput(Viewer):
     title = param.String(allow_None=True)
 
     language = "yaml"
+
+    _memory = param.Parameter()
 
     def __init__(self, **params):
         if 'spec' not in params and 'component' in params and params['component'] is not None:
@@ -82,7 +91,12 @@ class LumenOutput(Viewer):
             """,
         )
         icons = Row(copy_icon, download_icon, *self.footer)
-        code_col = Column(code_editor, icons, sizing_mode="stretch_both")
+        code_col = Column(
+            code_editor,
+            pn.pane.Markdown(f"**{self.title}**", margin=0, styles={"color": "gray", "font-size": "small"}),
+            icons,
+            sizing_mode="stretch_both"
+        )
         if self.render_output:
             placeholder = Column(
                 ParamMethod(self.render, inplace=True),
@@ -177,6 +191,11 @@ class LumenOutput(Viewer):
                 yaml_spec = load_yaml(self.spec)
                 self._validate_spec(yaml_spec)
                 self.component = type(self.component).from_spec(yaml_spec)
+                self.interface._logs.update_retry(
+                    message_id=str(id(self.parent_message)),
+                    message=self.parent_message,
+                    memory=self._memory
+                )
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
             else:
@@ -204,6 +223,12 @@ class LumenOutput(Viewer):
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        return serialize_to_spec(self)
+
+    def from_spec(self, spec: dict[str, Any]):
+        return deserialize_from_spec(spec)
 
 
 class VegaLiteOutput(LumenOutput):
@@ -334,6 +359,11 @@ class SQLOutput(LumenOutput):
                 pipeline.source = pipeline.source.create_sql_expr_source(
                     tables={pipeline.table: self.spec}
                 )
+                self.interface._logs.update_retry(
+                    message_id=str(id(self.parent_message)),
+                    message=self.parent_message,
+                    memory=self._memory
+                )
             output = await self._render_pipeline(pipeline)
             self._rendered = True
             self._last_output.clear()
@@ -351,4 +381,4 @@ class SQLOutput(LumenOutput):
         return self._main
 
     def __str__(self):
-        return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"
+        return f"{self.__class__.__name__ }:\n```sql\n{self.spec}\n```"

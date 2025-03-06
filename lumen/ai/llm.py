@@ -18,7 +18,9 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from lumen.ai.utils import log_debug
+from lumen.ai.utils import (
+    deserialize_from_spec, hash_spec, log_debug, serialize_to_spec,
+)
 
 from .interceptor import Interceptor
 
@@ -248,6 +250,17 @@ class Llm(param.Parameterized):
 
         client = await self.get_client(model_spec, **kwargs)
         return await client(messages=messages, **kwargs)
+
+    def from_spec(self, spec: dict[str, Any]) -> Llm:
+        return deserialize_from_spec(spec)
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        return serialize_to_spec(self)
+
+    @property
+    def hash(self) -> str:
+        """Hash of LLM's configuration."""
+        return hash_spec(self.to_spec())
 
 
 class LlamaCpp(Llm):

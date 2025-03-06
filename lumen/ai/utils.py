@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
+import importlib
 import inspect
 import json
 import math
@@ -9,21 +11,25 @@ import re
 import time
 import traceback
 
+from enum import Enum
 from functools import wraps
-from pathlib import Path
+from pathlib import Path, PosixPath
 from shutil import get_terminal_size
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs
 
 import pandas as pd
+import param
 import yaml
 
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
 )
 from markupsafe import escape
+from pydantic import BaseModel
 
+from lumen.base import Component
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
@@ -38,7 +44,12 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
-def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
+def render_template(
+    template_path: Path,
+    overrides: dict | None = None,
+    relative_to: Path = PROMPTS_DIR,
+    **context,
+):
     try:
         template_path = template_path.relative_to(relative_to).as_posix()
     except ValueError:
@@ -74,7 +85,7 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
     used_keys = set()
 
     for key in kwargs:
-        pattern = r'\b' + re.escape(key) + r'\b'
+        pattern = r"\b" + re.escape(key) + r"\b"
         if re.search(pattern, string):
             used_keys.add(key)
 
@@ -116,7 +127,9 @@ def retry_llm_output(retries=3, sleep=1):
                         if isinstance(e, UNRECOVERABLE_ERRORS):
                             raise e
                         elif i == retries - 1:
-                            raise RetriesExceededError("Maximum number of retries exceeded.") from e
+                            raise RetriesExceededError(
+                                "Maximum number of retries exceeded."
+                            ) from e
                         errors.append(str(e))
                         if sleep:
                             await asyncio.sleep(sleep)
@@ -139,7 +152,9 @@ def retry_llm_output(retries=3, sleep=1):
                         if isinstance(e, UNRECOVERABLE_ERRORS):
                             raise e
                         elif i == retries - 1:
-                            raise RetriesExceededError("Maximum number of retries exceeded.") from e
+                            raise RetriesExceededError(
+                                "Maximum number of retries exceeded."
+                            ) from e
                         errors.append(str(e))
                         if sleep:
                             time.sleep(sleep)
@@ -155,7 +170,7 @@ async def get_schema(
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
-    **get_kwargs
+    **get_kwargs,
 ):
     if isinstance(source, Pipeline):
         schema = await asyncio.to_thread(source.get_schema)
@@ -209,18 +224,20 @@ async def get_schema(
             spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [
-                enum
-                if (
-                    enum is None
-                    or not isinstance(enum, str)
-                    or len(enum) < 100
+                (
+                    enum
+                    if (enum is None or not isinstance(enum, str) or len(enum) < 100)
+                    else f"{enum[:100]} ..."
                 )
-                else f"{enum[:100]} ..."
                 for enum in spec["enum"]
             ]
         # truncate each enum to 100 characters
         spec["enum"] = [
-            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
+            (
+                enum
+                if enum is None or not isinstance(enum, str) or len(enum) < 100
+                else f"{enum[:100]} ..."
+            )
             for enum in spec["enum"]
         ]
 
@@ -234,8 +251,10 @@ async def get_pipeline(**kwargs):
     A wrapper be able to use asyncio.to_thread and not
     block the main thread when calling Pipeline
     """
+
     def get_pipeline_sync():
         return Pipeline(**kwargs)
+
     return await asyncio.to_thread(get_pipeline_sync)
 
 
@@ -244,8 +263,10 @@ async def get_data(pipeline):
     A wrapper be able to use asyncio.to_thread and not
     block the main thread when calling pipeline.data
     """
+
     def get_data_sync():
         return pipeline.data
+
     return await asyncio.to_thread(get_data_sync)
 
 
@@ -279,7 +300,7 @@ async def describe_data(df: pd.DataFrame) -> str:
                 df[col] = pd.to_datetime(df[col])
 
         describe_df = df.describe(percentiles=[])
-        columns_to_drop = ["min", "max"] # present if any numeric
+        columns_to_drop = ["min", "max"]  # present if any numeric
         columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
         df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
@@ -289,7 +310,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             try:
                 df_describe_dict[col]["nunique"] = df[col].nunique()
             except Exception:
-                df_describe_dict[col]["nunique"] = 'unknown'
+                df_describe_dict[col]["nunique"] = "unknown"
             try:
                 df_describe_dict[col]["lengths"] = {
                     "max": df[col].str.len().max(),
@@ -335,19 +356,27 @@ def clean_sql(sql_expr):
     Cleans up a SQL expression generated by an LLM by removing
     backticks, fencing and extraneous space and semi-colons.
     """
-    return sql_expr.replace("```sql", "").replace("```", "").replace('`', '"').strip().rstrip(";")
+    return (
+        sql_expr.replace("```sql", "")
+        .replace("```", "")
+        .replace("`", '"')
+        .strip()
+        .rstrip(";")
+    )
 
 
 def report_error(exc: Exception, step: ChatStep):
     error_msg = str(exc)
-    step.stream(f'\n```python\n{error_msg}\n```')
+    step.stream(f"\n```python\n{error_msg}\n```")
     if len(error_msg) > 50:
         error_msg = error_msg[:50] + "..."
     step.failed_title = error_msg
     step.status = "failed"
 
 
-async def gather_table_sources(sources: list[Source], include_provided: bool = True, include_sep: bool = False) -> tuple[dict[str, Source], str]:
+async def gather_table_sources(
+    sources: list[Source], include_provided: bool = True, include_sep: bool = False
+) -> tuple[dict[str, Source], str]:
     """
     Get a dictionary of tables to their respective sources
     and a markdown string of the tables and their schemas.
@@ -369,7 +398,11 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
             if source.name == PROVIDED_SOURCE_NAME and not include_provided:
                 continue
             label = f"{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
-            if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
+            if (
+                isinstance(source, DuckDBSource)
+                and source.ephemeral
+                or "Provided" in source.name
+            ):
                 sql = source.get_sql_expr(table)
                 schema = await get_schema(source, table, include_enum=True, limit=3)
                 tables_schema_str += f"- {label}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
@@ -378,7 +411,14 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
     return tables_to_source, tables_schema_str.strip()
 
 
-def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: bool = False, show_length: bool = False):
+def log_debug(
+    msg: str | list,
+    offset: int = 24,
+    prefix: str = "",
+    suffix: str = "",
+    show_sep: bool = False,
+    show_length: bool = False,
+):
     """
     Log a debug message with a separator line above and below.
     """
@@ -401,7 +441,13 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
         log.debug(suffix)
 
 
-def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True):
+def mutate_user_message(
+    content: str,
+    messages: list[dict[str, str]],
+    suffix: bool = True,
+    wrap: bool | str = False,
+    inplace: bool = True,
+):
     """
     Helper to mutate the last user message in a list of messages. Suffixes the content by default, else prefixes.
     """
@@ -446,15 +492,19 @@ def format_exception(exc: Exception, limit: int = 0) -> str:
     str
         A formatted string describing the exception and its traceback.
     """
-    e_msg = str(exc).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
-    tb = html.escape('\n'.join(traceback.format_exception(exc, limit=limit))).replace('\033[1m', '<b>').replace('\033[0m', '</b>')
+    e_msg = str(exc).replace("\033[1m", "<b>").replace("\033[0m", "</b>")
+    tb = (
+        html.escape("\n".join(traceback.format_exception(exc, limit=limit)))
+        .replace("\033[1m", "<b>")
+        .replace("\033[0m", "</b>")
+    )
     return f'<b>{type(exc).__name__}</b>: {e_msg}\n<pre style="overflow-y: auto">{tb}</pre>'
 
 
 def cast_value(value):
     if len(value) == 1:
         value = value[0]
-        if ',' in value and value.replace(',', '').isdigit():
+        if "," in value and value.replace(",", "").isdigit():
             return [cast_value(v) for v in value.split(",")]
         try:
             return json.loads(value)
@@ -475,8 +525,8 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
     Raises:
         ValueError: If URL format is invalid
     """
-    parts = url.split('/')
-    hf_index = parts.index('huggingface.co')
+    parts = url.split("/")
+    hf_index = parts.index("huggingface.co")
     if len(parts) < hf_index + 4:  # Need at least org/repo after huggingface.co
         raise ValueError
     repo = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
@@ -485,7 +535,101 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
     # Parse query parameters
     model_kwargs = {}
     if "?" in model_file:
-        model_file, query_params = model_file.split('?')
+        model_file, query_params = model_file.split("?")
         for key, value in parse_qs(query_params).items():
             model_kwargs[key] = cast_value(value)
     return repo, model_file, model_kwargs
+
+
+def serialize_value(v: Any) -> Any:
+    """
+    Serializes a value to a **consistent** JSON-serializable format (NOT a string).
+    """
+    if isinstance(v, Component) or (hasattr(v, "to_spec") and not isinstance(v, type)):
+        return v.to_spec()
+    if isinstance(v, BaseModel):
+        return v.model_dump()
+    if isinstance(v, param.Parameterized):
+        return serialize_to_spec(v)
+    if isinstance(v, type):
+        return f"{v.__module__}.{v.__name__}"
+    if isinstance(v, (Path, PosixPath)):
+        return str(v)
+    if isinstance(v, dict):
+        return {k: serialize_value(val) for k, val in sorted(v.items())}
+    if isinstance(v, (list, tuple)):
+        return sorted((serialize_value(x) for x in v), key=lambda item: json.dumps(item, sort_keys=True))
+    if callable(v):
+        return f"{v.__module__}.{v.__name__}"
+    if isinstance(v, Enum):
+        return {
+            "type": f"{v.__class__.__module__}.{v.__class__.__name__}",
+            "value": v.value
+        }
+    try:
+        json.dumps(v)
+        return v
+    except TypeError:
+        return str(v)
+
+
+def serialize_to_spec(parameterized: param.Parameterized) -> dict[str, Any]:
+    """
+    Serializes a Parameterized object to a dictionary representation.
+    """
+    excluded_keys = ["name", "interface", "logs", "parent_message"]
+    spec = {
+        "type": serialize_value(type(parameterized)),
+    }
+    for k, v in parameterized.param.values().items():
+        if k.startswith("_") or k in excluded_keys:
+            continue
+        spec[k] = serialize_value(v)
+    return spec
+
+
+def deserialize_value(value: Any) -> Any:
+    if isinstance(value, dict) and "type" in value:
+        return deserialize_from_spec(value)
+    elif isinstance(value, dict):
+        return {k: deserialize_value(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [deserialize_value(v) for v in value]
+    elif isinstance(value, str) and "." in value and not value.startswith("/"):
+        try:
+            module_name, class_name = value.rsplit(".", 1)
+            module = importlib.import_module(module_name)
+            return getattr(module, class_name)
+        except (ImportError, AttributeError, ValueError):
+            return value
+    elif isinstance(value, str) and (value.startswith("/", ".")):
+        return Path(value)
+    else:
+        return value
+
+
+def deserialize_from_spec(spec: dict[str, Any]) -> Any:
+    if not isinstance(spec, dict) or "type" not in spec:
+        raise ValueError("Invalid specification format: missing type")
+
+    type_str = spec["type"]
+    try:
+        module_name, class_name = type_str.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        cls = getattr(module, class_name)
+    except (ImportError, AttributeError, ValueError) as e:
+        raise ValueError(f"Could not import class {type_str}: {e!s}")
+
+    init_params = {}
+    for key, value in spec.items():
+        if key != "type" and (hasattr(cls, "param") and not cls.param[key].constant) or not hasattr(cls, "param"):
+            init_params[key] = deserialize_value(value)
+
+    instance = cls(**init_params)
+    return instance
+
+
+def hash_spec(config: dict[str, Any]) -> str:
+    """Creates a deterministic hash from a configuration dictionary."""
+    config_str = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(config_str.encode("utf-8")).hexdigest()[:16]

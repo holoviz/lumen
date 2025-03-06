@@ -9,7 +9,10 @@ from pydantic import BaseModel
 
 from .llm import Llm, Message
 from .memory import _Memory, memory
-from .utils import log_debug, render_template, warn_on_unused_variables
+from .utils import (
+    deserialize_from_spec, hash_spec, log_debug, render_template,
+    serialize_to_spec, serialize_value, warn_on_unused_variables,
+)
 
 
 class Actor(param.Parameterized):
@@ -172,6 +175,23 @@ class Actor(param.Parameterized):
         """
         return cls._lookup_prompt_key(cls, key, "template").read_text()
 
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = serialize_to_spec(self)
+        spec["prompts"] = serialize_value({**self.param.prompts.default, **self.prompts})
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any]) -> "Actor":
+        return deserialize_from_spec(spec)
+
+    @property
+    def hash(self) -> str:
+        """
+        A deterministic hash of this actor's configuration, including prompts,
+        requires/provides, template overrides, and LLM settings.
+        """
+        return hash_spec(self.to_spec())
+
 
 class ContextProvider(param.Parameterized):
     """
@@ -193,3 +213,15 @@ class ContextProvider(param.Parameterized):
 
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = serialize_to_spec(self)
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any]) -> "ContextProvider":
+        return deserialize_from_spec(spec)
+
+    @property
+    def hash(self) -> str:
+        return hash_spec(self.to_spec())
