@@ -543,13 +543,8 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
 
 def serialize_value(v: Any) -> Any:
     """
-    Serializes a value to a **consistent** JSON-serializable format.
+    Serializes a value to a **consistent** JSON-serializable format (NOT a string).
     """
-    if hasattr(v, "read_text"):
-        try:
-            return v.read_text()
-        except Exception:
-            return str(v)
     if isinstance(v, Component) or (hasattr(v, "to_spec") and not isinstance(v, type)):
         return v.to_spec()
     if isinstance(v, BaseModel):
@@ -582,14 +577,14 @@ def serialize_to_spec(parameterized: param.Parameterized) -> dict[str, Any]:
     """
     Serializes a Parameterized object to a dictionary representation.
     """
-    excluded_keys = ["name", "interface", "logs"]
+    excluded_keys = ["name", "interface", "logs", "parent_message"]
     spec = {
         "type": serialize_value(type(parameterized)),
-        **serialize_value({
-            k: v for k, v in parameterized.param.values().items()
-            if not k.startswith("_") and k not in excluded_keys
-        }),
     }
+    for k, v in parameterized.param.values().items():
+        if k.startswith("_") or k in excluded_keys:
+            continue
+        spec[k] = serialize_value(v)
     return spec
 
 

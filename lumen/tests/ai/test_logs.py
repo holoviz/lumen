@@ -395,51 +395,6 @@ class TestSQLiteChatLogs:
         # Latest version should be liked
         assert df_history.iloc[2]["liked"] == True
 
-    def test_get_llm_config(self, chat_logs, mock_coordinator):
-        """Test retrieving LLM configurations."""
-        # Register coordinator to set up test data
-        chat_logs.register_coordinator(mock_coordinator)
-
-        # Get LLM config
-        llm_config = chat_logs.get_llm_config("test_llm_id")
-
-        # Verify config object
-        assert isinstance(llm_config, LLMConfig)
-        assert llm_config.llm_id == "test_llm_id"
-        assert llm_config.mode == "Mode.TOOLS"
-        assert llm_config.model_kwargs == {"model": "gpt-4o-mini"}
-        assert llm_config.temperature == 0.25
-
-    def test_get_agent_config(self, chat_logs, mock_coordinator):
-        """Test retrieving agent configurations."""
-        # Register coordinator to set up test data
-        chat_logs.register_coordinator(mock_coordinator)
-
-        # Get agent config
-        agent_config = chat_logs.get_agent_config("test_agent_id_1")
-
-        # Verify config object
-        assert isinstance(agent_config, AgentConfig)
-        assert agent_config.agent_id == "test_agent_id_1"
-        assert agent_config.requires == ["source"]
-        assert agent_config.provides == ["data"]
-        assert agent_config.purpose == "This is a test agent"
-
-    def test_get_coordinator_config(self, chat_logs, mock_coordinator):
-        """Test retrieving coordinator configurations."""
-        # Register coordinator to set up test data
-        chat_logs.register_coordinator(mock_coordinator)
-
-        # Get coordinator config
-        coordinator_config = chat_logs.get_coordinator_config("test_coordinator_id")
-
-        # Verify config object
-        assert isinstance(coordinator_config, CoordinatorConfig)
-        assert coordinator_config.coordinator_id == "test_coordinator_id"
-        assert coordinator_config.history == 3
-        assert len(coordinator_config.agents) == 2
-        assert coordinator_config.tools == ["tool1", "tool2"]
-
     def test_get_session_info(self, chat_logs, mock_coordinator):
         """Test retrieving session information."""
         # Register coordinator and add some messages

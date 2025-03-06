@@ -428,7 +428,7 @@ class Coordinator(Viewer, Actor):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))
                     out = LumenOutput(
-                        component=result, render_output=render_output, title=title
+                        component=result, render_output=render_output, title=title, _memory=self._memory
                     )
                     if 'outputs' in self._memory:
                         # We have to create a new list to trigger an event

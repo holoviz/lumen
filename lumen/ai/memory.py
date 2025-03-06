@@ -54,6 +54,11 @@ class _Memory(SessionCache):
             self._rx[key].rx.value = new
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {key: serialize_value(value) for key, value in self.items() if not key.startswith("_")}
+        return {
+            key: serialize_value(value)
+            for key, value in dict(self).items()
+            if not key.startswith("_")
+        }
+
 
 memory = _Memory()

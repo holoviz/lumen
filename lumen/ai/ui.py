@@ -152,8 +152,8 @@ class UI(Viewer):
                 load_buffer=5,
             )
         levels = logging.getLevelNamesMapping()
-        if levels.get(self.log_level) < 20:
-            self.interface.callback_exception = "verbose"
+        # if levels.get(self.log_level) < 20:
+        self.interface.callback_exception = "raise"
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
