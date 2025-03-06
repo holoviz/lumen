@@ -266,7 +266,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
 
-    def _get_metadata(self, table: str) -> dict[str, dict]:
+    def _get_table_metadata(self, table: str) -> dict[str, dict]:
         """
         Generate metadata for a single table in Snowflake.
         """
