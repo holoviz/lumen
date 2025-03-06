@@ -778,7 +778,7 @@ class BaseSQLSource(Source):
             tables = [table]
 
         schemas = {}
-        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1)]
+        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1, read=self.dialect)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -801,7 +801,7 @@ class BaseSQLSource(Source):
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
             for col in enums:
-                distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
+                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
                 distinct_expr = ' '.join(distinct_expr.splitlines())
                 distinct = self.execute(distinct_expr)
                 schema[col]['enum'] = distinct[col].tolist()
@@ -809,7 +809,7 @@ class BaseSQLSource(Source):
             if not min_maxes:
                 continue
 
-            minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
             minmax_expr = ' '.join(minmax_expr.splitlines())
             minmax_data = self.execute(minmax_expr)
             for col in min_maxes:
@@ -827,7 +827,7 @@ class BaseSQLSource(Source):
                 max_data = minmax_data[f'{col}_max'].iloc[0]
                 schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
-            count_expr = SQLCount().apply(sql_expr)
+            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
             count_data = self.execute(count_expr)
             schema['__len__'] = cast(count_data['count'].iloc[0])

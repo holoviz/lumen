@@ -593,7 +593,7 @@ class SQLAgent(LumenBaseAgent):
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
-            sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True).to_sql()
+            sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True, identify=False).to_sql()
             if sql_query != sql_clean:
                 step.stream(f'\n\nSQL was cleaned up and prettified:\n\n```sql\n{sql_clean}\n```')
                 sql_query = sql_clean
@@ -602,9 +602,12 @@ class SQLAgent(LumenBaseAgent):
         try:
             # TODO: if original sql expr matches, don't recreate a new one!
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
-            # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
-            sql_transforms = [SQLLimit(limit=1_000_000)]
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            transformed_sql_query = sql_query
+            for sql_transform in sql_transforms:
+                transformed_sql_query = sql_transform.apply(sql_query)  # not to be used elsewhere; just for transparency
+                step.stream(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```')
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )

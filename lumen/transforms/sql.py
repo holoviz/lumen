@@ -53,6 +53,13 @@ class SQLTransform(Transform):
 
     __abstract = True
 
+    def __init__(self, **params):
+        if "write" not in params and "read" in params:
+            params["write"] = params["read"]
+        elif "read" not in params and "write" in params:
+            params["read"] = params["write"]
+        super().__init__(**params)
+
     @classmethod
     def apply_to(cls, sql_in: str, **kwargs) -> str:
         """
@@ -188,7 +195,7 @@ class SQLDistinct(SQLTransform):
             return sql_in
 
         subquery = self.parse_sql(sql_in).subquery()
-        expression = select(self.columns).from_(subquery).distinct()
+        expression = select(*self.columns).from_(subquery).distinct()
         return self.to_sql(expression)
 
 
@@ -296,7 +303,21 @@ class SQLFilter(SQLTransform):
                         range_filters.append(column_expr.between(Literal.string(v1_str), Literal.string(v2_str)))
                     filters.append(or_(*range_filters))
                 else:
-                    filters.append(column_expr.isin(*[Literal.string(str(v)) for v in val]))
+                    # Handle None values separately in lists
+                    non_none_values = [v for v in val if v is not None]
+                    has_none = any(v is None for v in val)
+
+                    if has_none and not non_none_values:
+                        # All values are None
+                        filters.append(column_expr.is_(Null()))
+                    elif has_none:
+                        # Mix of None and non-None values
+                        none_filter = column_expr.is_(Null())
+                        in_filter = column_expr.isin(*[Literal.string(str(v)) for v in non_none_values])
+                        filters.append(or_(none_filter, in_filter))
+                    else:
+                        # No None values
+                        filters.append(column_expr.isin(*[Literal.string(str(v)) for v in val]))
             else:
                 self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
                 continue
@@ -350,6 +371,7 @@ class SQLSample(SQLTransform):
             return self._apply_generic_dialect(expression)
 
     def _apply_tablesample_dialect(self, expression: Expression) -> str:
+        print(expression, "EXP")
         subquery = expression.subquery("subquery")
 
         if self.size is not None:

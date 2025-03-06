@@ -74,7 +74,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             tables = [table]
 
         schemas = {}
-        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1)]
+        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1, read=self.dialect)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -97,7 +97,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
             # Calculate enum schemas
             for col in enums:
-                distinct_transforms = [SQLDistinct(columns=[col])]
+                distinct_transforms = [SQLDistinct(columns=[col], read=self.dialect)]
                 distinct = self._read(
                     self._apply_transforms(source, distinct_transforms)
                 )
@@ -108,7 +108,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
             # Calculate numeric schemas
             minmax_data = self._read(
-                self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
+                self._apply_transforms(source, [SQLMinMax(columns=min_maxes, read=self.dialect)])
             )
             for col in min_maxes:
                 kind = data[col].dtype.kind

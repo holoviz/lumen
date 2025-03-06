@@ -266,6 +266,7 @@ class DuckDBSource(BaseSQLSource):
                 pattern = r"Table with name\s(\S+)"
                 match = re.search(pattern, str(e))
                 if match and isinstance(self.tables, dict):
+                    # TODO: see if sqlglot can do this in a more robust fashion
                     name = match.group(1)
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
                     if 'select' not in real.lower() and not real.startswith('"'):
@@ -290,6 +291,7 @@ class DuckDBSource(BaseSQLSource):
     def normalize_table(self, table: str):
         tables = self.get_tables()
         if table not in tables and 'read_' in table:
+            # Extract table name from read_* function
             table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
         return table
 
@@ -299,14 +301,14 @@ class DuckDBSource(BaseSQLSource):
                 table = self.tables[self.normalize_table(table)]
             except KeyError:
                 raise KeyError(f"Table {table} not found in {self.tables.keys()}")
-        if '(' not in table and ')' not in table:
-            table = f'"{table}"'
 
         # search if the so-called "table" already contains SELECT ... FROM
         # if so, we don't need to wrap it in a SELECT * FROM
         if re.search(r"(?i)\bselect\b[\s\S]+?\bfrom\b", table):
             sql_expr = table
         else:
+            if '(' not in table and ')' not in table:
+                table = f'"{table}"'
             sql_expr = self.sql_expr.format(table=table)
         return sql_expr.rstrip(";")
 
