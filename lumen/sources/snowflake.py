@@ -266,19 +266,10 @@ class SnowflakeSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
 
-    @cached
-    def get_table_metadata(self, table_name: str) -> dict[str, dict]:
+    def _get_metadata(self, table: str) -> dict[str, dict]:
         """
         Generate metadata for a single table in Snowflake.
-
-        Args:
-            table_name: Name of the table to get metadata for
-
-        Returns:
-            A dictionary with table metadata in the format:
-            {"description": ..., "columns": {"column_name": "description", ...}}
         """
-        # Get table description
         table_query = f"""
             SELECT
                 TABLE_NAME,
@@ -286,21 +277,13 @@ class SnowflakeSource(BaseSQLSource):
             FROM
                 {self.database}.INFORMATION_SCHEMA.TABLES
             WHERE
-                TABLE_NAME = '{table_name}'
+                TABLE_NAME = '{table}'
         """
-
         table_metadata = self.execute(table_query)
-
         if table_metadata.empty:
             return {"description": "", "columns": {}}
 
-        description = table_metadata.iloc[0]['TABLE_DESCRIPTION']
-        result = {
-            "description": description if description else "",
-            "columns": {}
-        }
-
-        # Get column metadata
+        description = table_metadata.iloc[0]['TABLE_DESCRIPTION'] or ""
         column_query = f"""
             SELECT
                 COLUMN_NAME,
@@ -308,44 +291,12 @@ class SnowflakeSource(BaseSQLSource):
             FROM
                 {self.database}.INFORMATION_SCHEMA.COLUMNS
             WHERE
-                TABLE_NAME = '{table_name}'
+                TABLE_NAME = '{table}'
             ORDER BY
                 ORDINAL_POSITION
         """
-
+        columns = {}
         columns_info = self.execute(column_query)
-
         for _, row in columns_info.iterrows():
-            column_name = row['COLUMN_NAME']
-            description = row['COMMENT']
-            result["columns"][column_name] = description if description else ""
-
-        return result
-
-    def get_metadata(self, tables: dict[str, str] | None = None) -> dict[str, dict]:
-        """
-        Generate metadata dictionary for multiple tables.
-        Non-cached version that processes a list of tables.
-
-        Args:
-            tables: Optional dictionary of table names to override the class tables.
-                If None, uses self.tables.
-
-        Returns:
-            A dictionary with table metadata in the format:
-            {"table_name": {"description": ..., "columns": {"column_name": "description", ...}}}
-        """
-        tables_to_use = tables if tables is not None else self.tables
-        result = {}
-
-        # If no tables provided, get all tables from the schema
-        if tables_to_use is None:
-            table_list = self.get_tables()
-            # Convert from fully qualified names to simple table names
-            tables_to_use = {t.split('.')[-1]: t for t in table_list}
-
-        # Process one table at a time
-        for table_name in tables_to_use:
-            result[table_name] = self.get_table_metadata(table_name)
-
-        return result
+            columns[row['COLUMN_NAME']] = {"description": row['COMMENT'] or ""}
+        return {"description": description, "columns": columns}

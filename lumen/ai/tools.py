@@ -126,7 +126,7 @@ class TableLookup(VectorLookupTool):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
             try:
-                metadata = await asyncio.to_thread(source.get_table_metadata, table_name)
+                metadata = await asyncio.to_thread(source.get_metadata, table_name)
                 source_table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}'
                 self._table_metadata[source_table] = metadata
 
@@ -136,10 +136,10 @@ class TableLookup(VectorLookupTool):
 
                 if columns := metadata.get('columns', {}):
                     enriched_text += "\nColumns:"
-                    for col_name, col_desc in columns.items():
+                    for col_name, col_info in columns.items():
                         col_text = f"\n- {col_name}"
-                        if col_desc:
-                            col_text += f": {col_desc}"
+                        if 'description' in col_info:
+                            col_text += f": {col_info['description']}"
                         enriched_text += col_text
 
                 if not self.vector_store.query(source_table, threshold=1):
@@ -156,13 +156,12 @@ class TableLookup(VectorLookupTool):
                 if not self.vector_store.query(source_table, threshold=1):
                     self.vector_store.add([{"text": source_table}])
 
-                if hasattr(source, 'get_table_metadata'):
-                    task = asyncio.create_task(
-                        self._fetch_and_store_metadata(source, table_name)
-                    )
-                    self._metadata_tasks.add(task)
-                    task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
-                    # TODO: Add ability to update existing source table?
+                task = asyncio.create_task(
+                    self._fetch_and_store_metadata(source, table_name)
+                )
+                self._metadata_tasks.add(task)
+                task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
+                # TODO: Add ability to update existing source table?
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         closest_tables = []
