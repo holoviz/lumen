@@ -189,13 +189,18 @@ class Source(MultiTypeComponent):
     cache_dir = param.String(default=None, doc="""
         Whether to enable local cache and write file to disk.""")
 
+    metadata_func = param.Callable(default=None, doc="""
+        Function that returns a metadata dictionary given a table name.
+        May be used to override the default _get_table_metadata
+        implementation of the Source.""")
+
+    root = param.ClassSelector(class_=Path, precedence=-1, doc="""
+        Root folder of the cache_dir, default is config.root""")
+
     shared = param.Boolean(default=False, doc="""
         Whether the Source can be shared across all instances of the
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
-
-    root = param.ClassSelector(class_=Path, precedence=-1, doc="""
-        Root folder of the cache_dir, default is config.root""")
 
     source_type: ClassVar[str | None] = None
 
@@ -542,8 +547,9 @@ class Source(MultiTypeComponent):
         {
             "description": ...,
             "columns": {
-               <COLUMN>: {
+                <COLUMN>: {
                    "description": ...
+                }
             }
         }
 
@@ -560,7 +566,10 @@ class Source(MultiTypeComponent):
             was provided or individual table metdata.
         """
         tables = [table] if table else self.get_tables()
-        metadata = {table: self._get_table_metadata(table) for table in tables}
+        metadata = {
+            table: self.metadata_func(table) if self.metadata_func else self._get_table_metadata(table)
+            for table in tables
+        }
         return metadata if table is None else metadata[table]
 
     def get(self, table: str, **query) -> DataFrame:

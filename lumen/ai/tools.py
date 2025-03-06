@@ -104,15 +104,18 @@ class TableLookup(VectorLookupTool):
     provides = param.List(default=["closest_tables"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
-    include_descriptions = param.Boolean(default=True, doc="""
-        Whether to include table and column descriptions in responses.""")
+    include_metadata = param.Boolean(default=True, doc="""
+        Whether to include table descriptions in the embeddings and responses.""")
+
+    include_columns = param.Boolean(default=False, doc="""
+        Whether to include column descriptions in the embeddings.""")
 
     max_concurrent = param.Integer(default=5, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._table_metadata = {}  # Store metadata for all tables
+        self._table_metadata = {}
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._memory.on_change('sources', self._update_vector_store)
@@ -122,86 +125,79 @@ class TableLookup(VectorLookupTool):
         elif source := self._memory.get("source"):
             self._update_vector_store(None, None, [source])
 
-    async def _fetch_and_store_metadata(self, source, table_name):
+    async def _fetch_and_store_metadata(self, source, table):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
-            try:
-                metadata = await asyncio.to_thread(source.get_metadata, table_name)
-                source_table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}'
-                self._table_metadata[source_table] = metadata
+            metadata = await asyncio.to_thread(source.get_metadata, table)
+        multi_source = len(self._memory.get("sources", [])) > 1
+        if multi_source:
+            enriched_text = table_name = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+        else:
+            enriched_text = table_name = table
+        self._table_metadata[table_name] = metadata
 
-                enriched_text = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-                if description := metadata.get('description', ''):
-                    enriched_text += f"\nDescription: {description}"
+        vector_metadata = {"table": table, "source": source.name}
+        if self.vector_store.filter_by(vector_metadata):
+            return
 
-                if columns := metadata.get('columns', {}):
-                    enriched_text += "\nColumns:"
-                    for col_name, col_info in columns.items():
-                        col_text = f"\n- {col_name}"
-                        if 'description' in col_info:
-                            col_text += f": {col_info['description']}"
-                        enriched_text += col_text
-
-                if not self.vector_store.query(source_table, threshold=1):
-                    self.vector_store.add([{"text": enriched_text}])
-            except Exception:
-                pass
+        if description := metadata.get('description', ''):
+            enriched_text += f"\nDescription: {description}"
+        if self.include_columns and (columns := metadata.get('columns', {})):
+            enriched_text += "\nColumns:"
+            for col_name, col_info in columns.items():
+                col_text = f"\n- {col_name}"
+                if 'description' in col_info:
+                    col_text += f": {col_info['description']}"
+                enriched_text += col_text
+        self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     def _update_vector_store(self, _, __, sources):
         for source in sources:
             for table in source.get_tables():
-                table_name = table.split('.')[-1] if '.' in table else table
-                source_table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-
-                if not self.vector_store.query(source_table, threshold=1):
-                    self.vector_store.add([{"text": source_table}])
-
-                task = asyncio.create_task(
-                    self._fetch_and_store_metadata(source, table_name)
-                )
-                self._metadata_tasks.add(task)
-                task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
-                # TODO: Add ability to update existing source table?
+                metadata = {"table": table, "source": source.name}
+                if not self.include_metadata:
+                    if self.vector_store.filter_by(metadata):
+                        # TODO: Add ability to update existing source table?
+                        continue
+                    source_table = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                    self.vector_store.add([{"text": source_table, "metadata": metadata}])
+                else:
+                    task = asyncio.create_task(
+                        self._fetch_and_store_metadata(source, table)
+                    )
+                    self._metadata_tasks.add(task)
+                    task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        closest_tables = []
-        message = "The most relevant tables are:\n"
-
-        results = self.vector_store.query(
-            messages[-1]["content"],
-            top_k=self.n,
-            threshold=self.min_similarity,
-        )
-
+        """
+        Fetches the closest tables based on the user query, depending on whether
+        any tables reach the min_similarity threshold we adjust the messsage.
+        """
+        query = messages[-1]["content"]
+        results = self.vector_store.query(query, top_k=self.n)
+        multi_source = len(self._memory.get("sources", []))
+        any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+        closest_tables, descriptions = [], []
         for result in results:
-            if SOURCE_TABLE_SEPARATOR not in result["text"]:
-                closest_tables.append(result["text"])
+            if result['similarity'] < self.min_similarity and any_matches:
+                continue
+            table = result['metadata']['table']
+            if multi_source:
+                source = result['metadata']['source']
+                table_name = f"{source}{SOURCE_TABLE_SEPARATOR}{table}"
             else:
-                first_line = result["text"].split("\n")[0] if "\n" in result["text"] else result["text"]
-                table_name = first_line.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-                closest_tables.append(table_name)
-
-        if not closest_tables:
+                table_name = table
+            description = f"- `{table_name}`: {result['similarity']:.3f} similarity"
+            if table_metadata := self._table_metadata.get(table_name):
+                description += f"\n    {table_metadata['description']}"
+            closest_tables.append(table_name)
+            descriptions.append(description)
+        if any_matches:
+            message = "The most relevant tables are:\n"
+        else:
             message = "No relevant tables found, but here are some other tables:\n"
-            results = self.vector_store.query(messages[-1]["content"], top_k=self.n, threshold=0)
-            for result in results:
-                first_line = result["text"].split("\n")[0] if "\n" in result["text"] else result["text"]
-                table_name = first_line.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-                closest_tables.append(table_name)
-
         self._memory["closest_tables"] = closest_tables
-
-        table_descriptions = []
-        for table in closest_tables:
-            table_desc = f"- `{table}`"
-            if self.include_descriptions:
-                for source_table, metadata in self._table_metadata.items():
-                    if table in source_table and metadata.get('description'):
-                        table_desc += f": {metadata['description']}"
-                        break
-            table_descriptions.append(table_desc)
-
-        return message + "\n".join(table_descriptions)
+        return message + "\n".join(descriptions)
 
 
 class FunctionTool(Tool):

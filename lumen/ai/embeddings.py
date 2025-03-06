@@ -83,7 +83,7 @@ class AzureOpenAIEmbeddings(Embeddings):
         return [r.embedding for r in response.data]
 
 
-class HuggingFaceEmbeddings:
+class HuggingFaceEmbeddings(Embeddings):
 
     device = param.String(default="cpu", doc="Device to run the model on (e.g., 'cpu' or 'cuda').")
 
