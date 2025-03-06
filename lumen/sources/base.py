@@ -132,6 +132,40 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
+def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
+    @wraps(method)
+    def wrapped(self, table: str | None = None):
+        if self in locks:
+            main_lock = locks[self]['main']
+        else:
+            main_lock = threading.RLock()
+            locks[self] = {'main': main_lock}
+        with main_lock:
+            metadata = self._get_metadata_cache() or {}
+        tables = self.get_tables() if table is None else [table]
+        if all(table in metadata for table in tables):
+            return metadata if table is None else metadata[table]
+        for missing in tables:
+            if missing in metadata:
+                continue
+            with main_lock:
+                if missing in locks[self]:
+                    lock = locks[self][missing]
+                else:
+                    locks[self][missing] = lock = threading.RLock()
+            with lock:
+                with main_lock:
+                    new_metadata = self._get_metadata_cache() or {}
+                if missing in new_metadata:
+                    metadata[missing] = new_metadata[missing]
+                else:
+                    metadata[missing] = method(self, missing)
+            with main_lock:
+                self._set_metadata_cache(metadata)
+        return metadata if table is None else metadata[table]
+    return wrapped
+
+
 class Source(MultiTypeComponent):
     """
     `Source` components provide allow querying all kinds of data.
@@ -271,6 +305,7 @@ class Source(MultiTypeComponent):
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
         self._schema_cache = {}
+        self._metadata_cache = {}
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -289,6 +324,22 @@ class Source(MultiTypeComponent):
             sha.update(k.encode('utf-8'))
             sha.update(_generate_hash(v))
         return sha.hexdigest()
+
+    def _get_metadata_cache(self) -> dict[str, dict[str, Any]]:
+        metadata = self._metadata_cache if self._metadata_cache else None
+        sha = self._get_source_hash()
+        if self.cache_dir:
+            path = self.root / self.cache_dir / f'{self.name}_{sha}_metadata.json'
+            if not path.is_file():
+                return metadata
+            with open(path) as f:
+                json_metadata = json.load(f)
+            if metadata is None:
+                metadata = {}
+            for table, table_metadata in json_metadata.items():
+                if table not in metadata:
+                    metadata[table] = table_metadata
+        return metadata
 
     def _get_schema_cache(self) -> dict[str, dict[str, Any]]:
         schema = self._schema_cache if self._schema_cache else None
@@ -315,6 +366,22 @@ class Source(MultiTypeComponent):
                 schema[table] = tschema
         return schema
 
+    def _set_metadata_cache(self, metadata):
+        self._metadata_cache = metadata
+        if not self.cache_dir:
+            return
+        sha = self._get_source_hash()
+        path = self.root / self.cache_dir
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(path / f'{self.name}_{sha}_metadata.json', 'w') as f:
+                json.dump(metadata, f, default=str)
+        except Exception as e:
+            self.param.warning(
+                f"Could not cache metadata to disk. Error while "
+                f"serializing metadata: {e}"
+            )
+
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
         if not self.cache_dir:
@@ -328,7 +395,7 @@ class Source(MultiTypeComponent):
         except Exception as e:
             self.param.warning(
                 f"Could not cache schema to disk. Error while "
-                f"serializing schema to disk: {e}"
+                f"serializing schema: {e}"
             )
 
     def _get_cache(self, table: str, **query) -> tuple[DataFrame | None, bool]:
@@ -394,6 +461,9 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
+    def _get_table_metadata(self, table: str):
+        return {}
+
     def __contains__(self, table):
         return table in self.get_tables()
 
@@ -403,6 +473,7 @@ class Source(MultiTypeComponent):
         """
         self._cache = {}
         self._schema_cache = {}
+        self._metadata_cache = {}
         if self.cache_dir:
             path = self.root / self.cache_dir
             if path.is_dir():
@@ -460,6 +531,37 @@ class Source(MultiTypeComponent):
             msg = f"{type(self).name} does not contain '{table}'"
             msg = match_suggestion_message(table or '', names, msg)
             raise ValidationError(msg) from e
+
+    @cached_metadata
+    def get_metadata(self, table: str | None) -> dict:
+        """
+        Returns metadata for one or all tables provided by the source.
+
+        The metadata for a table is structured as:
+
+        {
+            "description": ...,
+            "columns": {
+               <COLUMN>: {
+                   "description": ...
+            }
+        }
+
+        Parameters
+        ----------
+        table : str | None
+            The name of the table to return the schema for. If None
+            returns schema for all available tables.
+
+        Returns
+        -------
+        metadata : dict
+            Dictionary of metadata indexed by table (if no table was
+            was provided or individual table metdata.
+        """
+        tables = [table] if table else self.get_tables()
+        metadata = {table: self._get_table_metadata(table) for table in tables}
+        return metadata if table is None else metadata[table]
 
     def get(self, table: str, **query) -> DataFrame:
         """
