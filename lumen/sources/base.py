@@ -717,6 +717,8 @@ class BaseSQLSource(Source):
     a SQL based data source.
     """
 
+    dialect = 'any'
+
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     # Declare this source supports SQL transforms
@@ -776,7 +778,7 @@ class BaseSQLSource(Source):
             tables = [table]
 
         schemas = {}
-        sql_transforms = [SQLSample(size=limit or 1)] if shuffle else [SQLLimit(limit=limit or 1)]
+        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}

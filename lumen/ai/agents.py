@@ -26,7 +26,7 @@ from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..sources.duckdb import DuckDBSource
 from ..state import state
-from ..transforms.sql import SQLLimit
+from ..transforms.sql import SQLLimit, SQLTransform
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
@@ -593,8 +593,7 @@ class SQLAgent(LumenBaseAgent):
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
-            import sqlglot
-            sql_clean = sqlglot.transpile(sql_query, write=source.dialect, pretty=True)[0]
+            sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True).to_sql()
             if sql_query != sql_clean:
                 step.stream(f'\n\nSQL was cleaned up and prettified:\n\n```sql\n{sql_clean}\n```')
                 sql_query = sql_clean

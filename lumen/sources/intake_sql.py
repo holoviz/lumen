@@ -22,8 +22,6 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     filter_in_sql = param.Boolean(default=True, doc="")
 
-    dialect = 'any'
-
     # Declare this source supports SQL transforms
     _supports_sql = True
 
@@ -76,7 +74,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             tables = [table]
 
         schemas = {}
-        sql_transforms = [SQLSample(size=limit or 1)] if shuffle else [SQLLimit(limit=limit or 1)]
+        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
