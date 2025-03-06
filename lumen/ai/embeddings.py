@@ -81,3 +81,26 @@ class AzureOpenAIEmbeddings(Embeddings):
         texts = [text.replace("\n", " ") for text in texts]
         response = self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
+
+
+class HuggingFaceEmbeddings:
+
+    device = param.String(default="cpu", doc="Device to run the model on (e.g., 'cpu' or 'cuda').")
+
+    model = param.String(default="sentence-transformers/all-MiniLM-L6-v2", doc="""
+        The Hugging Face model to use.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        from transformers import AutoModel, AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model)
+        self._model = AutoModel.from_pretrained(self.model).to(self.device)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        import torch
+        texts = [text.replace("\n", " ") for text in texts]
+        inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self._model(**inputs)
+        embeddings = outputs.last_hidden_state[:, 0, :].cpu().tolist()  # Use [CLS] token embeddings
+        return embeddings
