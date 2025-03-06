@@ -12,7 +12,7 @@ import param
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
-from ..transforms.sql import SQLFilter
+from ..transforms.sql import SQLFilter, SQLSelectFrom
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -266,15 +266,9 @@ class DuckDBSource(BaseSQLSource):
                 pattern = r"Table with name\s(\S+)"
                 match = re.search(pattern, str(e))
                 if match and isinstance(self.tables, dict):
-                    # TODO: see if sqlglot can do this in a more robust fashion
                     name = match.group(1)
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
-                    if 'select' not in real.lower() and not real.startswith('"'):
-                        real = f'"{real}"'
-                    else:
-                        real = f'({real})'
-                    table_expr = table_expr.replace(f'FROM {name}', f'FROM {real}')
-                    source.tables[table] = sql_expr.replace(f'FROM {name}', f'FROM {real}')
+                    table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
                     self._connection.execute(table_expr)
                 else:
                     raise e
