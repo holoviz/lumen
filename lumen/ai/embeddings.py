@@ -35,7 +35,7 @@ class NumpyEmbeddings(Embeddings):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._projection = np.random.Generator(np.random.PCG64).normal(
+        self._projection = np.random.Generator(np.random.PCG64()).normal(
             0, 1, (self.vocab_size, self.embedding_dim)
         )
 
