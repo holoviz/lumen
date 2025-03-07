@@ -201,23 +201,20 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
+        max_enums = 10
         truncate_limit = min(limit or 5, 5)
         if not include_enum:
             spec.pop("enum")
             continue
-        elif len(spec["enum"]) > truncate_limit:
+        elif len(spec["enum"]) > max_enums:
+            # if there are only 10 enums, fine; let's keep them all
+            # else, that assumes this column is like glasbey 100+ categories vs category10
+            # so truncate to 5 and add "..."
             spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
-            spec["enum"] = [
-                enum
-                if (
-                    enum is None
-                    or not isinstance(enum, str)
-                    or len(enum) < 100
-                )
-                else f"{enum[:100]} ..."
-                for enum in spec["enum"]
-            ]
+            spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
+            continue
+
         # truncate each enum to 100 characters
         spec["enum"] = [
             enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
@@ -371,7 +368,7 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
             label = f"{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
             if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
                 sql = source.get_sql_expr(table)
-                schema = await get_schema(source, table, include_enum=True, limit=3)
+                schema = await get_schema(source, table, include_enum=True, limit=5)
                 tables_schema_str += f"- {label}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
             else:
                 tables_schema_str += f"- {label}\n\n"
