@@ -832,6 +832,10 @@ class BaseSQLSource(Source):
 
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
+    excluded_tables = param.List(default=[], doc="""
+        List of table names that should be excluded from the results.""")
+
+
     # Declare this source supports SQL transforms
     _supports_sql = True
 

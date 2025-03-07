@@ -81,6 +81,11 @@ class SnowflakeSource(BaseSQLSource):
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
+    excluded_tables = param.List(default=[], doc="""
+        List of table names that should be excluded from the results.
+        The items can be fully qualified (database.schema.table), partially
+        qualified (schema.table), or just table names.""")
+
     dialect = 'snowflake'
 
     def __init__(self, **params):
@@ -218,10 +223,33 @@ class SnowflakeSource(BaseSQLSource):
         return self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
 
     def get_tables(self) -> list[str]:
+        def _table_is_excluded(table_slug: str) -> bool:
+            """
+            Check if a table should be excluded based on its name components.
+            Supports matching:
+            - Fully qualified names (database.schema.table)
+            - Partially qualified names (schema.table)
+            - Just table names
+            """
+            parts = table_slug.split('.')
+            formats_to_check = {table_slug}
+            if len(parts) >= 3:  # database.schema.table
+                formats_to_check.add(f"{parts[-2]}.{parts[-1]}")  # schema.table
+                formats_to_check.add(parts[-1])  # table
+            elif len(parts) == 2:  # schema.table
+                formats_to_check.add(parts[-1])  # table
+            return any(excluded in formats_to_check for excluded in self.excluded_tables)
+
+        # limited set of tables was provided
         if isinstance(self.tables, dict | list):
-            return list(self.tables)
-        tables = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
-        return [f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}' for _, row in tables.iterrows()]
+            return [t for t in list(self.tables) if not _table_is_excluded(t)]
+
+        tables_df = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
+        return [
+            f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}'
+            for _, row in tables_df.iterrows()
+            if not _table_is_excluded(f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}')
+        ]
 
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
