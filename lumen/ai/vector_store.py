@@ -12,19 +12,14 @@ from .embeddings import Embeddings, NumpyEmbeddings
 class VectorStore(param.Parameterized):
     """Abstract base class for a vector store."""
 
+    chunk_size = param.Integer(
+        default=1024, doc="Maximum size of text chunks to split documents into."
+    )
+
     embeddings = param.ClassSelector(
         class_=Embeddings,
         default=NumpyEmbeddings(),
         doc="Embeddings object for text processing.",
-    )
-
-    vocab_size = param.Integer(
-        default=1536,
-        doc="The size of the embeddings vector. Must match the embeddings model.",
-    )
-
-    chunk_size = param.Integer(
-        default=1024, doc="Maximum size of text chunks to split documents into."
     )
 
     def _format_metadata_value(self, value) -> str:
@@ -224,7 +219,7 @@ class NumpyVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.vectors = np.empty((0, self.vocab_size), dtype=np.float32)
+        self.vectors = None
         self.texts: list[str] = []
         self.metadata: list[dict] = []
         self.ids: list[int] = []
@@ -303,11 +298,9 @@ class NumpyVectorStore(VectorStore):
         embeddings = np.array(self.embeddings.embed(text_and_metadata_list), dtype=np.float32)
         new_ids = [self._get_next_id() for _ in all_texts]
 
-        self.vectors = (
-            np.vstack([self.vectors, embeddings])
-            if len(self.vectors) > 0
-            else embeddings
-        )
+        if self.vectors is not None:
+            embeddings = np.vstack([self.vectors, embeddings])
+        self.vectors = embeddings
         self.texts.extend(all_texts)
         self.metadata.extend(all_metadata)
         self.ids.extend(new_ids)
@@ -438,7 +431,7 @@ class NumpyVectorStore(VectorStore):
 
         Resets the vectors, texts, metadata, and IDs to their initial empty states.
         """
-        self.vectors = np.empty((0, self.vocab_size), dtype=np.float32)
+        self.vectors = None
         self.texts = []
         self.metadata = []
         self.ids = []
@@ -468,9 +461,9 @@ class DuckDBVectorStore(VectorStore):
     def __init__(self, **params):
         super().__init__(**params)
         self.connection = duckdb.connect(database=self.uri)
-        self._setup_database()
+        self._initialized = False
 
-    def _setup_database(self) -> None:
+    def _setup_database(self, embedding_dim) -> None:
         """Set up the DuckDB database with necessary tables and indexes."""
         self.connection.execute("INSTALL 'vss';")
         self.connection.execute("LOAD 'vss';")
@@ -483,7 +476,7 @@ class DuckDBVectorStore(VectorStore):
                 id BIGINT DEFAULT NEXTVAL('documents_id_seq') PRIMARY KEY,
                 text VARCHAR,
                 metadata JSON,
-                embedding FLOAT[{self.vocab_size}]
+                embedding FLOAT[{embedding_dim}]
             );
         """
         )
@@ -494,6 +487,7 @@ class DuckDBVectorStore(VectorStore):
             ON documents USING HNSW (embedding) WITH (metric = 'cosine');
         """
         )
+        self._initialized = True
 
     def add(self, items: list[dict]) -> list[int]:
         """
@@ -527,6 +521,9 @@ class DuckDBVectorStore(VectorStore):
 
         text_ids = []
         for i in range(len(all_texts)):
+            vector = np.array(embeddings[i], dtype=np.float32)
+            if not self._initialized:
+                self._setup_database(len(vector))
             result = self.connection.execute(
                 """
                 INSERT INTO documents (text, metadata, embedding)
@@ -535,7 +532,7 @@ class DuckDBVectorStore(VectorStore):
                 [
                     all_texts[i],
                     json.dumps(all_metadata[i]),
-                    np.array(embeddings[i], dtype=np.float32).tolist(),
+                    vector.tolist(),
                 ],
             )
             fetched = result.fetchone()
@@ -571,15 +568,17 @@ class DuckDBVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
+        if not self._initialized:
+            return []
         query_embedding = np.array(
             self.embeddings.embed([text])[0], dtype=np.float32
         ).tolist()
 
         base_query = f"""
             SELECT id, text, metadata,
-                array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) AS similarity
+                array_cosine_similarity(embedding, ?::REAL[{self.embeddings.embedding_dim}]) AS similarity
             FROM documents
-            WHERE array_cosine_similarity(embedding, ?::REAL[{self.vocab_size}]) >= ?
+            WHERE array_cosine_similarity(embedding, ?::REAL[{self.embeddings.embedding_dim}]) >= ?
         """
         params = [query_embedding, query_embedding, threshold]
 
@@ -628,6 +627,8 @@ class DuckDBVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', and 'metadata'.
         """
+        if not self._initialized:
+            return []
         base_query = """
             SELECT id, text, metadata
             FROM documents
@@ -667,7 +668,7 @@ class DuckDBVectorStore(VectorStore):
         Parameters
             ids: List of IDs to delete.
         """
-        if not ids:
+        if not ids or not self._initialized:
             return
 
         placeholders = ", ".join(["?"] * len(ids))
@@ -680,10 +681,14 @@ class DuckDBVectorStore(VectorStore):
 
         Drops the documents table and sequence, then sets up the database again.
         """
+        if not self._initialized:
+            return
         self.connection.execute("DROP TABLE IF EXISTS documents;")
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
-        self._setup_database()
+        self._initialized = False
 
     def __len__(self) -> int:
+        if not self._initialized:
+            return 0
         result = self.connection.execute("SELECT COUNT(*) FROM documents;").fetchone()
         return result[0]
