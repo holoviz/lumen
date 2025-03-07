@@ -10,81 +10,78 @@ def test_sql_group_by_single_column():
     result = SQLGroupBy.apply_to(
         "SELECT * FROM TABLE", by=["A"], aggregates={"AVG": "B"}
     )
-    assert "AVG(B) AS B" in result
-    assert "GROUP BY A" in result
+    expected = "SELECT A, AVG(B) AS B FROM (SELECT * FROM TABLE) GROUP BY A"
+    assert result == expected
 
 
 def test_sql_group_by_multi_columns():
     result = SQLGroupBy.apply_to(
         "SELECT * FROM TABLE", by=["A"], aggregates={"AVG": ["B", "C"]}
     )
-    assert "AVG(B) AS B" in result
-    assert "AVG(C) AS C" in result
-    assert "GROUP BY A" in result
+    expected = (
+        "SELECT A, AVG(B) AS B, AVG(C) AS C FROM (SELECT * FROM TABLE) GROUP BY A"
+    )
+    assert result == expected
 
 
 def test_sql_limit():
-    assert (
-        SQLLimit.apply_to("SELECT * FROM TABLE", limit=10)
-        == "SELECT * FROM (SELECT * FROM TABLE) LIMIT 10"
-    )
+    result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=10)
+    expected = "SELECT * FROM (SELECT * FROM TABLE) LIMIT 10"
+    assert result == expected
 
 
 def test_sql_columns():
     result = SQLColumns.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    assert "A" in result
-    assert "B" in result
+    expected = "SELECT A, B FROM (SELECT * FROM TABLE)"
+    assert result == expected
 
 
 def test_sql_distinct():
     result = SQLDistinct.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    assert "DISTINCT" in result
-    assert "A" in result
-    assert "B" in result
+    expected = "SELECT DISTINCT A, B FROM (SELECT * FROM TABLE)"
+    assert result == expected
 
 
 def test_sql_min_max():
     result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    assert "MIN(A)" in result.replace('"', "")
-    assert "MAX(A)" in result.replace('"', "")
-    assert "MIN(B)" in result.replace('"', "")
-    assert "MAX(B)" in result.replace('"', "")
+    expected = "SELECT MIN(A) AS A_min, MAX(A) AS A_max, MIN(B) AS B_min, MAX(B) AS B_max FROM (SELECT * FROM TABLE)"
+    assert result == expected
 
 
 def test_sql_filter_none():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", None)])
-    assert "WHERE" in result
-    assert "A IS NULL" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A IS NULL"
+    assert result == expected
 
 
 def test_sql_filter_scalar():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", 1)])
-    assert "WHERE" in result
-    assert "A = 1" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A = 1"
+    assert result == expected
 
 
 def test_sql_filter_isin():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", ["A", "B", "C"])]
     )
-    assert "WHERE" in result
-    assert "A IN ('A', 'B', 'C')" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A IN ('A', 'B', 'C')"
+    assert result == expected
 
 
 def test_sql_filter_datetime():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", dt.datetime(2017, 4, 14))]
     )
-    assert "WHERE" in result
-    assert "A = '2017-04-14 00:00:00'" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A = '2017-04-14 00:00:00'"
+    assert result == expected
 
 
 def test_sql_filter_date():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", dt.date(2017, 4, 14))]
     )
-    assert "WHERE" in result
-    assert "A BETWEEN '2017-04-14 00:00:00' AND '2017-04-14 23:59:59'" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-04-14 00:00:00' AND '2017-04-14 23:59:59'"
+    assert result == expected
 
 
 def test_sql_filter_date_range():
@@ -92,8 +89,8 @@ def test_sql_filter_date_range():
         "SELECT * FROM TABLE",
         conditions=[("A", (dt.date(2017, 2, 22), dt.date(2017, 4, 14)))],
     )
-    assert "WHERE" in result
-    assert "A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59'" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59'"
+    assert result == expected
 
 
 def test_sql_filter_datetime_range():
@@ -101,21 +98,22 @@ def test_sql_filter_datetime_range():
         "SELECT * FROM TABLE",
         conditions=[("A", (dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))],
     )
-    assert "WHERE" in result
-    assert "A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'"
+    assert result == expected
 
 
 def test_sql_count():
     result = SQLCount.apply_to("SELECT * FROM TABLE")
-    assert "COUNT(*)" in result
-    assert "count" in result
+    expected = "SELECT COUNT(*) AS count FROM (SELECT * FROM TABLE)"
+    assert result == expected
 
 
 def test_sql_override():
-    assert (
-        SQLOverride.apply_to("SELECT * FROM TABLE", override="SELECT A, B FROM TABLE")
-        == "SELECT A, B FROM TABLE"
+    result = SQLOverride.apply_to(
+        "SELECT * FROM TABLE", override="SELECT A, B FROM TABLE"
     )
+    expected = "SELECT A, B FROM TABLE"
+    assert result == expected
 
 
 def test_sql_format():
@@ -123,36 +121,40 @@ def test_sql_format():
         "SELECT * FROM {table} WHERE {column} > :value",
         parameters={"table": "my_table", "column": "col1", "value": 10},
     )
-    assert "SELECT * FROM my_table WHERE col1 > 10" in result
+    expected = "SELECT * FROM my_table WHERE col1 > 10"
+    assert result == expected
 
 
 def test_sql_select_from_basic():
     result = SQLSelectFrom.apply_to("my_table")
-    assert result == "SELECT * FROM my_table"
+    expected = "SELECT * FROM my_table"
+    assert result == expected
 
 
 def test_sql_select_from_replace_table():
     result = SQLSelectFrom.apply_to("SELECT * FROM old_table", tables=["new_table"])
-    assert "FROM new_table" in result
+    expected = "SELECT * FROM new_table"
+    assert result == expected
 
 
 def test_sql_select_from_custom_expr():
     result = SQLSelectFrom.apply_to("my_table", sql_expr="SELECT id, name FROM {table}")
-    assert result == "SELECT id, name FROM my_table"
+    expected = "SELECT id, name FROM my_table"
+    assert result == expected
 
 
 def test_sql_sample_tablesample_percent():
     """Test percent-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="postgres")
-    assert "TABLESAMPLE" in result
-    assert "20" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery TABLESAMPLE (20)"
+    assert result == expected
 
 
 def test_sql_sample_tablesample_size():
     """Test size-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="postgres")
-    assert "TABLESAMPLE" in result
-    assert "100" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery TABLESAMPLE (100)"
+    assert result == expected
 
 
 def test_sql_sample_tablesample_with_seed():
@@ -160,10 +162,8 @@ def test_sql_sample_tablesample_with_seed():
     result = SQLSample.apply_to(
         "SELECT * FROM TABLE", percent=20, seed=42, write="postgres"
     )
-    assert "TABLESAMPLE" in result
-    assert "20" in result
-    assert "REPEATABLE" in result
-    assert "42" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery TABLESAMPLE (20) REPEATABLE (42)"
+    assert result == expected
 
 
 def test_sql_sample_tablesample_with_method():
@@ -174,42 +174,38 @@ def test_sql_sample_tablesample_with_method():
         write="postgres",
         sample_kwargs=dict(method="BERNOULLI"),
     )
-    assert "TABLESAMPLE" in result
-    assert "20" in result
-    assert "BERNOULLI" in result
+    expected = (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery TABLESAMPLE 'BERNOULLI' (20)"
+    )
+    assert result == expected
 
 
 def test_sql_sample_mysql_percent():
     """Test percent-based sampling in MySQL"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="mysql")
-    assert "ORDER BY RAND()" in result
-    assert "LIMIT" in result
-    assert "COUNT" in result
-    assert "* 0.2" in result
+    expected = "SELECT * FROM (SELECT * FROM `TABLE`) AS subquery ORDER BY RAND() LIMIT FLOOR(COUNT(*) * 0.2)"
+    assert result == expected
 
 
 def test_sql_sample_mysql_size():
     """Test size-based sampling in MySQL"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="mysql")
-    assert "ORDER BY RAND()" in result
-    assert "LIMIT 100" in result
+    expected = "SELECT * FROM (SELECT * FROM `TABLE`) AS subquery WHERE FROZEN_RAND() BETWEEN RAND() AND RAND() + 0.0003 ORDER BY RAND() LIMIT 100"
+    assert result == expected
 
 
 def test_sql_sample_sqlite_percent():
     """Test percent-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="sqlite")
-    assert "RANDOM() < 0.2" in result
-    assert "main_query" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS main_query WHERE RANDOM() < 0.2"
+    assert result == expected
 
 
 def test_sql_sample_sqlite_size():
     """Test size-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="sqlite")
-    assert "rowid IN" in result
-    assert "ORDER BY RANDOM()" in result
-    assert "LIMIT 100" in result
-    assert "main_query" in result
-    assert "sampling_query" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS main_query WHERE rowid IN (SELECT rowid FROM (SELECT * FROM TABLE) AS sampling_query ORDER BY RANDOM() LIMIT 100)"
+    assert result == expected
 
 
 def test_sql_sample_sqlite_with_seed():
@@ -217,28 +213,33 @@ def test_sql_sample_sqlite_with_seed():
     result = SQLSample.apply_to(
         "SELECT * FROM TABLE", size=100, seed=42, write="sqlite"
     )
-    assert "ORDER BY RANDOM(42)" in result
-    assert "LIMIT 100" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS main_query WHERE rowid IN (SELECT rowid FROM (SELECT * FROM TABLE) AS sampling_query ORDER BY RANDOM(42) LIMIT 100)"
+    assert result == expected
 
 
 def test_sql_sample_generic_percent():
     """Test percent-based sampling with generic dialect"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20)
-    assert "RAND() < 0.2" in result
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE RAND() < 0.2"
+    assert result == expected
 
 
 def test_sql_sample_generic_size():
     """Test size-based sampling with generic dialect"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100)
-    assert "ORDER BY RAND()" in result
-    assert "LIMIT 100" in result
+    expected = (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RAND() LIMIT 100"
+    )
+    assert result == expected
 
 
 def test_sql_sample_generic_with_seed():
     """Test sampling with seed using generic dialect"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, seed=42)
-    assert "ORDER BY RAND(42)" in result
-    assert "LIMIT 100" in result
+    expected = (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RAND(42) LIMIT 100"
+    )
+    assert result == expected
 
 
 class TestSQLFormat:
@@ -248,7 +249,8 @@ class TestSQLFormat:
         result = SQLFormat.apply_to(
             sql_in, parameters={"table": "my_table", "column": "col1", "value": 10}
         )
-        assert "SELECT * FROM my_table WHERE col1 > 10" in result
+        expected = "SELECT * FROM my_table WHERE col1 > 10"
+        assert result == expected
 
     def test_py_format_conversion(self):
         """Test conversion of Python-style formatting to SQLGlot placeholders."""
@@ -256,7 +258,8 @@ class TestSQLFormat:
         result = SQLFormat.apply_to(
             sql_in, parameters={"table": "my_table", "column": "col1", "value": 10}
         )
-        assert "SELECT * FROM my_table WHERE col1 > 10" in result
+        expected = "SELECT * FROM my_table WHERE col1 > 10"
+        assert result == expected
 
     def test_sqlglot_placeholders(self):
         """Test using SQLGlot-style placeholders."""
@@ -264,30 +267,26 @@ class TestSQLFormat:
         result = SQLFormat.apply_to(
             sql_in, parameters={"table": "my_table", "column": "col1", "value": 10}
         )
-        assert "SELECT * FROM my_table WHERE col1 > 10" in result
+        expected = "SELECT * FROM my_table WHERE col1 > 10"
+        assert result == expected
+
 
 class TestSQLSelectFrom:
     def test_replace_multiple_tables_with_list(self):
         """Test replacing multiple table names with a list of new table names."""
         sql_in = "SELECT * FROM table1 JOIN table2"
         result = SQLSelectFrom.apply_to(
-            sql_in,
-            tables=["new_table1", "new_table2"],
-            identify=True
+            sql_in, tables=["new_table1", "new_table2"], identify=True
         )
-        assert "new_table1" in result
-        assert "new_table2" in result
+        expected = 'SELECT * FROM "new_table1" AS "", "new_table2" AS ""'
+        assert result == expected
 
     def test_dialect_specifics(self):
         """Test dialect-specific behavior."""
         sql_in = "my_table"
-        result = SQLSelectFrom.apply_to(
-            sql_in,
-            identify=True,
-            write="postgres"
-        )
-        assert "FROM" in result
-        assert "my_table" in result
+        result = SQLSelectFrom.apply_to(sql_in, identify=True, write="postgres")
+        expected = "SELECT * FROM my_table"
+        assert result == expected
 
     def test_complex_query_table_replacement(self):
         """Test replacing tables in a complex query with JOIN, WHERE, etc."""
@@ -299,8 +298,8 @@ class TestSQLSelectFrom:
             GROUP BY t1.col1
         """
         result = SQLSelectFrom.apply_to(
-            sql_in,
-            tables={"table1": "new_table1", "table2": "new_table2"}
+            sql_in, tables={"table1": "new_table1", "table2": "new_table2"}
         )
-        assert "new_table1" in result
-        assert "new_table2" in result
+        normalized_result = " ".join(result.split())
+        expected = "SELECT t1.col1, t2.col2 FROM new_table1 AS t1 JOIN new_table2 AS t2 ON t1.id = t2.id WHERE t1.col1 > 10 GROUP BY t1.col1"
+        assert normalized_result == expected

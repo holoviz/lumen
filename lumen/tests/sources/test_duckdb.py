@@ -119,9 +119,6 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = duckdb_source.get(table, __dask=dask, **kwargs)
-    print(table, column, value)
-    print(filtered)
-    print(expected_filtered_df)
     pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
 
 
