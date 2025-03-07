@@ -108,7 +108,7 @@ class TableLookup(VectorLookupTool):
         Whether to include table descriptions in the embeddings and responses.""")
 
     include_columns = param.Boolean(default=False, doc="""
-        Whether to include column descriptions in the embeddings.""")
+        Whether to include column names and descriptions in the embeddings.""")
 
     max_concurrent = param.Integer(default=5, doc="""
         Maximum number of concurrent metadata fetch operations.""")
@@ -125,18 +125,18 @@ class TableLookup(VectorLookupTool):
         elif source := self._memory.get("source"):
             self._update_vector_store(None, None, [source])
 
-    async def _fetch_and_store_metadata(self, source, table):
+    async def _fetch_and_store_metadata(self, source, table_name):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
-            metadata = await asyncio.to_thread(source.get_metadata, table)
+            metadata = await asyncio.to_thread(source.get_metadata, table_name)
         multi_source = len(self._memory.get("sources", [])) > 1
         if multi_source:
-            enriched_text = table_name = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+            enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
         else:
-            enriched_text = table_name = table
-        self._table_metadata[table_name] = metadata
+            enriched_text = table_slug = table_name
+        self._table_metadata[table_slug] = metadata
 
-        vector_metadata = {"table": table, "source": source.name}
+        vector_metadata = {"source": source.name, "table": table_name}
         if self.vector_store.filter_by(vector_metadata):
             return
 
@@ -159,8 +159,8 @@ class TableLookup(VectorLookupTool):
                     if self.vector_store.filter_by(metadata):
                         # TODO: Add ability to update existing source table?
                         continue
-                    source_table = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    self.vector_store.add([{"text": source_table, "metadata": metadata}])
+                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                    self.vector_store.add([{"text": table_slug, "metadata": metadata}])
                 else:
                     task = asyncio.create_task(
                         self._fetch_and_store_metadata(source, table)
@@ -177,21 +177,21 @@ class TableLookup(VectorLookupTool):
         results = self.vector_store.query(query, top_k=self.n)
         multi_source = len(self._memory.get("sources", []))
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+
         closest_tables, descriptions = [], []
         for result in results:
-            if result['similarity'] < self.min_similarity and any_matches:
+            if any_matches and result['similarity'] < self.min_similarity:
                 continue
-            table = result['metadata']['table']
+            table_name = result['metadata']['table']
             if multi_source:
-                source = result['metadata']['source']
-                table_name = f"{source}{SOURCE_TABLE_SEPARATOR}{table}"
-            else:
-                table_name = table
+                source_name = result['metadata']['source']
+                table_name = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             description = f"- `{table_name}`: {result['similarity']:.3f} similarity"
             if table_metadata := self._table_metadata.get(table_name):
                 description += f"\n    {table_metadata['description']}"
             closest_tables.append(table_name)
             descriptions.append(description)
+
         if any_matches:
             message = "The most relevant tables are:\n"
         else:
