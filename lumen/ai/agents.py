@@ -607,8 +607,9 @@ class SQLAgent(LumenBaseAgent):
             sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
             transformed_sql_query = sql_query
             for sql_transform in sql_transforms:
-                transformed_sql_query = sql_transform.apply(sql_query)  # not to be used elsewhere; just for transparency
-                step.stream(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```')
+                transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
+                if transformed_sql_query != sql_query:
+                    step.stream(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```')
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )

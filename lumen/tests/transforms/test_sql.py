@@ -136,6 +136,18 @@ def test_sql_limit():
     assert result == expected
 
 
+def test_sql_limit_lower_than_original():
+    result = SQLLimit.apply_to("SELECT * FROM TABLE LIMIT 15", limit=10)
+    expected = "SELECT * FROM (SELECT * FROM TABLE LIMIT 15) LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_higher_than_original():
+    result = SQLLimit.apply_to("SELECT * FROM TABLE LIMIT 15", limit=20)
+    expected = "SELECT * FROM TABLE LIMIT 15"
+    assert result == expected
+
+
 def test_sql_columns():
     result = SQLColumns.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
     expected = "SELECT A, B FROM (SELECT * FROM TABLE)"
