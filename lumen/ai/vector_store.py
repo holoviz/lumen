@@ -332,6 +332,8 @@ class NumpyVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
+        if self.vectors is None:
+            return []
         query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
 
@@ -379,7 +381,7 @@ class NumpyVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', and 'metadata'.
         """
-        if not self.metadata:
+        if not self.metadata or self.vectors is None:
             return []
 
         mask = np.ones(len(self.metadata), dtype=bool)
@@ -411,7 +413,7 @@ class NumpyVectorStore(VectorStore):
         ids: list[int]
             List of IDs to delete.
         """
-        if not ids:
+        if not ids or self.vectors is None:
             return
 
         keep_mask = np.ones(len(self.vectors), dtype=bool)
