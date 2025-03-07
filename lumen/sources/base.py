@@ -570,7 +570,6 @@ class Source(MultiTypeComponent):
             table: self.metadata_func(table) if self.metadata_func else self._get_table_metadata(table)
             for table in tables
         }
-        print(metadata, "META")
         return metadata if table is None else metadata[table]
 
     def get(self, table: str, **query) -> DataFrame:
