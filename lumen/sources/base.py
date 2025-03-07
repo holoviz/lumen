@@ -570,6 +570,7 @@ class Source(MultiTypeComponent):
             table: self.metadata_func(table) if self.metadata_func else self._get_table_metadata(table)
             for table in tables
         }
+        print(metadata, "META")
         return metadata if table is None else metadata[table]
 
     def get(self, table: str, **query) -> DataFrame:
@@ -863,7 +864,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
-    def execute(self, sql_query: str) -> pd.DataFrame:
+    def execute(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
 
@@ -871,6 +872,10 @@ class BaseSQLSource(Source):
         ---------
         sql_query : str
             The SQL Query to execute
+        *args : list
+            Positional arguments to pass to the SQL query
+        **kwargs : dict
+            Keyword arguments to pass to the SQL query
 
         Returns
         -------

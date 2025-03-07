@@ -214,8 +214,8 @@ class SnowflakeSource(BaseSQLSource):
         params['conn'] = self._conn
         return SnowflakeSource(**params)
 
-    def execute(self, sql_query: str):
-        return self._cursor.execute(sql_query).fetch_pandas_all()
+    def execute(self, sql_query: str, *args, **kwargs):
+        return self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
 
     def get_tables(self) -> list[str]:
         if isinstance(self.tables, dict | list):
@@ -251,9 +251,9 @@ class SnowflakeSource(BaseSQLSource):
             FROM
                 {self.database}.INFORMATION_SCHEMA.TABLES
             WHERE
-                TABLE_NAME = '{table}'
+                TABLE_NAME = %s
         """
-        table_metadata = self.execute(table_query)
+        table_metadata = self.execute(table_query, (table,))
         if table_metadata.empty:
             return {"description": "", "columns": {}}
 
@@ -265,12 +265,12 @@ class SnowflakeSource(BaseSQLSource):
             FROM
                 {self.database}.INFORMATION_SCHEMA.COLUMNS
             WHERE
-                TABLE_NAME = '{table}'
+                TABLE_NAME = %s
             ORDER BY
                 ORDINAL_POSITION
         """
         columns = {}
-        columns_info = self.execute(column_query)
+        columns_info = self.execute(column_query, (table,))
         for _, row in columns_info.iterrows():
             columns[row['COLUMN_NAME']] = {"description": row['COMMENT'] or ""}
         return {"description": description, "columns": columns}
