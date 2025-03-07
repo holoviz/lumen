@@ -118,6 +118,7 @@ def retry_llm_output(retries=3, sleep=1):
                         elif i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
+                        traceback.print_exc()
                         if sleep:
                             await asyncio.sleep(sleep)
 

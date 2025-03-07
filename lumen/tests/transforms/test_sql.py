@@ -1,9 +1,75 @@
 import datetime as dt
 
+from textwrap import dedent
+
+import pytest
+import sqlglot
+
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
-    SQLLimit, SQLMinMax, SQLOverride, SQLSample, SQLSelectFrom,
+    SQLLimit, SQLMinMax, SQLOverride, SQLSample, SQLSelectFrom, SQLTransform,
 )
+
+
+def test_sql_optimize():
+    result = SQLTransform(optimize=True).apply(
+        "SELECT * FROM (SELECT col1, col2 FROM table) WHERE col1 > 10"
+    )
+    expected = """SELECT "table"."col1" AS "col1", "table"."col2" AS "col2" FROM "table" AS "table" WHERE "table"."col1" > 10"""
+    assert result == expected
+
+
+def test_sql_pretty():
+    result = SQLTransform(pretty=True).apply(
+        "SELECT * FROM (SELECT col1, col2 FROM table) WHERE col1 > 10"
+    )
+    expected = dedent(
+        """
+        SELECT
+          *
+        FROM (
+          SELECT
+            col1,
+            col2
+          FROM table
+        )
+        WHERE
+          col1 > 10
+        """
+    ).strip()
+    assert result == expected
+
+
+def test_sql_identify():
+    result = SQLTransform(identify=True).apply("SELECT * FROM table WHERE col1 > 10")
+    expected = 'SELECT * FROM "table" WHERE "col1" > 10'
+    assert result == expected
+
+
+def test_sql_comments():
+    result = SQLTransform(comments=False).apply(
+        "SELECT * FROM table WHERE col1 > 10 /* comment */"
+    )
+    expected = "SELECT * FROM table WHERE col1 > 10"
+    assert result == expected
+
+
+def test_sql_error_level():
+    with pytest.raises(
+        sqlglot.errors.ParseError, match="Expected table name but got <builtins"
+    ):
+        SQLTransform(error_level=sqlglot.ErrorLevel.RAISE).apply(
+            "SELECT FROM {table}"
+        )
+
+
+def test_sql_unsupported_level():
+    with pytest.raises(
+        sqlglot.errors.UnsupportedError, match="TABLESAMPLE unsupported"
+    ):
+        SQLTransform(unsupported_level=sqlglot.ErrorLevel.RAISE, write="sqlite").apply(
+            "SELECT FROM TABLE TABLESAMPLE (10) WHERE col1 > 10",
+        )
 
 
 def test_sql_group_by_single_column():
