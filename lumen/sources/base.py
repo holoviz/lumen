@@ -31,7 +31,7 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample,
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLTransform,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -724,7 +724,7 @@ class BaseSQLSource(Source):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
-    def _apply_transforms(self, source, sql_transforms):
+    def _apply_transforms(self, source: Source, sql_transforms: list[SQLTransform]) -> Source:
         if not sql_transforms:
             return source
         sql_expr = source._sql_expr
