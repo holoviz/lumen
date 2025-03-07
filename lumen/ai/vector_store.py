@@ -456,7 +456,7 @@ class DuckDBVectorStore(VectorStore):
         vector_store.query('LLM', threshold=0.1)
     """
 
-    uri = param.String(doc="The URI of the DuckDB database")
+    uri = param.String(default=":memory:", doc="The URI of the DuckDB database")
 
     def __init__(self, **params):
         super().__init__(**params)
