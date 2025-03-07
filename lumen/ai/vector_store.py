@@ -570,15 +570,14 @@ class DuckDBVectorStore(VectorStore):
         """
         if not self._initialized:
             return []
-        query_embedding = np.array(
-            self.embeddings.embed([text])[0], dtype=np.float32
-        ).tolist()
+        query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32).tolist()
+        vector_dim = len(query_embedding)
 
         base_query = f"""
             SELECT id, text, metadata,
-                array_cosine_similarity(embedding, ?::REAL[{self.embeddings.embedding_dim}]) AS similarity
+                array_cosine_similarity(embedding, ?::REAL[{vector_dim}]) AS similarity
             FROM documents
-            WHERE array_cosine_similarity(embedding, ?::REAL[{self.embeddings.embedding_dim}]) >= ?
+            WHERE array_cosine_similarity(embedding, ?::REAL[{vector_dim}]) >= ?
         """
         params = [query_embedding, query_embedding, threshold]
 
