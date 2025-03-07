@@ -12,7 +12,7 @@ import param
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
-from ..transforms.sql import SQLFilter
+from ..transforms.sql import SQLFilter, SQLSelectFrom
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -268,12 +268,7 @@ class DuckDBSource(BaseSQLSource):
                 if match and isinstance(self.tables, dict):
                     name = match.group(1)
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
-                    if 'select' not in real.lower() and not real.startswith('"'):
-                        real = f'"{real}"'
-                    else:
-                        real = f'({real})'
-                    table_expr = table_expr.replace(f'FROM {name}', f'FROM {real}')
-                    source.tables[table] = sql_expr.replace(f'FROM {name}', f'FROM {real}')
+                    table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
                     self._connection.execute(table_expr)
                 else:
                     raise e
@@ -290,6 +285,7 @@ class DuckDBSource(BaseSQLSource):
     def normalize_table(self, table: str):
         tables = self.get_tables()
         if table not in tables and 'read_' in table:
+            # Extract table name from read_* function
             table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
         return table
 
@@ -299,14 +295,14 @@ class DuckDBSource(BaseSQLSource):
                 table = self.tables[self.normalize_table(table)]
             except KeyError:
                 raise KeyError(f"Table {table} not found in {self.tables.keys()}")
-        if '(' not in table and ')' not in table:
-            table = f'"{table}"'
 
         # search if the so-called "table" already contains SELECT ... FROM
         # if so, we don't need to wrap it in a SELECT * FROM
         if re.search(r"(?i)\bselect\b[\s\S]+?\bfrom\b", table):
             sql_expr = table
         else:
+            if '(' not in table and ')' not in table:
+                table = f'"{table}"'
             sql_expr = self.sql_expr.format(table=table)
         return sql_expr.rstrip(";")
 

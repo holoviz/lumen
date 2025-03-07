@@ -118,6 +118,7 @@ def retry_llm_output(retries=3, sleep=1):
                         elif i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
+                        traceback.print_exc()
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -155,6 +156,7 @@ async def get_schema(
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
+    shuffle: bool = True,
     **get_kwargs
 ):
     if isinstance(source, Pipeline):
@@ -162,7 +164,7 @@ async def get_schema(
     else:
         if "limit" not in get_kwargs:
             get_kwargs["limit"] = 100
-        schema = await asyncio.to_thread(source.get_schema, table, **get_kwargs)
+        schema = await asyncio.to_thread(source.get_schema, table, shuffle=shuffle, **get_kwargs)
     schema = dict(schema)
 
     # first pop regardless to prevent

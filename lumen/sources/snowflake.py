@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.serialization import (
     Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
 )
 
-from ..transforms.sql import SQLFilter
+from ..transforms.sql import SQLFilter, SQLSelectFrom
 from .base import BaseSQLSource, cached
 
 # PEM certificates have the pattern:
@@ -226,11 +226,7 @@ class SnowflakeSource(BaseSQLSource):
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):
             table = self.tables[table]
-        if 'select ' in table.lower():
-            sql_expr = table
-        else:
-            sql_expr = self.sql_expr.format(table=table)
-        return sql_expr.rstrip(";")
+        return SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
 
     @cached
     def get(self, table, **query):

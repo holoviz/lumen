@@ -31,7 +31,7 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax,
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLTransform,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -100,7 +100,7 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table: str | None = None, limit: int | None = None):
+    def wrapped(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
         if self in locks:
             main_lock = locks[self]['main']
         else:
@@ -109,7 +109,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
         with main_lock:
             schema = self._get_schema_cache() or {}
         tables = self.get_tables() if table is None else [table]
-        if all(table in schema for table in tables) and limit is None:
+        if all(table in schema for table in tables) and limit is None and not shuffle:
             return schema if table is None else schema[table]
         for missing in tables:
             if missing in schema:
@@ -122,10 +122,10 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
             with lock:
                 with main_lock:
                     new_schema = self._get_schema_cache() or {}
-                if missing in new_schema and limit is None:
+                if missing in new_schema and limit is None and not shuffle:
                     schema[missing] = new_schema[missing]
                 else:
-                    schema[missing] = method(self, missing, limit)
+                    schema[missing] = method(self, missing, limit, shuffle)
             with main_lock:
                 self._set_schema_cache(schema)
         return schema if table is None else schema[table]
@@ -428,7 +428,7 @@ class Source(MultiTypeComponent):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         """
         Returns JSON schema describing the tables returned by the
@@ -497,7 +497,7 @@ class RESTSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         query = {} if table is None else {'table': table}
         response = requests.get(self.url+'/schema', params=query)
@@ -523,7 +523,7 @@ class InMemorySource(Source):
         return list(self.tables)
 
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table:
             df = self.get(table)
@@ -717,10 +717,20 @@ class BaseSQLSource(Source):
     a SQL based data source.
     """
 
+    dialect = 'any'
+
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     # Declare this source supports SQL transforms
     _supports_sql = True
+
+    def _apply_transforms(self, source: Source, sql_transforms: list[SQLTransform]) -> Source:
+        if not sql_transforms:
+            return source
+        sql_expr = source._sql_expr
+        for sql_transform in sql_transforms:
+            sql_expr = sql_transform.apply(sql_expr)
+        return type(source)(**dict(source._init_args, sql_expr=sql_expr))
 
     def normalize_table(self, table: str) -> str:
         """
@@ -760,7 +770,7 @@ class BaseSQLSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table is None:
             tables = self.get_tables()
@@ -768,16 +778,21 @@ class BaseSQLSource(Source):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
+        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1, read=self.dialect)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
-            data = self.execute(sql_limit.apply(sql_expr))
+            data_sql_expr = sql_expr
+            for sql_transform in sql_transforms:
+                data_sql_expr = sql_transform.apply(data_sql_expr)
+            data = self.execute(data_sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
+                # the min/max and enums will be computed on the limited dataset
                 continue
+            # else, patch the min/max and enums from the full dataset
 
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
@@ -786,7 +801,7 @@ class BaseSQLSource(Source):
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
             for col in enums:
-                distinct_expr = SQLDistinct(columns=[col]).apply(sql_expr)
+                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
                 distinct_expr = ' '.join(distinct_expr.splitlines())
                 distinct = self.execute(distinct_expr)
                 schema[col]['enum'] = distinct[col].tolist()
@@ -794,7 +809,7 @@ class BaseSQLSource(Source):
             if not min_maxes:
                 continue
 
-            minmax_expr = SQLMinMax(columns=min_maxes).apply(sql_expr)
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
             minmax_expr = ' '.join(minmax_expr.splitlines())
             minmax_data = self.execute(minmax_expr)
             for col in min_maxes:
@@ -816,7 +831,7 @@ class BaseSQLSource(Source):
                 schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
                 schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
-            count_expr = SQLCount().apply(sql_expr)
+            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
             count_data = self.execute(count_expr)
             count_col = 'count' if 'count' in count_data else 'COUNT'
@@ -902,7 +917,7 @@ class WebsiteSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schema = {
             "status": {
@@ -951,7 +966,7 @@ class PanelSessionSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schema = {
             "summary": {
@@ -1093,7 +1108,7 @@ class JoinedSource(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schemas: dict[str, dict[str, Any]] = {}
         for name, specs in self.tables.items():
