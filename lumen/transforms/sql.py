@@ -8,7 +8,7 @@ from typing import ClassVar
 import param  # type: ignore
 import sqlglot
 
-from sqlglot import parse_one
+from sqlglot import parse
 from sqlglot.expressions import (
     LT, Column, Expression, Identifier, Literal as SQLLiteral, Null, Select,
     Star, Table, TableSample, and_, func, or_, replace_placeholders,
@@ -114,11 +114,16 @@ class SQLTransform(Transform):
         sqlglot.Expression
             Parsed SQL expression
         """
-        expression = parse_one(
+        expressions = parse(
             sql_in,
             read=self.read,
             error_level=self.error_level,
         )
+        if len(expressions) > 1:
+            raise ValueError(
+                "Multiple SQL statements found. Please provide only a single SQL statement."
+            )
+        expression = expressions[0]
         return expression
 
     def to_sql(self, expression: Expression) -> str:
@@ -317,7 +322,9 @@ class SQLGroupBy(SQLTransform):
 
 class SQLLimit(SQLTransform):
     """
-    Performs a LIMIT SQL operation on the query
+    Performs a LIMIT SQL operation on the query.
+    If the query already has a LIMIT clause, it will only be applied if the
+    existing limit is less than the new limit.
     """
 
     limit = param.Integer(default=1000, allow_None=True, doc="Limit on the number of rows to return")
@@ -328,7 +335,14 @@ class SQLLimit(SQLTransform):
         if self.limit is None:
             return sql_in
 
-        subquery = self.parse_sql(sql_in).subquery()
+        parsed_expression = self.parse_sql(sql_in)
+        if existing_limit := parsed_expression.args["limit"]:
+            if int(existing_limit.expression.this) < self.limit:
+                # if existing limit is less than the new limit
+                # do not modify the original query
+                return sql_in
+
+        subquery = parsed_expression.subquery()
         expression = select("*").from_(subquery).limit(self.limit)
         return self.to_sql(expression)
 
