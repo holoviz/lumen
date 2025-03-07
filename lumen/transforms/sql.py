@@ -271,7 +271,7 @@ class SQLSelectFrom(SQLFormat):
         if expression.find(Select) is not None:
             # if no tables to replace, just return the SQL
             if not tables:
-                return self.to_sql(sql_in)
+                return sql_in
             # if Select is found, replace tables
             replaced_expression = replace_tables(expression, tables, dialect=self.read)
             return self.to_sql(replaced_expression)
