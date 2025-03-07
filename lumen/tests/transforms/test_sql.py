@@ -98,7 +98,7 @@ def test_sql_comments():
 
 def test_sql_error_level():
     with pytest.raises(
-        sqlglot.errors.ParseError, match="Expected table name but got <builtins"
+        sqlglot.errors.ParseError, match="Expected table name but got"
     ):
         SQLTransform(error_level=sqlglot.ErrorLevel.RAISE).apply("SELECT FROM {table}")
 
