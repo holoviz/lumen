@@ -819,7 +819,8 @@ class BaseSQLSource(Source):
             count_expr = SQLCount().apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
             count_data = self.execute(count_expr)
-            schema['__len__'] = cast(count_data['count'].iloc[0])
+            count_col = 'count' if 'count' in count_data else 'COUNT'
+            schema['__len__'] = cast(count_data[count_col].iloc[0])
 
         return schemas if table is None else schemas[table]
 
