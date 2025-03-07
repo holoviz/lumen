@@ -110,7 +110,7 @@ class TableLookup(VectorLookupTool):
     include_columns = param.Boolean(default=False, doc="""
         Whether to include column names and descriptions in the embeddings.""")
 
-    max_concurrent = param.Integer(default=5, doc="""
+    max_concurrent = param.Integer(default=2, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
     def __init__(self, **params):
