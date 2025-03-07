@@ -216,32 +216,8 @@ class SnowflakeSource(BaseSQLSource):
         params['conn'] = self._conn
         return SnowflakeSource(**params)
 
-    @staticmethod
-    def _convert_decimals_to_float(df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
-        """
-        Convert decimal.Decimal to float in a pandas DataFrame, as
-        most packages do not support decimal.Decimal natively.
-        Samples only a subset of the DataFrame to check for decimal.Decimal.
-
-        Arguments
-        ---------
-        df (pd.DataFrame):
-            the DataFrame to convert
-        sample (int):
-            number of rows to sample to check for decimal.Decimal
-        """
-        df = df.copy()
-        for col in df.select_dtypes(include=['object']).columns:
-            try:
-                if df[col].sample(min(sample, len(df))).apply(lambda x: isinstance(x, decimal.Decimal)).any():
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            except Exception:
-                df[col] = df[col].astype(str)
-        return df
-
-    def execute(self, sql_query: str):
-        df = self._cursor.execute(sql_query).fetch_pandas_all()
-        return self._convert_decimals_to_float(df)
+    def execute(self, sql_query: str, *args, **kwargs):
+        return self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
 
     def get_tables(self) -> list[str]:
         if isinstance(self.tables, dict | list):
@@ -277,9 +253,9 @@ class SnowflakeSource(BaseSQLSource):
             FROM
                 {self.database}.INFORMATION_SCHEMA.TABLES
             WHERE
-                TABLE_NAME = '{table}'
+                TABLE_NAME = %s
         """
-        table_metadata = self.execute(table_query)
+        table_metadata = self.execute(table_query, (table,))
         if table_metadata.empty:
             return {"description": "", "columns": {}}
 
@@ -291,12 +267,12 @@ class SnowflakeSource(BaseSQLSource):
             FROM
                 {self.database}.INFORMATION_SCHEMA.COLUMNS
             WHERE
-                TABLE_NAME = '{table}'
+                TABLE_NAME = %s
             ORDER BY
                 ORDINAL_POSITION
         """
         columns = {}
-        columns_info = self.execute(column_query)
+        columns_info = self.execute(column_query, (table,))
         for _, row in columns_info.iterrows():
             columns[row['COLUMN_NAME']] = {"description": row['COMMENT'] or ""}
         return {"description": description, "columns": columns}
