@@ -109,7 +109,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
         with main_lock:
             schema = self._get_schema_cache() or {}
         tables = self.get_tables() if table is None else [table]
-        if all(table in schema for table in tables) and limit is None and shuffle is False:
+        if all(table in schema for table in tables) and limit is None and not shuffle:
             return schema if table is None else schema[table]
         for missing in tables:
             if missing in schema:
