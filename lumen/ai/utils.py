@@ -201,23 +201,20 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
+        max_enums = 10
         truncate_limit = min(limit or 5, 5)
         if not include_enum:
             spec.pop("enum")
             continue
-        elif len(spec["enum"]) > truncate_limit:
+        elif len(spec["enum"]) > max_enums:
+            # if there are only 10 enums, fine; let's keep them all
+            # else, that assumes this column is like glasbey 100+ categories vs category10
+            # so truncate to 5 and add "..."
             spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
-            spec["enum"] = [
-                enum
-                if (
-                    enum is None
-                    or not isinstance(enum, str)
-                    or len(enum) < 100
-                )
-                else f"{enum[:100]} ..."
-                for enum in spec["enum"]
-            ]
+            spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
+            continue
+
         # truncate each enum to 100 characters
         spec["enum"] = [
             enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
