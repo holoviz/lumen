@@ -807,9 +807,13 @@ class BaseSQLSource(Source):
                     cast = str
                 else:
                     cast = lambda v: v
-                min_data = minmax_data[f'{col}_min'].iloc[0]
+
+                # some dialects, like snowflake output column names to UPPERCASE regardless of input case
+                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
+                min_data = minmax_data[min_col].iloc[0]
+                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
+                max_data = minmax_data[max_col].iloc[0]
                 schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
-                max_data = minmax_data[f'{col}_max'].iloc[0]
                 schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
             count_expr = SQLCount().apply(sql_expr)
