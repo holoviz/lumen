@@ -122,7 +122,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
             with lock:
                 with main_lock:
                     new_schema = self._get_schema_cache() or {}
-                if missing in new_schema and limit is None and shuffle is False:
+                if missing in new_schema and limit is None and not shuffle:
                     schema[missing] = new_schema[missing]
                 else:
                     schema[missing] = method(self, missing, limit, shuffle)
