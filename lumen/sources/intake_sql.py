@@ -6,7 +6,7 @@ import param  # type: ignore
 
 from ..transforms.base import Filter
 from ..transforms.sql import (
-    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax,
+    SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLSample,
 )
 from ..util import get_dataframe_schema
 from .base import (
@@ -22,20 +22,10 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     filter_in_sql = param.Boolean(default=True, doc="")
 
-    dialect = 'any'
-
     # Declare this source supports SQL transforms
     _supports_sql = True
 
     __abstract = True
-
-    def _apply_transforms(self, source, sql_transforms):
-        if not sql_transforms:
-            return source
-        sql_expr = source._sql_expr
-        for sql_transform in sql_transforms:
-            sql_expr = sql_transform.apply(sql_expr)
-        return type(source)(**dict(source._init_args, sql_expr=sql_expr))
 
     def _get_source(self, table):
         try:
@@ -76,7 +66,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table is None:
             tables = self.get_tables()
@@ -84,7 +74,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             tables = [table]
 
         schemas = {}
-        sql_limit = SQLLimit(limit=limit or 1)
+        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1, read=self.dialect)]
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -93,7 +83,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             if not hasattr(source, '_sql_expr'):
                 schemas[entry] = Source.get_schema(self, table)
                 continue
-            data = self._read(self._apply_transforms(source, [sql_limit]))
+            data = self._read(self._apply_transforms(source, sql_transforms))
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
             if limit:
                 continue
@@ -107,7 +97,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
             # Calculate enum schemas
             for col in enums:
-                distinct_transforms = [SQLDistinct(columns=[col])]
+                distinct_transforms = [SQLDistinct(columns=[col], read=self.dialect)]
                 distinct = self._read(
                     self._apply_transforms(source, distinct_transforms)
                 )
@@ -118,7 +108,7 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
 
             # Calculate numeric schemas
             minmax_data = self._read(
-                self._apply_transforms(source, [SQLMinMax(columns=min_maxes)])
+                self._apply_transforms(source, [SQLMinMax(columns=min_maxes, read=self.dialect)])
             )
             for col in min_maxes:
                 kind = data[col].dtype.kind

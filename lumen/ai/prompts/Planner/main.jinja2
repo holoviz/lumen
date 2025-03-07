@@ -7,7 +7,7 @@ Ground Rules:
 - Each of these experts requires certain information and has the ability to provide certain information.
 - Do not perform tasks the user didn't ask for, e.g. do not plot the data unless requested or compute things if the user asked you to summarize the results in words.
 - Ensure that you provide each expert the context they need to ensure they do not repeat previous steps.
-- Do not go in depth to try to solve the problem, just make a plan and let the experts do the work.
+- Do not go in details to try to solve the problem (i.e. you should not mention any specific values), just make a plan and let the experts do the work.
 {%- if tools %}
 - Tools do not interact with a user, assign an expert to report, summarize or use the results.
 - When looking up information with a tool ensure the expert comes AFTER the tool.
@@ -17,6 +17,7 @@ Important Agent Rules:
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
+- When plotting, instruct SQLAgent to select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations.
 - The ChatAgent usually can be used alone, but if the query is related to the data tables, please use AnalystAgent instead.
 {% endblock -%}
 

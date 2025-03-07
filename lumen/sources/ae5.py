@@ -295,7 +295,7 @@ class AE5Source(Source):
 
     @cached_schema
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schemas = {}
         for t in self._tables:
