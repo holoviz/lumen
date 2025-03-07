@@ -11,6 +11,48 @@ from lumen.transforms.sql import (
 )
 
 
+def test_init_with_any_dialect():
+    transform = SQLTransform(read="any", write="any")
+    assert transform.read is None
+    assert transform.write is None
+
+
+def test_init_with_any_read_dialect():
+    transform = SQLTransform(read="any", write="postgres")
+    assert transform.read == "postgres"
+    assert transform.write == "postgres"
+
+
+def test_init_with_any_write_dialect():
+    transform = SQLTransform(read="mysql", write="any")
+    assert transform.read == "mysql"
+    assert transform.write == "mysql"
+
+
+def test_init_with_read_only():
+    transform = SQLTransform(read="postgres")
+    assert transform.read == "postgres"
+    assert transform.write == "postgres"
+
+
+def test_init_with_write_only():
+    transform = SQLTransform(write="mysql")
+    assert transform.read == "mysql"
+    assert transform.write == "mysql"
+
+
+def test_init_with_both_dialects():
+    transform = SQLTransform(read="sqlite", write="postgres")
+    assert transform.read == "sqlite"
+    assert transform.write == "postgres"
+
+    postgres_result = SQLTransform(read="duckdb", write="postgres").apply(
+        "SELECT * FROM table USING SAMPLE 10%"
+    )
+    expected_postgres = "SELECT * FROM table TABLESAMPLE SYSTEM (10)"
+    assert postgres_result == expected_postgres
+
+
 def test_sql_optimize():
     result = SQLTransform(optimize=True).apply(
         "SELECT * FROM (SELECT col1, col2 FROM table) WHERE col1 > 10"
@@ -58,9 +100,7 @@ def test_sql_error_level():
     with pytest.raises(
         sqlglot.errors.ParseError, match="Expected table name but got <builtins"
     ):
-        SQLTransform(error_level=sqlglot.ErrorLevel.RAISE).apply(
-            "SELECT FROM {table}"
-        )
+        SQLTransform(error_level=sqlglot.ErrorLevel.RAISE).apply("SELECT FROM {table}")
 
 
 def test_sql_unsupported_level():

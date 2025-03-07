@@ -65,7 +65,7 @@ class SQLTransform(Transform):
 
         if params.get("read") and not params.get("write"):
             params["write"] = params["read"]
-        elif params.get("write"):
+        elif not params.get("read") and params.get("write"):
             params["read"] = params["write"]
         super().__init__(**params)
 
