@@ -110,6 +110,10 @@ class TableLookup(VectorLookupTool):
     include_columns = param.Boolean(default=False, doc="""
         Whether to include column names and descriptions in the embeddings.""")
 
+    include_misc = param.Boolean(default=False, doc="""
+        Whether to include miscellaneous metadata in the embeddings,
+        besides table and column descriptions.""")
+
     max_concurrent = param.Integer(default=2, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
@@ -140,15 +144,19 @@ class TableLookup(VectorLookupTool):
         if self.vector_store.filter_by(vector_metadata):
             return
 
-        if description := metadata.get('description', ''):
+        if description := metadata.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
-        if self.include_columns and (columns := metadata.get('columns', {})):
+        if self.include_columns and (columns := metadata.pop('columns', {})):
             enriched_text += "\nColumns:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
                 if 'description' in col_info:
                     col_text += f": {col_info['description']}"
                 enriched_text += col_text
+        if self.include_misc:
+            enriched_text += "\nMiscellaneous:"
+            for key, value in metadata.items():
+                enriched_text += f"\n- {key}: {value}"
         self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     def _update_vector_store(self, _, __, sources):
