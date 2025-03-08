@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import decimal
 import re
 
 from pathlib import Path
 
+import pandas as pd
 import param
 import snowflake.connector
 
@@ -214,8 +216,32 @@ class SnowflakeSource(BaseSQLSource):
         params['conn'] = self._conn
         return SnowflakeSource(**params)
 
+    @staticmethod
+    def _convert_decimals_to_float(df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
+        """
+        Convert decimal.Decimal to float in a pandas DataFrame, as
+        most packages do not support decimal.Decimal natively.
+        Samples only a subset of the DataFrame to check for decimal.Decimal.
+
+        Arguments
+        ---------
+        df (pd.DataFrame):
+            the DataFrame to convert
+        sample (int):
+            number of rows to sample to check for decimal.Decimal
+        """
+        df = df.copy()
+        for col in df.select_dtypes(include=['object']).columns:
+            try:
+                if df[col].sample(min(sample, len(df))).apply(lambda x: isinstance(x, decimal.Decimal)).any():
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            except Exception:
+                df[col] = df[col].astype(str)
+        return df
+
     def execute(self, sql_query: str, *args, **kwargs):
-        return self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        return self._convert_decimals_to_float(df)
 
     def get_tables(self) -> list[str]:
         if isinstance(self.tables, dict | list):

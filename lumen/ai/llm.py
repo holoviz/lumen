@@ -575,7 +575,7 @@ class AnthropicAI(Llm):
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-3-haiku-latest"},
+        "default": {"model": "claude-3-5-haiku-latest"},
         "reasoning": {"model": "claude-3-5-sonnet-latest"},
     })
 
