@@ -13,8 +13,31 @@ class Embeddings(param.Parameterized):
 
 
 class NumpyEmbeddings(Embeddings):
+    """
+    NumpyEmbeddings is a simple embeddings class that uses a hash function
+    to map n-grams to the vocabulary.
 
-    vocab_size = param.Integer(default=1536, doc="The size of the vocabulary.")
+    Note that the default hash function is not stable across different Python
+    sessions. If you need a stable hash function, you can set the `hash_func`,
+    e.g. using murmurhash from the `mmh3` package.
+
+    :Example:
+    >>> embeddings = NumpyEmbeddings()
+    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    """
+
+    hash_func = param.Callable(default=hash, doc="""
+        The hashing function to use to map n-grams to the vocabulary.""")
+
+    embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
+
+    vocab_size = param.Integer(default=5000, doc="The size of the vocabulary.")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._projection = np.random.Generator(np.random.PCG64()).normal(
+            0, 1, (self.vocab_size, self.embedding_dim)
+        )
 
     def get_char_ngrams(self, text, n=3):
         text = re.sub(r"\W+", "", text.lower())
@@ -25,17 +48,27 @@ class NumpyEmbeddings(Embeddings):
         for text in texts:
             ngrams = self.get_char_ngrams(text)
             vector = np.zeros(self.vocab_size)
+
             for ngram in ngrams:
-                index = hash(ngram) % self.vocab_size
+                index = self.hash_func(ngram) % self.vocab_size
                 vector[index] += 1
-            norm = np.linalg.norm(vector)
+
+            dense_vector = np.dot(vector, self._projection)
+            norm = np.linalg.norm(dense_vector)
             if norm > 0:
-                vector = vector / norm
-            embeddings.append(vector.tolist())
+                dense_vector /= norm
+            embeddings.append(dense_vector.tolist())
         return embeddings
 
 
 class OpenAIEmbeddings(Embeddings):
+    """
+    OpenAIEmbeddings is an embeddings class that uses the OpenAI API to generate embeddings.
+
+    :Example:
+    >>> embeddings = OpenAIEmbeddings()
+    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    """
 
     api_key = param.String(doc="The OpenAI API key.")
 
@@ -56,7 +89,13 @@ class OpenAIEmbeddings(Embeddings):
 
 
 class AzureOpenAIEmbeddings(Embeddings):
+    """
+    AzureOpenAIEmbeddings is an embeddings class that uses the Azure OpenAI API to generate embeddings.
 
+    :Example:
+    >>> embeddings = AzureOpenAIEmbeddings()
+    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    """
     api_key = param.String(doc="The Azure API key.")
 
     api_version = param.String(doc="The Azure AI Studio API version.")
@@ -83,8 +122,15 @@ class AzureOpenAIEmbeddings(Embeddings):
         return [r.embedding for r in response.data]
 
 
-class HuggingFaceEmbeddings:
+class HuggingFaceEmbeddings(Embeddings):
+    """
+    HuggingFaceEmbeddings is an embeddings class that uses sentence-transformers plus
+    a tokenizer model downloaded from Hugging Face to generate embeddings.
 
+    :Example:
+    >>> embeddings = HuggingFaceEmbeddings()
+    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    """
     device = param.String(default="cpu", doc="Device to run the model on (e.g., 'cpu' or 'cuda').")
 
     model = param.String(default="sentence-transformers/all-MiniLM-L6-v2", doc="""
@@ -95,6 +141,7 @@ class HuggingFaceEmbeddings:
         from transformers import AutoModel, AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.model)
         self._model = AutoModel.from_pretrained(self.model).to(self.device)
+        self.embedding_dim = self._model.config.hidden_size
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         import torch

@@ -274,8 +274,9 @@ class DuckDBSource(BaseSQLSource):
                     raise e
         return source
 
-    def execute(self, sql_query: str):
-        return self._connection.execute(sql_query).fetch_df()
+    def execute(self, sql_query: str, *args, **kwargs):
+
+        return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):

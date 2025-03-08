@@ -132,6 +132,44 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
+def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
+    @wraps(method)
+    def wrapped(self, table: str | None = None, batched: bool = True):
+        if self in locks:
+            main_lock = locks[self]['main']
+        else:
+            main_lock = threading.RLock()
+            locks[self] = {'main': main_lock}
+        with main_lock:
+            metadata = self._get_metadata_cache() or {}
+        tables = self.get_tables() if table is None else [table]
+        if all(table in metadata for table in tables):
+            return metadata if table is None else metadata[table]
+        if batched:
+            metadata = method(self, table, batched=True)
+            return metadata if table is None else metadata[table]
+
+        for missing in tables:
+            if missing in metadata:
+                continue
+            with main_lock:
+                if missing in locks[self]:
+                    lock = locks[self][missing]
+                else:
+                    locks[self][missing] = lock = threading.RLock()
+            with lock:
+                with main_lock:
+                    new_metadata = self._get_metadata_cache() or {}
+                if missing in new_metadata:
+                    metadata[missing] = new_metadata[missing]
+                else:
+                    metadata[missing] = method(self, missing)
+            with main_lock:
+                self._set_metadata_cache(metadata)
+        return metadata if table is None else metadata[table]
+    return wrapped
+
+
 class Source(MultiTypeComponent):
     """
     `Source` components provide allow querying all kinds of data.
@@ -155,13 +193,19 @@ class Source(MultiTypeComponent):
     cache_dir = param.String(default=None, doc="""
         Whether to enable local cache and write file to disk.""")
 
+    metadata_func = param.Callable(default=None, doc="""
+        Function that returns a metadata dictionary
+        given nullable table(s) and batched boolean.
+        May be used to override the default _get_table_metadata
+        implementation of the Source.""")
+
+    root = param.ClassSelector(class_=Path, precedence=-1, doc="""
+        Root folder of the cache_dir, default is config.root""")
+
     shared = param.Boolean(default=False, doc="""
         Whether the Source can be shared across all instances of the
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
-
-    root = param.ClassSelector(class_=Path, precedence=-1, doc="""
-        Root folder of the cache_dir, default is config.root""")
 
     source_type: ClassVar[str | None] = None
 
@@ -271,6 +315,7 @@ class Source(MultiTypeComponent):
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
         self._schema_cache = {}
+        self._metadata_cache = {}
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -289,6 +334,22 @@ class Source(MultiTypeComponent):
             sha.update(k.encode('utf-8'))
             sha.update(_generate_hash(v))
         return sha.hexdigest()
+
+    def _get_metadata_cache(self) -> dict[str, dict[str, Any]]:
+        metadata = self._metadata_cache if self._metadata_cache else None
+        sha = self._get_source_hash()
+        if self.cache_dir:
+            path = self.root / self.cache_dir / f'{self.name}_{sha}_metadata.json'
+            if not path.is_file():
+                return metadata
+            with open(path) as f:
+                json_metadata = json.load(f)
+            if metadata is None:
+                metadata = {}
+            for table, table_metadata in json_metadata.items():
+                if table not in metadata:
+                    metadata[table] = table_metadata
+        return metadata
 
     def _get_schema_cache(self) -> dict[str, dict[str, Any]]:
         schema = self._schema_cache if self._schema_cache else None
@@ -315,6 +376,22 @@ class Source(MultiTypeComponent):
                 schema[table] = tschema
         return schema
 
+    def _set_metadata_cache(self, metadata):
+        self._metadata_cache = metadata
+        if not self.cache_dir:
+            return
+        sha = self._get_source_hash()
+        path = self.root / self.cache_dir
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(path / f'{self.name}_{sha}_metadata.json', 'w') as f:
+                json.dump(metadata, f, default=str)
+        except Exception as e:
+            self.param.warning(
+                f"Could not cache metadata to disk. Error while "
+                f"serializing metadata: {e}"
+            )
+
     def _set_schema_cache(self, schema):
         self._schema_cache = schema
         if not self.cache_dir:
@@ -328,7 +405,7 @@ class Source(MultiTypeComponent):
         except Exception as e:
             self.param.warning(
                 f"Could not cache schema to disk. Error while "
-                f"serializing schema to disk: {e}"
+                f"serializing schema: {e}"
             )
 
     def _get_cache(self, table: str, **query) -> tuple[DataFrame | None, bool]:
@@ -394,6 +471,9 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
+    def _get_table_metadata(self, table: str | list[str], batched: bool = True) -> dict:
+        return {}
+
     def __contains__(self, table):
         return table in self.get_tables()
 
@@ -403,6 +483,7 @@ class Source(MultiTypeComponent):
         """
         self._cache = {}
         self._schema_cache = {}
+        self._metadata_cache = {}
         if self.cache_dir:
             path = self.root / self.cache_dir
             if path.is_dir():
@@ -460,6 +541,53 @@ class Source(MultiTypeComponent):
             msg = f"{type(self).name} does not contain '{table}'"
             msg = match_suggestion_message(table or '', names, msg)
             raise ValidationError(msg) from e
+
+    @cached_metadata
+    def get_metadata(self, table: str | None, batched: bool = True) -> dict:
+        """
+        Returns metadata for one or all tables provided by the source.
+
+        The metadata for a table is structured as:
+
+        {
+            "description": ...,
+            "columns": {
+                <COLUMN>: {
+                   "description": ...,
+                   "data_type": ...,
+                }
+            },
+            **other_metadata
+        }
+
+        Parameters
+        ----------
+        table : str | None
+            The name of the table to return the schema for. If None
+            returns schema for all available tables.
+
+        Returns
+        -------
+        metadata : dict
+            Dictionary of metadata indexed by table (if no table was
+            was provided or individual table metdata.
+        """
+        tables = [table] if table else self.get_tables()
+        if batched:
+            if self.metadata_func:
+                metadata = self.metadata_func(tables, batched=True)
+            else:
+                print("BATCHED", tables)
+                metadata = self._get_table_metadata(tables, batched=True)
+            return metadata
+        else:
+            metadata = {
+                table: self.metadata_func(table, batched=False)
+                if self.metadata_func
+                else self._get_table_metadata(table, batched=False)
+                for table in tables
+            }
+            return metadata if table is None else metadata[table]
 
     def get(self, table: str, **query) -> DataFrame:
         """
@@ -752,7 +880,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
-    def execute(self, sql_query: str) -> pd.DataFrame:
+    def execute(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
 
@@ -760,6 +888,10 @@ class BaseSQLSource(Source):
         ---------
         sql_query : str
             The SQL Query to execute
+        *args : list
+            Positional arguments to pass to the SQL query
+        **kwargs : dict
+            Keyword arguments to pass to the SQL query
 
         Returns
         -------
