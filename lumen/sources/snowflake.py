@@ -242,37 +242,135 @@ class SnowflakeSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
 
-    def _get_table_metadata(self, table: str) -> dict[str, dict]:
+    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, dict]:
         """
         Generate metadata for a single table in Snowflake.
+        Handles formats: database.schema.table_name, schema.table_name, or table_name.
+        Schema can be None to be used as a wildcard.
         """
-        table_query = f"""
-            SELECT
-                TABLE_NAME,
-                COMMENT as TABLE_DESCRIPTION
-            FROM
-                {self.database}.INFORMATION_SCHEMA.TABLES
-            WHERE
-                TABLE_NAME = %s
-        """
-        table_metadata = self.execute(table_query, (table,))
-        if table_metadata.empty:
-            return {"description": "", "columns": {}}
+        if batched:
+            # Process a list of tables in batch mode
+            table_list = table if isinstance(table, list) else [table]
 
-        description = table_metadata.iloc[0]['TABLE_DESCRIPTION'] or ""
-        column_query = f"""
-            SELECT
-                COLUMN_NAME,
-                COMMENT
-            FROM
-                {self.database}.INFORMATION_SCHEMA.COLUMNS
-            WHERE
-                TABLE_NAME = %s
-            ORDER BY
-                ORDINAL_POSITION
+            # Parse each table to get their components
+            parsed_tables = []
+            for t in table_list:
+                parts = t.split(".")
+                if len(parts) == 3:
+                    parsed_tables.append(parts)  # database.schema.table_name
+                elif len(parts) == 2:
+                    parsed_tables.append([self.database, parts[0], parts[1]])  # schema.table_name
+                elif len(parts) == 1:
+                    parsed_tables.append([self.database, self.schema, parts[0]])  # table_name
+                else:
+                    raise ValueError(f"Invalid table format: {t}")
+
+            # Get all table slugs to filter
+            table_slugs = [".".join(t) for t in parsed_tables]
+
+            # Query metadata for all tables
+            table_metadata = self.execute(
+                """
+                SELECT
+                TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COMMENT as TABLE_DESCRIPTION, ROW_COUNT, LAST_ALTERED, CREATED
+                FROM INFORMATION_SCHEMA.TABLES
+                """
+            )
+            table_metadata["TABLE_SLUG"] = table_metadata[
+                ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ].agg(lambda x: ".".join(x), axis=1)
+
+            # Filter to only include requested tables
+            table_metadata = table_metadata[table_metadata["TABLE_SLUG"].isin(table_slugs)]
+
+            table_metadata = table_metadata.drop(
+                columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ).set_index("TABLE_SLUG")
+
+            # Get columns for the filtered tables
+            table_columns = self.execute(
+                """
+                SELECT
+                TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COMMENT AS COLUMN_DESCRIPTION, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                """
+            )
+            table_columns["TABLE_SLUG"] = table_columns[
+                ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ].agg(lambda x: ".".join(x), axis=1)
+
+            # Filter columns to only include requested tables
+            table_columns = table_columns[table_columns["TABLE_SLUG"].isin(table_slugs)]
+
+            table_columns = table_columns.drop(
+                columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ).set_index("TABLE_SLUG")
+
+            table_metadata_columns = table_metadata.join(table_columns).reset_index()
+
+            result = {}
+            for table_slug, group in table_metadata_columns.groupby("TABLE_SLUG"):
+                # Get metadata from the first row (all rows for a table have the same metadata)
+                first_row = group.iloc[0]
+                description = first_row["TABLE_DESCRIPTION"]
+                rows = first_row["ROW_COUNT"]
+                updated_at = first_row["LAST_ALTERED"].isoformat()
+                created_at = first_row["CREATED"].isoformat()
+                columns = (
+                    group[["COLUMN_NAME", "COLUMN_DESCRIPTION", "DATA_TYPE"]]
+                    .rename({"COLUMN_DESCRIPTION": "description", "DATA_TYPE": "data_type"}, axis=1)
+                    .set_index("COLUMN_NAME")
+                    .to_dict()
+                )
+                result[table_slug] = {
+                    "description": description,
+                    "columns": columns,
+                    "rows": rows,
+                    "updated_at": updated_at,
+                    "created_at": created_at,
+                }
+            return result  # Fixed indentation here - was previously inside the loop
+
+        # Not batched below...
+        parts = table.split(".")
+
+        if len(parts) == 3:
+            database, schema, table_name = parts
+        elif len(parts) == 2:
+            database, schema, table_name = self.database, parts[0], parts[1]
+        elif len(parts) == 1:
+            database, schema, table_name = self.database, self.schema, parts[0]
+        else:
+            raise ValueError(f"Invalid table format: {table}")
+        schema_condition = "" if schema is None else "AND TABLE_SCHEMA = %s"
+        params = (database, table_name) if schema is None else (database, schema, table_name)
+
+        table_query = f"""
+            SELECT TABLE_NAME, TABLE_SCHEMA, COMMENT, ROW_COUNT, LAST_ALTERED, CREATED
+            FROM {database}.INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_CATALOG = %s {schema_condition} AND TABLE_NAME = %s
         """
-        columns = {}
-        columns_info = self.execute(column_query, (table,))
-        for _, row in columns_info.iterrows():
-            columns[row['COLUMN_NAME']] = {"description": row['COMMENT'] or ""}
-        return {"description": description, "columns": columns}
+
+        table_metadata = self.execute(table_query, params)
+        if table_metadata.empty:
+            return {"description": "", "columns": {}, "rows": 0, "updated_at": None, "created_at": None}
+
+        actual_schema = table_metadata.iloc[0]['TABLE_SCHEMA']
+        description = table_metadata.iloc[0]['COMMENT']
+        rows = table_metadata.iloc[0]['ROW_COUNT']
+        updated_at = table_metadata.iloc[0]['LAST_ALTERED'].isoformat()
+        created_at = table_metadata.iloc[0]['CREATED'].isoformat()
+
+        # Get column metadata
+        column_query = f"""
+            SELECT COLUMN_NAME, COMMENT, DATA_TYPE
+            FROM {database}.INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_CATALOG = %s AND TABLE_SCHEMA = %s AND TABLE_NAME = %s
+            ORDER BY ORDINAL_POSITION
+        """
+
+        columns_info = self.execute(column_query, (database, actual_schema, table_name))
+        columns = columns_info.set_index("COLUMN_NAME")[["COMMENT", "DATA_TYPE"]].fillna("").rename(
+            {"COMMENT": "description", "DATA_TYPE": "data_type"}, axis=1
+        ).to_dict()
+        return {"description": description, "columns": columns, "rows": rows, "updated_at": updated_at, "created_at": created_at}

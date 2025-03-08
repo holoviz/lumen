@@ -134,7 +134,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table: str | None = None):
+    def wrapped(self, table: str | None = None, batched: bool = True):
         if self in locks:
             main_lock = locks[self]['main']
         else:
@@ -145,6 +145,10 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
         tables = self.get_tables() if table is None else [table]
         if all(table in metadata for table in tables):
             return metadata if table is None else metadata[table]
+        if batched:
+            metadata = method(self, table, batched=True)
+            return metadata if table is None else metadata[table]
+
         for missing in tables:
             if missing in metadata:
                 continue
@@ -190,7 +194,8 @@ class Source(MultiTypeComponent):
         Whether to enable local cache and write file to disk.""")
 
     metadata_func = param.Callable(default=None, doc="""
-        Function that returns a metadata dictionary given a table name.
+        Function that returns a metadata dictionary
+        given nullable table(s) and batched boolean.
         May be used to override the default _get_table_metadata
         implementation of the Source.""")
 
@@ -466,7 +471,7 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
-    def _get_table_metadata(self, table: str):
+    def _get_table_metadata(self, table: str | list[str], batched: bool = True) -> dict:
         return {}
 
     def __contains__(self, table):
@@ -538,7 +543,7 @@ class Source(MultiTypeComponent):
             raise ValidationError(msg) from e
 
     @cached_metadata
-    def get_metadata(self, table: str | None) -> dict:
+    def get_metadata(self, table: str | None, batched: bool = True) -> dict:
         """
         Returns metadata for one or all tables provided by the source.
 
@@ -548,9 +553,11 @@ class Source(MultiTypeComponent):
             "description": ...,
             "columns": {
                 <COLUMN>: {
-                   "description": ...
+                   "description": ...,
+                   "data_type": ...,
                 }
-            }
+            },
+            **other_metadata
         }
 
         Parameters
@@ -566,11 +573,21 @@ class Source(MultiTypeComponent):
             was provided or individual table metdata.
         """
         tables = [table] if table else self.get_tables()
-        metadata = {
-            table: self.metadata_func(table) if self.metadata_func else self._get_table_metadata(table)
-            for table in tables
-        }
-        return metadata if table is None else metadata[table]
+        if batched:
+            if self.metadata_func:
+                metadata = self.metadata_func(tables, batched=True)
+            else:
+                print("BATCHED", tables)
+                metadata = self._get_table_metadata(tables, batched=True)
+            return metadata
+        else:
+            metadata = {
+                table: self.metadata_func(table, batched=False)
+                if self.metadata_func
+                else self._get_table_metadata(table, batched=False)
+                for table in tables
+            }
+            return metadata if table is None else metadata[table]
 
     def get(self, table: str, **query) -> DataFrame:
         """
