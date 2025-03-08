@@ -313,7 +313,9 @@ class SnowflakeSource(BaseSQLSource):
                 # Get metadata from the first row (all rows for a table have the same metadata)
                 first_row = group.iloc[0]
                 description = first_row["TABLE_DESCRIPTION"] or ""
-                rows = int(first_row["ROW_COUNT"])
+                rows = first_row["ROW_COUNT"]
+                if rows is not None:
+                    rows = int(rows)
                 updated_at = first_row["LAST_ALTERED"].isoformat()
                 created_at = first_row["CREATED"].isoformat()
                 columns = (
@@ -357,7 +359,9 @@ class SnowflakeSource(BaseSQLSource):
 
         actual_schema = table_metadata.iloc[0]['TABLE_SCHEMA']
         description = table_metadata.iloc[0]['COMMENT'] or ""
-        rows = int(table_metadata.iloc[0]['ROW_COUNT'])
+        rows = table_metadata.iloc[0]['ROW_COUNT']
+        if rows is not None:
+            rows = int(rows)
         updated_at = table_metadata.iloc[0]['LAST_ALTERED'].isoformat()
         created_at = table_metadata.iloc[0]['CREATED'].isoformat()
 
