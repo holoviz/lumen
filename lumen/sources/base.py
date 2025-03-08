@@ -839,6 +839,57 @@ class BaseSQLSource(Source):
     # Declare this source supports SQL transforms
     _supports_sql = True
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._exclude_tables_regex = None
+
+    def _build_exclude_regex(self):
+        """
+        Build patterns for excluding tables based on different format specifications.
+        This allows exclusion by:
+        - Fully qualified name: 'TEST_DB.PUBLIC.CUSTOMERS'
+        - Schema qualified name: 'PUBLIC.ORDERS'
+        - Table name only: 'CUSTOMERS'
+        - Wildcards: 'SCHEMA.*'
+
+        Returns a compiled regex pattern for efficient matching.
+        """
+        patterns = []
+        for pattern in self.excluded_tables:
+            if not pattern:  # Skip empty patterns
+                continue
+
+            if '*' not in pattern:
+                # Handle exact match patterns
+                parts = pattern.split('.')
+                if len(parts) == 1:  # Just table name
+                    # Match table name at the end of a fully qualified name
+                    patterns.append(f"(?:^|\\.)({re.escape(pattern)})$")
+                elif len(parts) == 2:  # schema.table
+                    # Match a schema.table at the end of fully qualified name
+                    patterns.append(f"(?:^|\\.)({re.escape(pattern)})$")
+                else:  # fully qualified name
+                    patterns.append(f"^{re.escape(pattern)}$")
+            elif pattern.endswith('*'):
+                # Handle wildcard patterns like 'SCHEMA.*'
+                prefix = re.escape(pattern[:-1])
+                patterns.append(f"(?:^|\\.)({prefix}.*)")
+            else:
+                # Other wildcard patterns
+                regex_pattern = re.escape(pattern).replace('\\*', '.*')
+                patterns.append(f"(?:^|\\.)({regex_pattern})")
+        if patterns:
+            combined = '|'.join(patterns)
+            return re.compile(combined)
+        return
+
+    def _is_table_excluded(self, table_slug):
+        if not self.excluded_tables:
+            return False
+        elif self._exclude_tables_regex is None:
+            self._exclude_tables_regex = self._build_exclude_regex()
+        return bool(self._exclude_tables_regex.search(table_slug))
+
     def _apply_transforms(self, source: Source, sql_transforms: list[SQLTransform]) -> Source:
         if not sql_transforms:
             return source

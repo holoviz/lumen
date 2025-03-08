@@ -62,9 +62,6 @@ class DuckDBSource(BaseSQLSource):
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
-    excluded_tables = param.List(default=[], doc="""
-        List of table names that should be excluded from the results.""")
-
     uri = param.String(doc="The URI of the DuckDB database")
 
     source_type = 'duckdb'
@@ -283,11 +280,11 @@ class DuckDBSource(BaseSQLSource):
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
-            return [t for t in list(self.tables) if t not in self.excluded_tables]
+            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
 
         return [
             t[0] for t in self._connection.execute('SHOW TABLES').fetchall()
-            if t[0] not in self.excluded_tables
+            if self._is_table_excluded(t[0])
         ]
 
     def normalize_table(self, table: str):
