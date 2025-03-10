@@ -284,7 +284,7 @@ class DuckDBSource(BaseSQLSource):
 
         return [
             t[0] for t in self._connection.execute('SHOW TABLES').fetchall()
-            if self._is_table_excluded(t[0])
+            if not self._is_table_excluded(t[0])
         ]
 
     def normalize_table(self, table: str):
