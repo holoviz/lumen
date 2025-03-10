@@ -9,6 +9,8 @@ import param
 
 from panel.viewable import Viewable
 
+from lumen.sources.base import Source
+
 from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
@@ -67,7 +69,7 @@ class DocumentLookup(VectorLookupTool):
         super().__init__(**params)
         self._memory.on_change('document_sources', self._update_vector_store)
 
-    def _update_vector_store(self, _, __, sources):
+    async def _update_vector_store(self, _, __, sources):
         for source in sources:
             metadata = source.get("metadata", {})
             filename = metadata.get("filename")
@@ -101,8 +103,11 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables"], readonly=True, doc="""
+    provides = param.List(default=["closest_tables", "sources_raw_metadata"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
+
+    batched = param.Boolean(default=True, doc="""
+        Whether to batch the table metadata fetches.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -114,39 +119,46 @@ class TableLookup(VectorLookupTool):
         Whether to include miscellaneous metadata in the embeddings,
         besides table and column descriptions.""")
 
-    max_concurrent = param.Integer(default=2, doc="""
+    max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
     def __init__(self, **params):
         super().__init__(**params)
+        if "sources_raw_metadata" not in self._memory:
+            self._memory["sources_raw_metadata"] = {}
+
         self._table_metadata = {}
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._memory.on_change('sources', self._update_vector_store)
+        self._memory.trigger('sources')
 
-        if sources := self._memory.get("sources"):
-            self._update_vector_store(None, None, sources)
-        elif source := self._memory.get("source"):
-            self._update_vector_store(None, None, [source])
-
-    async def _fetch_and_store_metadata(self, source, table_name):
+    async def _fetch_and_store_metadata(self, source: Source, table_name: str):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
-            metadata = await asyncio.to_thread(source.get_metadata, table_name)
+            if self.batched:
+                source_metadata = self._memory["sources_raw_metadata"][source.name]
+                if isinstance(source_metadata, asyncio.Task):
+                    source_metadata = await source_metadata
+                    self._memory["sources_raw_metadata"][source.name] = source_metadata
+                    print("LOADED!!")
+            else:
+                source_metadata = await asyncio.to_thread(source.get_metadata, table_name)
+
         multi_source = len(self._memory.get("sources", [])) > 1
         if multi_source:
             enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
         else:
             enriched_text = table_slug = table_name
-        self._table_metadata[table_slug] = metadata
+        self._table_metadata[table_slug] = source_metadata
 
         vector_metadata = {"source": source.name, "table": table_name}
         if self.vector_store.filter_by(vector_metadata):
             return
 
-        if description := metadata.pop('description', ''):
+        if description := source_metadata.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
-        if self.include_columns and (columns := metadata.pop('columns', {})):
+        if self.include_columns and (columns := source_metadata.pop('columns', {})):
             enriched_text += "\nColumns:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
@@ -155,15 +167,21 @@ class TableLookup(VectorLookupTool):
                 enriched_text += col_text
         if self.include_misc:
             enriched_text += "\nMiscellaneous:"
-            for key, value in metadata.items():
+            for key, value in source_metadata.items():
                 enriched_text += f"\n- {key}: {value}"
         self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
-    def _update_vector_store(self, _, __, sources):
+    async def _update_vector_store(self, _, __, sources):
         for source in sources:
+            if self._memory["sources_raw_metadata"].get(source.name) is None:
+                print(f"Fetching metadata for source: {source.name}")
+                self._memory["sources_raw_metadata"][source.name] = asyncio.create_task(
+                    asyncio.to_thread(source.get_metadata)
+                )
+
             for table in source.get_tables():
-                metadata = {"table": table, "source": source.name}
                 if not self.include_metadata:
+                    metadata = {"table": table, "source": source.name}
                     if self.vector_store.filter_by(metadata):
                         # TODO: Add ability to update existing source table?
                         continue
