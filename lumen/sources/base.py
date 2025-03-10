@@ -145,7 +145,7 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
         tables = self.get_tables() if table is None else [table]
         if all(table in metadata for table in tables):
             return metadata if table is None else metadata[table]
-        if batched:
+        if batched and table is None:
             metadata = method(self, table, batched=True)
             return metadata if table is None else metadata[table]
 
@@ -573,11 +573,10 @@ class Source(MultiTypeComponent):
             was provided or individual table metdata.
         """
         tables = [table] if table else self.get_tables()
-        if batched:
+        if batched and len(tables) > 1:
             if self.metadata_func:
                 metadata = self.metadata_func(tables, batched=True)
             else:
-                print("BATCHED", tables)
                 metadata = self._get_table_metadata(tables, batched=True)
             return metadata
         else:

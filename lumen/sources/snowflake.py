@@ -268,15 +268,14 @@ class SnowflakeSource(BaseSQLSource):
 
     def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, dict]:
         """
-        Generate metadata for a single table in Snowflake.
+        Generate metadata for all tables or a single table (batched=False) in Snowflake.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
         Schema can be None to be used as a wildcard.
         """
+        print("CALLED...")
+        null_result = {"description": "", "columns": {}, "rows": 0, "updated_at": None, "created_at": None}
         if batched:
-            # Process a list of tables in batch mode
             table_list = table if isinstance(table, list) else [table]
-
-            # Parse each table to get their components
             parsed_tables = []
             for t in table_list:
                 parts = t.split(".")
@@ -289,10 +288,8 @@ class SnowflakeSource(BaseSQLSource):
                 else:
                     raise ValueError(f"Invalid table format: {t}")
 
-            # Get all table slugs to filter
-            table_slugs = [".".join(t) for t in parsed_tables]
+            table_slugs = pd.Series([".".join(t) for t in parsed_tables]).str.upper()
 
-            # Query metadata for all tables
             table_metadata = self.execute(
                 """
                 SELECT
@@ -302,16 +299,15 @@ class SnowflakeSource(BaseSQLSource):
             )
             table_metadata["TABLE_SLUG"] = table_metadata[
                 ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
-            ].agg(lambda x: ".".join(x), axis=1)
+            ].agg(lambda x: ".".join(x), axis=1).str.upper()
 
-            # Filter to only include requested tables
+            # TODO: maybe do this in SQL?
             table_metadata = table_metadata[table_metadata["TABLE_SLUG"].isin(table_slugs)]
 
             table_metadata = table_metadata.drop(
                 columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
             ).set_index("TABLE_SLUG")
 
-            # Get columns for the filtered tables
             table_columns = self.execute(
                 """
                 SELECT
@@ -321,9 +317,8 @@ class SnowflakeSource(BaseSQLSource):
             )
             table_columns["TABLE_SLUG"] = table_columns[
                 ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
-            ].agg(lambda x: ".".join(x), axis=1)
+            ].agg(lambda x: ".".join(x), axis=1).str.upper()
 
-            # Filter columns to only include requested tables
             table_columns = table_columns[table_columns["TABLE_SLUG"].isin(table_slugs)]
 
             table_columns = table_columns.drop(
@@ -332,14 +327,12 @@ class SnowflakeSource(BaseSQLSource):
 
             table_metadata_columns = table_metadata.join(table_columns).reset_index()
 
-            result = {}
+            result = null_result
             for table_slug, group in table_metadata_columns.groupby("TABLE_SLUG"):
-                # Get metadata from the first row (all rows for a table have the same metadata)
                 first_row = group.iloc[0]
                 description = first_row["TABLE_DESCRIPTION"] or ""
                 rows = first_row["ROW_COUNT"]
-                if rows is not None:
-                    rows = int(rows)
+                rows = None if pd.isna(rows) else int(rows)
                 updated_at = first_row["LAST_ALTERED"].isoformat()
                 created_at = first_row["CREATED"].isoformat()
                 columns = (
@@ -355,9 +348,9 @@ class SnowflakeSource(BaseSQLSource):
                     "updated_at": updated_at,
                     "created_at": created_at,
                 }
-            return result  # Fixed indentation here - was previously inside the loop
+            return result
 
-        # Not batched below...
+        # Not batched below; for quick access to a specific
         parts = table.split(".")
 
         if len(parts) == 3:
@@ -379,17 +372,15 @@ class SnowflakeSource(BaseSQLSource):
 
         table_metadata = self.execute(table_query, params)
         if table_metadata.empty:
-            return {"description": "", "columns": {}, "rows": 0, "updated_at": None, "created_at": None}
+            return null_result
 
         actual_schema = table_metadata.iloc[0]['TABLE_SCHEMA']
         description = table_metadata.iloc[0]['COMMENT'] or ""
         rows = table_metadata.iloc[0]['ROW_COUNT']
-        if rows is not None:
-            rows = int(rows)
+        rows = None if pd.isna(rows) else int(rows)
         updated_at = table_metadata.iloc[0]['LAST_ALTERED'].isoformat()
         created_at = table_metadata.iloc[0]['CREATED'].isoformat()
 
-        # Get column metadata
         column_query = f"""
             SELECT COLUMN_NAME, COMMENT, DATA_TYPE
             FROM {database}.INFORMATION_SCHEMA.COLUMNS
