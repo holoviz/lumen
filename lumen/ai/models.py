@@ -72,7 +72,11 @@ def make_context_model(tools: list[str], required_tools: list[str]):
         )
         if required_tools:
             description += f" You must include these required tools: {', '.join(required_tools)}"
-        fields['tools'] = tools=(
+        fields["chain_of_thought"] = (
+            str,
+            FieldInfo(description="Explain what tool you'll choose to use based on user query.")
+        )
+        fields['tools'] = (
             list[tool],
             FieldInfo(description=description)
         )

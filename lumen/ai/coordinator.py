@@ -625,13 +625,16 @@ class Planner(Coordinator):
             title="Obtaining additional context...",
             user="Assistant"
         ) as istep:
-            output = await self.llm.invoke(
+            response = self.llm.stream(
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=context_model,
                 max_retries=3,
             )
+            async for output in response:
+                if output.chain_of_thought:
+                    istep.stream(output.chain_of_thought, replace=True)
             if getattr(output, 'tools', None):
                 for tool in output.tools:
                     tool_messages = list(messages)

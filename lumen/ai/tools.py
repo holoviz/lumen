@@ -155,6 +155,9 @@ class TableLookup(VectorLookupTool):
             else:
                 source_metadata = await asyncio.to_thread(source.get_metadata, table_name, batched=False)
 
+        if table_name not in source_metadata:
+            return
+
         table_metadata = source_metadata[table_name]
         enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
         if self.output_formatted_schema:
@@ -200,7 +203,7 @@ class TableLookup(VectorLookupTool):
                 if self.vector_store.filter_by(metadata):
                     # TODO: Add ability to update existing source table?
                     continue
-                self.vector_store.add([{"text": "", "metadata": metadata}])
+                self.vector_store.add([{"text": table_slug, "metadata": metadata}])
 
             # if metadata is included, upsert the existing
             if self.include_metadata:
