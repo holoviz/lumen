@@ -605,7 +605,7 @@ class Planner(Coordinator):
         }
     )
 
-    async def _lookup_context(self, messages: list[Message]) -> dict:
+    async def _get_tools_context(self, messages: list[Message]) -> dict:
         tools = {tool.name: tool for tool in self._tools["__main__"]}
         if not tools:
             return ''
@@ -623,7 +623,6 @@ class Planner(Coordinator):
             required_tools=required_tools
         )
 
-        leftover_tools = tools.copy()
         with self.interface.add_step(
             success_title="Obtained necessary context",
             title="Obtaining additional context...",
@@ -648,15 +647,15 @@ class Planner(Coordinator):
                             f"-- Here are instructions of the context you are to provide: {output_tool.instruction!r}",
                             tool_messages, suffix=True, wrap=True, inplace=False
                         )
-                    if output_tool.name not in leftover_tools:
+                    if output_tool.name not in tools:
                         continue
-                    callable_tool = leftover_tools[output_tool.name]
+                    callable_tool = tools[output_tool.name]
                     response = await callable_tool.respond(tool_messages)
                     if response is not None:
                         step.stream(f'\n{output_tool.name}:\n{response}\n')
                         tool_context += f'\n- {response}'
                     self._memory["tools_context"][output_tool.name] = tool_context
-        return leftover_tools.values()  # do not allow the coordinator to rerun the same tool
+        return tools.values()
 
     async def _make_plan(
         self,
@@ -668,14 +667,14 @@ class Planner(Coordinator):
         plan_model: type[BaseModel],
         step: ChatStep,
     ) -> BaseModel:
-        leftover_tools = await self._lookup_context(messages)
+        tools = await self._get_tools_context(messages)
         reasoning = None
         while reasoning is None:
             system = await self._render_prompt(
                 "main",
                 messages,
                 agents=list(agents.values()),
-                tools=leftover_tools,
+                tools=tools,
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
