@@ -130,6 +130,9 @@ class TableLookup(VectorLookupTool):
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
+    _ready = param.Boolean(default=False, doc="""
+        Whether the vector store is ready.""")
+
     def __init__(self, **params):
         super().__init__(**params)
         if "sources_raw_metadata" not in self._memory:
@@ -197,11 +200,16 @@ class TableLookup(VectorLookupTool):
         self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def _update_vector_store(self, _, __, sources):
+        # Create a list to track all tasks we're starting in this update
+        all_tasks = []
+
         for source in sources:
             if self.include_metadata and self._memory["sources_raw_metadata"].get(source.name) is None:
-                self._memory["sources_raw_metadata"][source.name] = asyncio.create_task(
+                metadata_task = asyncio.create_task(
                     asyncio.to_thread(source.get_metadata)
                 )
+                self._memory["sources_raw_metadata"][source.name] = metadata_task
+                all_tasks.append(metadata_task)
 
             tables = source.get_tables()
             # since enriching the metadata might take time, first add basic metadata (table name)
@@ -220,6 +228,20 @@ class TableLookup(VectorLookupTool):
                     )
                     self._metadata_tasks.add(task)
                     task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
+                    all_tasks.append(task)
+
+        # Create a task to wait for all tasks to complete and then mark as ready
+        if all_tasks:
+            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
+            # We don't need to track this task in all_tasks since it depends on them
+            ready_task.add_done_callback(lambda t: None if t.exception() else None)
+
+
+    async def _mark_ready_when_done(self, tasks):
+        """Wait for all tasks to complete and then mark the tool as ready."""
+        await asyncio.gather(*tasks, return_exceptions=True)
+        print("All tasks completed.")
+        self._ready = True
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
