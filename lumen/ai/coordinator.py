@@ -321,7 +321,7 @@ class Coordinator(Viewer, Actor):
                 messages
             )
 
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
         out = await self.llm.invoke(
             messages=messages,
             system=system,
@@ -715,7 +715,7 @@ class Planner(Coordinator):
                 tables_schema_str=tables_schema_str,
                 tool_context=tool_context
             )
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,

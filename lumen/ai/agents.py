@@ -566,7 +566,7 @@ class SQLAgent(LumenBaseAgent):
             has_errors=bool(errors),
         )
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             try:
@@ -798,7 +798,7 @@ class BaseViewAgent(LumenBaseAgent):
             doc=doc,
         )
 
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
         response = self.llm.stream(
             messages,
             system=system,
@@ -1023,7 +1023,7 @@ class AnalysisAgent(LumenBaseAgent):
                     analyses=analyses,
                     data=self._memory.get("data"),
                 )
-                model_spec = self.prompts["main"].get("llm_spec", "default")
+                model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
