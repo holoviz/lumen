@@ -280,8 +280,12 @@ class DuckDBSource(BaseSQLSource):
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
-            return list(self.tables)
-        return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
+            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
+
+        return [
+            t[0] for t in self._connection.execute('SHOW TABLES').fetchall()
+            if not self._is_table_excluded(t[0])
+        ]
 
     def normalize_table(self, table: str):
         tables = self.get_tables()
