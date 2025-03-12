@@ -32,8 +32,6 @@ class Actor(param.Parameterized):
         and the block names as the inner keys with the new content as the
         values.""")
 
-    _llm_spec_key = "default"
-
     def __init__(self, **params):
         super().__init__(**params)
         self._validate_template_overrides()
@@ -174,6 +172,18 @@ class Actor(param.Parameterized):
         """
         return cls._lookup_prompt_key(cls, key, "template").read_text()
 
+    @property
+    def llm_spec_key(self):
+        name = self.__class__.__name__.replace("Agent", "")
+        result = ""
+        for i, char in enumerate(name):
+            if char.isupper():
+                if i > 0:
+                    result += "_"
+                result += char.lower()
+            else:
+                result += char
+        return result
 
 class ContextProvider(param.Parameterized):
     """

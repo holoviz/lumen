@@ -90,8 +90,6 @@ class Coordinator(Viewer, Actor):
 
     tools = param.List(default=[])
 
-    _llm_spec_key = "coordinator"
-
     __abstract = True
 
     def __init__(
@@ -323,7 +321,7 @@ class Coordinator(Viewer, Actor):
                 messages
             )
 
-        model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         out = await self.llm.invoke(
             messages=messages,
             system=system,
@@ -645,7 +643,7 @@ class Planner(Coordinator):
         if not tools and not tables:
             return table_info, ''
         context_model = make_context_model(tools=list(tools), tables=tables)
-        model_spec = self.prompts["context"].get("llm_spec", self._llm_spec_key)
+        model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
         system = await self._render_prompt(
             "context",
             messages,
@@ -717,7 +715,7 @@ class Planner(Coordinator):
                 tables_schema_str=tables_schema_str,
                 tool_context=tool_context
             )
-            model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
