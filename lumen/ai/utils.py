@@ -397,7 +397,7 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
     else:
         log.debug(msg)
     if show_length:
-        log.debug(f"Characters used: \033[94m{len(msg)}\033[0m")
+        log.debug(f"Characters: {len(msg)}")
     if suffix:
         log.debug(suffix)
     if show_sep == "below":

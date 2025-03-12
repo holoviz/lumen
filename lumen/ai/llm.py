@@ -227,27 +227,27 @@ class Llm(param.Parameterized):
 
     async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
         if response_model := kwargs.get("response_model"):
-            log_debug(f"Using \033[93m{response_model.__name__!r}\033[0m response model")
+            log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
 
+        log_debug(f"Input messages: \033[94m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
             role = message["role"]
             if role == "system":
                 continue
             if role == "user":
-                log_debug(f"\033[95m{i} (u)\033[0m. {message['content']}")
+                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
             else:
-                log_debug(f"\033[95m{i} (a)\033[0m. {message['content']}")
+                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
-        log_debug(f"Length is \033[94m{len(messages)} messages\033[0m including system")
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=messages, **kwargs)
-        log_debug(f"**Response**: \033[90m{str(result)[:100]}...\033[0m\n---")
+        log_debug(f"Response: \033[90m{str(result)[:100]}...\033[0m\n---")
         return result
 
 
