@@ -90,6 +90,8 @@ class Coordinator(Viewer, Actor):
 
     tools = param.List(default=[])
 
+    _llm_spec_key = "coordinator"
+
     __abstract = True
 
     def __init__(

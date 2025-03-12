@@ -32,6 +32,8 @@ class Actor(param.Parameterized):
         and the block names as the inner keys with the new content as the
         values.""")
 
+    _llm_spec_key = "default"
+
     def __init__(self, **params):
         super().__init__(**params)
         self._validate_template_overrides()

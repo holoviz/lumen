@@ -24,6 +24,7 @@ class Tool(Actor, ContextProvider):
     interact with or on behalf of a user directly.
     """
 
+    _llm_spec_key = "tool"
 
 class VectorLookupTool(Tool):
     """
@@ -179,6 +180,8 @@ class FunctionTool(Tool):
             },
         }
     )
+
+    _llm_spec_key = "function_tool"
 
     def __init__(self, function, **params):
         model = function_to_model(function, skipped=self.requires)

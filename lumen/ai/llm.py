@@ -23,7 +23,11 @@ from lumen.ai.utils import log_debug
 from .interceptor import Interceptor
 
 if TYPE_CHECKING:
-    MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
+    MODEL_TYPE = Literal[
+        "default", "reasoning", "coordinator", "agent", "chat", "analyst", "table_list",
+        "document_list", "lumen_base", "sql", "base_view", "hv_plot", "vega_lite", "analysis",
+        "tool", "function_tool"
+    ]
 
 
 class Message(TypedDict):

@@ -81,6 +81,8 @@ class Agent(Viewer, Actor, ContextProvider):
     # Panel extensions this agent requires to be loaded
     _extensions = ()
 
+    _llm_spec_key = "agent"
+
     # Maximum width of the output
     _max_width = 1200
 
@@ -127,7 +129,7 @@ class Agent(Viewer, Actor, ContextProvider):
 
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self._llm_spec_key)
         async for output_chunk in self.llm.stream(
             messages, system=system_prompt, model_spec=model_spec, field="output"
         ):
@@ -250,6 +252,8 @@ class ChatAgent(Agent):
 
     requires = param.List(default=[], readonly=True)
 
+    _llm_spec_key = "chat"
+
     async def respond(
         self,
         messages: list[Message],
@@ -294,6 +298,8 @@ class AnalystAgent(ChatAgent):
         }
     )
 
+    _llm_spec_key = "analyst"
+
 
 class TableListAgent(Agent):
 
@@ -306,6 +312,8 @@ class TableListAgent(Agent):
     requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('tabulator',)
+
+    _llm_spec_key = "table_list"
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
@@ -363,6 +371,8 @@ class DocumentListAgent(Agent):
 
     _extensions = ('tabulator',)
 
+    _llm_spec_key = "document_list"
+
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
         sources = memory.get("document_sources")
@@ -417,6 +427,8 @@ class LumenBaseAgent(Agent):
     _output_type = LumenOutput
 
     _max_width = None
+
+    _llm_spec_key = "lumen_base"
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         """
@@ -506,6 +518,8 @@ class SQLAgent(LumenBaseAgent):
     requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
+
+    _llm_spec_key = "sql"
 
     _output_type = SQLOutput
 
@@ -741,6 +755,8 @@ class BaseViewAgent(LumenBaseAgent):
 
     provides = param.List(default=["view"], readonly=True)
 
+    _llm_spec_key = "base_view"
+
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "BaseViewAgent" / "main.jinja2"},
@@ -855,6 +871,8 @@ class hvPlotAgent(BaseViewAgent):
         }
     )
 
+    _llm_spec_key = "hv_plot"
+
     view_type = hvPlotUIView
 
     def _get_model(self, prompt_name: str, schema: dict[str, Any]) -> type[BaseModel]:
@@ -916,6 +934,8 @@ class VegaLiteAgent(BaseViewAgent):
 
     _extensions = ('vega',)
 
+    _llm_spec_key = "vega_lite"
+
     _output_type = VegaLiteOutput
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
@@ -963,6 +983,8 @@ class AnalysisAgent(LumenBaseAgent):
     provides = param.List(default=['view'])
 
     requires = param.List(default=['pipeline'])
+
+    _llm_spec_key = "analysis"
 
     _output_type = AnalysisOutput
 
