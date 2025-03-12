@@ -83,6 +83,12 @@ class SnowflakeSource(BaseSQLSource):
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
+    excluded_tables = param.List(default=[], doc="""
+        List of table names that should be excluded from the results.
+        The items can be fully qualified (database.schema.table), partially
+        qualified (schema.table), simply table names, or wildcards
+        (e.g. database.schema.*).""")
+
     dialect = 'snowflake'
 
     def __init__(self, **params):
@@ -220,10 +226,16 @@ class SnowflakeSource(BaseSQLSource):
         return self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
 
     def get_tables(self) -> list[str]:
+        # limited set of tables was provided
         if isinstance(self.tables, dict | list):
-            return list(self.tables)
-        tables = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
-        return [f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}' for _, row in tables.iterrows()]
+            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
+
+        tables_df = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
+        return [
+            f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}'
+            for _, row in tables_df.iterrows()
+            if not self._is_table_excluded(f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}')
+        ]
 
     def get_sql_expr(self, table: str):
         if isinstance(self.tables, dict):

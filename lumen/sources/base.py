@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -846,10 +847,50 @@ class BaseSQLSource(Source):
 
     dialect = 'any'
 
+    excluded_tables = param.List(default=[], doc="""
+        List of table names that should be excluded from the results. Supports:
+        - Fully qualified name: 'DATABASE.SCHEMA.TABLE'
+        - Schema qualified name: 'SCHEMA.TABLE'
+        - Table name only: 'TABLE'
+        - Wildcards: 'SCHEMA.*'""")
+
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     # Declare this source supports SQL transforms
     _supports_sql = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._exclude_tables_regex = None
+
+    def _is_table_excluded(self, table_slug):
+        """
+        Check if a table should be excluded based on patterns in self.excluded_tables.
+        Case-insensitive matching.
+        """
+        if not self.excluded_tables:
+            return False
+
+        table_slug_lower = table_slug.lower()
+
+        for pattern in self.excluded_tables:
+            if not pattern:  # Skip empty patterns
+                continue
+
+            pattern_lower = pattern.lower()
+
+            # Check for exact match with full name
+            if fnmatch.fnmatch(table_slug_lower, pattern_lower):
+                return True
+
+            # Handle cases where we're matching just the table name or schema.table
+            parts = table_slug.split('.')
+            for i in range(1, len(parts) + 1):
+                suffix = '.'.join(parts[-i:])
+                if fnmatch.fnmatch(suffix.lower(), pattern_lower):
+                    return True
+
+        return False
 
     def _apply_transforms(self, source: Source, sql_transforms: list[SQLTransform]) -> Source:
         if not sql_transforms:
