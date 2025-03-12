@@ -295,6 +295,8 @@ class NumpyVectorStore(VectorStore):
                 all_metadata.append(metadata)
                 text_and_metadata_list.append(text_and_metadata)
 
+        print(text_and_metadata, "text_and_metadata")
+
         embeddings = np.array(self.embeddings.embed(text_and_metadata_list), dtype=np.float32)
         new_ids = [self._get_next_id() for _ in all_texts]
 

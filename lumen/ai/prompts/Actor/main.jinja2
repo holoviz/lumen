@@ -2,15 +2,12 @@
 {%- endblock -%}
 
 {%- block context -%}
-{%- endblock -%}
+{%- endblock %}
 
 {% block tools -%}
-{%- if 'tool_context' in memory -%}
+{% if 'tool_context' in memory %}
 {#- Context from Coordinator.tools -#}
 {{ memory["tool_context"] }}
-{%- endif -%}
-{%- if tool_context is defined -%}
-{{ tool_context }}
 {% endif -%}
 {%- endblock -%}
 

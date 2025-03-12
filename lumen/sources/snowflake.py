@@ -284,12 +284,11 @@ class SnowflakeSource(BaseSQLSource):
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
         Schema can be None to be used as a wildcard.
         """
-        print("CALLED...")
         null_result = {"description": "", "columns": {}, "rows": 0, "updated_at": None, "created_at": None}
         if batched:
-            table_list = table if isinstance(table, list) else [table]
+            table_names = table if isinstance(table, list) else [table]
             parsed_tables = []
-            for t in table_list:
+            for t in table_names:
                 parts = t.split(".")
                 if len(parts) == 3:
                     parsed_tables.append(parts)  # database.schema.table_name
@@ -299,7 +298,6 @@ class SnowflakeSource(BaseSQLSource):
                     parsed_tables.append([self.database, self.schema, parts[0]])  # table_name
                 else:
                     raise ValueError(f"Invalid table format: {t}")
-
             table_slugs = pd.Series([".".join(t) for t in parsed_tables]).str.upper()
 
             table_metadata = self.execute(

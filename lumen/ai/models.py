@@ -57,26 +57,24 @@ class RetrySpec(BaseModel):
     )
 
 
-def make_context_model(tools: list[str], tables: list[str]):
+def make_context_model(tools: list[str], required_tools: list[str]):
     fields = {}
-    if tables:
-        fields['tables'] = (
-            list[Literal[tuple(tables)]],
-            FieldInfo(
-                description="A list of the most relevant tables to explore and load into memory before coming up with a plan. Choose at most three tables. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
-            )
-        )
     if tools:
         tool = create_model(
             "Tool",
             name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
             instruction=(str, FieldInfo(description="Instructions for the tool.")),
         )
+        description = (
+            "A list of tools to call to provide context before launching into the planning stage."
+            "Use tools to gather additional context or clarification, tools should NEVER be used"
+            "to obtain the actual data you will be working with."
+        )
+        if required_tools:
+            description += f" You must include these required tools: {', '.join(required_tools)}"
         fields['tools'] = tools=(
             list[tool],
-            FieldInfo(
-                description="A list of tools to call to provide context before launching into the planning stage. Use tools to gather additional context or clarification, tools should NEVER be used to obtain the actual data you will be working with."
-            )
+            FieldInfo(description=description)
         )
     return create_model("Context", __base__=PartialBaseModel, **fields)
 

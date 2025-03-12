@@ -37,7 +37,7 @@ from .memory import _Memory
 from .models import (
     PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
 )
-from .tools import DocumentLookup, TableLookup
+from .tools import DocumentLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
@@ -243,7 +243,7 @@ class ChatAgent(Agent):
         default={
             "main": {
                 "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-                "tools": [TableLookup, DocumentLookup]
+                "tools": [DocumentLookup]
             },
         }
     )
@@ -700,7 +700,7 @@ class SQLAgent(LumenBaseAgent):
         step_title: str | None = None,
     ) -> Any:
         sources = self._memory["sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(sources, include_sep=True)
+        tables_to_source, tables_schema_str = await gather_table_sources(sources, as_slug=True)
         tables_to_source, comments = await self._find_tables(messages, tables_schema_str)
 
         tables_sql_schemas = {}

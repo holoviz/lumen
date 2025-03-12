@@ -12,7 +12,9 @@ import param
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
-from ..transforms.sql import SQLFilter, SQLSelectFrom
+from ..transforms.sql import (
+    SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
+)
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -334,3 +336,33 @@ class DuckDBSource(BaseSQLSource):
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
+
+    def _get_table_metadata(self, table: str | None, batched: bool = False) -> dict[str, dict]:
+        """
+        Generate metadata for all tables or a single table (batched=False) in DuckDB.
+        Handles formats: database.schema.table_name, schema.table_name, or table_name.
+
+        Args:
+            table: Table name(s) to get metadata for
+            batched: If True, process multiple tables at once
+
+        Returns:
+            Dictionary with table metadata including description, columns, row count, etc.
+        """
+        if batched:
+            return {table: self._get_table_metadata(table, batched=False) for table in self.get_tables()}
+        sql_expr = self.get_sql_expr(table)
+        schema_expr = SQLLimit(limit=0).apply(sql_expr)
+        count_expr = SQLCount().apply(sql_expr)
+        schema_result = self.execute(schema_expr)
+        count = self.execute(count_expr).iloc[0, 0]
+        return {
+            "description": "",
+            "columns": {
+                col: {"data_type": str(dtype), "description": ""}
+                for col, dtype in zip(schema_result.columns, schema_result.dtypes)
+            },
+            "rows": count,
+            "updated_at": None,
+            "created_at": None,
+        }

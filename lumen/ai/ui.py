@@ -28,6 +28,7 @@ from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
 from lumen.ai.config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from lumen.ai.tools import TableLookup
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -120,7 +121,7 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
-    tools = param.List(default=[], doc="""
+    tools = param.List(default=[TableLookup], doc="""
        List of Tools that can be invoked by the coordinator.""")
 
     __abstract = True

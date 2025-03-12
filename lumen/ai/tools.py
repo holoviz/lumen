@@ -17,6 +17,7 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .translate import function_to_model
+from .utils import format_source_schema
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -26,6 +27,10 @@ class Tool(Actor, ContextProvider):
     context or respond to a question. Unlike an Agent they never
     interact with or on behalf of a user directly.
     """
+
+    always_use = param.Boolean(default=False, doc="""
+        Whether to always use this tool, even if it is not explicitly
+        required by the current context.""")
 
 
 class VectorLookupTool(Tool):
@@ -59,8 +64,8 @@ class DocumentLookup(VectorLookupTool):
     Always use this for more context.
     """
 
-    purpose = param.String(doc="""
-        Looks up relevant""")
+    purpose = param.String(default="""
+        Looks up relevant documents based on the user query.""")
 
     requires = param.List(default=["document_sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -100,6 +105,9 @@ class TableLookup(VectorLookupTool):
     and responds with relevant tables for user queries.
     """
 
+    purpose = param.String(default="""
+        Looks up relevant tables based on the user query.""")
+
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
@@ -112,12 +120,15 @@ class TableLookup(VectorLookupTool):
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
 
-    include_columns = param.Boolean(default=False, doc="""
+    include_columns = param.Boolean(default=True, doc="""
         Whether to include column names and descriptions in the embeddings.""")
 
     include_misc = param.Boolean(default=False, doc="""
         Whether to include miscellaneous metadata in the embeddings,
         besides table and column descriptions.""")
+
+    output_formatted_schema = param.Boolean(default=True, doc="""
+        Whether to include the formatted schema in the output.""")
 
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
@@ -141,24 +152,25 @@ class TableLookup(VectorLookupTool):
                 if isinstance(source_metadata, asyncio.Task):
                     source_metadata = await source_metadata
                     self._memory["sources_raw_metadata"][source.name] = source_metadata
-                    print("LOADED!!")
             else:
-                source_metadata = await asyncio.to_thread(source.get_metadata, table_name)
+                source_metadata = await asyncio.to_thread(source.get_metadata, table_name, batched=False)
 
-        multi_source = len(self._memory.get("sources", [])) > 1
-        if multi_source:
-            enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        else:
-            enriched_text = table_slug = table_name
-        self._table_metadata[table_slug] = source_metadata
+        table_metadata = source_metadata[table_name]
+        enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+        if self.output_formatted_schema:
+            table_metadata["formatted_schema"] = await format_source_schema(source, table_name, as_slug=True)
+        self._table_metadata[table_slug] = table_metadata.copy()
 
-        vector_metadata = {"source": source.name, "table": table_name}
-        if self.vector_store.filter_by(vector_metadata):
-            return
+        vector_metadata = {"source": source.name, "table_slug": table_slug}
+        if existing_items := self.vector_store.filter_by(vector_metadata):
+            if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
+                return
+            self.vector_store.delete([item['id'] for item in existing_items])
+        vector_metadata["enriched"] = True
 
-        if description := source_metadata.pop('description', ''):
+        if description := table_metadata.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
-        if self.include_columns and (columns := source_metadata.pop('columns', {})):
+        if self.include_columns and (columns := table_metadata.pop('columns', {})):
             enriched_text += "\nColumns:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
@@ -167,27 +179,32 @@ class TableLookup(VectorLookupTool):
                 enriched_text += col_text
         if self.include_misc:
             enriched_text += "\nMiscellaneous:"
-            for key, value in source_metadata.items():
+            for key, value in table_metadata.items():
                 enriched_text += f"\n- {key}: {value}"
+        vector_metadata.pop("enriched")
         self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def _update_vector_store(self, _, __, sources):
         for source in sources:
-            if self._memory["sources_raw_metadata"].get(source.name) is None:
-                print(f"Fetching metadata for source: {source.name}")
+            if self.include_metadata and self._memory["sources_raw_metadata"].get(source.name) is None:
                 self._memory["sources_raw_metadata"][source.name] = asyncio.create_task(
                     asyncio.to_thread(source.get_metadata)
                 )
 
-            for table in source.get_tables():
-                if not self.include_metadata:
-                    metadata = {"table": table, "source": source.name}
-                    if self.vector_store.filter_by(metadata):
-                        # TODO: Add ability to update existing source table?
-                        continue
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    self.vector_store.add([{"text": table_slug, "metadata": metadata}])
-                else:
+            tables = source.get_tables()
+            # since enriching the metadata might take time, first add basic metadata
+            for table_name in tables:
+                table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+                # intentionally always use table slug as the unique identifier
+                metadata = {"source": source.name, "table_slug": table_slug}
+                if self.vector_store.filter_by(metadata):
+                    # TODO: Add ability to update existing source table?
+                    continue
+                self.vector_store.add([{"text": "", "metadata": metadata}])
+
+            # if metadata is included, upsert the existing
+            if self.include_metadata:
+                for table in tables:
                     task = asyncio.create_task(
                         self._fetch_and_store_metadata(source, table)
                     )
@@ -201,27 +218,30 @@ class TableLookup(VectorLookupTool):
         """
         query = messages[-1]["content"]
         results = self.vector_store.query(query, top_k=self.n)
-        multi_source = len(self._memory.get("sources", []))
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
 
         closest_tables, descriptions = [], []
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
-            table_name = result['metadata']['table']
-            if multi_source:
-                source_name = result['metadata']['source']
-                table_name = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            description = f"- `{table_name}`: {result['similarity']:.3f} similarity"
-            if table_metadata := self._table_metadata.get(table_name):
-                description += f"\n    {table_metadata['description']}"
-            closest_tables.append(table_name)
+            table_slug = result['metadata']["table_slug"]
+            description = f"- {result['similarity']:.3f} similarity: "
+            if table_metadata := self._table_metadata.get(table_slug):
+                if self.output_formatted_schema and table_metadata.get('formatted_schema'):
+                    description += f"{table_metadata['formatted_schema']}"
+                else:
+                    description += f"`{table_slug}`"
+                if table_metadata.get("description"):
+                    description += f"\n    {table_metadata['description']}"
+            closest_tables.append(table_slug)
             descriptions.append(description)
 
         if any_matches:
-            message = "The most relevant tables are:\n"
+            message = "Based on the vector search, the most relevant tables are:\n"
         else:
-            message = "No relevant tables found, but here are some other tables:\n"
+            message = "Based on the vector search, was unable to find tables relevant to the query.\n"
+            if closest_tables:
+                message += "Here are some other tables:\n"
         self._memory["closest_tables"] = closest_tables
         return message + "\n".join(descriptions)
 

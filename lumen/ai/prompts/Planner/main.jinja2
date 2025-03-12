@@ -22,24 +22,13 @@ Important Agent Rules:
 {% endblock -%}
 
 {% block context -%}
-{%- if tool_context %}
-Note that you previously decided that you required additional context and got the following responses DO NOT invoke the same tools again: {{ tool_context }}
-{% endif %}
-
-{%- if table_info %}
-Here are tables and schemas that are available to you:
-{{ table_info }}
-{%- endif %}
-{%- if tables_schema_str %}
-{{ tables_schema_str }}
-{%- endif -%}
 {% if memory.get('document_sources') %}
 Here are the documents you have access to:
 {%- for document_source in memory['document_sources'] %}
 - '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
 
 {%- endfor %}
-{% endif %}
+{%- endif %}
 Here's the choice of experts and their uses:
 {%- for agent in agents %}
 - `{{ agent.name[:-5] }}`

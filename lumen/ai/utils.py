@@ -348,7 +348,21 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
     step.status = "failed"
 
 
-async def gather_table_sources(sources: list[Source], include_provided: bool = True, include_sep: bool = False) -> tuple[dict[str, Source], str]:
+async def format_source_schema(source: Source, table_name: str, as_slug: bool = False, limit: int = 5, **get_schema_kwargs) -> str:
+    """
+    Format a source schema as a markdown string.
+    """
+    tables_schema_str = ""
+    table_label = f"{source}{SOURCE_TABLE_SEPARATOR}{table_name}" if as_slug else table_name
+    if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
+        sql = source.get_sql_expr(table_name)
+        schema = await get_schema(source, table_name, limit=limit, **get_schema_kwargs)
+        tables_schema_str += f"`{table_label}`\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
+    else:
+        tables_schema_str += f"`{table_label}`\n\n"
+    return tables_schema_str
+
+async def gather_table_sources(sources: list[Source], include_provided: bool = True, as_slug: bool = False) -> tuple[dict[str, Source], str]:
     """
     Get a dictionary of tables to their respective sources
     and a markdown string of the tables and their schemas.
@@ -359,7 +373,7 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
         A list of sources to gather tables from.
     include_provided : bool
         Whether to include the provided source in the string; will always be included in the dictionary.
-    include_sep : bool
+    as_slug : bool
         Whether to include the source separator in the string.
     """
     tables_to_source = {}
@@ -369,13 +383,7 @@ async def gather_table_sources(sources: list[Source], include_provided: bool = T
             tables_to_source[table] = source
             if source.name == PROVIDED_SOURCE_NAME and not include_provided:
                 continue
-            label = f"{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
-            if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
-                sql = source.get_sql_expr(table)
-                schema = await get_schema(source, table, include_enum=True, limit=5)
-                tables_schema_str += f"- {label}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
-            else:
-                tables_schema_str += f"- {label}\n\n"
+            tables_schema_str += await format_source_schema(source, table, as_slug)
     return tables_to_source, tables_schema_str.strip()
 
 

@@ -9,7 +9,6 @@ from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
-import yaml
 
 from panel import bind
 from panel.chat import ChatInterface, ChatStep
@@ -30,17 +29,12 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import make_agent_model, make_context_model, make_plan_models
-from .tools import FunctionTool, Tool
-from .utils import (
-    gather_table_sources, get_schema, log_debug, mutate_user_message,
-    retry_llm_output,
-)
+from .tools import FunctionTool, TableLookup, Tool
+from .utils import log_debug, mutate_user_message, retry_llm_output
 from .views import LumenOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
-
-    from ..sources import Source
 
 
 class ExecutionNode(param.Parameterized):
@@ -88,7 +82,8 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[])
+    tools = param.List(default=[TableLookup], doc="""
+        List of tools to use to provide context.""")
 
     __abstract = True
 
@@ -188,7 +183,12 @@ class Coordinator(Viewer, Actor):
             elif isinstance(tool, FunctionType):
                 self._tools["__main__"].append(FunctionTool(tool, llm=llm))
             else:
-                self._tools["__main__"].append(tool(llm=llm))
+                tool_kwargs = {}
+                if tool is TableLookup:
+                    tool_kwargs["n"] = 100
+                    tool_kwargs["always_use"] = True
+                self._tools["__main__"].append(tool(llm=llm, **tool_kwargs))
+
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
             user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
@@ -357,10 +357,7 @@ class Coordinator(Viewer, Actor):
                     )
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
-                content = "-- For context...\n"
-                if self._memory.get("tool_context"):
-                    content += f"{self._memory['tool_context']}"
-                content += f"Here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues."
+                content = f"-- For context...\nHere's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues."
                 mutate_user_message(
                     content,
                     mutated_messages, suffix=True, wrap=True
@@ -608,46 +605,18 @@ class Planner(Coordinator):
         }
     )
 
-    @classmethod
-    async def _lookup_schemas(
-        cls,
-        tables: dict[str, Source],
-        requested: list[str],
-        provided: list[str],
-        cache: dict[str, dict] | None = None
-    ) -> str:
-        cache = cache or {}
-        for table in requested:
-            if table in provided or table in cache:
-                continue
-            cache[table] = await get_schema(tables[table], table, limit=1000)
-        schema_info = ''
-        for table in requested:
-            if table in provided:
-                continue
-            provided.append(table)
-            schema = cache[table]
-            schema_info += f'- {table}\nSchema:\n```yaml\n{yaml.dump(schema)}```\n'
-        return schema_info
-
-    async def _lookup_context(
-        self, messages: list[Message], tables: dict[str, Source], schemas: dict[str, dict] | None
-    ) -> tuple[str, str]:
-        requested, provided = [], []
-        if "table" in self._memory:
-            requested.append(self._memory["table"])
-        elif len(tables) == 1:
-            requested.append(next(iter(tables)))
-        table_info = await self._lookup_schemas(tables, requested, provided, cache=schemas)
+    async def _lookup_context(self, messages: list[Message]) -> tuple[str, str]:
         tools = {tool.name: tool for tool in self._tools["__main__"]}
-        if not tools and not tables:
-            return table_info, ''
-        context_model = make_context_model(tools=list(tools), tables=tables)
+        if not tools:
+            return ''
+        context_model = make_context_model(
+            tools=list(tools),
+            required_tools=[tool.name for tool in tools.values() if tool.always_use],
+        )
         model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
         system = await self._render_prompt(
             "context",
             messages,
-            table_info=table_info,
             tools=list(tools.values()),
         )
         tool_context = ''
@@ -656,21 +625,13 @@ class Planner(Coordinator):
             title="Obtaining additional context...",
             user="Assistant"
         ) as istep:
-            response = self.llm.stream(
+            output = await self.llm.invoke(
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
                 response_model=context_model,
                 max_retries=3,
             )
-            async for output in response:
-                if not getattr(output, 'tables', None):
-                    continue
-                requested = [t for t in output.tables if t not in provided]
-                loaded = '\n'.join([f'- {table}' for table in requested])
-                if loaded:
-                    istep.stream(f'Looking up schemas for following tables:\n\n{loaded}', replace=True)
-            table_info += await self._lookup_schemas(tables, requested, provided, cache=schemas)
             if getattr(output, 'tools', None):
                 for tool in output.tools:
                     tool_messages = list(messages)
@@ -684,22 +645,19 @@ class Planner(Coordinator):
                         istep.stream(f'{response}\n')
                         tool_context += f'\n- {response}'
         self._memory["tool_context"] = tool_context
-        return table_info, tool_context
+        return tool_context
 
     async def _make_plan(
         self,
         messages: list[Message],
         agents: dict[str, Agent],
-        tables: dict[str, Source],
         unmet_dependencies: set[str],
         previous_plans: list[str],
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
-        schemas: dict[str, dict] | None = None,
-        tables_schema_str: str = ""
     ) -> BaseModel:
-        table_info, tool_context = await self._lookup_context(messages, tables, schemas)
+        tool_context = await self._lookup_context(messages)
         reasoning = None
         tools = self._tools["__main__"]
         while reasoning is None:
@@ -711,8 +669,6 @@ class Planner(Coordinator):
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
-                table_info=table_info,
-                tables_schema_str=tables_schema_str,
                 tool_context=tool_context
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -810,9 +766,6 @@ class Planner(Coordinator):
         tool_names = [tool.name for tool in self._tools["__main__"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
 
-        # provided is already included in table_info
-        tables, tables_schema_str = await gather_table_sources(self._memory['sources'], include_provided=False)
-
         reason_model, plan_model = self._get_model(
             "main",
             agents=agent_names,
@@ -820,10 +773,10 @@ class Planner(Coordinator):
         )
         planned = False
         unmet_dependencies = set()
-        schemas = {}
         execution_graph = []
         previous_plans = []
         attempts = 0
+
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
             while not planned:
                 if attempts > 0:
@@ -831,7 +784,7 @@ class Planner(Coordinator):
                 plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, tables, unmet_dependencies, previous_plans, reason_model, plan_model, istep, schemas, tables_schema_str
+                        messages, agents, unmet_dependencies, previous_plans, reason_model, plan_model, istep
                     )
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
