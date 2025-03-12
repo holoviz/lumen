@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -830,11 +831,14 @@ class BaseSQLSource(Source):
 
     dialect = 'any'
 
-    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
-
     excluded_tables = param.List(default=[], doc="""
-        List of table names that should be excluded from the results.""")
+        List of table names that should be excluded from the results. Supports:
+        - Fully qualified name: 'DATABASE.SCHEMA.TABLE'
+        - Schema qualified name: 'SCHEMA.TABLE'
+        - Table name only: 'TABLE'
+        - Wildcards: 'SCHEMA.*'""")
 
+    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     # Declare this source supports SQL transforms
     _supports_sql = True
@@ -843,52 +847,34 @@ class BaseSQLSource(Source):
         super().__init__(**params)
         self._exclude_tables_regex = None
 
-    def _build_exclude_regex(self):
+    def _is_table_excluded(self, table_slug):
         """
-        Build patterns for excluding tables based on different format specifications.
-        This allows exclusion by:
-        - Fully qualified name: 'TEST_DB.PUBLIC.CUSTOMERS'
-        - Schema qualified name: 'PUBLIC.ORDERS'
-        - Table name only: 'CUSTOMERS'
-        - Wildcards: 'SCHEMA.*'
+        Check if a table should be excluded based on patterns in self.excluded_tables.
+        Case-insensitive matching.
+        """
+        if not self.excluded_tables:
+            return False
 
-        Returns a compiled regex pattern for efficient matching.
-        """
-        patterns = []
+        table_slug_lower = table_slug.lower()
+
         for pattern in self.excluded_tables:
             if not pattern:  # Skip empty patterns
                 continue
 
-            if '*' not in pattern:
-                # Handle exact match patterns
-                parts = pattern.split('.')
-                if len(parts) == 1:  # Just table name
-                    # Match table name at the end of a fully qualified name
-                    patterns.append(f"(?:^|\\.)({re.escape(pattern)})$")
-                elif len(parts) == 2:  # schema.table
-                    # Match a schema.table at the end of fully qualified name
-                    patterns.append(f"(?:^|\\.)({re.escape(pattern)})$")
-                else:  # fully qualified name
-                    patterns.append(f"^{re.escape(pattern)}$")
-            elif pattern.endswith('*'):
-                # Handle wildcard patterns like 'SCHEMA.*'
-                prefix = re.escape(pattern[:-1])
-                patterns.append(f"(?:^|\\.)({prefix}.*)")
-            else:
-                # Other wildcard patterns
-                regex_pattern = re.escape(pattern).replace('\\*', '.*')
-                patterns.append(f"(?:^|\\.)({regex_pattern})")
-        if patterns:
-            combined = '|'.join(patterns)
-            return re.compile(combined)
-        return
+            pattern_lower = pattern.lower()
 
-    def _is_table_excluded(self, table_slug):
-        if not self.excluded_tables:
-            return False
-        elif self._exclude_tables_regex is None:
-            self._exclude_tables_regex = self._build_exclude_regex()
-        return bool(self._exclude_tables_regex.search(table_slug))
+            # Check for exact match with full name
+            if fnmatch.fnmatch(table_slug_lower, pattern_lower):
+                return True
+
+            # Handle cases where we're matching just the table name or schema.table
+            parts = table_slug.split('.')
+            for i in range(1, len(parts) + 1):
+                suffix = '.'.join(parts[-i:])
+                if fnmatch.fnmatch(suffix.lower(), pattern_lower):
+                    return True
+
+        return False
 
     def _apply_transforms(self, source: Source, sql_transforms: list[SQLTransform]) -> Source:
         if not sql_transforms:

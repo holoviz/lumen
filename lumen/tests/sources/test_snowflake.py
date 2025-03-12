@@ -223,3 +223,111 @@ def test_get_tables_with_fully_qualified_schema_wildcard(mock_snowflake_connecti
         'TEST_DB.TPCDS_SF100TCL.STATISTICS'
     ]
     assert set(tables) == set(expected_tables)
+
+def test_get_tables_with_empty_string_exclusions(mock_snowflake_connection):
+    """Test that empty strings in excluded_tables are properly ignored."""
+    source = SnowflakeSource(
+        database='TEST_DB',
+        excluded_tables=['', 'CUSTOMERS', '']
+    )
+
+    tables = source.get_tables()
+
+    expected_tables = [
+        'TEST_DB.PUBLIC.ORDERS',
+        'TEST_DB.ANALYTICS.PRODUCTS',
+        'TEST_DB.ANALYTICS.SALES',
+        'TEST_DB.TPCDS_SF100TCL.DEMOGRAPHICS',
+        'TEST_DB.TPCDS_SF100TCL.STATISTICS'
+    ]
+    assert set(tables) == set(expected_tables)
+
+
+def test_get_tables_with_complex_wildcard_patterns(mock_snowflake_connection):
+    """Test exclusions with more complex wildcard patterns."""
+    source = SnowflakeSource(
+        database='TEST_DB',
+        excluded_tables=['*CUSTOMERS', 'ORDER*', '*STAT*']
+    )
+
+    tables = source.get_tables()
+
+    expected_tables = [
+        'TEST_DB.ANALYTICS.PRODUCTS',
+        'TEST_DB.ANALYTICS.SALES',
+        'TEST_DB.TPCDS_SF100TCL.DEMOGRAPHICS'
+    ]
+    assert set(tables) == set(expected_tables)
+
+
+def test_get_tables_case_sensitivity(mock_snowflake_connection):
+    """Test case sensitivity in excluded_tables patterns."""
+    source = SnowflakeSource(
+        database='TEST_DB',
+        excluded_tables=['customers', 'public.orders']  # lowercase patterns
+    )
+
+    tables = source.get_tables()
+
+    expected_tables = [
+        'TEST_DB.ANALYTICS.PRODUCTS',
+        'TEST_DB.ANALYTICS.SALES',
+        'TEST_DB.TPCDS_SF100TCL.DEMOGRAPHICS',
+        'TEST_DB.TPCDS_SF100TCL.STATISTICS'
+    ]
+    assert set(tables) == set(expected_tables)
+
+
+def test_get_tables_with_none_in_exclusions(mock_snowflake_connection):
+    """Test that None values in excluded_tables are properly handled."""
+    source = SnowflakeSource(
+        database='TEST_DB',
+        excluded_tables=['CUSTOMERS', None, 'ORDERS']
+    )
+
+    tables = source.get_tables()
+
+    expected_tables = [
+        'TEST_DB.ANALYTICS.PRODUCTS',
+        'TEST_DB.ANALYTICS.SALES',
+        'TEST_DB.TPCDS_SF100TCL.DEMOGRAPHICS',
+        'TEST_DB.TPCDS_SF100TCL.STATISTICS'
+    ]
+    assert set(tables) == set(expected_tables)
+
+
+def test_get_tables_with_overlapping_exclusions(mock_snowflake_connection):
+    """Test with overlapping exclusion patterns."""
+    source = SnowflakeSource(
+        database='TEST_DB',
+        excluded_tables=['PUBLIC.*', 'TEST_DB.PUBLIC.CUSTOMERS', 'ORDERS']
+    )
+
+    tables = source.get_tables()
+
+    expected_tables = [
+        'TEST_DB.ANALYTICS.PRODUCTS',
+        'TEST_DB.ANALYTICS.SALES',
+        'TEST_DB.TPCDS_SF100TCL.DEMOGRAPHICS',
+        'TEST_DB.TPCDS_SF100TCL.STATISTICS'
+    ]
+    assert set(tables) == set(expected_tables)
+
+
+def test_get_tables_with_nested_wildcard_exclusions(mock_snowflake_connection):
+    """Test get_tables with nested wildcard patterns."""
+    source = SnowflakeSource(
+        database='TEST_DB',
+        excluded_tables=['TEST_DB.*.CUST*']
+    )
+
+    tables = source.get_tables()
+
+    expected_tables = [
+        'TEST_DB.PUBLIC.ORDERS',
+        'TEST_DB.ANALYTICS.PRODUCTS',
+        'TEST_DB.ANALYTICS.SALES',
+        'TEST_DB.TPCDS_SF100TCL.DEMOGRAPHICS',
+        'TEST_DB.TPCDS_SF100TCL.STATISTICS'
+    ]
+    assert set(tables) == set(expected_tables)
