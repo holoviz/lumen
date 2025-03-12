@@ -27,11 +27,12 @@ class Message(TypedDict):
     name: str | None
 
 
-MODEL_TYPE = Literal[
+KNOWN_LLM_SPEC_KEYS = (
     "default", "reasoning", "coordinator", "agent", "chat", "analyst", "table_list",
     "document_list", "lumen_base", "sql", "base_view", "hv_plot", "vega_lite", "analysis",
     "tool", "function_tool"
-]
+)
+MODEL_TYPE = Literal[KNOWN_LLM_SPEC_KEYS]
 
 BASE_MODES = list(Mode)
 
@@ -83,8 +84,9 @@ class Llm(param.Parameterized):
         if isinstance(model_spec, dict):
             return model_spec
 
-        if model_spec in self.model_kwargs or model_spec in MODEL_TYPE:
+        if model_spec in self.model_kwargs or model_spec in KNOWN_LLM_SPEC_KEYS:
             model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+            print(model_kwargs)
         else:
             model_kwargs = self.model_kwargs["default"]
             model_kwargs["model"] = model_spec  # override the default model with user provided model
@@ -282,7 +284,7 @@ class LlamaCpp(Llm):
         if isinstance(model_spec, dict):
             return model_spec
 
-        if model_spec in self.model_kwargs or model_spec in MODEL_TYPE or "/" not in model_spec:
+        if model_spec in self.model_kwargs or model_spec in KNOWN_LLM_SPEC_KEYS or "/" not in model_spec:
             model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
         else:
             model_kwargs = self.model_kwargs["default"]
