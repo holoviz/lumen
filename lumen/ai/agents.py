@@ -675,7 +675,7 @@ class SQLAgent(LumenBaseAgent):
             "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
         )
         tables_model = self._get_model("find_tables", tables=tables)
-        model_spec = self.prompts["find_tables"].get("llm_spec", "default")
+        model_spec = self.prompts["find_tables"].get("llm_spec", self._llm_spec_key)
         with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,

@@ -643,7 +643,7 @@ class Planner(Coordinator):
         if not tools and not tables:
             return table_info, ''
         context_model = make_context_model(tools=list(tools), tables=tables)
-        model_spec = self.prompts["context"].get("llm_spec", "default")
+        model_spec = self.prompts["context"].get("llm_spec", self._llm_spec_key)
         system = await self._render_prompt(
             "context",
             messages,

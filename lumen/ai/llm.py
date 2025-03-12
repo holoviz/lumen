@@ -75,6 +75,11 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        if not self.model_kwargs.get("default"):
+            raise ValueError(
+                f"Please specify a 'default' model in the model_kwargs "
+                f"parameter for {self.__class__.__name__}."
+            )
 
     def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
         """
@@ -86,7 +91,6 @@ class Llm(param.Parameterized):
 
         if model_spec in self.model_kwargs or model_spec in KNOWN_LLM_SPEC_KEYS:
             model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-            print(model_kwargs)
         else:
             model_kwargs = self.model_kwargs["default"]
             model_kwargs["model"] = model_spec  # override the default model with user provided model
@@ -237,7 +241,7 @@ class Llm(param.Parameterized):
 
     async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
         if response_model := kwargs.get("response_model"):
-            log_debug(f"\033[93m{response_model.__name__}\033[0m model used", show_sep=True)
+            log_debug(f"\033[93m{response_model.__name__}\033[0m model used")
 
         previous_role = None
         for i, message in enumerate(messages):
@@ -255,7 +259,7 @@ class Llm(param.Parameterized):
                 )
             previous_role = role
         log_debug(f"Length is \033[94m{len(messages)} messages\033[0m including system")
-
+        log_debug(f"Model used {model_spec}")
         client = await self.get_client(model_spec, **kwargs)
         return await client(messages=messages, **kwargs)
 
