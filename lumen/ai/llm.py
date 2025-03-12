@@ -227,7 +227,7 @@ class Llm(param.Parameterized):
 
     async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
         if response_model := kwargs.get("response_model"):
-            log_debug(f"\033[93m{response_model.__name__}\033[0m model used", show_sep=True)
+            log_debug(f"Using \033[93m{response_model.__name__!r}\033[0m response model")
 
         previous_role = None
         for i, message in enumerate(messages):
@@ -245,9 +245,10 @@ class Llm(param.Parameterized):
                 )
             previous_role = role
         log_debug(f"Length is \033[94m{len(messages)} messages\033[0m including system")
-
         client = await self.get_client(model_spec, **kwargs)
-        return await client(messages=messages, **kwargs)
+        result = await client(messages=messages, **kwargs)
+        log_debug(f"**Response**: \033[90m{str(result)[:100]}...\033[0m\n---")
+        return result
 
 
 class LlamaCpp(Llm):

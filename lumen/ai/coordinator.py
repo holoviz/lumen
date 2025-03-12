@@ -307,7 +307,7 @@ class Coordinator(Viewer, Actor):
         )
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        log_debug("\033[94mNEW\033[0m", show_sep=True)
+        log_debug("\033[94mNEW\033[0m", show_sep="above")
         await self.respond(contents)
 
     @retry_llm_output()
@@ -382,7 +382,7 @@ class Coordinator(Viewer, Actor):
                 except Exception as e:
                     self._memory['__error__'] = str(e)
                     raise e
-                log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
+                log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_length=False)
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
             if (unprovided and agent_name != "Source") or (len(unprovided) > 1 and agent_name == "Source"):
@@ -483,7 +483,7 @@ class Coordinator(Viewer, Actor):
                     break
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
-            log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
+            log_debug("\033[92mDONE\033[0m", show_sep="below")
 
         for message_obj in self.interface.objects[::-1]:
             if isinstance(message_obj.object, Card):
