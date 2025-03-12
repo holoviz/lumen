@@ -339,7 +339,7 @@ class SnowflakeSource(BaseSQLSource):
 
             table_metadata_columns = table_metadata.join(table_columns).reset_index()
 
-            result = null_result
+            result = {}
             for table_slug, group in table_metadata_columns.groupby("TABLE_SLUG"):
                 first_row = group.iloc[0]
                 description = first_row["TABLE_DESCRIPTION"] or ""
