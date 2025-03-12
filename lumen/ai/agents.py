@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import traceback
 
@@ -26,7 +25,7 @@ from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..sources.duckdb import DuckDBSource
 from ..state import state
-from ..transforms.sql import SQLLimit
+from ..transforms.sql import SQLLimit, SQLTransform
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
@@ -42,7 +41,8 @@ from .tools import DocumentLookup, TableLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, log_debug, mutate_user_message, report_error, retry_llm_output,
+    get_schema, load_json, log_debug, mutate_user_message, report_error,
+    retry_llm_output,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -127,7 +127,7 @@ class Agent(Viewer, Actor, ContextProvider):
 
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         async for output_chunk in self.llm.stream(
             messages, system=system_prompt, model_spec=model_spec, field="output"
         ):
@@ -339,7 +339,8 @@ class TableListAgent(Agent):
             widths={'Table': '90%'},
             disabled=True,
             page_size=10,
-            header_filters=len(tables) > 10
+            header_filters=len(tables) > 10,
+            sizing_mode="stretch_width",
         )
         table_list.on_click(self._use_table)
         self.interface.stream(table_list, user="Lumen", trigger_post_hook=True)
@@ -443,7 +444,7 @@ class LumenBaseAgent(Agent):
             with self.param.update(memory=memory):
                 system = await self._render_prompt(
                     "retry_output", messages=modified_messages, spec=out.spec,
-                    language=out.language
+                    language=out.language,
                 )
 
             retry_model = self._lookup_prompt_key("retry_output", "response_model")
@@ -556,7 +557,7 @@ class SQLAgent(LumenBaseAgent):
             has_errors=bool(errors),
         )
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             try:
@@ -598,8 +599,7 @@ class SQLAgent(LumenBaseAgent):
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
-            import sqlglot
-            sql_clean = sqlglot.transpile(sql_query, write=source.dialect, pretty=True)[0]
+            sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True, identify=False).to_sql()
             if sql_query != sql_clean:
                 step.stream(f'\n\nSQL was cleaned up and prettified:\n\n```sql\n{sql_clean}\n```')
                 sql_query = sql_clean
@@ -608,9 +608,13 @@ class SQLAgent(LumenBaseAgent):
         try:
             # TODO: if original sql expr matches, don't recreate a new one!
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
-            # Get validated query
             sql_query = sql_expr_source.tables[expr_slug]
-            sql_transforms = [SQLLimit(limit=1_000_000)]
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            transformed_sql_query = sql_query
+            for sql_transform in sql_transforms:
+                transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
+                if transformed_sql_query != sql_query:
+                    step.stream(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```')
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
@@ -662,7 +666,7 @@ class SQLAgent(LumenBaseAgent):
             "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
         )
         tables_model = self._get_model("find_tables", tables=tables)
-        model_spec = self.prompts["find_tables"].get("llm_spec", "default")
+        model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
         with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,
@@ -752,30 +756,46 @@ class BaseViewAgent(LumenBaseAgent):
         self._last_output = None
         super().__init__(**params)
 
+
     @retry_llm_output()
     async def _create_valid_spec(
         self,
         messages: list[Message],
-        system: str,
+        pipeline: Pipeline,
         schema: dict[str, Any],
         step_title: str | None = None,
         errors: list[str] | None = None,
     ) -> dict[str, Any]:
         if errors:
-            errors = '\n'.join(errors)
-            if self._last_output:
-                messages = mutate_user_message(
-                    f"\nNote, your last specification did not work as intended:\n```json\n{self._last_output}\n```\n\n"
-                    f"Your task is to expertly revise these errors:\n```\n{errors}\n```\n",
-                    messages
-                )
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+           errors = '\n'.join(errors)
+           if self._last_output:
+               json_spec = load_json(self._last_output["json_spec"])
+               messages = mutate_user_message(
+                   f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
+                   f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
+                   messages
+               )
+
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        system = await self._render_prompt(
+            "main",
+            messages,
+            schema=yaml.dump(schema),
+            table=pipeline.table,
+            view=self._memory.get('view'),
+            has_errors=bool(errors),
+            doc=doc,
+        )
+
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         response = self.llm.stream(
             messages,
             system=system,
             model_spec=model_spec,
             response_model=self._get_model("main", schema=schema),
         )
+
+        error = ""
         with self.interface.add_step(
             title=step_title or "Generating view...",
             steps_layout=self._steps_layout
@@ -783,8 +803,18 @@ class BaseViewAgent(LumenBaseAgent):
             async for output in response:
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
+
             self._last_output = dict(output)
-            spec = await self._extract_spec(self._last_output)
+            try:
+                spec = await self._extract_spec(self._last_output)
+            except Exception as e:
+                error = str(e)
+                context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                report_error(e, step, language="json", context=context)
+
+        if error:
+            raise ValueError(error)
+
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
@@ -811,16 +841,7 @@ class BaseViewAgent(LumenBaseAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            schema=yaml.dump(schema),
-            table=pipeline.table,
-            view=self._memory.get('view'),
-            doc=doc,
-        )
-        spec = await self._create_valid_spec(messages, system_prompt, schema, step_title)
+        spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
@@ -831,7 +852,7 @@ class hvPlotAgent(BaseViewAgent):
 
     purpose = param.String(default="""
         Generates a plot of the data given a user prompt.
-        If the user asks to plot, visualize or render the data this is your best best.""")
+        If the user asks to plot, visualize or render the data this is your best bet.""")
 
     prompts = param.Dict(
         default={
@@ -885,7 +906,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     purpose = param.String(default="""
         Generates a vega-lite specification of the plot the user requested.
-        If the user asks to plot, visualize or render the data this is your best best.""")
+        If the user asks to plot, visualize or render the data this is your best bet.""")
 
     prompts = param.Dict(
         default={
@@ -907,17 +928,23 @@ class VegaLiteAgent(BaseViewAgent):
         memory['view'] = dict(spec, type=self.view_type)
 
     async def _extract_spec(self, spec: dict[str, Any]):
+        # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
+        # where it's expecting property names enclosed in double quotes
+        # by properly handling the escaped characters in your JSON string
         if yaml_spec:= spec.get('yaml_spec'):
             vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
         elif json_spec:= spec.get('json_spec'):
-            vega_spec = json.loads(json_spec)
-        self._output_type._validate_spec(vega_spec)
+            vega_spec = load_json(json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
+        self._output_type._validate_spec(vega_spec)
+        if "projection" not in vega_spec:
+            # add pan/zoom controls to all plots except geographic maps
+            vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
 
 
@@ -975,7 +1002,7 @@ class AnalysisAgent(LumenBaseAgent):
                     analyses=analyses,
                     data=self._memory.get("data"),
                 )
-                model_spec = self.prompts["main"].get("llm_spec", "default")
+                model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,

@@ -6,9 +6,7 @@ import os
 
 from functools import partial
 from types import SimpleNamespace
-from typing import (
-    TYPE_CHECKING, Any, Literal, TypedDict,
-)
+from typing import Any, Literal, TypedDict
 
 import instructor
 import panel as pn
@@ -24,15 +22,11 @@ from lumen.ai.utils import (
 
 from .interceptor import Interceptor
 
-if TYPE_CHECKING:
-    MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
-
 
 class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
-
 
 BASE_MODES = list(Mode)
 
@@ -45,6 +39,10 @@ class Llm(param.Parameterized):
     with instructor to enable support for correctly validating Pydantic
     models.
     """
+
+    create_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments to pass to the LLM provider
+        when calling chat.completions.create.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES, doc="""
         The calling mode used by instructor to guide the LLM towards generating
@@ -71,13 +69,22 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        if not self.model_kwargs.get("default"):
+            raise ValueError(
+                f"Please specify a 'default' model in the model_kwargs "
+                f"parameter for {self.__class__.__name__}."
+            )
 
-    def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
-        if model_spec in self.model_kwargs:
-            model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        else:
-            model_kwargs = self.model_kwargs["default"]
-            model_kwargs["model"] = model_spec  # override the default model with user provided model
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        """
+        Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
+        or as a string that is a model type; else the actual name of the model.
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+        log_debug(f"LLM Model: \033[96m{model_kwargs.get('model')!r}\033[0m")
         return dict(model_kwargs)
 
     @property
@@ -108,7 +115,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_spec: MODEL_TYPE | dict = "default",
+        model_spec: str | dict = "default",
         **input_kwargs,
     ) -> BaseModel:
         """
@@ -223,29 +230,30 @@ class Llm(param.Parameterized):
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
 
-    async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
-        if response_model := kwargs.get("response_model"):
-            log_debug(f"\033[93m{response_model.__name__}\033[0m model used", show_sep=True)
-
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
             role = message["role"]
             if role == "system":
                 continue
             if role == "user":
-                log_debug(f"\033[95m{i} (u)\033[0m. {message['content']}")
+                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
             else:
-                log_debug(f"\033[95m{i} (a)\033[0m. {message['content']}")
+                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
-        log_debug(f"Length is \033[94m{len(messages)} messages\033[0m including system")
 
         client = await self.get_client(model_spec, **kwargs)
-        return await client(messages=messages, **kwargs)
+        result = await client(messages=messages, **kwargs)
+        if response_model := kwargs.get("response_model"):
+            log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
+        log_debug(f"LLM Response: \033[90m{str(result)[:100]}...\033[0m\n---")
+        return result
 
     def from_spec(self, spec: dict[str, Any]) -> Llm:
         return deserialize_from_spec(spec)
@@ -276,16 +284,15 @@ class LlamaCpp(Llm):
             "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
             "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
             "chat_format": "qwen",
-            "n_ctx": 131072,
         },
     })
 
-    def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         if isinstance(model_spec, dict):
             return model_spec
 
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+            return super()._get_model_kwargs()
         else:
             model_kwargs = self.model_kwargs["default"]
             repo, model_spec = model_spec.rsplit("/", 1)
@@ -296,13 +303,17 @@ class LlamaCpp(Llm):
                 model_file = model_spec
             model_kwargs["repo"] = repo
             model_kwargs["model_file"] = model_file
+
+        if "n_ctx" not in model_kwargs:
+            # 0 = from model
+            model_kwargs["n_ctx"] = 0
         return dict(model_kwargs)
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def _cache_model(self, model_spec: MODEL_TYPE | dict, **kwargs):
+    def _cache_model(self, model_spec: str | dict, **kwargs):
         from llama_cpp import Llama as LlamaCpp
         llm = LlamaCpp(**kwargs)
 
@@ -334,7 +345,7 @@ class LlamaCpp(Llm):
             model_file = kwargs.get('model_file')
             hf_hub_download(repo, model_file)
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if client_callable := pn.state.cache.get(model_spec):
             return client_callable
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -363,7 +374,7 @@ class LlamaCpp(Llm):
         client_callable = await asyncio.to_thread(self._cache_model, model_spec, **llm_kwargs)
         return client_callable
 
-    async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         client = await self.get_client(model_spec, **kwargs)
         return client(messages=messages, **kwargs)
 
@@ -395,7 +406,7 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -418,7 +429,7 @@ class OpenAI(Llm):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
 
         if self.use_logfire:
             import logfire
@@ -440,13 +451,13 @@ class AzureOpenAI(Llm):
 
     mode = param.Selector(default=Mode.TOOLS)
 
-    temperature = param.Number(default=0.2, bounds=(0, None), constant=True)
+    temperature = param.Number(default=1, bounds=(0, None), constant=True)
 
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -469,7 +480,7 @@ class AzureOpenAI(Llm):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
 
@@ -516,7 +527,7 @@ class MistralAI(Llm):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
     @classmethod
@@ -565,7 +576,7 @@ class AzureMistralAI(MistralAI):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model)
+        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
         return client_callable
 
 
@@ -581,7 +592,7 @@ class AnthropicAI(Llm):
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-3-haiku-latest"},
+        "default": {"model": "claude-3-5-haiku-latest"},
         "reasoning": {"model": "claude-3-5-sonnet-latest"},
     })
 
@@ -591,7 +602,7 @@ class AnthropicAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
 
@@ -604,9 +615,9 @@ class AnthropicAI(Llm):
 
         if response_model:
             client = instructor.from_anthropic(llm)
-            return partial(client.messages.create, model=model)
+            return partial(client.messages.create, model=model, **self.create_kwargs)
         else:
-            return partial(llm.messages.create, model=model)
+            return partial(llm.messages.create, model=model, **self.create_kwargs)
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:

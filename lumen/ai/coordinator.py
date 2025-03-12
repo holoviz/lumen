@@ -100,6 +100,8 @@ class Coordinator(Viewer, Actor):
         logs: ChatLogs | None = None,
         **params,
     ):
+        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
+
         def on_message(message: ChatMessage, instance: ChatInterface):
             """Handle new messages and updates to existing messages."""
             def update_on_reaction(reactions):
@@ -342,7 +344,7 @@ class Coordinator(Viewer, Actor):
         )
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
-        log_debug("\033[94mNEW\033[0m", show_sep=True)
+        log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
         await self.respond(contents)
 
     @retry_llm_output()
@@ -354,7 +356,7 @@ class Coordinator(Viewer, Actor):
                 messages
             )
 
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         out = await self.llm.invoke(
             messages=messages,
             system=system,
@@ -390,8 +392,12 @@ class Coordinator(Viewer, Actor):
                     )
                     mutated_messages = mutate_user_message(custom_message, mutated_messages)
             if instruction:
+                content = "-- For context...\n"
+                if self._memory.get("tool_context"):
+                    content += f"{self._memory['tool_context']}"
+                content += f"Here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues."
                 mutate_user_message(
-                    f"-- For context, here's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues.",
+                    content,
                     mutated_messages, suffix=True, wrap=True
                 )
 
@@ -413,7 +419,7 @@ class Coordinator(Viewer, Actor):
                 except Exception as e:
                     self._memory['__error__'] = str(e)
                     raise e
-                log_debug(f"\033[96m{agent_name} successfully completed\033[0m", show_sep=False, show_length=False)
+                log_debug(f"\033[96mCompleted: {agent_name}\033[0m", show_length=False)
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
             if (unprovided and agent_name != "Source") or (len(unprovided) > 1 and agent_name == "Source"):
@@ -514,7 +520,7 @@ class Coordinator(Viewer, Actor):
                     break
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
-            log_debug("\033[92mDONE\033[0m\n\n", show_sep=True)
+            log_debug("\033[92mCompleted: Coordinator\033[0m", show_sep="below")
 
         for message_obj in self.interface.objects[::-1]:
             if isinstance(message_obj.object, Card):
@@ -672,7 +678,7 @@ class Planner(Coordinator):
         if not tools and not tables:
             return table_info, ''
         context_model = make_context_model(tools=list(tools), tables=tables)
-        model_spec = self.prompts["context"].get("llm_spec", "default")
+        model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
         system = await self._render_prompt(
             "context",
             messages,
@@ -712,6 +718,7 @@ class Planner(Coordinator):
                     if response is not None:
                         istep.stream(f'{response}\n')
                         tool_context += f'\n- {response}'
+        self._memory["tool_context"] = tool_context
         return table_info, tool_context
 
     async def _make_plan(
@@ -743,7 +750,7 @@ class Planner(Coordinator):
                 tables_schema_str=tables_schema_str,
                 tool_context=tool_context
             )
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
@@ -884,5 +891,8 @@ class Planner(Coordinator):
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(plan.steps):
                 istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
-            istep.success_title = f"Plan with {len(plan.steps)} steps created"
+            if attempts > 0:
+                istep.success_title = f"Plan with {len(plan.steps)} steps created after {attempts + 1} attempts"
+            else:
+                istep.success_title = f"Plan with {len(plan.steps)} steps created"
         return execution_graph

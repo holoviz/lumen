@@ -192,6 +192,19 @@ class Actor(param.Parameterized):
         """
         return hash_spec(self.to_spec())
 
+    @property
+    def llm_spec_key(self):
+        name = self.__class__.__name__.replace("Agent", "")
+        result = ""
+        for i, char in enumerate(name):
+            if char.isupper():
+                if i > 0:
+                    result += "_"
+                result += char.lower()
+            else:
+                result += char
+        return result
+
 
 class ContextProvider(param.Parameterized):
     """

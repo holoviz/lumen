@@ -577,7 +577,7 @@ class ExplorerUI(UI):
                     if SOURCE_TABLE_SEPARATOR in table:
                         _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
                     pipeline = Pipeline(
-                        source=source, table=table, sql_transforms=[SQLLimit(limit=100_000)]
+                        source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
                     )
                     table_label = f"{table[:25]}..." if len(table) > 25 else table
                     walker = GraphicWalker(

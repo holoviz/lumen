@@ -222,7 +222,7 @@ class PrometheusSource(Source):
             return pd.DataFrame(columns=list(self.get_schema('timeseries')))
 
     def get_schema(
-        self, table: str | None = None, limit: int | None = None
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         dt_start, dt_end = self._format_timestamps()
         schema = {

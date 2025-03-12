@@ -1,12 +1,65 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-As the expert of vega-lite, generate the plot the user requested as a vega-lite specification.
+As the expert of vega-lite, generate the plot the user requested as a vega-lite specification
 
-- The data will be provided separately. Never provide a data field.
-- Ensure you use the column names verbatim.
-- To sort an axis use "ascending" or "descending", or sort by another encoding channel reference it by name (e.g. `sort: y` or `sort: -y` for descending order).
-- Integer columns like year (e.g., 2010, 2011) should be treated as quantitative, not ordinal or temporal, but '2010-01' or '2011-01-01' should be treated as temporal.
-- Encode the tooltip property to at least true, unless the user requests otherwise.
-- If the dataset contains separate columns for date components, e.g. year and month, combine them as a transform `calculate: datetime(datum.Year, datum.Month - 1)`
+ESSENTIAL REQUIREMENTS:
+- Data is provided separately; never include a data field
+- Use the column names verbatim
+- Include tooltips by default: `"tooltips": true` (subset if many columns)
+- Include a human-readable, descriptive title, xlabel, ylabel, and legend
+- Do not include descriptions; they will be discarded
+- `marks` key must not be on the same level as the `layer` or `concat` keys
+
+VISUALIZATION FUNDAMENTALS:
+- Choose marks based on analytical goal: bar (comparison), line (trends/tracks), point (distribution/correlation), area (composition)
+- Use position (x/y) for primary relationships, then color (categorical), size (quantitative), shape (≤6 categories)
+- Handle overplotting in dense visualizations: opacity, aggregation, binning, or jitter
+- Focus on the domain of interest with `scale: domain: [...]`, or `projection: center: [...], scale: ...` for geographic maps, to control x and y limits
+
+DATA HANDLING:
+- Years as numbers (2010, 2011): treat as quantitative, not temporal
+- Date formats ('2010-01'): use temporal type
+- Split date components: combine with `calculate: datetime(datum.Year, datum.Month - 1)`
+- Time encoding: select appropriate `timeUnit` granularity
+- Sorting: use "ascending"/"descending" or reference encoding (e.g., `sort: y` or `sort: -y`), especially for bar charts
+- Categorical variables: use `detail` for generation without visual channel, `facet` for moderate cardinality
+- Part-to-whole relationships: use `stack` with normalization when percentages matter more than values
+
+ANNOTATIONS & ENHANCEMENTS:
+- Use `text` marks with strategic positioning for key insights
+- Implement reference lines for benchmarks, averages, or thresholds
+- For complex relationships, consider `layer` to combine multiple mark types (e.g., points with trend lines)
+- When showing uncertainty, incorporate `errorBar` or `errorBand` marks
+
+SCALES & FORMATTING:
+- Choose scale types (`linear`, `log`, `symlog`, `sqrt`) based on data distribution
+- Color schemes: sequential (continuous), diverging (midpoint), categorical (nominal)
+- Format axes/legends for readability
+- For dual-axis: use separate scales with aligned axes
+
+SPECIFICS:
+- Geographic maps: underlay coastlines with `format: {type: topojson, feature: countries}` from https://vega.github.io/vega-datasets/data/world-110m.json with `fill: null stroke: black` under `layer`
+- Multi-view: use `concat`/`repeat` for small multiples, coordinated views for filtering
+{% endblock %}
+
+{% block examples %}
+{% if has_errors %}
+GOOD (no mark at the same level as layer):
+```yaml
+layer:
+  - data:
+      format:
+        feature: countries
+        type: topojson
+      url: https://vega.github.io/vega-datasets/data/world-110m.json
+    mark:
+      fill: null
+      stroke: black
+      type: geoshape
+  - mark:
+      tooltip: true
+      type: point
+```
+{% endif %}
 {% endblock %}

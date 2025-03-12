@@ -30,6 +30,7 @@ pandas = "*"
 panel = ">=1.5.0"
 param = ">=1.9.0"
 pip = "*"
+sqlglot = "*"
 
 [feature.py310.dependencies]
 python = "3.10.*"
