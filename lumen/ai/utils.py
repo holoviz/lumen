@@ -385,9 +385,9 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
     """
     terminal_cols, _ = get_terminal_size()
     terminal_cols -= offset  # Account for the timestamp and log level
-    delimiter = "*" * terminal_cols
+    delimiter = "_" * terminal_cols
     if show_sep == "above":
-        log.debug(f"\033[91m{delimiter}\033[0m")
+        log.debug(f"\033[90m{delimiter}\033[0m")
     if prefix:
         log.debug(prefix)
 
@@ -397,11 +397,11 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
     else:
         log.debug(msg)
     if show_length:
-        log.debug(f"Characters: {len(msg)}")
+        log.debug(f"Characters: \033[94m{len(msg)}\033[0m")
     if suffix:
         log.debug(suffix)
     if show_sep == "below":
-        log.debug(f"\033[91m{delimiter}\033[0m")
+        log.debug(f"\033[90m{delimiter}\033[0m")
 
 
 def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True):
