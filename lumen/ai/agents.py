@@ -40,9 +40,8 @@ from .models import (
 from .tools import DocumentLookup
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, load_json, log_debug, mutate_user_message, report_error,
-    retry_llm_output,
+    clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
+    log_debug, mutate_user_message, report_error, retry_llm_output,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -257,21 +256,6 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
-        table = self._memory.get("table")
-        source = self._memory.get("source")
-        source_tables = source.get_tables() if source else []
-        if table:
-            schema = await get_schema(source, table, include_count=True, limit=1000)
-            context["table"] = table
-            context["schema"] = schema
-        elif "closest_tables" in self._memory and any(
-            table for table in self._memory["closest_tables"] if table in source_tables
-        ):
-            schemas = [
-                await get_schema(source, table, include_count=True, limit=1000)
-                for table in self._memory["closest_tables"] if table in source_tables
-            ]
-            context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
 
@@ -636,7 +620,7 @@ class SQLAgent(LumenBaseAgent):
         memory['sql'] = event.new
 
     @retry_llm_output()
-    async def _find_tables(self, messages: list[Message], tables_schema_str: str, errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
+    async def _find_tables(self, messages: list[Message], errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
         if errors:
             last_content = self.interface.objects[-1].object[-1][-1].object
             chain_of_thought = last_content.split("```")[0]
@@ -647,10 +631,9 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
             log_debug("\033[91mRetry find_tables\033[0m")
 
-        sep = SOURCE_TABLE_SEPARATOR
         sources = {source.name: source for source in self._memory["sources"]}
         tables = [
-            f"{a_source}{sep}{a_table}" for a_source in sources.values()
+            f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
             for a_table in a_source.get_tables()
         ]
         if len(tables) == 1:
@@ -658,7 +641,7 @@ class SQLAgent(LumenBaseAgent):
             return {tables[0]: next(iter(sources.values()))}, ""
 
         system = await self._render_prompt(
-            "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
+            "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
         )
         tables_model = self._get_model("find_tables", tables=tables)
         model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
@@ -699,10 +682,7 @@ class SQLAgent(LumenBaseAgent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        sources = self._memory["sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(sources, as_slug=True)
-        tables_to_source, comments = await self._find_tables(messages, tables_schema_str)
-
+        tables_to_source, comments = await self._find_tables(messages)
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
             # Look up underlying table name

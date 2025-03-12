@@ -20,5 +20,10 @@ Here's a list of tools:
   Description: {{ tool.purpose.strip().split() | join(' ') }}
 {%- endfor -%}
 {%- endif %}
-
+{% if required_tools %}
+You need to use the following tools:
+{%- for tool in required_tools %}
+- `{{ tool }}`
+{%- endfor %}
+{%- endif %}
 {%- endblock -%}

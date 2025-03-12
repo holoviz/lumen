@@ -277,7 +277,6 @@ class DuckDBSource(BaseSQLSource):
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
-
         return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
 
     def get_tables(self):
@@ -337,7 +336,7 @@ class DuckDBSource(BaseSQLSource):
             df = Filter.apply_to(df, conditions=conditions)
         return df
 
-    def _get_table_metadata(self, table: str | None, batched: bool = False) -> dict[str, dict]:
+    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, Any]:
         """
         Generate metadata for all tables or a single table (batched=False) in DuckDB.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
@@ -350,7 +349,11 @@ class DuckDBSource(BaseSQLSource):
             Dictionary with table metadata including description, columns, row count, etc.
         """
         if batched:
-            return {table: self._get_table_metadata(table, batched=False) for table in self.get_tables()}
+            metadata = {}
+            table_names = table if isinstance(table, list) else [table]
+            for table_name in table_names:
+                metadata[table_name] = self._get_table_metadata(table_name, batched=False)
+            return metadata
         sql_expr = self.get_sql_expr(table)
         schema_expr = SQLLimit(limit=0).apply(sql_expr)
         count_expr = SQLCount().apply(sql_expr)

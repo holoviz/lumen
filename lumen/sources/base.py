@@ -196,7 +196,10 @@ class Source(MultiTypeComponent):
 
     metadata_func = param.Callable(default=None, doc="""
         Function that returns a metadata dictionary
-        given nullable table(s) and batched boolean.
+        given nullable `table` and `batched` boolean.
+        If batched, should return a nested dict
+        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}}
+        Or, if not batched, simply {"description": ..., "columns": {"column_name": "..."}}}
         May be used to override the default _get_table_metadata
         implementation of the Source.""")
 
@@ -559,6 +562,23 @@ class Source(MultiTypeComponent):
                 }
             },
             **other_metadata
+        }
+
+        If batched, the metadata is nested one additional level:
+
+        {
+            "table_name": {
+                {
+                    "description": ...,
+                    "columns": {
+                        <COLUMN>: {
+                        "description": ...,
+                        "data_type": ...,
+                        }
+                    },
+                    **other_metadata
+                }
+            }
         }
 
         Parameters

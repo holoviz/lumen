@@ -26,12 +26,11 @@ from markupsafe import escape
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
-from lumen.sources.duckdb import DuckDBSource
 
 from ..util import log
 from .config import (
-    PROMPTS_DIR, PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR,
-    UNRECOVERABLE_ERRORS, RetriesExceededError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
+    RetriesExceededError,
 )
 
 if TYPE_CHECKING:
@@ -153,6 +152,7 @@ def retry_llm_output(retries=3, sleep=1):
 async def get_schema(
     source: Source | Pipeline,
     table: str | None = None,
+    include_type: bool = True,
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
@@ -170,6 +170,11 @@ async def get_schema(
     # first pop regardless to prevent
     # argument of type 'numpy.int64' is not iterable
     count = schema.pop("__len__", None)
+
+    if not include_type:
+        for field, spec in schema.items():
+            if "type" in spec:
+                spec.pop("type")
 
     if include_min_max:
         for field, spec in schema.items():
@@ -205,7 +210,7 @@ async def get_schema(
         limit = get_kwargs.get("limit")
         max_enums = 10
         truncate_limit = min(limit or 5, 5)
-        if not include_enum:
+        if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
             continue
         elif len(spec["enum"]) > max_enums:
@@ -226,6 +231,23 @@ async def get_schema(
     if count and include_count:
         schema["__len__"] = count
     return schema
+
+
+async def format_table_schema(
+    source: Source, table_name: str, prefix_table: bool = True,
+    as_slug: bool = False, limit: int = 5, **get_schema_kwargs
+) -> str:
+    """
+    Format a source schema as a markdown string.
+    """
+    tables_schema_str = ""
+    if prefix_table:
+        table_label = f"{source}{SOURCE_TABLE_SEPARATOR}{table_name}" if as_slug else table_name
+        tables_schema_str += f"`{table_label}`\n"
+    sql = source.get_sql_expr(table_name)
+    schema = await get_schema(source, table_name, limit=limit, **get_schema_kwargs)
+    tables_schema_str += f"Schema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```"
+    return tables_schema_str
 
 
 async def get_pipeline(**kwargs):
@@ -346,45 +368,6 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
         error_msg = error_msg[:50] + "..."
     step.failed_title = error_msg
     step.status = "failed"
-
-
-async def format_source_schema(source: Source, table_name: str, as_slug: bool = False, limit: int = 5, **get_schema_kwargs) -> str:
-    """
-    Format a source schema as a markdown string.
-    """
-    tables_schema_str = ""
-    table_label = f"{source}{SOURCE_TABLE_SEPARATOR}{table_name}" if as_slug else table_name
-    if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
-        sql = source.get_sql_expr(table_name)
-        schema = await get_schema(source, table_name, limit=limit, **get_schema_kwargs)
-        tables_schema_str += f"`{table_label}`\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
-    else:
-        tables_schema_str += f"`{table_label}`\n\n"
-    return tables_schema_str
-
-async def gather_table_sources(sources: list[Source], include_provided: bool = True, as_slug: bool = False) -> tuple[dict[str, Source], str]:
-    """
-    Get a dictionary of tables to their respective sources
-    and a markdown string of the tables and their schemas.
-
-    Parameters
-    ----------
-    sources : list[Source]
-        A list of sources to gather tables from.
-    include_provided : bool
-        Whether to include the provided source in the string; will always be included in the dictionary.
-    as_slug : bool
-        Whether to include the source separator in the string.
-    """
-    tables_to_source = {}
-    tables_schema_str = ""
-    for source in sources:
-        for table in source.get_tables():
-            tables_to_source[table] = source
-            if source.name == PROVIDED_SOURCE_NAME and not include_provided:
-                continue
-            tables_schema_str += await format_source_schema(source, table, as_slug)
-    return tables_to_source, tables_schema_str.strip()
 
 
 def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):

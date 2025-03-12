@@ -5,9 +5,11 @@
 {%- endblock %}
 
 {% block tools -%}
-{% if 'tool_context' in memory %}
+{%- if 'tools_context' in memory %}
 {#- Context from Coordinator.tools -#}
-{{ memory["tool_context"] }}
+{% for key, value in memory["tools_context"].items() %}
+`{{ key }}`: {{ value }}
+{% endfor %}
 {% endif -%}
 {%- endblock -%}
 

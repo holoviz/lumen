@@ -114,7 +114,7 @@ class Actor(param.Parameterized):
                 with tool.param.update(memory=self.memory):
                     tool_context = await tool.respond(messages)
                     if tool_context:
-                        tools_context += f"\n\n{tool_context}"
+                        tools_context += f"\n{tool_context}"
         return tools_context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:

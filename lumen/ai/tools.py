@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
+from textwrap import indent
 from typing import Any
 
 import param
@@ -17,7 +18,6 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .translate import function_to_model
-from .utils import format_source_schema
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -39,7 +39,7 @@ class VectorLookupTool(Tool):
     chunks.
     """
 
-    min_similarity = param.Number(default=0.1, doc="""
+    min_similarity = param.Number(default=0.05, doc="""
         The minimum similarity to include a document.""")
 
     n = param.Integer(default=3, bounds=(0, None), doc="""
@@ -127,9 +127,6 @@ class TableLookup(VectorLookupTool):
         Whether to include miscellaneous metadata in the embeddings,
         besides table and column descriptions.""")
 
-    output_formatted_schema = param.Boolean(default=True, doc="""
-        Whether to include the formatted schema in the output.""")
-
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
@@ -155,36 +152,48 @@ class TableLookup(VectorLookupTool):
             else:
                 source_metadata = await asyncio.to_thread(source.get_metadata, table_name, batched=False)
 
-        if table_name not in source_metadata:
+        table_name_key = next((
+            key for key in (table_name.upper(), table_name.lower(), table_name)
+            if key in source_metadata), None
+        )
+        if not table_name_key:
             return
-
+        table_name = table_name_key
         table_metadata = source_metadata[table_name]
-        enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        if self.output_formatted_schema:
-            table_metadata["formatted_schema"] = await format_source_schema(source, table_name, as_slug=True)
-        self._table_metadata[table_slug] = table_metadata.copy()
 
-        vector_metadata = {"source": source.name, "table_slug": table_slug}
+        # IMPORTANT: re-insert using table slug
+        # we need to store a copy of table_metadata so it can be used to inject context into the LLM
+        table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+        self._table_metadata[table_slug] = table_metadata.copy()
+        self._table_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
+
+        vector_metadata = {"source": source.name, "table_name": table_name}
         if existing_items := self.vector_store.filter_by(vector_metadata):
             if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
                 return
             self.vector_store.delete([item['id'] for item in existing_items])
-        vector_metadata["enriched"] = True
 
+        # ---
+        # TODO: maybe migrate to jinja2 template?
+        # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
+        vector_metadata["enriched"] = True
+        enriched_text = f"Table: {table_name}"
         if description := table_metadata.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
         if self.include_columns and (columns := table_metadata.pop('columns', {})):
             enriched_text += "\nColumns:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
-                if 'description' in col_info:
+                if col_info.get("description"):
                     col_text += f": {col_info['description']}"
                 enriched_text += col_text
+            enriched_text += "\n"
         if self.include_misc:
             enriched_text += "\nMiscellaneous:"
             for key, value in table_metadata.items():
+                if key == "enriched":
+                    continue
                 enriched_text += f"\n- {key}: {value}"
-        vector_metadata.pop("enriched")
         self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def _update_vector_store(self, _, __, sources):
@@ -195,15 +204,13 @@ class TableLookup(VectorLookupTool):
                 )
 
             tables = source.get_tables()
-            # since enriching the metadata might take time, first add basic metadata
+            # since enriching the metadata might take time, first add basic metadata (table name)
             for table_name in tables:
-                table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-                # intentionally always use table slug as the unique identifier
-                metadata = {"source": source.name, "table_slug": table_slug}
+                metadata = {"source": source.name, "table_name": table_name}
                 if self.vector_store.filter_by(metadata):
                     # TODO: Add ability to update existing source table?
                     continue
-                self.vector_store.add([{"text": table_slug, "metadata": metadata}])
+                self.vector_store.add([{"text": table_name, "metadata": metadata}])
 
             # if metadata is included, upsert the existing
             if self.include_metadata:
@@ -223,19 +230,24 @@ class TableLookup(VectorLookupTool):
         results = self.vector_store.query(query, top_k=self.n)
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
 
+        # this is where we inject context into the LLM!
         closest_tables, descriptions = [], []
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
-            table_slug = result['metadata']["table_slug"]
-            description = f"- {result['similarity']:.3f} similarity: "
+            source_name = result['metadata']["source"]
+            table_name = result['metadata']["table_name"]
+            table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+            description = f"- `{table_slug}` ({result['similarity']:.3f} similarity):\n"
             if table_metadata := self._table_metadata.get(table_slug):
-                if self.output_formatted_schema and table_metadata.get('formatted_schema'):
-                    description += f"{table_metadata['formatted_schema']}"
-                else:
-                    description += f"`{table_slug}`"
-                if table_metadata.get("description"):
-                    description += f"\n    {table_metadata['description']}"
+                if table_description := table_metadata.get("description"):
+                    description += f"  Description: {table_description}"
+                columns_description = "Columns:"
+                for col_name, col_info in table_metadata.get("columns", {}).items():
+                    col_dtype = f" ({col_info.get('data_type', '')})" if col_info.get("data_type") else ""
+                    col_desc = f": {col_info['description']}" if col_info.get("description") else ""
+                    columns_description += f"\n- {col_name}{col_dtype}{col_desc}"
+                description += f"\n{indent(columns_description, ' ' * 2)}"
             closest_tables.append(table_slug)
             descriptions.append(description)
 

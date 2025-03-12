@@ -1,7 +1,7 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
-You are a world-class data analyst known for your analytical rigor and critical thinking.
+You are a world-class data AnalystAgent known for your analytical rigor and critical thinking.
 
 If the SQL has CTEs, briefly explain each CTE, mentioning its alias; otherwise, skip this step.
 
@@ -27,14 +27,12 @@ Here was the plan that was executed:
 Here is the current dataset:
 {{ memory.data }}
 
-{%- if 'sql' in memory %}
-
+{% if 'sql' in memory %}
 Here is the current SQL query:
 ```sql
 {{ memory.sql }}
 ```
-{% endif %}
-
+{%- endif %}
 {%- if memory.data|length == 0 %}
 The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
 and try to make educated guess what other columns or values should be used instead.
@@ -51,6 +49,7 @@ For reference, here's the tables and their schemas:
 
 {% block examples %}
 {% if memory.data|length == 0 %}
+Here's an example...
 User Query:
 What are all the Category 3 hurricanes in the East Pacific since 2000?
 
@@ -75,6 +74,7 @@ fields should be treated as numbers by removing quotes: SEASON >= 2000 instead o
 try
 again!
 {% else %}
+Here's an example...
 User Query:
 Show me subscription trends over the past 12 months with retention rates by plan type.
 

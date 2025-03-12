@@ -185,7 +185,7 @@ class Coordinator(Viewer, Actor):
             else:
                 tool_kwargs = {}
                 if tool is TableLookup:
-                    tool_kwargs["n"] = 100
+                    tool_kwargs["n"] = 4
                     tool_kwargs["always_use"] = True
                 self._tools["__main__"].append(tool(llm=llm, **tool_kwargs))
 
@@ -390,8 +390,8 @@ class Coordinator(Viewer, Actor):
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
-                    self._memory["tool_context"] += '\n\n'+result
-                    step.stream('\n\n'+result)
+                    self._memory["tools_context"][subagent.name] = result
+                    step.stream(f"{subagent.name}:\n{result}")
                 elif isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))
@@ -454,7 +454,7 @@ class Coordinator(Viewer, Actor):
         return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        self._memory["tool_context"] = ""
+        self._memory["tools_context"] = {}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
                 with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
@@ -605,26 +605,30 @@ class Planner(Coordinator):
         }
     )
 
-    async def _lookup_context(self, messages: list[Message]) -> tuple[str, str]:
+    async def _lookup_context(self, messages: list[Message]) -> dict:
         tools = {tool.name: tool for tool in self._tools["__main__"]}
         if not tools:
             return ''
+        # TODO: find a better way to make LLM always use a tool
+        required_tools = [tool.name for tool in tools.values() if tool.always_use]
         context_model = make_context_model(
             tools=list(tools),
-            required_tools=[tool.name for tool in tools.values() if tool.always_use],
+            required_tools=required_tools,
         )
         model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
         system = await self._render_prompt(
             "context",
             messages,
             tools=list(tools.values()),
+            required_tools=required_tools
         )
-        tool_context = ''
+
+        leftover_tools = tools.copy()
         with self.interface.add_step(
             success_title="Obtained necessary context",
             title="Obtaining additional context...",
             user="Assistant"
-        ) as istep:
+        ) as step:
             response = self.llm.stream(
                 messages=messages,
                 system=system,
@@ -634,21 +638,25 @@ class Planner(Coordinator):
             )
             async for output in response:
                 if output.chain_of_thought:
-                    istep.stream(output.chain_of_thought, replace=True)
+                    step.stream(output.chain_of_thought, replace=True)
             if getattr(output, 'tools', None):
-                for tool in output.tools:
+                for output_tool in output.tools:
+                    tool_context = ''
                     tool_messages = list(messages)
-                    if tool.instruction:
+                    if output_tool.instruction:
                         mutate_user_message(
-                            f"-- Here are instructions of the context you are to provide: {tool.instruction!r}",
+                            f"-- Here are instructions of the context you are to provide: {output_tool.instruction!r}",
                             tool_messages, suffix=True, wrap=True, inplace=False
                         )
-                    response = await tools[tool.name].respond(tool_messages)
+                    if output_tool.name not in leftover_tools:
+                        continue
+                    callable_tool = leftover_tools[output_tool.name]
+                    response = await callable_tool.respond(tool_messages)
                     if response is not None:
-                        istep.stream(f'{response}\n')
+                        step.stream(f'\n{output_tool.name}:\n{response}\n')
                         tool_context += f'\n- {response}'
-        self._memory["tool_context"] = tool_context
-        return tool_context
+                    self._memory["tools_context"][output_tool.name] = tool_context
+        return leftover_tools.values()  # do not allow the coordinator to rerun the same tool
 
     async def _make_plan(
         self,
@@ -660,19 +668,17 @@ class Planner(Coordinator):
         plan_model: type[BaseModel],
         step: ChatStep,
     ) -> BaseModel:
-        tool_context = await self._lookup_context(messages)
+        leftover_tools = await self._lookup_context(messages)
         reasoning = None
-        tools = self._tools["__main__"]
         while reasoning is None:
             system = await self._render_prompt(
                 "main",
                 messages,
                 agents=list(agents.values()),
-                tools=tools,
+                tools=leftover_tools,
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
-                tool_context=tool_context
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(

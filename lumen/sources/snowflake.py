@@ -4,6 +4,7 @@ import decimal
 import re
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import param
@@ -278,7 +279,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
 
-    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, dict]:
+    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, Any]:
         """
         Generate metadata for all tables or a single table (batched=False) in Snowflake.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
@@ -298,6 +299,7 @@ class SnowflakeSource(BaseSQLSource):
                     parsed_tables.append([self.database, self.schema, parts[0]])  # table_name
                 else:
                     raise ValueError(f"Invalid table format: {t}")
+
             table_slugs = pd.Series([".".join(t) for t in parsed_tables]).str.upper()
 
             table_metadata = self.execute(
@@ -349,6 +351,7 @@ class SnowflakeSource(BaseSQLSource):
                     group[["COLUMN_NAME", "COLUMN_DESCRIPTION", "DATA_TYPE"]]
                     .rename({"COLUMN_DESCRIPTION": "description", "DATA_TYPE": "data_type"}, axis=1)
                     .set_index("COLUMN_NAME")
+                    .transpose()
                     .to_dict()
                 )
                 result[table_slug] = {
@@ -401,5 +404,5 @@ class SnowflakeSource(BaseSQLSource):
         columns_info = self.execute(column_query, (database, actual_schema, table_name))
         columns = columns_info.set_index("COLUMN_NAME")[["COMMENT", "DATA_TYPE"]].fillna("").rename(
             {"COMMENT": "description", "DATA_TYPE": "data_type"}, axis=1
-        ).to_dict()
+        ).transpose().to_dict()
         return {"description": description, "columns": columns, "rows": rows, "updated_at": updated_at, "created_at": created_at}
