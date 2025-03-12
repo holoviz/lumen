@@ -194,7 +194,7 @@ class FunctionTool(Tool):
         prompt = await self._render_prompt("main", messages)
         kwargs = {}
         if any(field not in self.requires for field in self._model.model_fields):
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             kwargs = await self.llm.invoke(
                 messages,
                 system=prompt,

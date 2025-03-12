@@ -6,9 +6,7 @@ import os
 
 from functools import partial
 from types import SimpleNamespace
-from typing import (
-    TYPE_CHECKING, Any, Literal, TypedDict,
-)
+from typing import Any, Literal, TypedDict
 
 import instructor
 import panel as pn
@@ -22,15 +20,11 @@ from lumen.ai.utils import log_debug
 
 from .interceptor import Interceptor
 
-if TYPE_CHECKING:
-    MODEL_TYPE = Literal["default" | "reasoning" | "sql"]
-
 
 class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
-
 
 BASE_MODES = list(Mode)
 
@@ -73,13 +67,22 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        if not self.model_kwargs.get("default"):
+            raise ValueError(
+                f"Please specify a 'default' model in the model_kwargs "
+                f"parameter for {self.__class__.__name__}."
+            )
 
-    def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
-        if model_spec in self.model_kwargs:
-            model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        else:
-            model_kwargs = self.model_kwargs["default"]
-            model_kwargs["model"] = model_spec  # override the default model with user provided model
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        """
+        Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
+        or as a string that is a model type; else the actual name of the model.
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+        log_debug(f"LLM Model: \033[96m{model_kwargs.get('model')!r}\033[0m")
         return dict(model_kwargs)
 
     @property
@@ -110,7 +113,7 @@ class Llm(param.Parameterized):
         system: str = "",
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
-        model_spec: MODEL_TYPE | dict = "default",
+        model_spec: str | dict = "default",
         **input_kwargs,
     ) -> BaseModel:
         """
@@ -225,10 +228,7 @@ class Llm(param.Parameterized):
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
 
-    async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
-        if response_model := kwargs.get("response_model"):
-            log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
-
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
@@ -245,9 +245,12 @@ class Llm(param.Parameterized):
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
+
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=messages, **kwargs)
-        log_debug(f"Response: \033[90m{str(result)[:100]}...\033[0m\n---")
+        if response_model := kwargs.get("response_model"):
+            log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
+        log_debug(f"LLM Response: \033[90m{str(result)[:100]}...\033[0m\n---")
         return result
 
 
@@ -271,12 +274,12 @@ class LlamaCpp(Llm):
         },
     })
 
-    def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         if isinstance(model_spec, dict):
             return model_spec
 
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+            return super()._get_model_kwargs()
         else:
             model_kwargs = self.model_kwargs["default"]
             repo, model_spec = model_spec.rsplit("/", 1)
@@ -297,7 +300,7 @@ class LlamaCpp(Llm):
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def _cache_model(self, model_spec: MODEL_TYPE | dict, **kwargs):
+    def _cache_model(self, model_spec: str | dict, **kwargs):
         from llama_cpp import Llama as LlamaCpp
         llm = LlamaCpp(**kwargs)
 
@@ -329,7 +332,7 @@ class LlamaCpp(Llm):
             model_file = kwargs.get('model_file')
             hf_hub_download(repo, model_file)
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if client_callable := pn.state.cache.get(model_spec):
             return client_callable
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -358,7 +361,7 @@ class LlamaCpp(Llm):
         client_callable = await asyncio.to_thread(self._cache_model, model_spec, **llm_kwargs)
         return client_callable
 
-    async def run_client(self, model_spec: MODEL_TYPE | dict, messages: list[Message], **kwargs):
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         client = await self.get_client(model_spec, **kwargs)
         return client(messages=messages, **kwargs)
 
@@ -390,7 +393,7 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -441,7 +444,7 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -586,7 +589,7 @@ class AnthropicAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
-    async def get_client(self, model_spec: MODEL_TYPE | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
 
