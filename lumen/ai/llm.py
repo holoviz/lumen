@@ -229,7 +229,7 @@ class Llm(param.Parameterized):
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
 
-        log_debug(f"Input messages: \033[94m{len(messages)} messages\033[0m including system")
+        log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
             role = message["role"]
