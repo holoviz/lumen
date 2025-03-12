@@ -127,7 +127,7 @@ class Agent(Viewer, Actor, ContextProvider):
 
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         async for output_chunk in self.llm.stream(
             messages, system=system_prompt, model_spec=model_spec, field="output"
         ):
@@ -552,7 +552,7 @@ class SQLAgent(LumenBaseAgent):
             has_errors=bool(errors),
         )
         with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
-            model_spec = self.prompts["main"].get("llm_spec", "default")
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
             try:
@@ -661,7 +661,7 @@ class SQLAgent(LumenBaseAgent):
             "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
         )
         tables_model = self._get_model("find_tables", tables=tables)
-        model_spec = self.prompts["find_tables"].get("llm_spec", "default")
+        model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
         with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             response = self.llm.stream(
                 messages,
@@ -782,7 +782,7 @@ class BaseViewAgent(LumenBaseAgent):
             doc=doc,
         )
 
-        model_spec = self.prompts["main"].get("llm_spec", "default")
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         response = self.llm.stream(
             messages,
             system=system,
@@ -1001,7 +1001,7 @@ class AnalysisAgent(LumenBaseAgent):
                     analyses=analyses,
                     data=self._memory.get("data"),
                 )
-                model_spec = self.prompts["main"].get("llm_spec", "default")
+                model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
                 analysis_name = (await self.llm.invoke(
                     messages,
                     system=system_prompt,
