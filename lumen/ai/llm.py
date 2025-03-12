@@ -6,9 +6,7 @@ import os
 
 from functools import partial
 from types import SimpleNamespace
-from typing import (
-    TYPE_CHECKING, Any, Literal, TypedDict,
-)
+from typing import Any, Literal, TypedDict
 
 import instructor
 import panel as pn
@@ -22,19 +20,18 @@ from lumen.ai.utils import log_debug
 
 from .interceptor import Interceptor
 
-if TYPE_CHECKING:
-    MODEL_TYPE = Literal[
-        "default", "reasoning", "coordinator", "agent", "chat", "analyst", "table_list",
-        "document_list", "lumen_base", "sql", "base_view", "hv_plot", "vega_lite", "analysis",
-        "tool", "function_tool"
-    ]
-
 
 class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
 
+
+MODEL_TYPE = Literal[
+    "default", "reasoning", "coordinator", "agent", "chat", "analyst", "table_list",
+    "document_list", "lumen_base", "sql", "base_view", "hv_plot", "vega_lite", "analysis",
+    "tool", "function_tool"
+]
 
 BASE_MODES = list(Mode)
 
@@ -79,7 +76,14 @@ class Llm(param.Parameterized):
         super().__init__(**params)
 
     def _get_model_kwargs(self, model_spec: MODEL_TYPE | dict) -> dict[str, Any]:
-        if model_spec in self.model_kwargs:
+        """
+        Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
+        or as a string that is a model type; else the actual name of the model.
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        if model_spec in self.model_kwargs or model_spec in MODEL_TYPE:
             model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
         else:
             model_kwargs = self.model_kwargs["default"]
@@ -278,7 +282,7 @@ class LlamaCpp(Llm):
         if isinstance(model_spec, dict):
             return model_spec
 
-        if model_spec in self.model_kwargs or "/" not in model_spec:
+        if model_spec in self.model_kwargs or model_spec in MODEL_TYPE or "/" not in model_spec:
             model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
         else:
             model_kwargs = self.model_kwargs["default"]
