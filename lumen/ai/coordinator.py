@@ -628,6 +628,10 @@ class Planner(Coordinator):
         3. Gets complete schemas for these tables
         4. Repeats until the LLM is satisfied with the context
         """
+        sources = {source.name: source for source in self._memory.get("sources", [])}
+        if not sources:
+            return {}
+
         satisfied = False
         iteration = 0
         max_iterations = 3
@@ -654,7 +658,7 @@ class Planner(Coordinator):
                 if iteration == 1:
                     selected_tables = available_tables[:3]  # start with a couple
 
-                step.stream(f"\nGathering complete schema information for {len(selected_tables)} tables...")
+                step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
                 for source_table in selected_tables:
                     if SOURCE_TABLE_SEPARATOR in source_table:
                         source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
@@ -666,7 +670,9 @@ class Planner(Coordinator):
                     if not source_obj:
                         continue
 
-                    table_schema = await get_schema(source_obj, table_name, include_count=True, include_enum=False, include_type=False)
+                    table_schema = await get_schema(
+                        source_obj, table_name, include_count=True, include_enum=False, include_type=False
+                    )
                     normalized_table_name = source_obj.normalize_table(table_name)
                     tables_sql_schemas[normalized_table_name] = {
                         "schema": yaml.dump(table_schema),
@@ -751,7 +757,12 @@ class Planner(Coordinator):
             async for output in response:
                 if output.chain_of_thought:
                     step.stream(output.chain_of_thought, replace=True)
-            if getattr(output, 'tools', None):
+
+            # if user is asking for what tables are available show them all
+            if output.is_asking_availability:
+                return tools.values()
+
+            if output.tools:
                 for output_tool in output.tools:
                     tool_context = ''
                     tool_messages = list(messages)
@@ -789,7 +800,6 @@ class Planner(Coordinator):
         step: ChatStep,
     ) -> BaseModel:
         tools = await self._get_tools_context(messages)
-        print(tools)
         reasoning = None
         while reasoning is None:
             system = await self._render_prompt(
