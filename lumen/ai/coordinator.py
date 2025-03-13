@@ -787,7 +787,7 @@ class Planner(Coordinator):
                 "main",
                 messages,
                 agents=list(agents.values()),
-                tools=tools,
+                tools=[tool for tool in tools if not isinstance(tool, TableLookup)],
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
