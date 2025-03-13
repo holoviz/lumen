@@ -671,9 +671,10 @@ class Planner(Coordinator):
                     tables_sql_schemas[normalized_table_name] = {
                         "schema": yaml.dump(table_schema),
                         "sql": source_obj.get_sql_expr(table_name),
+                        "source": source_obj.name,
                     }
                     examined_tables.add(source_table)
-                    step.stream(f"Added schema for {normalized_table_name}", replace=False)
+                    step.stream(f"\n\nAdded schema for {normalized_table_name}", replace=False)
 
                 system = await self._render_prompt(
                     "table_selection",
@@ -698,7 +699,7 @@ class Planner(Coordinator):
                     chain_of_thought = output.chain_of_thought or ""
                     step.stream(chain_of_thought, replace=True)
                 selected_tables = output.selected_tables or []
-                step.stream(f"\nSelected tables: {', '.join(selected_tables)}", replace=False)
+                step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
                 satisfied = output.is_satisfied or not available_tables
                 closest_tables = []
                 if satisfied:
@@ -788,13 +789,14 @@ class Planner(Coordinator):
         step: ChatStep,
     ) -> BaseModel:
         tools = await self._get_tools_context(messages)
+        print(tools)
         reasoning = None
         while reasoning is None:
             system = await self._render_prompt(
                 "main",
                 messages,
                 agents=list(agents.values()),
-                tools=[tool for tool in tools],
+                tools=list(tools),
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,
