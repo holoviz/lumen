@@ -789,11 +789,18 @@ class BaseSQLSource(Source):
                 data_sql_expr = sql_transform.apply(data_sql_expr)
             data = self.execute(data_sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+
+            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
+            count_expr = ' '.join(count_expr.splitlines())
+            count_data = self.execute(count_expr)
+            count_col = 'count' if 'count' in count_data else 'COUNT'
+            count = int(count_data[count_col].iloc[0])
             if limit:
                 # the min/max and enums will be computed on the limited dataset
+                schema['__len__'] = count
                 continue
-            # else, patch the min/max and enums from the full dataset
 
+            # patch the min/max and enums from the full dataset
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
                 if 'enum' in col_schema:
@@ -806,6 +813,7 @@ class BaseSQLSource(Source):
                 distinct = self.execute(distinct_expr)
                 schema[col]['enum'] = distinct[col].tolist()
 
+            schema['__len__'] = count
             if not min_maxes:
                 continue
 
@@ -830,12 +838,6 @@ class BaseSQLSource(Source):
                 max_data = minmax_data[max_col].iloc[0]
                 schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
                 schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
-
-            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
-            count_expr = ' '.join(count_expr.splitlines())
-            count_data = self.execute(count_expr)
-            count_col = 'count' if 'count' in count_data else 'COUNT'
-            schema['__len__'] = cast(count_data[count_col].iloc[0])
 
         return schemas if table is None else schemas[table]
 
