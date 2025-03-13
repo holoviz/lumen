@@ -487,7 +487,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data", "tables_sql_schemas"], readonly=True)
 
-    requires = param.List(default=["source"], readonly=True)
+    requires = param.List(default=["source", "closest_tables"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -634,7 +634,7 @@ class SQLAgent(LumenBaseAgent):
         sources = {source.name: source for source in self._memory["sources"]}
         tables = [
             f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
-            for a_table in a_source.get_tables()
+            for a_table in self._memory["closest_tables"]
         ]
         if len(tables) == 1:
             # if only one source and one table, return it directly
