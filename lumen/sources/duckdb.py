@@ -9,6 +9,8 @@ import duckdb
 import pandas as pd
 import param
 
+from lumen.ai.config import SOURCE_TABLE_SEPARATOR
+
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
@@ -281,36 +283,23 @@ class DuckDBSource(BaseSQLSource):
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
-            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
+            return [self.normalize_table(t) for t in list(self.tables) if not self._is_table_excluded(t)]
 
         return [
-            t[0] for t in self._connection.execute('SHOW TABLES').fetchall()
+            self.normalize_table(t[0]) for t in self._connection.execute('SHOW TABLES').fetchall()
             if not self._is_table_excluded(t[0])
         ]
 
     def normalize_table(self, table: str):
-        tables = self.get_tables()
-        if table not in tables and 'read_' in table:
-            # Extract table name from read_* function
-            table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
-        return table
-
-    def get_sql_expr(self, table: str):
+        if table not in self.tables:
+            matches = re.search(r"read_(\w+)\('(.+?)'", table)
+            if matches:
+                table = matches.group(2)
+        if table.split(SOURCE_TABLE_SEPARATOR)[-1] in self.tables:
+            table = table.split(SOURCE_TABLE_SEPARATOR)[-1]
         if isinstance(self.tables, dict):
-            try:
-                table = self.tables[self.normalize_table(table)]
-            except KeyError:
-                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
-
-        # search if the so-called "table" already contains SELECT ... FROM
-        # if so, we don't need to wrap it in a SELECT * FROM
-        if re.search(r"(?i)\bselect\b[\s\S]+?\bfrom\b", table):
-            sql_expr = table
-        else:
-            if '(' not in table and ')' not in table:
-                table = f'"{table}"'
-            sql_expr = self.sql_expr.format(table=table)
-        return sql_expr.rstrip(";")
+            table = self.tables[table]
+        return table
 
     @cached
     def get(self, table, **query):

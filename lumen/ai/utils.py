@@ -25,7 +25,6 @@ from jinja2 import (
 from markupsafe import escape
 
 from lumen.pipeline import Pipeline
-from lumen.sources.base import Source
 
 from ..util import log
 from .config import (
@@ -35,6 +34,8 @@ from .config import (
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
+
+    from lumen.sources.base import Source
 
 
 def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
@@ -164,6 +165,7 @@ async def get_schema(
     else:
         if "limit" not in get_kwargs:
             get_kwargs["limit"] = 100
+        table = source.normalize_table(table)
         schema = await asyncio.to_thread(source.get_schema, table, shuffle=shuffle, **get_kwargs)
     schema = dict(schema)
 
@@ -490,3 +492,15 @@ def load_json(json_spec: str) -> dict:
     Load a JSON string, handling unicode escape sequences.
     """
     return json.loads(json_spec.encode().decode('unicode_escape'))
+
+
+def separate_source_table(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+    if SOURCE_TABLE_SEPARATOR in table:
+        a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+        a_source_obj = sources.get(a_source_name)
+    else:
+        a_source_obj = next(iter(sources.values()))
+        a_table = table
+    if normalize:
+        a_table = a_source_obj.normalize_table(a_table)
+    return a_source_obj, a_table

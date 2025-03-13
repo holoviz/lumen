@@ -32,7 +32,8 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLTransform,
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLSelectFrom,
+    SQLTransform,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -47,11 +48,11 @@ if TYPE_CHECKING:
     DataFrameTypes: tuple[type, ...]
     try:
         import dask.dataframe as dd
+
         DataFrameTypes = (pd.DataFrame, dd.DataFrame)
     except ImportError:
         dd = None  # type: ignore
         DataFrameTypes = (pd.DataFrame,)
-
 
 
 def cached(method, locks=weakref.WeakKeyDictionary()):
@@ -62,18 +63,23 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
     -------
     Returns method wrapped in caching functionality.
     """
+
     @wraps(method)
     def wrapped(self, table, **query):
-        if self._supports_sql and not self.cache_per_query and 'sql_transforms' in query:
+        if (
+            self._supports_sql
+            and not self.cache_per_query
+            and "sql_transforms" in query
+        ):
             raise RuntimeError(
-                'SQLTransforms cannot be used on a Source with cache_per_query '
-                'being disabled. Ensure you set `cache_per_query=True`.'
+                "SQLTransforms cannot be used on a Source with cache_per_query "
+                "being disabled. Ensure you set `cache_per_query=True`."
             )
         if self in locks:
-            main_lock = locks[self]['main']
+            main_lock = locks[self]["main"]
         else:
             main_lock = threading.RLock()
-            locks[self] = {'main': main_lock}
+            locks[self] = {"main": main_lock}
         with main_lock:
             if table in locks:
                 lock = locks[self][table]
@@ -83,30 +89,33 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
         with lock:
             df, no_query = self._get_cache(table, **cache_query)
         if df is None:
-            if not self.cache_per_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
-                cache_query['__dask'] = True
+            if not self.cache_per_query and (
+                hasattr(self, "dask") or hasattr(self, "use_dask")
+            ):
+                cache_query["__dask"] = True
             df = method(self, table, **cache_query)
             with lock:
                 self._set_cache(df, table, **cache_query)
         filtered = df
         if (not self.cache_per_query or no_query) and query:
-            filtered = FilterTransform.apply_to(
-                df, conditions=list(query.items())
-            )
-        if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
+            filtered = FilterTransform.apply_to(df, conditions=list(query.items()))
+        if getattr(self, "dask", False) or not hasattr(filtered, "compute"):
             return filtered
         return filtered.compute()
+
     return wrapped
 
 
 def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
+    def wrapped(
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
+    ):
         if self in locks:
-            main_lock = locks[self]['main']
+            main_lock = locks[self]["main"]
         else:
             main_lock = threading.RLock()
-            locks[self] = {'main': main_lock}
+            locks[self] = {"main": main_lock}
         with main_lock:
             schema = self._get_schema_cache() or {}
         tables = self.get_tables() if table is None else [table]
@@ -130,6 +139,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
             with main_lock:
                 self._set_schema_cache(schema)
         return schema if table is None else schema[table]
+
     return wrapped
 
 
@@ -137,10 +147,10 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
     def wrapped(self, table: str | None = None, batched: bool = True):
         if self in locks:
-            main_lock = locks[self]['main']
+            main_lock = locks[self]["main"]
         else:
             main_lock = threading.RLock()
-            locks[self] = {'main': main_lock}
+            locks[self] = {"main": main_lock}
         with main_lock:
             metadata = self._get_metadata_cache() or {}
         tables = self.get_tables() if table is None else [table]
@@ -168,6 +178,7 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
             with main_lock:
                 self._set_metadata_cache(metadata)
         return metadata if table is None else metadata[table]
+
     return wrapped
 
 
@@ -185,14 +196,23 @@ class Source(MultiTypeComponent):
     cached to disk is stored as parquet files.
     """
 
-    cache_with_dask = param.Boolean(default=True, doc="""
-        Whether to read and write cache files with dask if available.""")
+    cache_with_dask = param.Boolean(
+        default=True,
+        doc="""
+        Whether to read and write cache files with dask if available.""",
+    )
 
-    cache_per_query = param.Boolean(default=True, doc="""
-        Whether to query the whole dataset or individual queries.""")
+    cache_per_query = param.Boolean(
+        default=True,
+        doc="""
+        Whether to query the whole dataset or individual queries.""",
+    )
 
-    cache_dir = param.String(default=None, doc="""
-        Whether to enable local cache and write file to disk.""")
+    cache_dir = param.String(
+        default=None,
+        doc="""
+        Whether to enable local cache and write file to disk.""",
+    )
 
     metadata_func = param.Callable(default=None, doc="""
         Function that returns a metadata dictionary
@@ -203,26 +223,33 @@ class Source(MultiTypeComponent):
         May be used to override the default _get_table_metadata
         implementation of the Source.""")
 
-    root = param.ClassSelector(class_=Path, precedence=-1, doc="""
-        Root folder of the cache_dir, default is config.root""")
+    root = param.ClassSelector(
+        class_=Path,
+        precedence=-1,
+        doc="""
+        Root folder of the cache_dir, default is config.root""",
+    )
 
-    shared = param.Boolean(default=False, doc="""
+    shared = param.Boolean(
+        default=False,
+        doc="""
         Whether the Source can be shared across all instances of the
         dashboard. If set to `True` the Source will be loaded on
-        initial server load.""")
+        initial server load.""",
+    )
 
     source_type: ClassVar[str | None] = None
 
     __abstract = True
 
     # Specification configuration
-    _internal_params: ClassVar[list[str]] = ['name', 'root']
+    _internal_params: ClassVar[list[str]] = ["name", "root"]
 
     # Declare whether source supports SQL transforms
     _supports_sql: ClassVar[bool] = False
 
     # Valid keys incude all parameters (except _internal_params)
-    _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
+    _valid_keys: ClassVar[list[str] | Literal["params"] | None] = "params"
 
     @property
     def _reload_params(self) -> list[str]:
@@ -234,13 +261,12 @@ class Source(MultiTypeComponent):
         cls, spec: dict[str, Any], source_type: type[Source]
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         resolved_spec, refs = {}, {}
-        if 'sources' in source_type.param and 'sources' in spec:
-            resolved_spec['sources'] = {
-                source: cls.from_spec(source)
-                for source in spec.pop('sources')
+        if "sources" in source_type.param and "sources" in spec:
+            resolved_spec["sources"] = {
+                source: cls.from_spec(source) for source in spec.pop("sources")
             }
-        if 'source' in source_type.param and 'source' in spec:
-            resolved_spec['source'] = cls.from_spec(spec.pop('source'))
+        if "source" in source_type.param and "source" in spec:
+            resolved_spec["source"] = cls.from_spec(spec.pop("source"))
         for k, v in spec.items():
             if is_ref(v):
                 refs[k] = v
@@ -248,32 +274,40 @@ class Source(MultiTypeComponent):
             elif isinstance(v, dict):
                 v, subrefs = cls._recursive_resolve(v, source_type)
                 for sk, sv in subrefs.items():
-                    refs[f'{k}.{sk}'] = sv
-            if k == 'filters' and 'source' in resolved_spec:
-                assert isinstance(resolved_spec['source'], Source)
-                source_schema = resolved_spec['source'].get_schema()
+                    refs[f"{k}.{sk}"] = sv
+            if k == "filters" and "source" in resolved_spec:
+                assert isinstance(resolved_spec["source"], Source)
+                source_schema = resolved_spec["source"].get_schema()
                 v = [Filter.from_spec(fspec, source_schema) for fspec in v]
-            if k == 'transforms':
+            if k == "transforms":
                 v = [Transform.from_spec(tspec) for tspec in v]
             resolved_spec[k] = v
         return resolved_spec, refs
 
     @classmethod
     def _validate_filters(
-        cls, filter_specs: dict[str, dict[str, Any] | str], spec: dict[str, Any], context: dict[str, Any]
+        cls,
+        filter_specs: dict[str, dict[str, Any] | str],
+        spec: dict[str, Any],
+        context: dict[str, Any],
     ) -> dict[str, Any]:
         warnings.warn(
-            'Providing filters in a Source definition is deprecated, '
-            'please declare filters as part of a Pipeline.', DeprecationWarning
+            "Providing filters in a Source definition is deprecated, "
+            "please declare filters as part of a Pipeline.",
+            DeprecationWarning,
         )
-        return cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context)
+        return cls._validate_dict_subtypes(
+            "filters", Filter, filter_specs, spec, context
+        )
 
     @classmethod
-    def validate(cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None) -> dict[str, Any] | str:
+    def validate(
+        cls, spec: dict[str, Any] | str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any] | str:
         if isinstance(spec, str):
-            if context is None or spec not in context.get('sources', {}):
-                msg = f'Referenced non-existent source {spec!r}.'
-                sources = list(context.get('sources', {})) if context else []
+            if context is None or spec not in context.get("sources", {}):
+                msg = f"Referenced non-existent source {spec!r}."
+                sources = list(context.get("sources", {})) if context else []
                 msg = match_suggestion_message(spec, sources, msg)
                 raise ValidationError(msg, spec, spec)
             return spec
@@ -299,22 +333,23 @@ class Source(MultiTypeComponent):
         if isinstance(spec, str):
             if spec in state.sources:
                 source = state.sources[spec]
-            elif spec in state.spec.get('sources', {}):
-                source = state.load_source(spec, state.spec['sources'][spec])
+            elif spec in state.spec.get("sources", {}):
+                source = state.load_source(spec, state.spec["sources"][spec])
             return source
 
         spec = spec.copy()
-        src_type_name = spec.pop('type', None)
+        src_type_name = spec.pop("type", None)
         source_type = Source._get_type(src_type_name)
         if cls is Source:
-            spec['type'] = src_type_name
+            spec["type"] = src_type_name
             return source_type.from_spec(spec)
         resolved_spec, refs = source_type._recursive_resolve(spec, source_type)
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
         from ..config import config
-        params['root'] = Path(params.get('root', config.root))
+
+        params["root"] = Path(params.get("root", config.root))
         super().__init__(**params)
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
@@ -323,19 +358,19 @@ class Source(MultiTypeComponent):
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
-        sha.update(self._get_source_hash().encode('utf-8'))
-        sha.update(table.encode('utf-8'))
-        if 'sql_transforms' in query:
-            sha.update(_generate_hash([hash(t) for t in query.pop('sql_transforms')]))
+        sha.update(self._get_source_hash().encode("utf-8"))
+        sha.update(table.encode("utf-8"))
+        if "sql_transforms" in query:
+            sha.update(_generate_hash([hash(t) for t in query.pop("sql_transforms")]))
         sha.update(_generate_hash(query))
         return sha.hexdigest()
 
     def _get_source_hash(self):
         sha = hashlib.sha256()
         for k, v in self.param.values().items():
-            if k in ('root',):
+            if k in ("root",):
                 continue
-            sha.update(k.encode('utf-8'))
+            sha.update(k.encode("utf-8"))
             sha.update(_generate_hash(v))
         return sha.hexdigest()
 
@@ -343,7 +378,7 @@ class Source(MultiTypeComponent):
         metadata = self._metadata_cache if self._metadata_cache else None
         sha = self._get_source_hash()
         if self.cache_dir:
-            path = self.root / self.cache_dir / f'{self.name}_{sha}_metadata.json'
+            path = self.root / self.cache_dir / f"{self.name}_{sha}_metadata.json"
             if not path.is_file():
                 return metadata
             with open(path) as f:
@@ -359,7 +394,7 @@ class Source(MultiTypeComponent):
         schema = self._schema_cache if self._schema_cache else None
         sha = self._get_source_hash()
         if self.cache_dir:
-            path = self.root / self.cache_dir / f'{self.name}_{sha}.json'
+            path = self.root / self.cache_dir / f"{self.name}_{sha}.json"
             if not path.is_file():
                 return schema
             with open(path) as f:
@@ -370,12 +405,15 @@ class Source(MultiTypeComponent):
                 if table in schema:
                     continue
                 for col, cschema in tschema.items():
-                    if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
-                        cschema['inclusiveMinimum'] = pd.to_datetime(
-                            cschema['inclusiveMinimum']
+                    if (
+                        cschema.get("type") == "string"
+                        and cschema.get("format") == "datetime"
+                    ):
+                        cschema["inclusiveMinimum"] = pd.to_datetime(
+                            cschema["inclusiveMinimum"]
                         )
-                        cschema['inclusiveMaximum'] = pd.to_datetime(
-                            cschema['inclusiveMaximum']
+                        cschema["inclusiveMaximum"] = pd.to_datetime(
+                            cschema["inclusiveMaximum"]
                         )
                 schema[table] = tschema
         return schema
@@ -388,7 +426,7 @@ class Source(MultiTypeComponent):
         path = self.root / self.cache_dir
         path.mkdir(parents=True, exist_ok=True)
         try:
-            with open(path / f'{self.name}_{sha}_metadata.json', 'w') as f:
+            with open(path / f"{self.name}_{sha}_metadata.json", "w") as f:
                 json.dump(metadata, f, default=str)
         except Exception as e:
             self.param.warning(
@@ -404,7 +442,7 @@ class Source(MultiTypeComponent):
         path = self.root / self.cache_dir
         path.mkdir(parents=True, exist_ok=True)
         try:
-            with open(path / f'{self.name}_{sha}.json', 'w') as f:
+            with open(path / f"{self.name}_{sha}.json", "w") as f:
                 json.dump(schema, f, default=str)
         except Exception as e:
             self.param.warning(
@@ -413,7 +451,7 @@ class Source(MultiTypeComponent):
             )
 
     def _get_cache(self, table: str, **query) -> tuple[DataFrame | None, bool]:
-        query.pop('__dask', None)
+        query.pop("__dask", None)
         key = self._get_key(table, **query)
         if key in self._cache:
             return self._cache[key], not bool(query)
@@ -426,15 +464,15 @@ class Source(MultiTypeComponent):
             else:
                 dd = None
             if query:
-                filename = f'{key}_{table}.parq'
+                filename = f"{key}_{table}.parq"
             else:
-                filename = f'{table}.parq'
+                filename = f"{table}.parq"
             path = self.root / self.cache_dir / filename
             if path.is_file():
                 return pd.read_parquet(path), not bool(query)
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
-            path = path.with_suffix('')
+            path = path.with_suffix("")
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
         return None, not bool(query)
@@ -442,7 +480,7 @@ class Source(MultiTypeComponent):
     def _set_cache(
         self, data: DataFrame, table: str, write_to_file: bool = True, **query
     ):
-        query.pop('__dask', None)
+        query.pop("__dask", None)
         key = self._get_key(table, **query)
         self._cache[key] = data
         if self.cache_dir and write_to_file:
@@ -456,13 +494,13 @@ class Source(MultiTypeComponent):
             path = self.root / self.cache_dir
             path.mkdir(parents=True, exist_ok=True)
             if query:
-                filename = f'{key}_{table}.parq'
+                filename = f"{key}_{table}.parq"
             else:
-                filename = f'{table}.parq'
+                filename = f"{table}.parq"
             filepath = path / filename
             if dd:
                 if isinstance(data, dd.DataFrame):
-                    filepath = filepath.with_suffix('')
+                    filepath = filepath.with_suffix("")
             try:
                 data.to_parquet(filepath)
             except Exception as e:
@@ -538,15 +576,14 @@ class Source(MultiTypeComponent):
             if table is not None and name != table:
                 continue
             df = self.get(name, __dask=True)
-            schemas[name] = get_dataframe_schema(df)['items']['properties']
+            schemas[name] = get_dataframe_schema(df)["items"]["properties"]
         try:
             return schemas if table is None else schemas[table]
         except KeyError as e:
             msg = f"{type(self).name} does not contain '{table}'"
-            msg = match_suggestion_message(table or '', names, msg)
+            msg = match_suggestion_message(table or "", names, msg)
             raise ValidationError(msg) from e
 
-    @cached_metadata
     def get_metadata(self, table: str | None, batched: bool = True) -> dict:
         """
         Returns metadata for one or all tables provided by the source.
@@ -602,9 +639,11 @@ class Source(MultiTypeComponent):
             return metadata
         else:
             metadata = {
-                table: self.metadata_func(table, batched=False)
-                if self.metadata_func
-                else self._get_table_metadata(table, batched=False)
+                table: (
+                    self.metadata_func(table, batched=False)
+                    if self.metadata_func
+                    else self._get_table_metadata(table, batched=False)
+                )
                 for table in tables
             }
             return metadata if table is None else metadata[table]
@@ -641,21 +680,23 @@ class RESTSource(Source):
 
     url = param.String(doc="URL of the REST endpoint to monitor.")
 
-    source_type: ClassVar[str] = 'rest'
+    source_type: ClassVar[str] = "rest"
 
     @cached_schema
     def get_schema(
         self, table: str | None = None, limit: int | None = None, shuffle: bool = False
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
-        query = {} if table is None else {'table': table}
-        response = requests.get(self.url+'/schema', params=query)
-        return {table: schema['items']['properties'] for table, schema in
-                response.json().items()}
+        query = {} if table is None else {"table": table}
+        response = requests.get(self.url + "/schema", params=query)
+        return {
+            table: schema["items"]["properties"]
+            for table, schema in response.json().items()
+        }
 
     @cached
     def get(self, table: str, **query) -> pd.DataFrame:
         query = dict(table=table, **query)
-        r = requests.get(self.url+'/data', params=query)
+        r = requests.get(self.url + "/data", params=query)
         df = pd.DataFrame(r.json())
         return df
 
@@ -675,15 +716,18 @@ class InMemorySource(Source):
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         if table:
             df = self.get(table)
-            return get_dataframe_schema(df)['items']['properties']
+            return get_dataframe_schema(df)["items"]["properties"]
         else:
-            return {t: get_dataframe_schema(self.get(t))['items']['properties'] for t in self.get_tables()}
+            return {
+                t: get_dataframe_schema(self.get(t))["items"]["properties"]
+                for t in self.get_tables()
+            }
 
     def get(self, table: str, **query) -> pd.DataFrame:
-        dask = query.pop('__dask', False)
+        dask = query.pop("__dask", False)
         table = self.tables.get(table)
         df = FilterTransform.apply_to(table, conditions=list(query.items()))
-        return df if dask or not hasattr(df, 'compute') else df.compute()
+        return df if dask or not hasattr(df, "compute") else df.compute()
 
     def add_table(self, name, table):
         self.tables[name] = table
@@ -699,13 +743,20 @@ class FileSource(Source):
     is enabled.
     """
 
-    dask = param.Boolean(default=False, doc="""
-        Whether to return a Dask dataframe.""")
+    dask = param.Boolean(
+        default=False,
+        doc="""
+        Whether to return a Dask dataframe.""",
+    )
 
-    kwargs = param.Dict(doc="""
-        Keyword arguments to the pandas/dask loading function.""")
+    kwargs = param.Dict(
+        doc="""
+        Keyword arguments to the pandas/dask loading function."""
+    )
 
-    tables = param.ClassSelector(class_=(list, dict), doc="""
+    tables = param.ClassSelector(
+        class_=(list, dict),
+        doc="""
         List or dictionary of tables to load. If a list is supplied the
         names are computed from the filenames, otherwise the keys are
         the names. The values must filepaths or URLs to the data:
@@ -723,31 +774,33 @@ class FileSource(Source):
         ```
         {'table': ['http://test.com/api', 'json']}
         ```
-        """)
+        """,
+    )
 
-    use_dask = param.Boolean(default=True, doc="""
-        Whether to use dask to load files.""")
+    use_dask = param.Boolean(
+        default=True,
+        doc="""
+        Whether to use dask to load files.""",
+    )
 
     _pd_load_fns = {
-        'csv': pd.read_csv,
-        'xlsx': pd.read_excel,
-        'xls': pd.read_excel,
-        'parq': pd.read_parquet,
-        'parquet': pd.read_parquet,
-        'json': pd.read_json
+        "csv": pd.read_csv,
+        "xlsx": pd.read_excel,
+        "xls": pd.read_excel,
+        "parq": pd.read_parquet,
+        "parquet": pd.read_parquet,
+        "json": pd.read_json,
     }
 
-    _load_kwargs: ClassVar[dict[str, dict[str, Any]]] = {
-        'csv': {'parse_dates': True}
-    }
+    _load_kwargs: ClassVar[dict[str, dict[str, Any]]] = {"csv": {"parse_dates": True}}
 
-    _template_re = re.compile(r'(\$\{[\w.]+\})')
+    _template_re = re.compile(r"(\$\{[\w.]+\})")
 
-    source_type: ClassVar[str] = 'file'
+    source_type: ClassVar[str] = "file"
 
     def __init__(self, **params):
-        if 'files' in params:
-            params['tables'] = params.pop('files')
+        if "files" in params:
+            params["tables"] = params.pop("files")
         super().__init__(**params)
 
     def _load_fn(self, ext, dask=True):
@@ -759,21 +812,23 @@ class FileSource(Source):
                 import dask.dataframe as dd
             except Exception:
                 return self._load_fn(ext, dask=False)
-            if ext == 'csv':
+            if ext == "csv":
                 return dd.read_csv, kwargs
-            elif ext in ('parq', 'parquet'):
+            elif ext in ("parq", "parquet"):
                 return dd.read_parquet, kwargs
-            elif ext == 'json':
-                if 'orient' not in kwargs:
-                    kwargs['orient'] = None
+            elif ext == "json":
+                if "orient" not in kwargs:
+                    kwargs["orient"] = None
                 return dd.read_json, kwargs
         if ext not in self._pd_load_fns:
             raise ValueError(f"File type '{ext}' not recognized and cannot be loaded.")
         return self._pd_load_fns[ext], kwargs
 
-    def _set_cache(self, data: DataFrame, table: str, write_to_file: bool = True, **query):
+    def _set_cache(
+        self, data: DataFrame, table: str, write_to_file: bool = True, **query
+    ):
         file, ext = self._named_files[table]
-        if ext in ('parq', 'parquet') and Path(file).exists():
+        if ext in ("parq", "parquet") and Path(file).exists():
             write_to_file = False
         super()._set_cache(data, table, write_to_file, **query)
 
@@ -782,10 +837,10 @@ class FileSource(Source):
         if isinstance(self.tables, list):
             tables = {}
             for f in self.tables:
-                if isinstance(f, str) and f.startswith('http'):
+                if isinstance(f, str) and f.startswith("http"):
                     name = f
                 else:
-                    name = '.'.join(basename(f).split('.')[:-1])
+                    name = ".".join(basename(f).split(".")[:-1])
                 tables[name] = f
         else:
             tables = self.tables or {}
@@ -794,7 +849,7 @@ class FileSource(Source):
             if isinstance(table, (list | tuple)):
                 table, ext = table
             else:
-                if isinstance(table, str) and table.startswith('http'):
+                if isinstance(table, str) and table.startswith("http"):
                     file = basename(urlparse(table).path)
                 else:
                     file = basename(table)
@@ -806,8 +861,8 @@ class FileSource(Source):
 
     def _resolve_template_vars(self, table: str) -> list[str]:
         for m in self._template_re.findall(str(table)):
-            values = state.resolve_reference(f'${m[2:-1]}')
-            values = ','.join([v for v in values])
+            values = state.resolve_reference(f"${m[2:-1]}")
+            values = ",".join([v for v in values])
             table = table.replace(m, quote(values))
         return [table]
 
@@ -817,13 +872,13 @@ class FileSource(Source):
     def _load_table(self, table: str, dask: bool = True) -> DataFrame:
         df = None
         for name, (filepath, ext) in self._named_files.items():
-            if isinstance(filepath, Path) or '://' not in filepath:
+            if isinstance(filepath, Path) or "://" not in filepath:
                 filepath = self.root / filepath
             if name != table:
                 continue
             load_fn, kwargs = self._load_fn(ext, dask=dask)
             paths = self._resolve_template_vars(filepath)
-            if self.use_dask and ext in ('csv', 'json', 'parquet', 'parq') and dask:
+            if self.use_dask and ext in ("csv", "json", "parquet", "parq") and dask:
                 try:
                     df = load_fn(paths, **kwargs)
                 except Exception as e:
@@ -839,24 +894,27 @@ class FileSource(Source):
                     raise e
                 if len(dfs) <= 1:
                     df = dfs[0] if dfs else None
-                elif self.use_dask and hasattr(dfs[0], 'compute'):
+                elif self.use_dask and hasattr(dfs[0], "compute"):
                     import dask.dataframe as dd
+
                     df = dd.concat(dfs)
                 else:
                     df = pd.concat(dfs)
-            if hasattr(df, 'persist'):
+            if hasattr(df, "persist"):
                 df = df.persist()
         if df is None:
             tables = list(self._named_files)
-            raise ValueError(f"Table '{table}' not found. Available tables include: {tables}.")
+            raise ValueError(
+                f"Table '{table}' not found. Available tables include: {tables}."
+            )
         return df
 
     @cached
     def get(self, table: str, **query) -> DataFrame:
-        dask = query.pop('__dask', self.dask)
+        dask = query.pop("__dask", self.dask)
         df = self._load_table(table)
         df = FilterTransform.apply_to(df, conditions=list(query.items()))
-        return df if dask or not hasattr(df, 'compute') else df.compute()
+        return df if dask or not hasattr(df, "compute") else df.compute()
 
 
 class BaseSQLSource(Source):
@@ -865,14 +923,15 @@ class BaseSQLSource(Source):
     a SQL based data source.
     """
 
-    dialect = 'any'
+    dialect = "any"
 
     excluded_tables = param.List(default=[], doc="""
         List of table names that should be excluded from the results. Supports:
         - Fully qualified name: 'DATABASE.SCHEMA.TABLE'
         - Schema qualified name: 'SCHEMA.TABLE'
         - Table name only: 'TABLE'
-        - Wildcards: 'SCHEMA.*'""")
+        - Wildcards: 'SCHEMA.*'""",
+    )
 
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
@@ -912,7 +971,38 @@ class BaseSQLSource(Source):
 
         return False
 
-    def _apply_transforms(self, source: Source, sql_transforms: list[SQLTransform]) -> Source:
+    def _is_table_excluded(self, table_slug):
+        """
+        Check if a table should be excluded based on patterns in self.excluded_tables.
+        Case-insensitive matching.
+        """
+        if not self.excluded_tables:
+            return False
+
+        table_slug_lower = table_slug.lower()
+
+        for pattern in self.excluded_tables:
+            if not pattern:  # Skip empty patterns
+                continue
+
+            pattern_lower = pattern.lower()
+
+            # Check for exact match with full name
+            if fnmatch.fnmatch(table_slug_lower, pattern_lower):
+                return True
+
+            # Handle cases where we're matching just the table name or schema.table
+            parts = table_slug.split(".")
+            for i in range(1, len(parts) + 1):
+                suffix = ".".join(parts[-i:])
+                if fnmatch.fnmatch(suffix.lower(), pattern_lower):
+                    return True
+
+        return False
+
+    def _apply_transforms(
+        self, source: Source, sql_transforms: list[SQLTransform]
+    ) -> Source:
         if not sql_transforms:
             return source
         sql_expr = source._sql_expr
@@ -928,10 +1018,9 @@ class BaseSQLSource(Source):
         return table
 
     def get_sql_expr(self, table: str):
-        """
-        Returns the SQL expression corresponding to a particular table.
-        """
-        raise NotImplementedError
+        table = self.normalize_table(table)
+        sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
+        return sql_expr
 
     def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
         """
@@ -970,7 +1059,11 @@ class BaseSQLSource(Source):
             tables = [table]
 
         schemas = {}
-        sql_transforms = [SQLSample(size=limit or 1, read=self.dialect)] if shuffle else [SQLLimit(limit=limit or 1, read=self.dialect)]
+        sql_transforms = (
+            [SQLSample(size=limit or 1, read=self.dialect)]
+            if shuffle
+            else [SQLLimit(limit=limit or 1, read=self.dialect)]
+        )
         for entry in tables:
             if not self.load_schema:
                 schemas[entry] = {}
@@ -980,7 +1073,7 @@ class BaseSQLSource(Source):
             for sql_transform in sql_transforms:
                 data_sql_expr = sql_transform.apply(data_sql_expr)
             data = self.execute(data_sql_expr)
-            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+            schemas[entry] = schema = get_dataframe_schema(data)["items"]["properties"]
             if limit:
                 # the min/max and enums will be computed on the limited dataset
                 continue
@@ -988,49 +1081,56 @@ class BaseSQLSource(Source):
 
             enums, min_maxes = [], []
             for name, col_schema in schema.items():
-                if 'enum' in col_schema:
+                if "enum" in col_schema:
                     enums.append(name)
-                elif 'inclusiveMinimum' in col_schema:
+                elif "inclusiveMinimum" in col_schema:
                     min_maxes.append(name)
             for col in enums:
-                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
-                distinct_expr = ' '.join(distinct_expr.splitlines())
+                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(
+                    sql_expr
+                )
+                distinct_expr = " ".join(distinct_expr.splitlines())
                 distinct = self.execute(distinct_expr)
-                schema[col]['enum'] = distinct[col].tolist()
+                schema[col]["enum"] = distinct[col].tolist()
 
             if not min_maxes:
                 continue
 
-            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
-            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(
+                sql_expr
+            )
+            minmax_expr = " ".join(minmax_expr.splitlines())
             minmax_data = self.execute(minmax_expr)
             for col in min_maxes:
                 kind = data[col].dtype.kind
-                if kind in 'iu':
+                if kind in "iu":
                     cast = int
-                elif kind == 'f':
+                elif kind == "f":
                     cast = float
-                elif kind == 'M':
+                elif kind == "M":
                     cast = str
                 else:
                     cast = lambda v: v
 
                 # some dialects, like snowflake output column names to UPPERCASE regardless of input case
-                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
+                min_col = f"{col}_min" if f"{col}_min" in minmax_data else f"{col}_MIN"
                 min_data = minmax_data[min_col].iloc[0]
-                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
+                max_col = f"{col}_max" if f"{col}_max" in minmax_data else f"{col}_MAX"
                 max_data = minmax_data[max_col].iloc[0]
-                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
-                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
+                schema[col]["inclusiveMinimum"] = (
+                    min_data if pd.isna(min_data) else cast(min_data)
+                )
+                schema[col]["inclusiveMaximum"] = (
+                    max_data if pd.isna(max_data) else cast(max_data)
+                )
 
             count_expr = SQLCount(read=self.dialect).apply(sql_expr)
-            count_expr = ' '.join(count_expr.splitlines())
+            count_expr = " ".join(count_expr.splitlines())
             count_data = self.execute(count_expr)
-            count_col = 'count' if 'count' in count_data else 'COUNT'
-            schema['__len__'] = cast(count_data[count_col].iloc[0])
+            count_col = "count" if "count" in count_data else "COUNT"
+            schema["__len__"] = cast(count_data[count_col].iloc[0])
 
         return schemas if table is None else schemas[table]
-
 
 
 class JSONSource(FileSource):
@@ -1041,14 +1141,22 @@ class JSONSource(FileSource):
     as a list or dictionaries of `tables`.
     """
 
-    cache_per_query = param.Boolean(default=False, doc="""
-        Whether to query the whole dataset or individual queries.""")
+    cache_per_query = param.Boolean(
+        default=False,
+        doc="""
+        Whether to query the whole dataset or individual queries.""",
+    )
 
-    chunk_size = param.Integer(default=0, doc="""
+    chunk_size = param.Integer(
+        default=0,
+        doc="""
         Number of items to load per chunk if a template variable
-        is provided.""")
+        is provided.""",
+    )
 
-    tables = param.ClassSelector(class_=(list, dict), doc="""
+    tables = param.ClassSelector(
+        class_=(list, dict),
+        doc="""
         List or dictionary of tables to load. If a list is supplied the
         names are computed from the filenames, otherwise the keys are
         the names. The values must filepaths or URLs to the data:
@@ -1059,40 +1167,41 @@ class JSONSource(FileSource):
             'remote': 'https://test.com/test.csv'
         }
         ```
-    """)
+    """,
+    )
 
-    source_type: ClassVar[str] = 'json'
+    source_type: ClassVar[str] = "json"
 
     def _resolve_template_vars(self, template: str) -> list[str]:
         template_vars = self._template_re.findall(template)
         template_values = []
         for m in template_vars:
-            values = state.resolve_reference(f'${m[2:-1]}')
+            values = state.resolve_reference(f"${m[2:-1]}")
             if not isinstance(values, list):
                 values = [values]
             template_values.append(values)
         tables = []
         cross_product = list(product(*template_values))
         if self.chunk_size and len(cross_product) > self.chunk_size:
-            for i in range(len(cross_product)//self.chunk_size):
-                start = i*self.chunk_size
-                chunk = cross_product[start: start+self.chunk_size]
+            for i in range(len(cross_product) // self.chunk_size):
+                start = i * self.chunk_size
+                chunk = cross_product[start : start + self.chunk_size]
                 tvalues = zip(*chunk)
                 table = template
                 for m, tvals in zip(template_vars, tvalues):
-                    tvals = ','.join([v for v in set(tvals)])
+                    tvals = ",".join([v for v in set(tvals)])
                     table = table.replace(m, quote(tvals))
                 tables.append(table)
         else:
             table = template
             for m, tvals in zip(template_vars, zip(*cross_product)):
-                values = ','.join([v for v in set(tvals)])
+                values = ",".join([v for v in set(tvals)])
                 table = table.replace(m, quote(values))
             tables.append(table)
         return tables
 
     def _load_fn(self, ext: str, dask: bool = True) -> DataFrame:
-        return super()._load_fn('json', dask=dask)
+        return super()._load_fn("json", dask=dask)
 
 
 class WebsiteSource(Source):
@@ -1100,12 +1209,15 @@ class WebsiteSource(Source):
     `WebsiteSource` queries whether a website responds with a 400 status code.
     """
 
-    cache_per_query = param.Boolean(default=False, doc="""
-        Whether to query the whole dataset or individual queries.""")
+    cache_per_query = param.Boolean(
+        default=False,
+        doc="""
+        Whether to query the whole dataset or individual queries.""",
+    )
 
     urls = param.List(doc="URLs of the websites to monitor.")
 
-    source_type: ClassVar[str] = 'live'
+    source_type: ClassVar[str] = "live"
 
     @cached_schema
     def get_schema(
@@ -1113,14 +1225,14 @@ class WebsiteSource(Source):
     ) -> dict[str, dict[str, Any]] | dict[str, Any]:
         schema = {
             "status": {
-                "url": {"type": "string", 'enum': self.urls},
-                "live": {"type": "boolean"}
+                "url": {"type": "string", "enum": self.urls},
+                "live": {"type": "boolean"},
             }
         }
         return schema if table is None else schema[table]
 
     def get_tables(self) -> list[str]:
-        return ['status']
+        return ["status"]
 
     @cached
     def get(self, table: str, **query) -> pd.DataFrame:
@@ -1137,7 +1249,7 @@ class WebsiteSource(Source):
 
 
 class PanelSessionSource(Source):
-    """"
+    """ "
     `PanelSessionSource` queries the session_info endpoint of a Panel application.
 
     Panel applications with --rest-session-info enabled can be queried
@@ -1145,8 +1257,11 @@ class PanelSessionSource(Source):
     Lumen for monitoring.
     """
 
-    cache_per_query = param.Boolean(default=False, doc="""
-        Whether to query the whole dataset or individual queries.""")
+    cache_per_query = param.Boolean(
+        default=False,
+        doc="""
+        Whether to query the whole dataset or individual queries.""",
+    )
 
     endpoint = param.String(default="rest/session_info")
 
@@ -1154,7 +1269,7 @@ class PanelSessionSource(Source):
 
     timeout = param.Parameter(default=5)
 
-    source_type: ClassVar[str] = 'session_info'
+    source_type: ClassVar[str] = "session_info"
 
     @cached_schema
     def get_schema(
@@ -1166,7 +1281,7 @@ class PanelSessionSource(Source):
                 "total": {"type": "int"},
                 "live": {"type": "int"},
                 "render_duration": {"type": "float"},
-                "session_duration": {"type": "float"}
+                "session_duration": {"type": "float"},
             },
             "sessions": {
                 "url": {"type": "string", "enum": self.urls},
@@ -1176,51 +1291,47 @@ class PanelSessionSource(Source):
                 "rendered": {"type": "float"},
                 "render_duration": {"type": "float"},
                 "session_duration": {"type": "float"},
-                "user_agent": {"type": "string"}
-            }
+                "user_agent": {"type": "string"},
+            },
         }
         return schema if table is None else schema[table]
 
     def get_tables(self) -> list[str]:
-        return ['summary', 'sessions']
+        return ["summary", "sessions"]
 
     def _get_session_info(self, table: str, url: str) -> list[dict[str, Any]]:
-        res = requests.get(
-            url + self.endpoint, verify=False, timeout=self.timeout
-        )
+        res = requests.get(url + self.endpoint, verify=False, timeout=self.timeout)
         data: list[dict[str, Any]] = []
         if res.status_code != 200:
             return data
         r = res.json()
-        session_info = r['session_info']
-        sessions = session_info['sessions']
+        session_info = r["session_info"]
+        sessions = session_info["sessions"]
 
         if table == "summary":
-            rendered = [s for s in sessions.values()
-                        if s['rendered'] is not None]
-            ended = [s for s in sessions.values()
-                     if s['ended'] is not None]
+            rendered = [s for s in sessions.values() if s["rendered"] is not None]
+            ended = [s for s in sessions.values() if s["ended"] is not None]
             row = {
-                'url': url,
-                'total': session_info['total'],
-                'live': session_info['live'],
-                'render_duration': np.mean([s['rendered']-s['started']
-                                            for s in rendered]),
-                'session_duration': np.mean([s['ended']-s['started']
-                                             for s in ended])
+                "url": url,
+                "total": session_info["total"],
+                "live": session_info["live"],
+                "render_duration": np.mean(
+                    [s["rendered"] - s["started"] for s in rendered]
+                ),
+                "session_duration": np.mean([s["ended"] - s["started"] for s in ended]),
             }
             data.append(row)
         elif table == "sessions":
             for sid, session in sessions.items():
                 row = dict(url=url, id=sid, **session)
                 if session["rendered"]:
-                    row["render_duration"] = session["rendered"]-session["started"]
+                    row["render_duration"] = session["rendered"] - session["started"]
                 else:
-                    row["render_duration"] = float('NaN')
+                    row["render_duration"] = float("NaN")
                 if session["ended"]:
-                    row["session_duration"] = session["ended"]-session["started"]
+                    row["session_duration"] = session["ended"] - session["started"]
                 else:
-                    row["session_duration"] = float('NaN')
+                    row["session_duration"] = float("NaN")
                 data.append(row)
         return data
 
@@ -1228,16 +1339,20 @@ class PanelSessionSource(Source):
     def get(self, table: str, **query) -> pd.DataFrame:
         data = []
         with futures.ThreadPoolExecutor(len(self.urls)) as executor:
-            tasks = {executor.submit(self._get_session_info, table, url): url
-                     for url in self.urls}
+            tasks = {
+                executor.submit(self._get_session_info, table, url): url
+                for url in self.urls
+            }
             for future in futures.as_completed(tasks):
                 url = tasks[future] + self.endpoint
                 try:
                     data.extend(future.result())
                 except Exception as e:
                     exception = f"{type(e).__name__}({e})"
-                    self.param.warning("Failed to fetch session_info from "
-                                       f"{url}, errored with {exception}.")
+                    self.param.warning(
+                        "Failed to fetch session_info from "
+                        f"{url}, errored with {exception}."
+                    )
         return pd.DataFrame(data, columns=list(self.get_schema(table)))
 
 
@@ -1270,10 +1385,15 @@ class JoinedSource(Source):
     table "foo".
     """
 
-    sources = param.ClassSelector(class_=(list, dict), doc="""
-        A dictionary of sources indexed by their assigned name.""")
+    sources = param.ClassSelector(
+        class_=(list, dict),
+        doc="""
+        A dictionary of sources indexed by their assigned name.""",
+    )
 
-    tables = param.Dict(default={}, doc="""
+    tables = param.Dict(
+        default={},
+        doc="""
         A dictionary with the names of the joined sources as keys
         and a specification of the source, table and index to merge
         on.
@@ -1291,9 +1411,10 @@ class JoinedSource(Source):
             ...
         ]}
         ```
-        """)
+        """,
+    )
 
-    source_type: ClassVar[str] = 'join'
+    source_type: ClassVar[str] = "join"
 
     def get_tables(self) -> list[str]:
         return list(self.tables)
@@ -1309,7 +1430,7 @@ class JoinedSource(Source):
             schema: dict[str, Any] = {}
             schemas[name] = schema
             for spec in specs:
-                source, subtable = spec['source'], spec['table']
+                source, subtable = spec["source"], spec["table"]
                 table_schema = self.sources[source].get_schema(subtable)
                 if not schema:
                     schema.update(table_schema)
@@ -1322,28 +1443,29 @@ class JoinedSource(Source):
     def get(self, table: str, **query) -> DataFrame:
         df, left_key = None, None
         for spec in self.tables[table]:
-            source, subtable = spec['source'], spec['table']
+            source, subtable = spec["source"], spec["table"]
             source_query = dict(query)
-            right_key = spec.get('index')
+            right_key = spec.get("index")
             if df is not None and left_key and right_key not in query:
                 source_query[right_key] = list(df[left_key].unique())
             df_merge = self.sources[source].get(subtable, **source_query)
             if df is None:
                 df = df_merge
-                left_key = spec.get('index')
+                left_key = spec.get("index")
             else:
-                df = pd.merge(df, df_merge, left_on=left_key,
-                              right_on=right_key, how='outer')
+                df = pd.merge(
+                    df, df_merge, left_on=left_key, right_on=right_key, how="outer"
+                )
         return df  # type: ignore
 
     @property
     def panel(self) -> pn.Column:
-        column = pn.Column(sizing_mode='stretch_width')
+        column = pn.Column(sizing_mode="stretch_width")
         for name, source in self.sources.items():
             panel = source.panel
             if not panel:
                 continue
-            header = pn.pane.Markdown(f'#### {name.title()}', margin=(0, 5))
+            header = pn.pane.Markdown(f"#### {name.title()}", margin=(0, 5))
             column.extend([header, *source.panel])
         return column
 
@@ -1351,7 +1473,6 @@ class JoinedSource(Source):
         super().clear_cache()
         for source in self.sources.values():
             source.clear_cache()
-
 
 
 class DerivedSource(Source):
@@ -1405,26 +1526,39 @@ class DerivedSource(Source):
         }
     """
 
-    cache_per_query = param.Boolean(default=False, doc="""
-        Whether to query the whole dataset or individual queries.""")
+    cache_per_query = param.Boolean(
+        default=False,
+        doc="""
+        Whether to query the whole dataset or individual queries.""",
+    )
 
-    filters = param.List(doc="""
-        A list of filters to apply to all tables of this source.""")
+    filters = param.List(
+        doc="""
+        A list of filters to apply to all tables of this source."""
+    )
 
-    source = param.ClassSelector(class_=Source, doc="""
-        A source to mirror the tables on.""")
+    source = param.ClassSelector(
+        class_=Source,
+        doc="""
+        A source to mirror the tables on.""",
+    )
 
-    tables = param.Dict(default={}, doc="""
-        The dictionary of tables and associated filters and transforms.""")
+    tables = param.Dict(
+        default={},
+        doc="""
+        The dictionary of tables and associated filters and transforms.""",
+    )
 
-    transforms = param.List(doc="""
-        A list of transforms to apply to all tables of this source.""")
+    transforms = param.List(
+        doc="""
+        A list of transforms to apply to all tables of this source."""
+    )
 
-    source_type: ClassVar[str] = 'derived'
+    source_type: ClassVar[str] = "derived"
 
     @classmethod
     def _validate_filters(cls, *args, **kwargs) -> list[dict[str, Any] | str]:  # type: ignore
-        return cls._validate_list_subtypes('filters', Filter, *args, **kwargs)
+        return cls._validate_list_subtypes("filters", Filter, *args, **kwargs)
 
     def _get_source_table(self, table: str) -> DataFrame:
         if self.tables:
@@ -1434,8 +1568,8 @@ class DerivedSource(Source):
                     f"Table '{table}' was not declared on the DerivedSource. "
                     f"Available tables include {list(self.tables)}."
                 )
-            source, table = spec['source'], spec['table']
-            filters = spec.get('filters', []) + self.filters
+            source, table = spec["source"], spec["table"]
+            filters = spec.get("filters", []) + self.filters
         else:
             source = self.source
             filters = self.filters
@@ -1446,7 +1580,7 @@ class DerivedSource(Source):
     def get(self, table: str, **query) -> DataFrame:
         df = self._get_source_table(table)
         if self.tables:
-            transforms = self.tables[table].get('transforms', []) + self.transforms
+            transforms = self.tables[table].get("transforms", []) + self.transforms
         else:
             transforms = self.transforms
         transforms.append(FilterTransform(conditions=list(query.items())))
@@ -1463,8 +1597,13 @@ class DerivedSource(Source):
         super().clear_cache()
         if self.tables:
             for spec in self.tables.values():
-                spec['source'].clear_cache()
+                spec["source"].clear_cache()
         else:
             self.source.clear_cache()
 
-__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Source)]
+
+__all__ = [
+    name
+    for name, obj in locals().items()
+    if isinstance(obj, type) and issubclass(obj, Source)
+]

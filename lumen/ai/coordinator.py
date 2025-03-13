@@ -39,6 +39,7 @@ from .models import (
 from .tools import FunctionTool, TableLookup, Tool
 from .utils import (
     get_schema, log_debug, mutate_user_message, retry_llm_output,
+    separate_source_table,
 )
 from .views import LumenOutput
 
@@ -704,9 +705,13 @@ class Planner(Coordinator):
                 selected_tables = output.selected_tables or []
                 step.stream(f"\nSelected tables: {', '.join(selected_tables)}", replace=False)
                 satisfied = output.is_satisfied or not available_tables
+                closest_tables = []
                 if satisfied:
                     step.stream("\nSelection process complete - model is satisfied with selected tables", replace=False)
-                    self._memory["closest_tables"] = selected_tables
+                    for table in selected_tables:
+                        _, normalized_table_name = separate_source_table(table, sources)
+                        closest_tables.append(normalized_table_name)
+                    self._memory["closest_tables"] = closest_tables
 
         return tables_sql_schemas
 
