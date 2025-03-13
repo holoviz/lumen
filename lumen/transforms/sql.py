@@ -126,7 +126,11 @@ class SQLTransform(Transform):
             quoted_sql_in = re.sub(
                 pattern, lambda m: f'FROM "{m.group(1)}"', sql_in, flags=re.IGNORECASE
             )
-            expressions = parse(quoted_sql_in)
+            expressions = parse(
+                quoted_sql_in,
+                read=self.read,
+                error_level=self.error_level,
+            )
 
         if len(expressions) > 1:
             raise ValueError(
