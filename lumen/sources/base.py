@@ -32,7 +32,8 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLTransform,
+    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLSelectFrom,
+    SQLTransform,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -931,7 +932,9 @@ class BaseSQLSource(Source):
         """
         Returns the SQL expression corresponding to a particular table.
         """
-        raise NotImplementedError
+        table = self.normalize_table(table)
+        sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
+        return sql_expr
 
     def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
         """
