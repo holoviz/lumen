@@ -10,8 +10,8 @@ import sqlglot
 
 from sqlglot import parse
 from sqlglot.expressions import (
-    LT, Column, Expression, Identifier, Literal as SQLLiteral, Null, Select,
-    Star, Table, TableSample, and_, func, or_, replace_placeholders,
+    LT, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min, Null,
+    Select, Star, Table, TableSample, and_, func, or_, replace_placeholders,
     replace_tables, select,
 )
 from sqlglot.optimizer import optimize
@@ -114,11 +114,20 @@ class SQLTransform(Transform):
         sqlglot.Expression
             Parsed SQL expression
         """
-        expressions = parse(
-            sql_in,
-            read=self.read,
-            error_level=self.error_level,
-        )
+        try:
+            expressions = parse(
+                sql_in,
+                read=self.read,
+                error_level=self.error_level,
+            )
+        except sqlglot.ParseError:
+            # Find table name after FROM and quote it if it contains special characters
+            pattern = r'FROM\s+([a-zA-Z0-9_\-\.]+)'
+            quoted_sql_in = re.sub(
+                pattern, lambda m: f'FROM "{m.group(1)}"', sql_in, flags=re.IGNORECASE
+            )
+            expressions = parse(quoted_sql_in)
+
         if len(expressions) > 1:
             raise ValueError(
                 "Multiple SQL statements found. Please provide only a single SQL statement."
@@ -383,10 +392,14 @@ class SQLMinMax(SQLTransform):
             return sql_in
 
         subquery = self.parse_sql(sql_in).subquery()
-        minmax = [
-            f'{func}({col}) AS {col}_{func.lower()}'
-            for col in self.columns for func in ('MIN', 'MAX')
-        ]
+        minmax = []
+        for col in self.columns:
+            quoted = self.identify or bool(re.search(r'\W', col))
+            for agg_func in (Min, Max):
+                alias = Identifier(this=(col + f"_{agg_func.__name__.upper()}"), quoted=quoted)
+                minmax.append(
+                    agg_func(this=Column(this=Identifier(this=col, quoted=quoted))).as_(alias)
+                )
         expression = select(*minmax).from_(subquery)
         return self.to_sql(expression)
 
