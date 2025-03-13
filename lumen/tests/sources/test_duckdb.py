@@ -66,9 +66,28 @@ def test_duckdb_get_schema(duckdb_source):
             'inclusiveMinimum': '2009-01-01 00:00:00',
             'type': 'string'
         },
-        '__len__': '5'
+        '__len__': 5
     }
     source = duckdb_source.get_schema('test_sql')
+    source["C"]["enum"].sort()
+    assert source == expected_sql
+    assert list(duckdb_source._schema_cache.keys()) == ['test_sql']
+
+
+def test_duckdb_get_schema_with_limit(duckdb_source):
+    expected_sql = {
+        'A': {'inclusiveMaximum': 0.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
+        'B': {'inclusiveMaximum': 0.0, 'inclusiveMinimum': 0.0, 'type': 'number'},
+        'C': {'enum': ['foo1'], 'type': 'string'},
+        'D': {
+            'format': 'datetime',
+            'inclusiveMaximum': '2009-01-01T00:00:00',
+            'inclusiveMinimum': '2009-01-01T00:00:00',
+            'type': 'string'
+        },
+        '__len__': 5
+    }
+    source = duckdb_source.get_schema('test_sql', limit=1)
     source["C"]["enum"].sort()
     assert source == expected_sql
     assert list(duckdb_source._schema_cache.keys()) == ['test_sql']
@@ -86,7 +105,7 @@ def test_duckdb_get_schema_with_none(duckdb_source):
             'inclusiveMinimum': '2009-01-01 00:00:00',
             'type': 'string'
         },
-        '__len__': '5'
+        '__len__': 5
     }
     source = duckdb_source.get_schema('test_sql_with_none')
     source["C"]["enum"].sort(key=enum.index)
