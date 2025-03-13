@@ -39,6 +39,7 @@ from .models import (
 from .tools import FunctionTool, TableLookup, Tool
 from .utils import (
     get_schema, log_debug, mutate_user_message, retry_llm_output,
+    separate_source_table,
 )
 from .views import LumenOutput
 
@@ -618,25 +619,20 @@ class Planner(Coordinator):
         }
     )
 
-    async def _iterative_table_selection(self, messages: list[Message]) -> dict:
+    async def _iterative_table_selection(self, messages: list[Message], sources: dict) -> dict:
         """
         Performs an iterative table selection process to gather context.
-
         This function:
         1. From the top tables in TableLookup results, presents all tables and columns to the LLM
         2. Has the LLM select ~3 tables for deeper examination
         3. Gets complete schemas for these tables
         4. Repeats until the LLM is satisfied with the context
         """
-        tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
-        sources = {source.name: source for source in self._memory.get("sources", [])}
-        if not sources:
-            return {}
-
         satisfied = False
         iteration = 0
         max_iterations = 3
 
+        tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
         examined_tables = set(tables_sql_schemas.keys())
         current_query = messages[-1]["content"]
         while not satisfied and iteration < max_iterations:
@@ -704,9 +700,13 @@ class Planner(Coordinator):
                 selected_tables = output.selected_tables or []
                 step.stream(f"\nSelected tables: {', '.join(selected_tables)}", replace=False)
                 satisfied = output.is_satisfied or not available_tables
+                closest_tables = []
                 if satisfied:
                     step.stream("\nSelection process complete - model is satisfied with selected tables", replace=False)
-                    self._memory["closest_tables"] = selected_tables
+                    for table in selected_tables:
+                        _, normalized_table_name = separate_source_table(table, sources)
+                        closest_tables.append(normalized_table_name)
+                    self._memory["closest_tables"] = closest_tables
 
         return tables_sql_schemas
 
@@ -714,25 +714,32 @@ class Planner(Coordinator):
         tools = {tool.name: tool for tool in self._tools["__main__"]}
         if not tools:
             return {}
-        # TODO: find a better way to make LLM always use a tool
-        required_tools = [tool.name for tool in tools.values() if tool.always_use]
-        context_model = make_context_model(
-            tools=list(tools),
-            required_tools=required_tools,
-        )
-        model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
-        system = await self._render_prompt(
-            "context",
-            messages,
-            tools=list(tools.values()),
-            required_tools=required_tools
-        )
 
+        sources = {source.name: source for source in self._memory.get("sources", [])}
+        all_tables = set()
+        for source in sources.values():
+            all_tables |= set(source.get_tables())
+        if len(all_tables) <= 5:  # if there's not many tables, just use all
+            return tools.values()
+
+        # TODO: find a better way to make LLM always use a tool
         with self.interface.add_step(
             success_title="Obtained necessary context",
             title="Obtaining additional context...",
             user="Assistant"
         ) as step:
+            required_tools = [tool.name for tool in tools.values() if tool.always_use]
+            system = await self._render_prompt(
+                "context",
+                messages,
+                tools=list(tools.values()),
+                required_tools=required_tools
+            )
+            model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
+            context_model = make_context_model(
+                tools=list(tools),
+                required_tools=required_tools,
+            )
             response = self.llm.stream(
                 messages=messages,
                 system=system,
@@ -763,11 +770,11 @@ class Planner(Coordinator):
 
             if any(isinstance(tool, TableLookup) for tool in tools.values()) and "closest_tables" in self._memory:
                 step.stream("\n\nPerforming iterative table selection to explore relevant schemas...", replace=False)
-                tables_sql_schemas = await self._iterative_table_selection(messages)
+                tables_sql_schemas = await self._iterative_table_selection(messages, sources)
                 if tables_sql_schemas:
                     self._memory["tables_sql_schemas"] = tables_sql_schemas
                     step.stream(f"\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
-
+                tools = {name: tool for name, tool in tools.items() if not isinstance(tool, TableLookup)}
         return tools.values()
 
     async def _make_plan(
@@ -787,7 +794,7 @@ class Planner(Coordinator):
                 "main",
                 messages,
                 agents=list(agents.values()),
-                tools=[tool for tool in tools if not isinstance(tool, TableLookup)],
+                tools=[tool for tool in tools],
                 unmet_dependencies=unmet_dependencies,
                 candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
                 previous_plans=previous_plans,

@@ -295,23 +295,6 @@ class DuckDBSource(BaseSQLSource):
             table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
         return table
 
-    def get_sql_expr(self, table: str):
-        if isinstance(self.tables, dict):
-            try:
-                table = self.tables[self.normalize_table(table)]
-            except KeyError:
-                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
-
-        # search if the so-called "table" already contains SELECT ... FROM
-        # if so, we don't need to wrap it in a SELECT * FROM
-        if re.search(r"(?i)\bselect\b[\s\S]+?\bfrom\b", table):
-            sql_expr = table
-        else:
-            if '(' not in table and ')' not in table:
-                table = f'"{table}"'
-            sql_expr = self.sql_expr.format(table=table)
-        return sql_expr.rstrip(";")
-
     @cached
     def get(self, table, **query):
         query.pop('__dask', None)
