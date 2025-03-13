@@ -231,7 +231,6 @@ async def get_schema(
 
     if count is not None and include_count:
         schema["__len__"] = count
-    print(count)
     return schema
 
 
