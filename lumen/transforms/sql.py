@@ -400,7 +400,7 @@ class SQLMinMax(SQLTransform):
         for col in self.columns:
             quoted = self.identify or bool(re.search(r'\W', col))
             for agg_func in (Min, Max):
-                alias = Identifier(this=(col + f"_{agg_func.__name__.upper()}"), quoted=quoted)
+                alias = Identifier(this=(col + f"_{agg_func.__name__}"), quoted=quoted)
                 minmax.append(
                     agg_func(this=Column(this=Identifier(this=col, quoted=quoted))).as_(alias)
                 )
