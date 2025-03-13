@@ -2,7 +2,7 @@
 
 Lumen AI ships with the {py:class}`lumen.ai.llm.AnthropicAI` wrapper for Anthropic LLM models. Lumen picks between a default and a reasoning model to solve different tasks, by default it will use the following models:
 
-- **`default`**: claude-3-haiku-latest
+- **`default`**: claude-3.5-haiku-latest
 - **`reasoning`**: claude-3-5-sonnet-latest
 
 ## Prerequisites
