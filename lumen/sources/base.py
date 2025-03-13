@@ -794,9 +794,10 @@ class BaseSQLSource(Source):
             count_expr = ' '.join(count_expr.splitlines())
             count_data = self.execute(count_expr)
             count_col = 'count' if 'count' in count_data else 'COUNT'
+            count = int(count_data[count_col].iloc[0])
             if limit:
                 # the min/max and enums will be computed on the limited dataset
-                schema['__len__'] = count_data[count_col].iloc[0]
+                schema['__len__'] = count
                 continue
 
             # patch the min/max and enums from the full dataset
@@ -812,7 +813,7 @@ class BaseSQLSource(Source):
                 distinct = self.execute(distinct_expr)
                 schema[col]['enum'] = distinct[col].tolist()
 
-            schema['__len__'] = count_data[count_col].iloc[0]
+            schema['__len__'] = count
             if not min_maxes:
                 continue
 
