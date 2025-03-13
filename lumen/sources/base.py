@@ -928,10 +928,16 @@ class BaseSQLSource(Source):
         """
         return table
 
-    def get_sql_expr(self, table: str):
+    def get_sql_expr(self, table: str | dict):
         """
         Returns the SQL expression corresponding to a particular table.
         """
+        if isinstance(self.tables, dict):
+            try:
+                table = self.tables[self.normalize_table(table)]
+            except KeyError:
+                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
+
         table = self.normalize_table(table)
         sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
         return sql_expr
