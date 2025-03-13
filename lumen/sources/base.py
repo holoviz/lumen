@@ -789,49 +789,54 @@ class BaseSQLSource(Source):
                 data_sql_expr = sql_transform.apply(data_sql_expr)
             data = self.execute(data_sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
-            if not limit:
-                # patch the min/max and enums from the full dataset
-                enums, min_maxes = [], []
-                for name, col_schema in schema.items():
-                    if 'enum' in col_schema:
-                        enums.append(name)
-                    elif 'inclusiveMinimum' in col_schema:
-                        min_maxes.append(name)
-                for col in enums:
-                    distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
-                    distinct_expr = ' '.join(distinct_expr.splitlines())
-                    distinct = self.execute(distinct_expr)
-                    schema[col]['enum'] = distinct[col].tolist()
 
-                if not min_maxes:
-                    continue
-
-                minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
-                minmax_expr = ' '.join(minmax_expr.splitlines())
-                minmax_data = self.execute(minmax_expr)
-                for col in min_maxes:
-                    kind = data[col].dtype.kind
-                    if kind in 'iu':
-                        cast = int
-                    elif kind == 'f':
-                        cast = float
-                    elif kind == 'M':
-                        cast = str
-                    else:
-                        cast = lambda v: v
-
-                    # some dialects, like snowflake output column names to UPPERCASE regardless of input case
-                    min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
-                    min_data = minmax_data[min_col].iloc[0]
-                    max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
-                    max_data = minmax_data[max_col].iloc[0]
-                    schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
-                    schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
             count_expr = SQLCount(read=self.dialect).apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
             count_data = self.execute(count_expr)
             count_col = 'count' if 'count' in count_data else 'COUNT'
+            if limit:
+                # the min/max and enums will be computed on the limited dataset
+                schema['__len__'] = count_data[count_col].iloc[0]
+                continue
+
+            # patch the min/max and enums from the full dataset
+            enums, min_maxes = [], []
+            for name, col_schema in schema.items():
+                if 'enum' in col_schema:
+                    enums.append(name)
+                elif 'inclusiveMinimum' in col_schema:
+                    min_maxes.append(name)
+            for col in enums:
+                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
+                distinct_expr = ' '.join(distinct_expr.splitlines())
+                distinct = self.execute(distinct_expr)
+                schema[col]['enum'] = distinct[col].tolist()
+
             schema['__len__'] = count_data[count_col].iloc[0]
+            if not min_maxes:
+                continue
+
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_data = self.execute(minmax_expr)
+            for col in min_maxes:
+                kind = data[col].dtype.kind
+                if kind in 'iu':
+                    cast = int
+                elif kind == 'f':
+                    cast = float
+                elif kind == 'M':
+                    cast = str
+                else:
+                    cast = lambda v: v
+
+                # some dialects, like snowflake output column names to UPPERCASE regardless of input case
+                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
+                min_data = minmax_data[min_col].iloc[0]
+                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
+                max_data = minmax_data[max_col].iloc[0]
+                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
+                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
         return schemas if table is None else schemas[table]
 
