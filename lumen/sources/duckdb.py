@@ -12,7 +12,9 @@ import param
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
-from ..transforms.sql import SQLFilter, SQLSelectFrom
+from ..transforms.sql import (
+    SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
+)
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -275,7 +277,6 @@ class DuckDBSource(BaseSQLSource):
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
-
         return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
 
     def get_tables(self):
@@ -334,3 +335,37 @@ class DuckDBSource(BaseSQLSource):
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
+
+    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, Any]:
+        """
+        Generate metadata for all tables or a single table (batched=False) in DuckDB.
+        Handles formats: database.schema.table_name, schema.table_name, or table_name.
+
+        Args:
+            table: Table name(s) to get metadata for
+            batched: If True, process multiple tables at once
+
+        Returns:
+            Dictionary with table metadata including description, columns, row count, etc.
+        """
+        if batched:
+            metadata = {}
+            table_names = table if isinstance(table, list) else [table]
+            for table_name in table_names:
+                metadata[table_name] = self._get_table_metadata(table_name, batched=False)
+            return metadata
+        sql_expr = self.get_sql_expr(table)
+        schema_expr = SQLLimit(limit=0).apply(sql_expr)
+        count_expr = SQLCount().apply(sql_expr)
+        schema_result = self.execute(schema_expr)
+        count = self.execute(count_expr).iloc[0, 0]
+        return {
+            "description": "",
+            "columns": {
+                col: {"data_type": str(dtype), "description": ""}
+                for col, dtype in zip(schema_result.columns, schema_result.dtypes)
+            },
+            "rows": count,
+            "updated_at": None,
+            "created_at": None,
+        }

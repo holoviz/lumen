@@ -4,6 +4,7 @@ import decimal
 import re
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import param
@@ -278,18 +279,17 @@ class SnowflakeSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
 
-    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, dict]:
+    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, Any]:
         """
         Generate metadata for all tables or a single table (batched=False) in Snowflake.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
         Schema can be None to be used as a wildcard.
         """
-        print("CALLED...")
         null_result = {"description": "", "columns": {}, "rows": 0, "updated_at": None, "created_at": None}
         if batched:
-            table_list = table if isinstance(table, list) else [table]
+            table_names = table if isinstance(table, list) else [table]
             parsed_tables = []
-            for t in table_list:
+            for t in table_names:
                 parts = t.split(".")
                 if len(parts) == 3:
                     parsed_tables.append(parts)  # database.schema.table_name
@@ -339,7 +339,7 @@ class SnowflakeSource(BaseSQLSource):
 
             table_metadata_columns = table_metadata.join(table_columns).reset_index()
 
-            result = null_result
+            result = {}
             for table_slug, group in table_metadata_columns.groupby("TABLE_SLUG"):
                 first_row = group.iloc[0]
                 description = first_row["TABLE_DESCRIPTION"] or ""
@@ -351,6 +351,7 @@ class SnowflakeSource(BaseSQLSource):
                     group[["COLUMN_NAME", "COLUMN_DESCRIPTION", "DATA_TYPE"]]
                     .rename({"COLUMN_DESCRIPTION": "description", "DATA_TYPE": "data_type"}, axis=1)
                     .set_index("COLUMN_NAME")
+                    .transpose()
                     .to_dict()
                 )
                 result[table_slug] = {
@@ -403,5 +404,5 @@ class SnowflakeSource(BaseSQLSource):
         columns_info = self.execute(column_query, (database, actual_schema, table_name))
         columns = columns_info.set_index("COLUMN_NAME")[["COMMENT", "DATA_TYPE"]].fillna("").rename(
             {"COMMENT": "description", "DATA_TYPE": "data_type"}, axis=1
-        ).to_dict()
+        ).transpose().to_dict()
         return {"description": description, "columns": columns, "rows": rows, "updated_at": updated_at, "created_at": created_at}

@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
+from textwrap import indent
 from typing import Any
 
 import param
 
 from panel.viewable import Viewable
 
-from lumen.sources.base import Source
-
 from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
+from .models import make_refined_query_model
 from .translate import function_to_model
+from .utils import log_debug
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -27,22 +27,45 @@ class Tool(Actor, ContextProvider):
     interact with or on behalf of a user directly.
     """
 
+    always_use = param.Boolean(default=False, doc="""
+        Whether to always use this tool, even if it is not explicitly
+        required by the current context.""")
+
 
 class VectorLookupTool(Tool):
     """
     Baseclass for tools that search a vector database for relevant
     chunks.
     """
+    enable_query_refinement = param.Boolean(default=True, doc="""
+        Whether to enable query refinement for improving search results.""")
 
-    min_similarity = param.Number(default=0.1, doc="""
+    min_similarity = param.Number(default=0.05, doc="""
         The minimum similarity to include a document.""")
 
     n = param.Integer(default=3, bounds=(0, None), doc="""
         The number of document results to return.""")
 
+    prompts = param.Dict(
+        default={
+            "refine_query": {
+                "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
+                "response_model": make_refined_query_model,
+            },
+        },
+        doc="""
+        Dictionary of available prompts for the tool.
+        """
+    )
+
+    refinement_similarity_threshold = param.Number(default=0.3, bounds=(0, 1), doc="""
+        Similarity threshold below which query refinement is triggered.""")
+
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
         before responding.""")
+
+    _item_type_name: str = "items"
 
     __abstract = True
 
@@ -50,6 +73,132 @@ class VectorLookupTool(Tool):
         if 'vector_store' not in params:
             params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
+
+    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+        """
+        Format search results for inclusion in the refinement prompt.
+
+        Subclasses can override this to provide more specific formatting.
+
+        Parameters
+        ----------
+        results: list[dict[str, Any]]
+            The search results from vector_store.query
+
+        Returns
+        -------
+        str
+            Formatted description of results
+        """
+        return "\n".join(
+            f"- Result {i+1}: {result.get('text', 'No text')} (Similarity: {result.get('similarity', 0):.3f})"
+            for i, result in enumerate(results)
+        )
+
+    async def _refine_query(
+        self,
+        original_query: str,
+        results: list[dict[str, Any]]
+    ) -> str:
+        """
+        Refines the search query based on initial search results.
+
+        Parameters
+        ----------
+        original_query: str
+            The original user query
+        results: list[dict[str, Any]]
+            The initial search results
+
+        Returns
+        -------
+        str
+            A refined search query
+        """
+        results_description = self._format_results_for_refinement(results)
+
+        messages = [{"role": "user", "content": original_query}]
+
+        try:
+            refined_query_model = self._get_model("refine_query", item_type_name=self._item_type_name)
+            system_prompt = await self._render_prompt(
+                "refine_query",
+                messages,
+                results=results,
+                results_description=results_description,
+                original_query=original_query,
+                item_type=self._item_type_name
+            )
+
+            model_spec = self.prompts["refine_query"].get("llm_spec", self.llm_spec_key)
+            output = await self.llm.invoke(
+                messages=messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=refined_query_model
+            )
+
+            return output.refined_search_query
+        except Exception as e:
+            log_debug(f"Error refining query: {e}")
+            return original_query
+
+    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[str, list[dict[str, Any]], float]:
+        """
+        Performs a vector search with optional query refinement.
+
+        Parameters
+        ----------
+        query: str
+            The search query
+        **kwargs:
+            Additional arguments for vector_store.query
+
+        Returns
+        -------
+        tuple[str, list[dict[str, Any]], float]
+            - The final query used (original or refined)
+            - The search results
+            - The best similarity score
+        """
+        original_query = query
+        final_query = query
+
+        log_debug(f"Performing initial search with query: '{query}'")
+        results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        best_similarity = max([result.get('similarity', 0) for result in results], default=0)
+        log_debug(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}")
+
+        self._memory["original_query"] = original_query
+        self._memory["original_similarity"] = best_similarity
+
+        if self.enable_query_refinement and best_similarity < self.refinement_similarity_threshold:
+            log_debug(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
+
+            refined_query = await self._refine_query(original_query, results)
+
+            if refined_query != query:  # Only perform search if query changed
+                final_query = refined_query
+                self._memory["refined_search_query"] = refined_query
+                log_debug(f"Query refined to: '{refined_query}'")
+
+                new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
+
+                new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
+                self._memory["refined_similarity"] = new_best_similarity
+                log_debug(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f}")
+
+                if new_best_similarity > best_similarity:
+                    log_debug(f"Using refined results (improvement: {(new_best_similarity-best_similarity):.3f})")
+                    results = new_results
+                    best_similarity = new_best_similarity
+                else:
+                    log_debug("No improvement with refined query, reverting to original results")
+                    final_query = original_query
+            else:
+                log_debug("Refinement returned unchanged query")
+
+        return final_query, results, best_similarity
 
 
 class DocumentLookup(VectorLookupTool):
@@ -59,15 +208,46 @@ class DocumentLookup(VectorLookupTool):
     Always use this for more context.
     """
 
-    purpose = param.String(doc="""
-        Looks up relevant""")
+    purpose = param.String(default="""
+        Looks up relevant documents based on the user query.""")
 
     requires = param.List(default=["document_sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
+    # Override the item type name
+    _item_type_name = "documents"
+
     def __init__(self, **params):
         super().__init__(**params)
         self._memory.on_change('document_sources', self._update_vector_store)
+
+    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+        """
+        Format document search results for inclusion in the refinement prompt.
+
+        Parameters
+        ----------
+        results: list[dict[str, Any]]
+            The search results from vector_store.query
+
+        Returns
+        -------
+        str
+            Formatted description of document results
+        """
+        formatted_results = []
+        for i, result in enumerate(results):
+            metadata = result.get('metadata', {})
+            filename = metadata.get('filename', 'Unknown document')
+            text_preview = result.get('text', '')[:150] + '...' if len(result.get('text', '')) > 150 else result.get('text', '')
+
+            description = f"- Document: {filename} (Similarity: {result.get('similarity', 0):.3f})"
+            if text_preview:
+                description += f"\n  Preview: {text_preview}"
+
+            formatted_results.append(description)
+
+        return "\n".join(formatted_results)
 
     async def _update_vector_store(self, _, __, sources):
         for source in sources:
@@ -81,15 +261,27 @@ class DocumentLookup(VectorLookupTool):
             self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
-        query = re.findall(r"'(.*?)'", messages[-1]["content"])[0]
-        results = self.vector_store.query(query, top_k=self.n, threshold=self.min_similarity)
+        query = messages[-1]["content"]
+
+        # Perform search with refinement
+        final_query, results, best_similarity = await self._perform_search_with_refinement(query)
+
         closest_doc_chunks = [
-            f"{result['text']} (Relevance: {result['similarity']:.1f} - Metadata: {result['metadata']}"
+            f"{result['text']} (Relevance: {result['similarity']:.1f} - "
+            f"Metadata: {result['metadata']})"
             for result in results
+            if result['similarity'] >= self.min_similarity
         ]
+
         if not closest_doc_chunks:
             return ""
+
         message = "Please augment your response with the following context if relevant:\n"
+
+        # If refined query was used, note this in the response
+        if "refined_search_query" in self._memory and final_query != query:
+            message = f"Refined search query '{final_query}' yielded these results:\n\n" + message
+
         message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
         return message
 
@@ -99,6 +291,9 @@ class TableLookup(VectorLookupTool):
     TableLookup tool that creates a vector store of all available tables
     and responds with relevant tables for user queries.
     """
+
+    purpose = param.String(default="""
+        Looks up relevant tables based on the user query.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -112,7 +307,7 @@ class TableLookup(VectorLookupTool):
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
 
-    include_columns = param.Boolean(default=False, doc="""
+    include_columns = param.Boolean(default=True, doc="""
         Whether to include column names and descriptions in the embeddings.""")
 
     include_misc = param.Boolean(default=False, doc="""
@@ -121,6 +316,11 @@ class TableLookup(VectorLookupTool):
 
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
+
+    _item_type_name = "database tables"
+
+    _ready = param.Boolean(default=False, doc="""
+        Whether the vector store is ready.""")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -133,7 +333,34 @@ class TableLookup(VectorLookupTool):
         self._memory.on_change('sources', self._update_vector_store)
         self._memory.trigger('sources')
 
-    async def _fetch_and_store_metadata(self, source: Source, table_name: str):
+    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+        """
+        Format table search results for inclusion in the refinement prompt.
+
+        Parameters
+        ----------
+        results: list[dict[str, Any]]
+            The search results from vector_store.query
+
+        Returns
+        -------
+        str
+            Formatted description of table results
+        """
+        formatted_results = []
+        for i, result in enumerate(results):
+            source_name = result['metadata'].get("source", "unknown")
+            table_name = result['metadata'].get("table_name", "unknown")
+            table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+
+            description = f"- Table: {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
+            if table_metadata := self._table_metadata.get(table_slug):
+                if table_description := table_metadata.get("description"):
+                    description += f"\n  Description: {table_description}"
+            formatted_results.append(description)
+        return "\n".join(formatted_results)
+
+    async def _fetch_and_store_metadata(self, source, table_name: str):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
             if self.batched:
@@ -141,88 +368,137 @@ class TableLookup(VectorLookupTool):
                 if isinstance(source_metadata, asyncio.Task):
                     source_metadata = await source_metadata
                     self._memory["sources_raw_metadata"][source.name] = source_metadata
-                    print("LOADED!!")
             else:
-                source_metadata = await asyncio.to_thread(source.get_metadata, table_name)
+                source_metadata = await asyncio.to_thread(source.get_metadata, table_name, batched=False)
 
-        multi_source = len(self._memory.get("sources", [])) > 1
-        if multi_source:
-            enriched_text = table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        else:
-            enriched_text = table_slug = table_name
-        self._table_metadata[table_slug] = source_metadata
-
-        vector_metadata = {"source": source.name, "table": table_name}
-        if self.vector_store.filter_by(vector_metadata):
+        table_name_key = next((
+            key for key in (table_name.upper(), table_name.lower(), table_name)
+            if key in source_metadata), None
+        )
+        if not table_name_key:
             return
+        table_name = table_name_key
+        table_metadata = source_metadata[table_name]
 
-        if description := source_metadata.pop('description', ''):
+        # IMPORTANT: re-insert using table slug
+        # we need to store a copy of table_metadata so it can be used to inject context into the LLM
+        table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+        self._table_metadata[table_slug] = table_metadata.copy()
+        self._table_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
+
+        vector_metadata = {"source": source.name, "table_name": table_name}
+        if existing_items := self.vector_store.filter_by(vector_metadata):
+            if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
+                return
+            self.vector_store.delete([item['id'] for item in existing_items])
+
+        # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
+        vector_metadata["enriched"] = True
+        enriched_text = f"Table: {table_name}"
+        if description := table_metadata.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
-        if self.include_columns and (columns := source_metadata.pop('columns', {})):
+        if self.include_columns and (columns := table_metadata.pop('columns', {})):
             enriched_text += "\nColumns:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
-                if 'description' in col_info:
+                if col_info.get("description"):
                     col_text += f": {col_info['description']}"
                 enriched_text += col_text
+            enriched_text += "\n"
         if self.include_misc:
             enriched_text += "\nMiscellaneous:"
-            for key, value in source_metadata.items():
+            for key, value in table_metadata.items():
+                if key == "enriched":
+                    continue
                 enriched_text += f"\n- {key}: {value}"
         self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def _update_vector_store(self, _, __, sources):
+        # Create a list to track all tasks we're starting in this update
+        all_tasks = []
+
         for source in sources:
-            if self._memory["sources_raw_metadata"].get(source.name) is None:
-                print(f"Fetching metadata for source: {source.name}")
-                self._memory["sources_raw_metadata"][source.name] = asyncio.create_task(
+            if self.include_metadata and self._memory["sources_raw_metadata"].get(source.name) is None:
+                metadata_task = asyncio.create_task(
                     asyncio.to_thread(source.get_metadata)
                 )
+                self._memory["sources_raw_metadata"][source.name] = metadata_task
+                all_tasks.append(metadata_task)
 
-            for table in source.get_tables():
-                if not self.include_metadata:
-                    metadata = {"table": table, "source": source.name}
-                    if self.vector_store.filter_by(metadata):
-                        # TODO: Add ability to update existing source table?
-                        continue
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    self.vector_store.add([{"text": table_slug, "metadata": metadata}])
-                else:
+            tables = source.get_tables()
+            # since enriching the metadata might take time, first add basic metadata (table name)
+            for table_name in tables:
+                metadata = {"source": source.name, "table_name": table_name}
+                if self.vector_store.filter_by(metadata):
+                    # TODO: Add ability to update existing source table?
+                    continue
+                self.vector_store.add([{"text": table_name, "metadata": metadata}])
+
+            # if metadata is included, upsert the existing
+            if self.include_metadata:
+                for table in tables:
                     task = asyncio.create_task(
                         self._fetch_and_store_metadata(source, table)
                     )
                     self._metadata_tasks.add(task)
                     task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
+                    all_tasks.append(task)
+
+        if all_tasks:
+            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
+            ready_task.add_done_callback(lambda t: None if t.exception() else None)
+
+    async def _mark_ready_when_done(self, tasks):
+        """Wait for all tasks to complete and then mark the tool as ready."""
+        await asyncio.gather(*tasks, return_exceptions=True)
+        log_debug("All table metadata tasks completed.")
+        self._ready = True
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
-        Fetches the closest tables based on the user query, depending on whether
-        any tables reach the min_similarity threshold we adjust the messsage.
+        Fetches the closest tables based on the user query, with query refinement
+        if enabled and initial results don't meet threshold.
         """
         query = messages[-1]["content"]
-        results = self.vector_store.query(query, top_k=self.n)
-        multi_source = len(self._memory.get("sources", []))
+
+        # Perform search with refinement
+        final_query, results, best_similarity = await self._perform_search_with_refinement(query)
+
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
 
+        # Process results as before
         closest_tables, descriptions = [], []
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
-            table_name = result['metadata']['table']
-            if multi_source:
-                source_name = result['metadata']['source']
-                table_name = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            description = f"- `{table_name}`: {result['similarity']:.3f} similarity"
-            if table_metadata := self._table_metadata.get(table_name):
-                description += f"\n    {table_metadata['description']}"
-            closest_tables.append(table_name)
+            source_name = result['metadata']["source"]
+            table_name = result['metadata']["table_name"]
+            table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+            description = f"- `{table_slug}` ({result['similarity']:.3f} similarity):\n"
+            if table_metadata := self._table_metadata.get(table_slug):
+                if table_description := table_metadata.get("description"):
+                    description += f"  Description: {table_description}"
+                columns_description = "Columns:"
+                for i, (col_name, col_info) in enumerate(table_metadata.get("columns", {}).items()):
+                    col_desc = f": {col_info['description']}" if col_info.get("description") else ""
+                    columns_description += f"\n- {col_name}{col_desc}"
+                    if i > 10:
+                        columns_description += "\n  ... (more columns not shown)"
+                        break
+                description += f"\n{indent(columns_description, ' ' * 2)}"
+            closest_tables.append(table_slug)
             descriptions.append(description)
 
         if any_matches:
-            message = "The most relevant tables are:\n"
+            message = "Based on the vector search, the most relevant tables are:\n"
         else:
-            message = "No relevant tables found, but here are some other tables:\n"
+            message = "Based on the vector search, was unable to find tables relevant to the query.\n"
+            if closest_tables:
+                message += "Here are some other tables:\n"
+
         self._memory["closest_tables"] = closest_tables
+        if "refined_search_query" in self._memory and final_query != query:
+            message = f"Refined search query: '{final_query}'\n" + message
         return message + "\n".join(descriptions)
 
 
