@@ -1,0 +1,9 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block tools -%}
+{{ super() }}
+{%- if tool_context is defined -%}
+{# Context from agent #}
+{{ tool_context }}
+{% endif -%}
+{%- endblock -%}

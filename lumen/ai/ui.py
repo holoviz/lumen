@@ -28,6 +28,7 @@ from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
 from lumen.ai.config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from lumen.ai.tools import TableLookup
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -120,7 +121,7 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
-    tools = param.List(default=[], doc="""
+    tools = param.List(default=[TableLookup], doc="""
        List of Tools that can be invoked by the coordinator.""")
 
     __abstract = True
@@ -189,7 +190,7 @@ class UI(Viewer):
 
     async def _verify_llm(self):
         alert = Alert(
-            'Initializing LLM ⌛',
+            'Initializing LLM and vector store ⌛',
             alert_type='primary',
             margin=5,
             sizing_mode='stretch_width',
@@ -198,6 +199,7 @@ class UI(Viewer):
         self.interface.send(alert, respond=False, user='System')
         try:
             await self.llm.invoke([{'role': 'user', 'content': 'Are you there? YES | NO'}])
+            success = True
         except Exception as e:
             traceback.print_exc()
             alert.param.update(
@@ -209,10 +211,24 @@ class UI(Viewer):
                     'padding-bottom': '0.8em'
                 }
             )
-        else:
+            success = False
+
+        table_lookup = None
+        for tool in self._coordinator._tools["__main__"]:
+            if isinstance(tool, TableLookup):
+                table_lookup = tool
+                break
+
+        if table_lookup is not None:
+            while True:
+                await asyncio.sleep(1)
+                if table_lookup._ready:
+                    break
+
+        if success:
             alert.param.update(
                 alert_type='success',
-                object='Successfully initialized LLM ✅︎',
+                object='Successfully initialized LLM and vector store ✅︎',
                 styles={'background-color': 'var(--success-bg-subtle)'}
             )
 
