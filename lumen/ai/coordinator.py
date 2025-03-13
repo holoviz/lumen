@@ -9,6 +9,7 @@ from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
+import yaml
 
 from panel import bind
 from panel.chat import ChatInterface, ChatStep
@@ -25,12 +26,20 @@ from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
-from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
+from .config import (
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
+    SOURCE_TABLE_SEPARATOR,
+)
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import make_agent_model, make_context_model, make_plan_models
+from .models import (
+    make_agent_model, make_context_model, make_coordinator_tables_model,
+    make_plan_models,
+)
 from .tools import FunctionTool, TableLookup, Tool
-from .utils import log_debug, mutate_user_message, retry_llm_output
+from .utils import (
+    get_schema, log_debug, mutate_user_message, retry_llm_output,
+)
 from .views import LumenOutput
 
 if TYPE_CHECKING:
@@ -185,7 +194,7 @@ class Coordinator(Viewer, Actor):
             else:
                 tool_kwargs = {}
                 if tool is TableLookup:
-                    tool_kwargs["n"] = 4
+                    tool_kwargs["n"] = 10
                     tool_kwargs["always_use"] = True
                 self._tools["__main__"].append(tool(llm=llm, **tool_kwargs))
 
@@ -601,14 +610,110 @@ class Planner(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
+            },
+            "table_selection": {
+                "template": PROMPTS_DIR / "Planner" / "table_selection.jinja2",
+                "response_model": make_coordinator_tables_model,
             }
         }
     )
 
+    async def _iterative_table_selection(self, messages: list[Message]) -> dict:
+        """
+        Performs an iterative table selection process to gather context.
+
+        This function:
+        1. From the top tables in TableLookup results, presents all tables and columns to the LLM
+        2. Has the LLM select ~3 tables for deeper examination
+        3. Gets complete schemas for these tables
+        4. Repeats until the LLM is satisfied with the context
+        """
+        tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
+        sources = {source.name: source for source in self._memory.get("sources", [])}
+        if not sources:
+            return {}
+
+        satisfied = False
+        iteration = 0
+        max_iterations = 3
+
+        examined_tables = set(tables_sql_schemas.keys())
+        current_query = messages[-1]["content"]
+        while not satisfied and iteration < max_iterations:
+            iteration += 1
+            with self.interface.add_step(
+                title=f"Iterative table selection ({iteration} / {max_iterations})",
+                user="Assistant",
+                success_title=f"Iteration {iteration} completed",
+            ) as step:
+                step.stream(f"\n\nIteration {iteration} of table selection", replace=False)
+                available_tables = [
+                    table for table in self._memory.get("closest_tables", [])
+                    if table not in examined_tables
+                ]
+                if not available_tables:
+                    step.stream("\nNo more tables available to examine")
+                    break
+
+                if iteration == 1:
+                    selected_tables = available_tables[:3]  # start with a couple
+
+                step.stream(f"\nGathering complete schema information for {len(selected_tables)} tables...")
+                for source_table in selected_tables:
+                    if SOURCE_TABLE_SEPARATOR in source_table:
+                        source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+                        source_obj = sources.get(source_name)
+                    else:
+                        source_obj = next(iter(sources.values()))
+                        table_name = source_table
+
+                    if not source_obj:
+                        continue
+
+                    table_schema = await get_schema(source_obj, table_name, include_count=True, include_enum=False, include_type=False)
+                    normalized_table_name = source_obj.normalize_table(table_name)
+                    tables_sql_schemas[normalized_table_name] = {
+                        "schema": yaml.dump(table_schema),
+                        "sql": source_obj.get_sql_expr(table_name),
+                    }
+                    examined_tables.add(source_table)
+                    step.stream(f"Added schema for {normalized_table_name}", replace=False)
+
+                system = await self._render_prompt(
+                    "table_selection",
+                    messages,
+                    current_query=current_query,
+                    available_tables=available_tables,
+                    examined_tables=examined_tables,
+                    separator=SOURCE_TABLE_SEPARATOR,
+                    current_schemas=tables_sql_schemas,
+                    iteration=iteration
+                )
+                step.stream(f"\n\nSelecting tables from {len(available_tables)} available options...")
+                model_spec = self.prompts["table_selection"].get("llm_spec", self.llm_spec_key)
+                tables_model = make_coordinator_tables_model(available_tables)
+                response = self.llm.stream(
+                    messages,
+                    system=system,
+                    model_spec=model_spec,
+                    response_model=tables_model,
+                )
+                async for output in response:
+                    chain_of_thought = output.chain_of_thought or ""
+                    step.stream(chain_of_thought, replace=True)
+                selected_tables = output.selected_tables or []
+                step.stream(f"\nSelected tables: {', '.join(selected_tables)}", replace=False)
+                satisfied = output.is_satisfied or not available_tables
+                if satisfied:
+                    step.stream("\nSelection process complete - model is satisfied with selected tables", replace=False)
+                    self._memory["closest_tables"] = selected_tables
+
+        return tables_sql_schemas
+
     async def _get_tools_context(self, messages: list[Message]) -> dict:
         tools = {tool.name: tool for tool in self._tools["__main__"]}
         if not tools:
-            return ''
+            return {}
         # TODO: find a better way to make LLM always use a tool
         required_tools = [tool.name for tool in tools.values() if tool.always_use]
         context_model = make_context_model(
@@ -655,6 +760,14 @@ class Planner(Coordinator):
                         step.stream(f'\n{output_tool.name}:\n{response}\n')
                         tool_context += f'\n- {response}'
                     self._memory["tools_context"][output_tool.name] = tool_context
+
+            if any(isinstance(tool, TableLookup) for tool in tools.values()) and "closest_tables" in self._memory:
+                step.stream("\n\nPerforming iterative table selection to explore relevant schemas...", replace=False)
+                tables_sql_schemas = await self._iterative_table_selection(messages)
+                if tables_sql_schemas:
+                    self._memory["tables_sql_schemas"] = tables_sql_schemas
+                    step.stream(f"\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
+
         return tools.values()
 
     async def _make_plan(

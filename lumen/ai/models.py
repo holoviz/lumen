@@ -165,3 +165,61 @@ def make_tables_model(tables):
         __base__=PartialBaseModel
     )
     return table_model
+
+
+def make_coordinator_tables_model(tables):
+    """
+    Creates a model for table selection in the coordinator.
+    This is separate from the SQLAgent's table selection model to focus on context gathering
+    rather than query execution.
+    """
+    table_model = create_model(
+        "CoordinatorTable",
+        chain_of_thought=(str, FieldInfo(
+            description="""
+            Consider which tables would provide the most relevant context for understanding the user query.
+            Think about what information would help you better understand the domain and data relationships.
+            """
+        )),
+        is_satisfied=(bool, FieldInfo(
+            description="""
+            Indicate whether you have sufficient context about the available data structures.
+            Set to True if you understand enough about the data model to proceed with the query.
+            Set to False if you need to examine additional tables to better understand the domain.
+            """
+        )),
+        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
+            description="""
+            If is satisfied is True, return the closest tables that are most relevant to the user query.
+            If is satisfied is False, return a list of table names that you believe would provide
+            the most relevant context for understanding the user query.
+            Focus on tables that contain key entities, relationships, or metrics mentioned in the query.
+            """
+        )),
+        __base__=PartialBaseModel
+    )
+    return table_model
+
+
+def make_refined_query_model(item_type_name: str = "items"):
+    """
+    Creates a model for refining search queries in vector lookup tools.
+    """
+    return create_model(
+        "RefinedQuery",
+        chain_of_thought=(str, Field(
+            description=f"""
+            Analyze the current search results for {item_type_name}. Consider whether the terms used
+            in the query match the terms that might be found in {item_type_name} names and descriptions.
+            Think about more specific or alternative terms that might yield better results.
+            """
+        )),
+        refined_search_query=(str, Field(
+            description=f"""
+            A refined search query that would help find more relevant {item_type_name}.
+            This should be a focused query with specific terms, entities, or concepts
+            that might appear in relevant {item_type_name}.
+            """
+        )),
+        __base__=PartialBaseModel
+    )
