@@ -42,6 +42,7 @@ from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
     log_debug, mutate_user_message, report_error, retry_llm_output,
+    separate_source_table,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -506,7 +507,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data", "tables_sql_schemas"], readonly=True)
 
-    requires = param.List(default=["source", "closest_tables"], readonly=True)
+    requires = param.List(default=["source"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -652,46 +653,42 @@ class SQLAgent(LumenBaseAgent):
 
         sources = {source.name: source for source in self._memory["sources"]}
         tables = [
-            f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" for a_source in sources.values()
-            for a_table in self._memory["closest_tables"]
+            f"{a_source}{SOURCE_TABLE_SEPARATOR}{a_table}" if SOURCE_TABLE_SEPARATOR not in a_table else a_table
+            for a_source in sources.values()
+            for a_table in self._memory.get("closest_tables", a_source.get_tables()[:5])
         ]
-        if len(tables) == 1:
-            # if only one source and one table, return it directly
-            return {tables[0]: next(iter(sources.values()))}, ""
-
-        system = await self._render_prompt(
-            "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
-        )
-        tables_model = self._get_model("find_tables", tables=tables)
-        model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-        with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(
-                messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=tables_model,
+        if len(tables) > 1:
+            system = await self._render_prompt(
+                "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
             )
-            async for output in response:
-                chain_of_thought = output.chain_of_thought or ""
-                selected_tables = output.selected_tables
-                if output.potential_join_issues is not None:
-                    chain_of_thought += output.potential_join_issues
-                if selected_tables is not None:
-                    chain_of_thought = chain_of_thought + f"\n\nRelevant tables: {selected_tables}"
-                step.stream(
-                    f'{chain_of_thought}',
-                    replace=True
+            tables_model = self._get_model("find_tables", tables=tables)
+            model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
+            with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+                response = self.llm.stream(
+                    messages,
+                    system=system,
+                    model_spec=model_spec,
+                    response_model=tables_model,
                 )
-            step.success_title = f'Found {len(selected_tables)} relevant table(s)'
+                async for output in response:
+                    chain_of_thought = output.chain_of_thought or ""
+                    selected_tables = output.selected_tables
+                    if output.potential_join_issues is not None:
+                        chain_of_thought += output.potential_join_issues
+                    if selected_tables is not None:
+                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: {selected_tables}"
+                    step.stream(
+                        f'{chain_of_thought}',
+                        replace=True
+                    )
+                step.success_title = f'Found {len(selected_tables)} relevant table(s)'
+        else:
+            selected_tables = tables[:1]
+            chain_of_thought = ""
 
         tables_to_source = {}
         for source_table in selected_tables:
-            if SOURCE_TABLE_SEPARATOR in source_table:
-                a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                a_source_obj = sources.get(a_source_name)
-            else:
-                a_source_obj = next(iter(sources.values()))
-                a_table = source_table
+            a_source_obj, a_table = separate_source_table(source_table, sources)
             tables_to_source[a_table] = a_source_obj
         return tables_to_source, chain_of_thought
 
