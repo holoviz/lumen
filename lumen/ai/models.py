@@ -190,8 +190,9 @@ def make_coordinator_tables_model(tables):
         )),
         selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
             description="""
-            If is satisfied is True, return the closest tables that are most relevant to the user query.
-            If is satisfied is False, return a list of table names that you believe would provide
+            If is satisfied is True, return the closest tables that are most relevant to the user query,
+            which can be one or more tables. If is satisfied is False,
+            return a list of table names that you believe would provide
             the most relevant context for understanding the user query.
             Focus on tables that contain key entities, relationships, or metrics mentioned in the query.
             """

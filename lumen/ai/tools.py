@@ -474,7 +474,7 @@ class TableLookup(VectorLookupTool):
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            description = f"- `{table_slug}` ({result['similarity']:.3f} similarity):\n"
+            description = f"- `{table_slug}` ({result['similarity']:.3f} similarity):"
             if table_metadata := self._table_metadata.get(table_slug):
                 if table_description := table_metadata.get("description"):
                     description += f"  Description: {table_description}"

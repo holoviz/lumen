@@ -229,8 +229,9 @@ async def get_schema(
             for enum in spec["enum"]
         ]
 
-    if count and include_count:
+    if count is not None and include_count:
         schema["__len__"] = count
+    print(count)
     return schema
 
 
