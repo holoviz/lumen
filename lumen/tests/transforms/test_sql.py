@@ -53,6 +53,18 @@ def test_init_with_both_dialects():
     assert postgres_result == expected_postgres
 
 
+def test_sql_parse_hyphen():
+    result = SQLTransform().apply(
+        "SELECT * FROM read_csv('life-expectancy.csv')"
+    )
+    expected = "SELECT * FROM READ_CSV('life-expectancy.csv')"
+    assert result == expected
+
+    result = SQLTransform().apply("SELECT * FROM 'life-expectancy.csv'")
+    expected = 'SELECT * FROM "life-expectancy.csv"'
+    assert result == expected
+
+
 def test_sql_optimize():
     result = SQLTransform(optimize=True).apply(
         "SELECT * FROM (SELECT col1, col2 FROM table) WHERE col1 > 10"
@@ -163,6 +175,17 @@ def test_sql_distinct():
 def test_sql_min_max():
     result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
     expected = "SELECT MIN(A) AS A_min, MAX(A) AS A_max, MIN(B) AS B_min, MAX(B) AS B_max FROM (SELECT * FROM TABLE)"
+    assert result == expected
+
+
+def test_sql_min_max_nonalphanum_characters():
+    result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A_B-123", "Period life expectancy at birth - Sex: total - Age: 0"])
+    expected = (
+        'SELECT MIN("A_B-123") AS "A_B-123_min", MAX("A_B-123") AS "A_B-123_max", '
+        'MIN("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_min", '
+        'MAX("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_max" '
+        'FROM (SELECT * FROM TABLE)'
+    )
     assert result == expected
 
 
