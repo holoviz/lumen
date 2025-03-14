@@ -53,13 +53,17 @@ class VectorLookupTool(Tool):
                 "response_model": make_refined_query_model,
             },
         },
-        doc="""
-        Dictionary of available prompts for the tool.
-        """
+        doc="Dictionary of available prompts for the tool."
     )
 
     refinement_similarity_threshold = param.Number(default=0.3, bounds=(0, 1), doc="""
         Similarity threshold below which query refinement is triggered.""")
+
+    max_refinement_iterations = param.Integer(default=3, bounds=(1, 10), doc="""
+        Maximum number of refinement iterations to perform.""")
+
+    min_refinement_improvement = param.Number(default=0.05, bounds=(0, 1), doc="""
+        Minimum improvement in similarity score required to keep refining.""")
 
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
@@ -163,42 +167,68 @@ class VectorLookupTool(Tool):
         """
         original_query = query
         final_query = query
+        current_query = query
+        iteration = 0
 
         log_debug(f"Performing initial search with query: '{query}'")
         results = self.vector_store.query(query, top_k=self.n, **kwargs)
         best_similarity = max([result.get('similarity', 0) for result in results], default=0)
+        best_results = results
         log_debug(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}")
 
         self._memory["original_query"] = original_query
         self._memory["original_similarity"] = best_similarity
 
+        refinement_history = []
         if self.enable_query_refinement and best_similarity < self.refinement_similarity_threshold:
             log_debug(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
 
-            refined_query = await self._refine_query(original_query, results)
+            while iteration < self.max_refinement_iterations and best_similarity < self.refinement_similarity_threshold:
+                iteration += 1
+                log_debug(f"Refinement iteration {iteration}/{self.max_refinement_iterations}")
 
-            if refined_query != query:  # Only perform search if query changed
-                final_query = refined_query
-                self._memory["refined_search_query"] = refined_query
-                log_debug(f"Query refined to: '{refined_query}'")
+                refined_query = await self._refine_query(current_query, results)
+
+                if refined_query == current_query:
+                    log_debug("Refinement returned unchanged query, stopping iterations")
+                    break
+
+                current_query = refined_query
+                log_debug(f"Query refined to: \033[92m'{refined_query}'\033[0m")
 
                 new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
-
                 new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
-                self._memory["refined_similarity"] = new_best_similarity
-                log_debug(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f}")
 
-                if new_best_similarity > best_similarity:
-                    log_debug(f"Using refined results (improvement: {(new_best_similarity-best_similarity):.3f})")
-                    results = new_results
+                improvement = new_best_similarity - best_similarity
+                refinement_history.append({
+                    "iteration": iteration,
+                    "query": refined_query,
+                    "similarity": new_best_similarity,
+                    "improvement": improvement
+                })
+
+                log_debug(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})")
+
+                if new_best_similarity > best_similarity + self.min_refinement_improvement:
+                    log_debug(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}")
                     best_similarity = new_best_similarity
+                    best_results = new_results
+                    final_query = refined_query
+                    results = new_results  # Update results for next iteration's refinement
                 else:
-                    log_debug("No improvement with refined query, reverting to original results")
-                    final_query = original_query
-            else:
-                log_debug("Refinement returned unchanged query")
+                    log_debug(f"Insufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations")
+                    break
 
-        return final_query, results, best_similarity
+                # Break if we've reached an acceptable similarity
+                if best_similarity >= self.refinement_similarity_threshold:
+                    log_debug(f"Reached acceptable similarity threshold: {best_similarity:.3f}")
+                    break
+
+            if refinement_history:
+                self._memory["refined_search_query"] = final_query
+                log_debug(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
+
+        return final_query, best_results, best_similarity
 
 
 class DocumentLookup(VectorLookupTool):

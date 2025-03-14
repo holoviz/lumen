@@ -75,15 +75,11 @@ def make_context_model(tools: list[str], required_tools: list[str]):
             )
             )
         )
-        fields["is_asking_availability"] = (
-            bool,
-            FieldInfo(description="Whether the user is asking what tables are available.")
-        )
-
         description = (
             "A list of tools to call to provide context before launching into the planning stage."
             "Use tools to gather additional context or clarification, tools should NEVER be used"
-            "to obtain the actual data you will be working with. Empty if the user query is asking for availability"
+            "to obtain the actual data you will be working with. "
+            "Empty if the user query is asking for availability or if you have enough context to proceed."
         )
         if required_tools:
             description += f" You must include these required tools: {', '.join(required_tools)}"

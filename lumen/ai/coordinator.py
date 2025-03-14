@@ -196,7 +196,6 @@ class Coordinator(Viewer, Actor):
                 tool_kwargs = {}
                 if tool is TableLookup:
                     tool_kwargs["n"] = 10
-                    tool_kwargs["always_use"] = True
                 self._tools["__main__"].append(tool(llm=llm, **tool_kwargs))
 
         interface.send(
@@ -758,10 +757,6 @@ class Planner(Coordinator):
                 if output.chain_of_thought:
                     step.stream(output.chain_of_thought, replace=True)
 
-            # if user is asking for what tables are available show them all
-            if output.is_asking_availability:
-                return tools.values()
-
             if output.tools:
                 for output_tool in output.tools:
                     tool_context = ''
@@ -780,13 +775,16 @@ class Planner(Coordinator):
                         tool_context += f'\n- {response}'
                     self._memory["tools_context"][output_tool.name] = tool_context
 
-            if any(isinstance(tool, TableLookup) for tool in tools.values()) and "closest_tables" in self._memory:
+            if any(tool_name.startswith("TableLookup") for tool_name in tools) and "closest_tables" in self._memory:
                 step.stream("\n\nPerforming iterative table selection to explore relevant schemas...", replace=False)
                 tables_sql_schemas = await self._iterative_table_selection(messages, sources)
                 if tables_sql_schemas:
                     self._memory["tables_sql_schemas"] = tables_sql_schemas
-                    step.stream(f"\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
-                tools = {name: tool for name, tool in tools.items() if not isinstance(tool, TableLookup)}
+                    for tool_name in list(tools):
+                        if tool_name.startswith("TableLookup"):
+                            self._memory["tools_context"][tool_name] = yaml.safe_dump(tables_sql_schemas)
+                            tools.pop(tool_name)
+                    step.stream(f"\n\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
         return tools.values()
 
     async def _make_plan(
