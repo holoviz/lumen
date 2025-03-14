@@ -323,7 +323,9 @@ class TableLookup(VectorLookupTool):
     """
 
     purpose = param.String(default="""
-        Looks up relevant tables based on the user query.""")
+        Looks up relevant tables based on the user query. Unnecessary if
+        the table doesn't need to change or the user is requesting a visualization
+        from the previous results.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
