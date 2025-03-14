@@ -4,6 +4,7 @@ import decimal
 import re
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import param
@@ -14,7 +15,7 @@ from cryptography.hazmat.primitives.serialization import (
     Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
 )
 
-from ..transforms.sql import SQLFilter, SQLSelectFrom
+from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached
 
 # PEM certificates have the pattern:
@@ -82,6 +83,12 @@ class SnowflakeSource(BaseSQLSource):
 
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
+
+    excluded_tables = param.List(default=[], doc="""
+        List of table names that should be excluded from the results.
+        The items can be fully qualified (database.schema.table), partially
+        qualified (schema.table), simply table names, or wildcards
+        (e.g. database.schema.*).""")
 
     dialect = 'snowflake'
 
@@ -239,20 +246,21 @@ class SnowflakeSource(BaseSQLSource):
                 df[col] = df[col].astype(str)
         return df
 
-    def execute(self, sql_query: str):
-        df = self._cursor.execute(sql_query).fetch_pandas_all()
+    def execute(self, sql_query: str, *args, **kwargs):
+        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._convert_decimals_to_float(df)
 
     def get_tables(self) -> list[str]:
+        # limited set of tables was provided
         if isinstance(self.tables, dict | list):
-            return list(self.tables)
-        tables = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
-        return [f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}' for _, row in tables.iterrows()]
+            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
 
-    def get_sql_expr(self, table: str):
-        if isinstance(self.tables, dict):
-            table = self.tables[table]
-        return SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
+        tables_df = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
+        return [
+            f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}'
+            for _, row in tables_df.iterrows()
+            if not self._is_table_excluded(f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}')
+        ]
 
     @cached
     def get(self, table, **query):
@@ -265,3 +273,131 @@ class SnowflakeSource(BaseSQLSource):
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
+
+    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, Any]:
+        """
+        Generate metadata for all tables or a single table (batched=False) in Snowflake.
+        Handles formats: database.schema.table_name, schema.table_name, or table_name.
+        Schema can be None to be used as a wildcard.
+        """
+        null_result = {"description": "", "columns": {}, "rows": 0, "updated_at": None, "created_at": None}
+        if batched:
+            table_names = table if isinstance(table, list) else [table]
+            parsed_tables = []
+            for t in table_names:
+                parts = t.split(".")
+                if len(parts) == 3:
+                    parsed_tables.append(parts)  # database.schema.table_name
+                elif len(parts) == 2:
+                    parsed_tables.append([self.database, parts[0], parts[1]])  # schema.table_name
+                elif len(parts) == 1:
+                    parsed_tables.append([self.database, self.schema, parts[0]])  # table_name
+                else:
+                    raise ValueError(f"Invalid table format: {t}")
+
+            table_slugs = pd.Series([".".join(t) for t in parsed_tables]).str.upper()
+
+            table_metadata = self.execute(
+                """
+                SELECT
+                TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COMMENT as TABLE_DESCRIPTION, ROW_COUNT, LAST_ALTERED, CREATED
+                FROM INFORMATION_SCHEMA.TABLES
+                """
+            )
+            table_metadata["TABLE_SLUG"] = table_metadata[
+                ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ].agg(lambda x: ".".join(x), axis=1).str.upper()
+
+            # TODO: maybe do this in SQL?
+            table_metadata = table_metadata[table_metadata["TABLE_SLUG"].isin(table_slugs)]
+
+            table_metadata = table_metadata.drop(
+                columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ).set_index("TABLE_SLUG")
+
+            table_columns = self.execute(
+                """
+                SELECT
+                TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COMMENT AS COLUMN_DESCRIPTION, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                """
+            )
+            table_columns["TABLE_SLUG"] = table_columns[
+                ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ].agg(lambda x: ".".join(x), axis=1).str.upper()
+
+            table_columns = table_columns[table_columns["TABLE_SLUG"].isin(table_slugs)]
+
+            table_columns = table_columns.drop(
+                columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
+            ).set_index("TABLE_SLUG")
+
+            table_metadata_columns = table_metadata.join(table_columns).reset_index()
+
+            result = {}
+            for table_slug, group in table_metadata_columns.groupby("TABLE_SLUG"):
+                first_row = group.iloc[0]
+                description = first_row["TABLE_DESCRIPTION"] or ""
+                rows = first_row["ROW_COUNT"]
+                rows = None if pd.isna(rows) else int(rows)
+                updated_at = first_row["LAST_ALTERED"].isoformat()
+                created_at = first_row["CREATED"].isoformat()
+                columns = (
+                    group[["COLUMN_NAME", "COLUMN_DESCRIPTION", "DATA_TYPE"]]
+                    .rename({"COLUMN_DESCRIPTION": "description", "DATA_TYPE": "data_type"}, axis=1)
+                    .set_index("COLUMN_NAME")
+                    .transpose()
+                    .to_dict()
+                )
+                result[table_slug] = {
+                    "description": description,
+                    "columns": columns,
+                    "rows": rows,
+                    "updated_at": updated_at,
+                    "created_at": created_at,
+                }
+            return result
+
+        # Not batched below; for quick access to a specific
+        parts = table.split(".")
+
+        if len(parts) == 3:
+            database, schema, table_name = parts
+        elif len(parts) == 2:
+            database, schema, table_name = self.database, parts[0], parts[1]
+        elif len(parts) == 1:
+            database, schema, table_name = self.database, self.schema, parts[0]
+        else:
+            raise ValueError(f"Invalid table format: {table}")
+        schema_condition = "" if schema is None else "AND TABLE_SCHEMA = %s"
+        params = (database, table_name) if schema is None else (database, schema, table_name)
+
+        table_query = f"""
+            SELECT TABLE_NAME, TABLE_SCHEMA, COMMENT, ROW_COUNT, LAST_ALTERED, CREATED
+            FROM {database}.INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_CATALOG = %s {schema_condition} AND TABLE_NAME = %s
+        """
+
+        table_metadata = self.execute(table_query, params)
+        if table_metadata.empty:
+            return null_result
+
+        actual_schema = table_metadata.iloc[0]['TABLE_SCHEMA']
+        description = table_metadata.iloc[0]['COMMENT'] or ""
+        rows = table_metadata.iloc[0]['ROW_COUNT']
+        rows = None if pd.isna(rows) else int(rows)
+        updated_at = table_metadata.iloc[0]['LAST_ALTERED'].isoformat()
+        created_at = table_metadata.iloc[0]['CREATED'].isoformat()
+
+        column_query = f"""
+            SELECT COLUMN_NAME, COMMENT, DATA_TYPE
+            FROM {database}.INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_CATALOG = %s AND TABLE_SCHEMA = %s AND TABLE_NAME = %s
+            ORDER BY ORDINAL_POSITION
+        """
+
+        columns_info = self.execute(column_query, (database, actual_schema, table_name))
+        columns = columns_info.set_index("COLUMN_NAME")[["COMMENT", "DATA_TYPE"]].fillna("").rename(
+            {"COMMENT": "description", "DATA_TYPE": "data_type"}, axis=1
+        ).transpose().to_dict()
+        return {"description": description, "columns": columns, "rows": rows, "updated_at": updated_at, "created_at": created_at}

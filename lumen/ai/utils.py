@@ -25,17 +25,17 @@ from jinja2 import (
 from markupsafe import escape
 
 from lumen.pipeline import Pipeline
-from lumen.sources.base import Source
-from lumen.sources.duckdb import DuckDBSource
 
 from ..util import log
 from .config import (
-    PROMPTS_DIR, PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR,
-    UNRECOVERABLE_ERRORS, RetriesExceededError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
+    RetriesExceededError,
 )
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
+
+    from lumen.sources.base import Source
 
 
 def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
@@ -153,6 +153,7 @@ def retry_llm_output(retries=3, sleep=1):
 async def get_schema(
     source: Source | Pipeline,
     table: str | None = None,
+    include_type: bool = True,
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
@@ -170,6 +171,11 @@ async def get_schema(
     # first pop regardless to prevent
     # argument of type 'numpy.int64' is not iterable
     count = schema.pop("__len__", None)
+
+    if not include_type:
+        for field, spec in schema.items():
+            if "type" in spec:
+                spec.pop("type")
 
     if include_min_max:
         for field, spec in schema.items():
@@ -205,7 +211,7 @@ async def get_schema(
         limit = get_kwargs.get("limit")
         max_enums = 10
         truncate_limit = min(limit or 5, 5)
-        if not include_enum:
+        if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
             continue
         elif len(spec["enum"]) > max_enums:
@@ -223,9 +229,26 @@ async def get_schema(
             for enum in spec["enum"]
         ]
 
-    if count and include_count:
+    if count is not None and include_count:
         schema["__len__"] = count
     return schema
+
+
+async def format_table_schema(
+    source: Source, table_name: str, prefix_table: bool = True,
+    as_slug: bool = False, limit: int = 5, **get_schema_kwargs
+) -> str:
+    """
+    Format a source schema as a markdown string.
+    """
+    tables_schema_str = ""
+    if prefix_table:
+        table_label = f"{source}{SOURCE_TABLE_SEPARATOR}{table_name}" if as_slug else table_name
+        tables_schema_str += f"`{table_label}`\n"
+    sql = source.get_sql_expr(table_name)
+    schema = await get_schema(source, table_name, limit=limit, **get_schema_kwargs)
+    tables_schema_str += f"Schema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```"
+    return tables_schema_str
 
 
 async def get_pipeline(**kwargs):
@@ -348,37 +371,6 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
     step.status = "failed"
 
 
-async def gather_table_sources(sources: list[Source], include_provided: bool = True, include_sep: bool = False) -> tuple[dict[str, Source], str]:
-    """
-    Get a dictionary of tables to their respective sources
-    and a markdown string of the tables and their schemas.
-
-    Parameters
-    ----------
-    sources : list[Source]
-        A list of sources to gather tables from.
-    include_provided : bool
-        Whether to include the provided source in the string; will always be included in the dictionary.
-    include_sep : bool
-        Whether to include the source separator in the string.
-    """
-    tables_to_source = {}
-    tables_schema_str = ""
-    for source in sources:
-        for table in source.get_tables():
-            tables_to_source[table] = source
-            if source.name == PROVIDED_SOURCE_NAME and not include_provided:
-                continue
-            label = f"{source}{SOURCE_TABLE_SEPARATOR}{table}" if include_sep else table
-            if isinstance(source, DuckDBSource) and source.ephemeral or "Provided" in source.name:
-                sql = source.get_sql_expr(table)
-                schema = await get_schema(source, table, include_enum=True, limit=5)
-                tables_schema_str += f"- {label}\nSchema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```\n\n"
-            else:
-                tables_schema_str += f"- {label}\n\n"
-    return tables_to_source, tables_schema_str.strip()
-
-
 def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
     """
     Log a debug message with a separator line above and below.
@@ -499,3 +491,15 @@ def load_json(json_spec: str) -> dict:
     Load a JSON string, handling unicode escape sequences.
     """
     return json.loads(json_spec.encode().decode('unicode_escape'))
+
+
+def separate_source_table(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+    if SOURCE_TABLE_SEPARATOR in table:
+        a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+        a_source_obj = sources.get(a_source_name)
+    else:
+        a_source_obj = next(iter(sources.values()))
+        a_table = table
+    if normalize:
+        a_table = a_source_obj.normalize_table(a_table)
+    return a_source_obj, a_table

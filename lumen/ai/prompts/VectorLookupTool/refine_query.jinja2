@@ -1,0 +1,25 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+You are an expert at refining search queries to find relevant {{ item_type }}.
+
+I need to find {{ item_type }} relevant to this query: "{{ original_query }}"
+
+Here are the current search results:
+{{ results_description }}
+
+The current search results are not sufficiently relevant to the query, with similarity scores below the desired
+threshold.
+
+Please suggest a refined search query that would help find more appropriate {{ item_type }}.
+
+Focus on:
+1. More specific terminology that might appear in {{ item_type }} names and descriptions
+2. Alternative phrasings or synonyms for key concepts
+3. Including technical terms that might appear in {{ item_type }}
+4. Removing terms that might be causing confusion or irrelevant matches
+5. For time-based analysis, include granularity keywords (month, quarter, week, daily) to find tables labeled by time periods that can be aggregated to the desired analysis interval.
+6. If business-related, mention business terms like "business", "revenue", "profit", "cost", "sales", "ARR", "MRR", "BI" to find relevant financial tables.
+
+Your refined query should be concise and focused on the essential concepts from the original query.
+{% endblock %}
