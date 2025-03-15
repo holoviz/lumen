@@ -51,5 +51,9 @@ class _Memory(SessionCache):
         if key in self._rx:
             self._rx[key].rx.value = new
 
+    def __str__(self):
+        global_items = {k: v for k, v in self._global_context.items()}
+        curcontext_items = {k: v for k, v in self._curcontext.items()}
+        return f"Global items: {global_items}, Current context items: {curcontext_items}"
 
 memory = _Memory()

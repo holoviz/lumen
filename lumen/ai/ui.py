@@ -121,7 +121,7 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
-    tools = param.List(default=[TableLookup], doc="""
+    tools = param.List(doc="""
        List of Tools that can be invoked by the coordinator.""")
 
     __abstract = True
@@ -428,6 +428,8 @@ class ExplorerUI(UI):
         """
         Cleanup on session destroy
         """
+        print("CLEANING UP\n\n\n")
+        memory.cleanup()
         for c in self._contexts:
             c.cleanup()
 

@@ -363,7 +363,9 @@ class TableLookup(VectorLookupTool):
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._memory.on_change('sources', self._update_vector_store)
-        self._memory.trigger('sources')
+        if "sources" in self._memory:
+            print(self._memory)
+            self._memory.trigger('sources')
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
@@ -420,6 +422,7 @@ class TableLookup(VectorLookupTool):
 
         vector_metadata = {"source": source.name, "table_name": table_name}
         if existing_items := self.vector_store.filter_by(vector_metadata):
+            print(existing_items)
             if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
                 return
             self.vector_store.delete([item['id'] for item in existing_items])
@@ -450,7 +453,12 @@ class TableLookup(VectorLookupTool):
         all_tasks = []
 
         for source in sources:
-            if self.include_metadata and self._memory["sources_raw_metadata"].get(source.name) is None:
+            if self._memory["sources_raw_metadata"].get(source.name):
+                print(self._memory["sources_raw_metadata"])
+                # If metadata already exists for this source, skip to avoid duplicates
+                continue
+
+            if self.include_metadata:
                 metadata_task = asyncio.create_task(
                     asyncio.to_thread(source.get_metadata)
                 )
@@ -484,6 +492,7 @@ class TableLookup(VectorLookupTool):
         """Wait for all tasks to complete and then mark the tool as ready."""
         await asyncio.gather(*tasks, return_exceptions=True)
         log_debug("All table metadata tasks completed.")
+        print(len(self.vector_store))
         self._ready = True
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:

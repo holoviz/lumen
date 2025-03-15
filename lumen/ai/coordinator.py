@@ -92,7 +92,7 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[TableLookup], doc="""
+    tools = param.List(doc="""
         List of tools to use to provide context.""")
 
     __abstract = True
@@ -184,8 +184,14 @@ class Coordinator(Viewer, Actor):
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
+        tools = self.tools.copy()
+        if tools is None:
+            tools = [TableLookup(n=10)]
+        elif not any(isinstance(tool, TableLookup) for tool in tools):
+            tools.append(TableLookup(n=10))
+
         self._tools["__main__"] = []
-        for tool in self.tools:
+        for tool in tools:
             if isinstance(tool, Actor):
                 if tool.llm is None:
                     tool.llm = llm
