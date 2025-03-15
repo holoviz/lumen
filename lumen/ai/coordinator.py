@@ -182,13 +182,14 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
-
-        tools = self.tools.copy()
+        tools = params.get("tools").copy()
         if tools is None:
             tools = [TableLookup(n=10)]
         elif not any(isinstance(tool, TableLookup) for tool in tools):
             tools.append(TableLookup(n=10))
+        params["tools"] = tools
+
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
         self._tools["__main__"] = []
         for tool in tools:
