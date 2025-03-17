@@ -319,36 +319,34 @@ class DuckDBSource(BaseSQLSource):
             df = Filter.apply_to(df, conditions=conditions)
         return df
 
-    def _get_table_metadata(self, table: str | list[str], batched: bool = False) -> dict[str, Any]:
+    def _get_table_metadata(self, table: str | list[str]) -> dict[str, Any]:
         """
         Generate metadata for all tables or a single table (batched=False) in DuckDB.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
 
         Args:
             table: Table name(s) to get metadata for
-            batched: If True, process multiple tables at once
 
         Returns:
             Dictionary with table metadata including description, columns, row count, etc.
         """
-        if batched:
-            metadata = {}
-            table_names = table if isinstance(table, list) else [table]
-            for table_name in table_names:
-                metadata[table_name] = self._get_table_metadata(table_name, batched=False)
-            return metadata
-        sql_expr = self.get_sql_expr(table)
-        schema_expr = SQLLimit(limit=0).apply(sql_expr)
-        count_expr = SQLCount().apply(sql_expr)
-        schema_result = self.execute(schema_expr)
-        count = self.execute(count_expr).iloc[0, 0]
-        return {
-            "description": "",
-            "columns": {
-                col: {"data_type": str(dtype), "description": ""}
-                for col, dtype in zip(schema_result.columns, schema_result.dtypes)
-            },
-            "rows": count,
-            "updated_at": None,
-            "created_at": None,
-        }
+        metadata = {}
+        table_names = table if isinstance(table, list) else [table]
+        for table_name in table_names:
+            sql_expr = self.get_sql_expr(table)
+            schema_expr = SQLLimit(limit=0).apply(sql_expr)
+            count_expr = SQLCount().apply(sql_expr)
+            schema_result = self.execute(schema_expr)
+            count = self.execute(count_expr).iloc[0, 0]
+            table_metadata = {
+                "description": "",
+                "columns": {
+                    col: {"data_type": str(dtype), "description": ""}
+                    for col, dtype in zip(schema_result.columns, schema_result.dtypes)
+                },
+                "rows": count,
+                "updated_at": None,
+                "created_at": None,
+            }
+            metadata[table_name] = table_metadata
+        return metadata

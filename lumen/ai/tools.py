@@ -394,13 +394,10 @@ class TableLookup(VectorLookupTool):
     async def _fetch_and_store_metadata(self, source, table_name: str):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
-            if self.batched:
-                source_metadata = self._raw_metadata[source.name]
-                if isinstance(source_metadata, asyncio.Task):
-                    source_metadata = await source_metadata
-                    self._raw_metadata[source.name] = source_metadata
-            else:
-                source_metadata = await asyncio.to_thread(source.get_metadata, table_name, batched=False)
+            source_metadata = self._raw_metadata[source.name]
+            if isinstance(source_metadata, asyncio.Task):
+                source_metadata = await source_metadata
+                self._raw_metadata[source.name] = source_metadata
 
         table_name_key = next((
             key for key in (table_name.upper(), table_name.lower(), table_name)
