@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import decimal
 import re
 
@@ -217,10 +218,10 @@ class SnowflakeSource(BaseSQLSource):
         return SnowflakeSource(**params)
 
     @staticmethod
-    def _convert_decimals_to_float(df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
+    def _cast_dtypes(df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
         """
-        Convert decimal.Decimal to float in a pandas DataFrame, as
-        most packages do not support decimal.Decimal natively.
+        Convert decimal.Decimal to float and datetime date to pandas Timestamp in a pandas DataFrame, as
+        most packages do not support decimal.Decimal natively and datetime.date is not displayed correctly in panel-graphic-walker.
         Samples only a subset of the DataFrame to check for decimal.Decimal.
 
         Arguments
@@ -235,13 +236,15 @@ class SnowflakeSource(BaseSQLSource):
             try:
                 if df[col].sample(min(sample, len(df))).apply(lambda x: isinstance(x, decimal.Decimal)).any():
                     df[col] = pd.to_numeric(df[col], errors='coerce')
+                if df[col].sample(min(sample, len(df))).apply(lambda x: isinstance(x, (datetime.datetime, datetime.date))).any():
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
             except Exception:
                 df[col] = df[col].astype(str)
         return df
 
-    def execute(self, sql_query: str):
-        df = self._cursor.execute(sql_query).fetch_pandas_all()
-        return self._convert_decimals_to_float(df)
+    def execute(self, sql_query: str, *args, **kwargs):
+        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        return self._cast_dtypes(df)
 
     def get_tables(self) -> list[str]:
         if isinstance(self.tables, dict | list):
