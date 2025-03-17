@@ -319,7 +319,7 @@ class DuckDBSource(BaseSQLSource):
             df = Filter.apply_to(df, conditions=conditions)
         return df
 
-    def _get_table_metadata(self, table: str | list[str]) -> dict[str, Any]:
+    def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
         """
         Generate metadata for all tables or a single table (batched=False) in DuckDB.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
@@ -331,9 +331,8 @@ class DuckDBSource(BaseSQLSource):
             Dictionary with table metadata including description, columns, row count, etc.
         """
         metadata = {}
-        table_names = table if isinstance(table, list) else [table]
-        for table_name in table_names:
-            sql_expr = self.get_sql_expr(table)
+        for table_name in tables:
+            sql_expr = self.get_sql_expr(table_name)
             schema_expr = SQLLimit(limit=0).apply(sql_expr)
             count_expr = SQLCount().apply(sql_expr)
             schema_result = self.execute(schema_expr)

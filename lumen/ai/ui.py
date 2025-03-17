@@ -198,7 +198,10 @@ class UI(Viewer):
         )
         self.interface.send(alert, respond=False, user='System')
         try:
-            await self.llm.invoke([{'role': 'user', 'content': 'Are you there? YES | NO'}])
+            await self.llm.invoke(
+                [{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                model_spec="ui"
+            )
             success = True
         except Exception as e:
             traceback.print_exc()

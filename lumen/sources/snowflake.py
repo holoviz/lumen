@@ -250,7 +250,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
 
-    def _get_table_metadata(self, table: str | list[str]) -> dict[str, Any]:
+    def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
         """
         Generate metadata for tables in Snowflake.
         Handles formats: database.schema.table_name, schema.table_name, or table_name.
@@ -266,10 +266,8 @@ class SnowflakeSource(BaseSQLSource):
             ).set_index("TABLE_SLUG")
             return df
 
-        table_names = table if isinstance(table, list) else [table]
         parsed_tables = []
-
-        for t in table_names:
+        for t in tables:
             parts = t.split(".")
             if len(parts) == 3:
                 parsed_tables.append(parts)  # database.schema.table_name
