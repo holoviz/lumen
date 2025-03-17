@@ -43,7 +43,7 @@ class VectorLookupTool(Tool):
     min_similarity = param.Number(default=0.05, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=3, bounds=(0, None), doc="""
+    n = param.Integer(default=10, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     prompts = param.Dict(
@@ -356,14 +356,13 @@ class TableLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if "sources_raw_metadata" not in self._memory:
-            self._memory["sources_raw_metadata"] = {}
-
         self._table_metadata = {}
+        self._raw_metadata = {}
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._memory.on_change('sources', self._update_vector_store)
-        self._memory.trigger('sources')
+        if "sources" in self._memory:
+            self._memory.trigger('sources')
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
@@ -396,10 +395,10 @@ class TableLookup(VectorLookupTool):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
             if self.batched:
-                source_metadata = self._memory["sources_raw_metadata"][source.name]
+                source_metadata = self._raw_metadata[source.name]
                 if isinstance(source_metadata, asyncio.Task):
                     source_metadata = await source_metadata
-                    self._memory["sources_raw_metadata"][source.name] = source_metadata
+                    self._raw_metadata[source.name] = source_metadata
             else:
                 source_metadata = await asyncio.to_thread(source.get_metadata, table_name, batched=False)
 
@@ -450,11 +449,11 @@ class TableLookup(VectorLookupTool):
         all_tasks = []
 
         for source in sources:
-            if self.include_metadata and self._memory["sources_raw_metadata"].get(source.name) is None:
+            if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 metadata_task = asyncio.create_task(
                     asyncio.to_thread(source.get_metadata)
                 )
-                self._memory["sources_raw_metadata"][source.name] = metadata_task
+                self._raw_metadata[source.name] = metadata_task
                 all_tasks.append(metadata_task)
 
             tables = source.get_tables()
