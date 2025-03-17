@@ -4,12 +4,14 @@ import weakref
 
 from collections import defaultdict
 from functools import partial
+from typing import Any
 
 import param
 
 from panel.io.state import state
 
 from ..config import SessionCache
+from .utils import serialize_value
 
 
 class _Memory(SessionCache):
@@ -76,6 +78,13 @@ class _Memory(SessionCache):
                 cb(key, old, new)
         if key in self._rx:
             self._rx[key].rx.value = new
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            key: serialize_value(value)
+            for key, value in dict(self).items()
+            if not key.startswith("_")
+        }
 
 
 memory = _Memory()
