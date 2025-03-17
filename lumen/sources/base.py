@@ -153,28 +153,15 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
         if all(t in metadata for t in tables):
             if isinstance(table, str):
                 return metadata[table]
-            return {metadata[table] for table in tables}
+            return {table: metadata[table] for table in tables}
 
-        for missing in tables:
-            if missing in metadata:
-                continue
-            with main_lock:
-                if missing in locks[self]:
-                    lock = locks[self][missing]
-                else:
-                    locks[self][missing] = lock = threading.RLock()
-            with lock:
-                with main_lock:
-                    new_metadata = self._get_metadata_cache() or {}
-                if missing in new_metadata:
-                    metadata[missing] = new_metadata[missing]
-                else:
-                    metadata[missing] = method(self, missing)
-            with main_lock:
-                self._set_metadata_cache(metadata)
+        missing_tables = [t for t in tables if t not in metadata]
+        metadata.update(method(self, missing_tables))
+        with main_lock:
+            self._set_metadata_cache(metadata)
         if isinstance(table, str):
             return metadata[table]
-        return {metadata[table] for table in tables}
+        return {table: metadata[table] for table in tables}
     return wrapped
 
 
