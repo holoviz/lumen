@@ -375,6 +375,8 @@ class Source(MultiTypeComponent):
                 if table in schema:
                     continue
                 for col, cschema in tschema.items():
+                    if isinstance(cschema, int):
+                        continue
                     if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
                         cschema['inclusiveMinimum'] = pd.to_datetime(
                             cschema['inclusiveMinimum']
