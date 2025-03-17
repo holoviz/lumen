@@ -136,7 +136,7 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
 
 def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
     @wraps(method)
-    def wrapped(self, table: str | None = None, batched: bool = True):
+    def wrapped(self, table: str | list[str] | None = None):
         if self in locks:
             main_lock = locks[self]['main']
         else:
@@ -144,12 +144,16 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
             locks[self] = {'main': main_lock}
         with main_lock:
             metadata = self._get_metadata_cache() or {}
-        tables = self.get_tables() if table is None else [table]
-        if all(table in metadata for table in tables):
-            return metadata if table is None else metadata[table]
-        if batched and table is None:
-            metadata = method(self, table, batched=True)
-            return metadata if table is None else metadata[table]
+        if table is None:
+            tables = self.get_tables()
+        elif isinstance(table, str):
+            tables = [table]
+        else:
+            tables = table
+        if all(t in metadata for t in tables):
+            if isinstance(table, str):
+                return metadata[table]
+            return {metadata[table] for table in tables}
 
         for missing in tables:
             if missing in metadata:
@@ -168,7 +172,9 @@ def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
                     metadata[missing] = method(self, missing)
             with main_lock:
                 self._set_metadata_cache(metadata)
-        return metadata if table is None else metadata[table]
+        if isinstance(table, str):
+            return metadata[table]
+        return {metadata[table] for table in tables}
     return wrapped
 
 
@@ -195,12 +201,23 @@ class Source(MultiTypeComponent):
     cache_dir = param.String(default=None, doc="""
         Whether to enable local cache and write file to disk.""")
 
+    cache_data = param.Boolean(default=True, doc="""
+        Whether to cache actual data.""")
+
+    cache_schema = param.Boolean(default=True, doc="""
+        Whether to cache table schemas.""")
+
+    cache_metadata = param.Boolean(default=True, doc="""
+        Whether to cache metadata.""")
+
     metadata_func = param.Callable(default=None, doc="""
-        Function that returns a metadata dictionary
-        given nullable `table` and `batched` boolean.
-        If batched, should return a nested dict
-        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}}
-        Or, if not batched, simply {"description": ..., "columns": {"column_name": "..."}}}
+        Function to implement custom metadata lookup for tables.
+        Given a list of tables it should return a dictionary of the form:
+
+        {
+            <table>: {"description": ..., "columns": {"column_name": "..."}}
+        }
+
         May be used to override the default _get_table_metadata
         implementation of the Source.""")
 
@@ -382,6 +399,8 @@ class Source(MultiTypeComponent):
         return schema
 
     def _set_metadata_cache(self, metadata):
+        if not self.cache_metadata:
+            return
         self._metadata_cache = metadata
         if not self.cache_dir:
             return
@@ -398,6 +417,8 @@ class Source(MultiTypeComponent):
             )
 
     def _set_schema_cache(self, schema):
+        if not self.cache_metadata:
+            return
         self._schema_cache = schema
         if not self.cache_dir:
             return
@@ -443,6 +464,8 @@ class Source(MultiTypeComponent):
     def _set_cache(
         self, data: DataFrame, table: str, write_to_file: bool = True, **query
     ):
+        if not self.cache_data:
+            return
         query.pop('__dask', None)
         key = self._get_key(table, **query)
         self._cache[key] = data
@@ -548,9 +571,9 @@ class Source(MultiTypeComponent):
             raise ValidationError(msg) from e
 
     @cached_metadata
-    def get_metadata(self, table: str | None, batched: bool = True) -> dict:
+    def get_metadata(self, table: str | list[str] | None) -> dict:
         """
-        Returns metadata for one or all tables provided by the source.
+        Returns metadata for one, multiple or all tables provided by the source.
 
         The metadata for a table is structured as:
 
@@ -565,7 +588,7 @@ class Source(MultiTypeComponent):
             **other_metadata
         }
 
-        If batched, the metadata is nested one additional level:
+        If a list of tables or no table is provided the metadata is nested one additional level:
 
         {
             "table_name": {
@@ -584,7 +607,7 @@ class Source(MultiTypeComponent):
 
         Parameters
         ----------
-        table : str | None
+        table : str | list[str] | None
             The name of the table to return the schema for. If None
             returns schema for all available tables.
 
@@ -594,21 +617,17 @@ class Source(MultiTypeComponent):
             Dictionary of metadata indexed by table (if no table was
             was provided or individual table metdata.
         """
-        tables = [table] if table else self.get_tables()
-        if batched and len(tables) > 1:
-            if self.metadata_func:
-                metadata = self.metadata_func(tables, batched=True)
-            else:
-                metadata = self._get_table_metadata(tables, batched=True)
-            return metadata
+        if table is None:
+            tables = self.get_tables()
+        elif isinstance(table, str):
+            tables = [table]
         else:
-            metadata = {
-                table: self.metadata_func(table, batched=False)
-                if self.metadata_func
-                else self._get_table_metadata(table, batched=False)
-                for table in tables
-            }
-            return metadata if table is None else metadata[table]
+            tables = table
+        if self.metadata_func:
+            metadata = self.metadata_func(tables)
+        else:
+            metadata = self._get_table_metadata(tables)
+        return metadata
 
     def get(self, table: str, **query) -> DataFrame:
         """
