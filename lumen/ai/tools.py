@@ -448,7 +448,7 @@ class TableLookup(VectorLookupTool):
         for source in sources:
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 metadata_task = asyncio.create_task(
-                    asyncio.to_thread(source.get_metadata, tables=None)
+                    asyncio.to_thread(source.get_metadata)
                 )
                 self._raw_metadata[source.name] = metadata_task
                 all_tasks.append(metadata_task)
