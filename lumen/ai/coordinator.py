@@ -701,7 +701,7 @@ class Planner(Coordinator):
                             reverse=True
                         )[:5]
                         step.stream(
-                            f"\n\nSelected tables: `{'`, `'.join(selected_tables)}` based on a similarity "
+                            f"\n\nSelected tables: `{'`\n- `'.join(selected_tables)}` based on a similarity "
                             f"thresold of {self.table_similarity_threshold}", replace=False)
                         fast_track = True
                     else:
@@ -742,8 +742,9 @@ class Planner(Coordinator):
                     response_model=tables_model,
                 )
                 async for output in response:
+                    # the entire string comes out all at once; no point in streaming to step
                     chain_of_thought = output.chain_of_thought or ""
-                    step.stream(chain_of_thought, replace=True)
+                step.stream(chain_of_thought, replace=False)
 
                 selected_tables = output.selected_tables or []
                 step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
@@ -795,8 +796,8 @@ class Planner(Coordinator):
                 max_retries=3,
             )
             async for output in response:
-                if output.chain_of_thought:
-                    step.stream(output.chain_of_thought, replace=True)
+                chain_of_thought = output.chain_of_thought or ""
+            step.stream(chain_of_thought, replace=False)
 
             if not output.needs_lookup:
                 return tools.values()
