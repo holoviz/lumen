@@ -510,8 +510,10 @@ class TableLookup(VectorLookupTool):
                     description += f"  Description: {table_description}"
                 columns_description = "Columns:"
                 for i, (col_name, col_info) in enumerate(table_metadata.get("columns", {}).items()):
+                    # Save on tokens by truncating long column names and letting the LLM infer the rest
+                    col_label = col_name if len(col_name) <= 50 else f"{col_name[:15]}...{col_name[-35:]}"
                     col_desc = f": {col_info['description']}" if col_info.get("description") else ""
-                    columns_description += f"\n- {col_name}{col_desc}"
+                    columns_description += f"\n- {col_label}{col_desc}"
                     if i > 10:
                         columns_description += "\n  ... (more columns not shown)"
                         break
