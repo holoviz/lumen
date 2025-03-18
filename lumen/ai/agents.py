@@ -652,7 +652,7 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        tables = self._memory.get("closest_tables", next(iter(sources)).get_tables()[:5])
+        tables = self._memory.get("closest_tables", next(iter(sources.values())).get_tables()[:5])
         if len(tables) > 1:
             system = await self._render_prompt(
                 "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
