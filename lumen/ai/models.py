@@ -16,9 +16,9 @@ class Sql(BaseModel):
     chain_of_thought: str = Field(
         description="""
         You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        If it's simple, just provide one step. However, if applicable, be sure to carefully
-        study the schema, discuss the values in the columns, and whether you need to
-        wrangle the data before you can use it, before finally writing a correct and valid
+        If it's simple, give at max one sentence about using `SELECT * FROM ...`.
+        However, if applicable, be sure to carefully study the schema, discuss the values in the columns,
+        and whether you need to wrangle the data before you can use it, before finally writing a correct and valid
         SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
         Everything should be made as simple as possible, but no simpler.
         """
