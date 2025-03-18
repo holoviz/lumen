@@ -39,7 +39,6 @@ from .models import (
 from .tools import FunctionTool, TableLookup, Tool
 from .utils import (
     get_schema, log_debug, mutate_user_message, retry_llm_output,
-    separate_source_table,
 )
 from .views import LumenOutput
 
@@ -94,6 +93,11 @@ class Coordinator(Viewer, Actor):
 
     tools = param.List(default=[TableLookup], doc="""
         List of tools to use to provide context.""")
+
+    table_similarity_threshold = param.Number(default=0.5, doc="""
+        If any tables have a similarity score above this threshold,
+        those tables will be automatically selected for the closest_tables
+        and there will not be an iterative table selection process.""")
 
     __abstract = True
 
@@ -618,6 +622,27 @@ class Planner(Coordinator):
         }
     )
 
+    async def _lookup_table_schema(source_table, sources, step):
+        if SOURCE_TABLE_SEPARATOR in source_table:
+            source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+            source_obj = sources.get(source_name)
+        else:
+            source_obj = next(iter(sources.values()))
+            table_name = source_table
+
+        table_schema = await get_schema(
+            source_obj, table_name, include_count=True, include_enum=False, include_type=False
+        )
+        normalized_table_name = source_obj.normalize_table(table_name)
+        result = {
+            "schema": yaml.dump(table_schema),
+            "sql": source_obj.get_sql_expr(table_name),
+            "source": source_obj.name,
+        }
+        step.stream(f"\n\nAdded schema for {normalized_table_name}", replace=False)
+        return normalized_table_name, result, source_table
+
+
     async def _iterative_table_selection(self, sources: dict) -> dict:
         """
         Performs an iterative table selection process to gather context.
@@ -659,34 +684,34 @@ class Planner(Coordinator):
                     step.stream("\nNo more tables available to examine")
                     break
 
-                # For the first iteration, select the top 3 tables to examine
-                # For subsequent iterations, the LLM selects tables in the previous iteration
                 if iteration == 1:
+                    # For the first iteration, select tables based on similarity
+                    # If any tables have a similarity score above the threshold, select ALL of those tables
+                    table_similarities = self._memory.get("table_similarities", {})
+                    if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
+                        self._memory["closest_tables"] = selected_tables = sorted(
+                            table_similarities,
+                            key=lambda x: table_similarities[x],
+                            reverse=True
+                        )
+                        step.stream(
+                            f"\n\nFound {len(selected_tables)} likely table(s) based on "
+                            f"similarity threshold of {self.table_similarity_threshold}...",
+                            replace=False
+                        )
+                        # based on similarity search alone, if we have selected tables, we're done!!
+                        break
+
+                    # If not, select the top 3 tables to examine
                     selected_tables = available_tables[:3]
 
+                # For subsequent iterations, the LLM selects tables in the previous iteration
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
-                for source_table in selected_tables:
-                    if SOURCE_TABLE_SEPARATOR in source_table:
-                        source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                        source_obj = sources.get(source_name)
-                    else:
-                        source_obj = next(iter(sources.values()))
-                        table_name = source_table
-
-                    if not source_obj:
-                        continue
-
-                    table_schema = await get_schema(
-                        source_obj, table_name, include_count=True, include_enum=False, include_type=False
-                    )
-                    normalized_table_name = source_obj.normalize_table(table_name)
-                    tables_sql_schemas[normalized_table_name] = {
-                        "schema": yaml.dump(table_schema),
-                        "sql": source_obj.get_sql_expr(table_name),
-                        "source": source_obj.name,
-                    }
+                schema_tasks = [self._lookup_table_schema(source_table, sources, step) for source_table in selected_tables]
+                schema_results = await asyncio.gather(*schema_tasks)
+                for normalized_name, schema_data, source_table in schema_results:
+                    tables_sql_schemas[normalized_name] = schema_data
                     examined_tables.add(source_table)
-                    step.stream(f"\n\nAdded schema for {normalized_table_name}", replace=False)
 
                 system = await self._render_prompt(
                     "table_selection",
@@ -715,13 +740,8 @@ class Planner(Coordinator):
                 # Check if we're done with table selection
                 if output.is_satisfied or not available_tables:
                     step.stream("\nSelection process complete - model is satisfied with selected tables", replace=False)
-                    closest_tables = []
-                    for table in selected_tables:
-                        _, normalized_table_name = separate_source_table(table, sources)
-                        closest_tables.append(normalized_table_name)
-                    self._memory["closest_tables"] = closest_tables
+                    self._memory["closest_tables"] = selected_tables
                     break
-
         return tables_sql_schemas
 
     async def _get_tools_context(self, messages: list[Message]) -> dict:

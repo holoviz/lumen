@@ -330,7 +330,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables"], readonly=True, doc="""
+    provides = param.List(default=["closest_tables", "table_similarities"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     batched = param.Boolean(default=True, doc="""
@@ -496,6 +496,7 @@ class TableLookup(VectorLookupTool):
 
         # Process results as before
         closest_tables, descriptions = [], []
+        table_similarities = {}
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
@@ -503,6 +504,7 @@ class TableLookup(VectorLookupTool):
             table_name = result['metadata']["table_name"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             description = f"- `{table_slug}` ({result['similarity']:.3f} similarity):"
+            table_similarities[table_slug] = result['similarity']
             if table_metadata := self._table_metadata.get(table_slug):
                 if table_description := table_metadata.get("description"):
                     description += f"  Description: {table_description}"
@@ -525,8 +527,9 @@ class TableLookup(VectorLookupTool):
                 message += "Here are some other tables:\n"
 
         self._memory["closest_tables"] = closest_tables
+        self._memory["table_similarities"] = table_similarities
         if "refined_search_query" in self._memory and final_query != query:
-            message = f"Refined search query: '{final_query}'\n" + message
+            message = f"\n\nRefined search query: '{final_query}'\n" + message
         return message + "\n".join(descriptions)
 
 
