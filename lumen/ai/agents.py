@@ -295,7 +295,75 @@ class AnalystAgent(ChatAgent):
     )
 
 
-class TableListAgent(Agent):
+class ListAgent(Agent):
+    """
+    Abstract base class for agents that display a list of items to the user.
+    """
+
+    purpose = param.String(default="""
+        Renders a list of items to the user and lets the user pick one.""")
+
+    requires = param.List(default=[], readonly=True)
+
+    _extensions = ('tabulator',)
+
+    _column_name = None
+
+    _message_format = None
+
+    __abstract = True
+
+    def _get_items(self) -> list[str]:
+        """Return the list of items to display"""
+
+    def _use_item(self, event):
+        """Handle when a user clicks on an item in the list"""
+        if event.column != "show":
+            return
+        item = self._df.iloc[event.row, 0]
+
+        if self._message_format is None:
+            raise ValueError("Subclass must define _message_format")
+
+        message = self._message_format.format(item=repr(item))
+        self.interface.send(message)
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        items = self._get_items()
+        header_filters = False
+        if len(items) > 10:
+            column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
+            header_filters = {self._column_name: column_filter}
+
+        self._df = pd.DataFrame({self._column_name: items})
+        item_list = pn.widgets.Tabulator(
+            self._df,
+            buttons={'show': '<i class="fa fa-eye"></i>'},
+            show_index=False,
+            min_height=150,
+            min_width=350,
+            widths={self._column_name: '90%'},
+            disabled=True,
+            page_size=10,
+            pagination="remote",
+            header_filters=header_filters,
+            sizing_mode="stretch_width",
+        )
+
+        item_list.on_click(self._use_item)
+        self.interface.stream(item_list, user="Lumen")
+        return item_list
+
+
+class TableListAgent(ListAgent):
+    """
+    The TableListAgent lists all available tables and lets the user pick one.
+    """
 
     purpose = param.String(default="""
         Renders a list of all availables tables to the user and lets the user
@@ -305,7 +373,9 @@ class TableListAgent(Agent):
 
     requires = param.List(default=["source"], readonly=True)
 
-    _extensions = ('tabulator',)
+    _column_name = "Table"
+
+    _message_format = "Show the table: {item}"
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
@@ -314,41 +384,14 @@ class TableListAgent(Agent):
             return True  # source not loaded yet; always apply
         return len(source.get_tables()) > 1
 
-    def _use_table(self, event):
-        if event.column != "show":
-            return
-        table = self._df.iloc[event.row, 0]
-        self.interface.send(f"Show the table: {table!r}")
-
-    async def respond(
-        self,
-        messages: list[Message],
-        render_output: bool = False,
-        step_title: str | None = None,
-    ) -> Any:
+    def _get_items(self) -> list[str]:
         tables = []
         for source in self._memory["sources"]:
             tables += source.get_tables()
-        self._df = pd.DataFrame({"Table": tables})
-        table_list = pn.widgets.Tabulator(
-            self._df,
-            buttons={'show': '<i class="fa fa-eye"></i>'},
-            show_index=False,
-            min_height=150,
-            min_width=350,
-            widths={'Table': '90%'},
-            disabled=True,
-            page_size=10,
-            header_filters=len(tables) > 10,
-            sizing_mode="stretch_width",
-        )
-        table_list.on_click(self._use_table)
-        self.interface.stream(table_list, user="Lumen")
-        self._memory["closest_tables"] = tables[:5]
-        return table_list
+        return tables
 
 
-class DocumentListAgent(Agent):
+class DocumentListAgent(ListAgent):
     """
     The DocumentListAgent lists all available documents provided by the user.
     """
@@ -361,7 +404,9 @@ class DocumentListAgent(Agent):
 
     requires = param.List(default=["document_sources"], readonly=True)
 
-    _extensions = ('tabulator',)
+    _column_name = "Documents"
+
+    _message_format = "Tell me about: {item}"
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
@@ -370,35 +415,9 @@ class DocumentListAgent(Agent):
             return False  # source not loaded yet; always apply
         return len(sources) > 1
 
-    def _use_document(self, event):
-        if event.column != "show":
-            return
-        document = self._df.iloc[event.row, 0]
-        self.interface.send(f"Tell me about: {document!r}")
-
-    async def respond(
-        self,
-        messages: list[Message],
-        render_output: bool = False,
-        step_title: str | None = None,
-    ) -> Any:
+    def _get_items(self) -> list[str]:
         # extract the filename, following this pattern `Filename: 'filename'``
-        sources = [doc["metadata"].get("filename", "untitled") for doc in self._memory["document_sources"]]
-        self._df = pd.DataFrame({"Documents": sources})
-        document_list = pn.widgets.Tabulator(
-            self._df,
-            buttons={'show': '<i class="fa fa-eye"></i>'},
-            show_index=False,
-            min_height=150,
-            min_width=350,
-            widths={'Table': '90%'},
-            disabled=True,
-            page_size=10,
-            header_filters=True
-        )
-        document_list.on_click(self._use_document)
-        self.interface.stream(document_list, user="Lumen")
-        return document_list
+        return [doc["metadata"].get("filename", "untitled") for doc in self._memory["document_sources"]]
 
 
 class LumenBaseAgent(Agent):
