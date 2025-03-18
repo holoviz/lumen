@@ -644,8 +644,9 @@ class Planner(Coordinator):
             "sql": source_obj.get_sql_expr(table_name),
             "source": source_obj.name,
         }
-        step.stream(f"\n\nAdded schema for {normalized_table_name}", replace=False)
-        return normalized_table_name, result, source_table
+        table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{normalized_table_name}"
+        step.stream(f"\n\nAdded schema for {table_slug}", replace=False)
+        return table_slug, result, source_table
 
 
     async def _iterative_table_selection(self, sources: dict) -> dict:
@@ -713,8 +714,8 @@ class Planner(Coordinator):
                 schema_tasks = [self._lookup_table_schema(source_table, sources, step) for source_table in selected_tables]
                 async with self._semaphore:
                     schema_results = await asyncio.gather(*schema_tasks)
-                for normalized_name, schema_data, source_table in schema_results:
-                    tables_sql_schemas[normalized_name] = schema_data
+                for table_slug, schema_data, source_table in schema_results:
+                    tables_sql_schemas[table_slug] = schema_data
                     examined_tables.add(source_table)
 
                 if fast_track:
@@ -747,7 +748,7 @@ class Planner(Coordinator):
                 step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
                 # Check if we're done with table selection
                 if output.is_satisfied or not available_tables:
-                    step.stream("\nSelection process complete - model is satisfied with selected tables", replace=False)
+                    step.stream("\n\nSelection process complete - model is satisfied with selected tables", replace=False)
                     self._memory["closest_tables"] = selected_tables
                     break
         return tables_sql_schemas
@@ -792,6 +793,9 @@ class Planner(Coordinator):
             async for output in response:
                 if output.chain_of_thought:
                     step.stream(output.chain_of_thought, replace=True)
+
+            if not output.needs_lookup:
+                return tools.values()
 
             if output.tools:
                 for output_tool in output.tools:

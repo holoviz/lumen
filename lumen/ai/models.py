@@ -20,7 +20,7 @@ class Sql(BaseModel):
         However, if applicable, be sure to carefully study the schema, discuss the values in the columns,
         and whether you need to wrangle the data before you can use it, before finally writing a correct and valid
         SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
-        Everything should be made as simple as possible, but no simpler.
+        Everything should be made as simple as possible, but no simpler and be concise.
         """
     )
 
@@ -59,34 +59,40 @@ class RetrySpec(BaseModel):
 
 def make_context_model(tools: list[str], required_tools: list[str]):
     fields = {}
-    if tools:
-        tool = create_model(
-            "Tool",
-            name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
-            instruction=(str, FieldInfo(description="Instructions for the tool.")),
+    tool = create_model(
+        "Tool",
+        name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
+        instruction=(str, FieldInfo(description="Instructions for the tool.")),
+    )
+    fields["chain_of_thought"] = (
+        str,
+        FieldInfo(
+        description=(
+            "Explain what tool you'll choose to use based on user query. "
+            "If the user is asking for availability about tables, no tools are needed "
+            "because you'll use TableListAgent."
         )
-        fields["chain_of_thought"] = (
-            str,
-            FieldInfo(
-            description=(
-                "Explain what tool you'll choose to use based on user query. "
-                "If the user is asking for availability about tables, no tools are needed "
-                "because you'll use TableListAgent."
-            )
-            )
         )
-        description = (
-            "A list of tools to call to provide context before launching into the planning stage."
-            "Use tools to gather additional context or clarification, tools should NEVER be used"
-            "to obtain the actual data you will be working with. "
-            "Empty if the user query is asking for availability or if you have enough context to proceed."
+    )
+    fields["needs_lookup"] = (
+        bool,
+        FieldInfo(
+            description="Whether you need to use a tool to gather additional context before proceeding."
         )
-        if required_tools:
-            description += f" You must include these required tools: {', '.join(required_tools)}"
-        fields['tools'] = (
-            list[tool],
-            FieldInfo(description=description)
-        )
+    )
+    description = (
+        "A list of tools to call to provide context before launching into the planning stage."
+        "Use tools to gather additional context or clarification, tools should NEVER be used"
+        "to obtain the actual data you will be working with. "
+        "Do not provide if the user query is asking for availability or "
+        "if you have enough context to proceed."
+    )
+    if required_tools:
+        description += f" You must include these required tools: {', '.join(required_tools)}"
+    fields['tools'] = (
+        list[tool],
+        FieldInfo(description=description)
+    )
     return create_model("Context", __base__=PartialBaseModel, **fields)
 
 

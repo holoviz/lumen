@@ -515,7 +515,7 @@ class TableLookup(VectorLookupTool):
                     col_desc = f": {col_info['description']}" if col_info.get("description") else ""
                     columns_description += f"\n- {col_label}{col_desc}"
                     if i > 10:
-                        columns_description += "\n  ... (more columns not shown)"
+                        columns_description += f"\n  ... (out of {len(table_metadata['columns'])} columns)"
                         break
                 description += f"\n{indent(columns_description, ' ' * 2)}"
             closest_tables.append(table_slug)
@@ -531,7 +531,7 @@ class TableLookup(VectorLookupTool):
         self._memory["closest_tables"] = closest_tables
         self._memory["table_similarities"] = table_similarities
         if "refined_search_query" in self._memory and final_query != query:
-            message = f"\n\nRefined search query: '{final_query}'\n" + message
+            message = f"\n\nRefined search query: '{final_query}'\n\n" + message
         return message + "\n".join(descriptions)
 
 

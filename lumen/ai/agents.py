@@ -672,7 +672,7 @@ class SQLAgent(LumenBaseAgent):
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
                     if selected_tables is not None:
-                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: {selected_tables}"
+                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_tables)}`"
                     step.stream(
                         f'{chain_of_thought}',
                         replace=True
@@ -702,6 +702,7 @@ class SQLAgent(LumenBaseAgent):
                 _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
             table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
+            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             if (
                 'tables' in source.param and
                 isinstance(source.tables, dict) and
@@ -709,7 +710,7 @@ class SQLAgent(LumenBaseAgent):
             ):
                 table_name = source.tables[table_name]
 
-            tables_sql_schemas[table_name] = {
+            tables_sql_schemas[table_slug] = {
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table),
                 "source": source.name,
