@@ -642,8 +642,9 @@ class Planner(Coordinator):
         )
         current_query = "\n".join(message["content"] for message in messages)
 
+        selected_tables = None
         for iteration in range(1, max_iterations + 1):
-            iteration += 1
+            # Don't increment iteration since we're using the for loop counter
             with self.interface.add_step(
                 title=f"Iterative table selection ({iteration} / {max_iterations})",
                 user="Assistant",
@@ -658,8 +659,10 @@ class Planner(Coordinator):
                     step.stream("\nNo more tables available to examine")
                     break
 
+                # For the first iteration, select the top 3 tables to examine
+                # For subsequent iterations, the LLM selects tables in the previous iteration
                 if iteration == 1:
-                    selected_tables = available_tables[:3]  # start with a couple
+                    selected_tables = available_tables[:3]
 
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
                 for source_table in selected_tables:
