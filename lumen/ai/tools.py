@@ -95,7 +95,7 @@ class VectorLookupTool(Tool):
             Formatted description of results
         """
         return "\n".join(
-            f"- Result {i+1}: {result.get('text', 'No text')} (Similarity: {result.get('similarity', 0):.3f})"
+            f"- {result.get('text', 'No text')} (Similarity: {result.get('similarity', 0):.3f})"
             for i, result in enumerate(results)
         )
 
@@ -271,7 +271,7 @@ class DocumentLookup(VectorLookupTool):
             filename = metadata.get('filename', 'Unknown document')
             text_preview = result.get('text', '')[:150] + '...' if len(result.get('text', '')) > 150 else result.get('text', '')
 
-            description = f"- Document: {filename} (Similarity: {result.get('similarity', 0):.3f})"
+            description = f"- {filename} (Similarity: {result.get('similarity', 0):.3f})"
             if text_preview:
                 description += f"\n  Preview: {text_preview}"
 
@@ -384,7 +384,7 @@ class TableLookup(VectorLookupTool):
             table_name = result['metadata'].get("table_name", "unknown")
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
-            description = f"- Table: {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
+            description = f"- {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
             if table_metadata := self._table_metadata.get(table_slug):
                 if table_description := table_metadata.get("description"):
                     description += f"\n  Description: {table_description}"

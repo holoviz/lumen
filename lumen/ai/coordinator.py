@@ -631,10 +631,7 @@ class Planner(Coordinator):
         if not sources:
             return {}
 
-        satisfied = False
-        iteration = 0
         max_iterations = 3
-
         tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
         examined_tables = set(tables_sql_schemas.keys())
 
@@ -644,7 +641,8 @@ class Planner(Coordinator):
             max_user_messages=self.history
         )
         current_query = "\n".join(message["content"] for message in messages)
-        while not satisfied and iteration < max_iterations:
+
+        for iteration in range(1, max_iterations + 1):
             iteration += 1
             with self.interface.add_step(
                 title=f"Iterative table selection ({iteration} / {max_iterations})",
@@ -711,14 +709,15 @@ class Planner(Coordinator):
                     step.stream(chain_of_thought, replace=True)
                 selected_tables = output.selected_tables or []
                 step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
-                satisfied = output.is_satisfied or not available_tables
-                closest_tables = []
-                if satisfied:
+                # Check if we're done with table selection
+                if output.is_satisfied or not available_tables:
                     step.stream("\nSelection process complete - model is satisfied with selected tables", replace=False)
+                    closest_tables = []
                     for table in selected_tables:
                         _, normalized_table_name = separate_source_table(table, sources)
                         closest_tables.append(normalized_table_name)
                     self._memory["closest_tables"] = closest_tables
+                    break
 
         return tables_sql_schemas
 
