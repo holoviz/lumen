@@ -361,8 +361,40 @@ class ExplorerUI(UI):
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
         self._explorations = Tabs(
-            sizing_mode='stretch_both', closable=True, tabs_location="left" if self.chat_ui_position == "right" else "right",
-            stylesheets=[':host(.bk-left) .bk-header .bk-tab { padding-left: 5px; padding-right: 2px; text-align: left; }']
+            sizing_mode='stretch_both',
+            closable=True,
+            tabs_location="left" if self.chat_ui_position == "right" else "right",
+            stylesheets=[
+                """
+                :host(.bk-left) .bk-header .bk-tab {
+                    padding-left: 5px;
+                    padding-right: 2px;
+                    text-align: left;
+                    max-width: 50px;
+                    overflow: hidden;
+                    text-overflow: clip;
+                    white-space: nowrap;
+                    transition: max-width 0.3s ease;
+                }
+
+                :host(.bk-left) .bk-header .bk-tab:hover {
+                    max-width: 300px;
+                }
+
+                /* For right-side tabs */
+                .bk-header .bk-tab {
+                    max-width: 50px;
+                    overflow: hidden;
+                    text-overflow: clip;
+                    white-space: nowrap;
+                    transition: max-width 0.3s ease;
+                }
+
+                .bk-header .bk-tab:hover {
+                    max-width: 300px;
+                }
+                """
+            ]
         )
         self._explorations.param.watch(self._cleanup_explorations, ['objects'])
         self._explorations.param.watch(self._set_context, ['active'])
