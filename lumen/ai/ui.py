@@ -501,7 +501,7 @@ class ExplorerUI(UI):
                     self._root_conversation = self.interface.objects
         if (event.new if event is not None else tab):
             # Explorations Tab
-            if active < len(self._conversations):
+            if self._conversations and active < len(self._conversations):
                 conversation = self._conversations[active]
             else:
                 conversation = self._snapshot_messages()

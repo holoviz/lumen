@@ -330,7 +330,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables", "sources_raw_metadata"], readonly=True, doc="""
+    provides = param.List(default=["closest_tables"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     batched = param.Boolean(default=True, doc="""

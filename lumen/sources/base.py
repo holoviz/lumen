@@ -488,7 +488,7 @@ class Source(MultiTypeComponent):
                     f"Error during saving process: {e}"
                 )
 
-    def _get_table_metadata(self, table: list[str]) -> dict:
+    def _get_table_metadata(self, tables: list[str]) -> dict:
         return {}
 
     def __contains__(self, table):
