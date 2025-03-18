@@ -99,6 +99,9 @@ class Coordinator(Viewer, Actor):
         those tables will be automatically selected for the closest_tables
         and there will not be an iterative table selection process.""")
 
+    max_concurrent = param.Integer(default=3, doc="""
+        The maximum number of concurrent tasks to run.""")
+
     __abstract = True
 
     def __init__(
@@ -109,6 +112,7 @@ class Coordinator(Viewer, Actor):
         logs_db_path: str = "",
         **params,
     ):
+        self._semaphore = asyncio.Semaphore(self.max_concurrent)
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
         def on_message(message, instance):
@@ -622,6 +626,7 @@ class Planner(Coordinator):
         }
     )
 
+    @staticmethod
     async def _lookup_table_schema(source_table, sources, step):
         if SOURCE_TABLE_SEPARATOR in source_table:
             source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
@@ -684,34 +689,37 @@ class Planner(Coordinator):
                     step.stream("\nNo more tables available to examine")
                     break
 
+                fast_track = False
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
-                    # If any tables have a similarity score above the threshold, select ALL of those tables
+                    # If any tables have a similarity score above the threshold, select up to 5 of those tables
                     table_similarities = self._memory.get("table_similarities", {})
                     if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
                         self._memory["closest_tables"] = selected_tables = sorted(
                             table_similarities,
                             key=lambda x: table_similarities[x],
                             reverse=True
-                        )
+                        )[:5]
                         step.stream(
-                            f"\n\nFound {len(selected_tables)} likely table(s) based on "
-                            f"similarity threshold of {self.table_similarity_threshold}...",
-                            replace=False
-                        )
-                        # based on similarity search alone, if we have selected tables, we're done!!
-                        break
-
-                    # If not, select the top 3 tables to examine
-                    selected_tables = available_tables[:3]
+                            f"\n\nSelected tables: `{'`, `'.join(selected_tables)}` based on a similarity "
+                            f"thresold of {self.table_similarity_threshold}", replace=False)
+                        fast_track = True
+                    else:
+                        # If not, select the top 3 tables to examine
+                        selected_tables = available_tables[:3]
 
                 # For subsequent iterations, the LLM selects tables in the previous iteration
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
                 schema_tasks = [self._lookup_table_schema(source_table, sources, step) for source_table in selected_tables]
-                schema_results = await asyncio.gather(*schema_tasks)
+                async with self._semaphore:
+                    schema_results = await asyncio.gather(*schema_tasks)
                 for normalized_name, schema_data, source_table in schema_results:
                     tables_sql_schemas[normalized_name] = schema_data
                     examined_tables.add(source_table)
+
+                if fast_track:
+                    # based on similarity search alone, if we have selected tables, we're done!!
+                    break
 
                 system = await self._render_prompt(
                     "table_selection",
