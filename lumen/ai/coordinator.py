@@ -627,7 +627,7 @@ class Planner(Coordinator):
     )
 
     @staticmethod
-    async def _lookup_table_schema(source_table, sources, step):
+    async def _lookup_table_schema(source_table, sources):
         if SOURCE_TABLE_SEPARATOR in source_table:
             source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
             source_obj = sources.get(source_name)
@@ -645,7 +645,6 @@ class Planner(Coordinator):
             "source": source_obj.name,
         }
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{normalized_table_name}"
-        step.stream(f"\n\nAdded schema for {table_slug}", replace=False)
         return table_slug, result, source_table
 
 
@@ -711,10 +710,11 @@ class Planner(Coordinator):
 
                 # For subsequent iterations, the LLM selects tables in the previous iteration
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
-                schema_tasks = [self._lookup_table_schema(source_table, sources, step) for source_table in selected_tables]
+                schema_tasks = [self._lookup_table_schema(source_table, sources) for source_table in selected_tables]
                 async with self._semaphore:
                     schema_results = await asyncio.gather(*schema_tasks)
                 for table_slug, schema_data, source_table in schema_results:
+                    step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
                     tables_sql_schemas[table_slug] = schema_data
                     examined_tables.add(source_table)
 
@@ -744,6 +744,7 @@ class Planner(Coordinator):
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
                     step.stream(chain_of_thought, replace=True)
+
                 selected_tables = output.selected_tables or []
                 step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
                 # Check if we're done with table selection
@@ -751,7 +752,10 @@ class Planner(Coordinator):
                     step.stream("\n\nSelection process complete - model is satisfied with selected tables", replace=False)
                     self._memory["closest_tables"] = selected_tables
                     break
-        return tables_sql_schemas
+        return {
+            table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
+            if table_slug in selected_tables  # prevent it from getting too big and waste token
+        }
 
     async def _get_tools_context(self, messages: list[Message]) -> dict:
         tools = {tool.name: tool for tool in self._tools["__main__"]}

@@ -192,6 +192,7 @@ def make_coordinator_tables_model(tables):
             description="""
             Consider which tables would provide the most relevant context for understanding the user query.
             Think about what information would help you better understand the domain and data relationships.
+            Please be as concise as possible.
             """
         )),
         is_satisfied=(bool, FieldInfo(
