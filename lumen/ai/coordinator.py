@@ -754,7 +754,7 @@ class Planner(Coordinator):
                     break
         return {
             table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
-            if not selected_tables or table_slug in selected_tables  # prevent it from getting too big and waste token
+            if table_slug in selected_tables  # prevent it from getting too big and waste token
         }
 
     async def _get_tools_context(self, messages: list[Message]) -> dict:
