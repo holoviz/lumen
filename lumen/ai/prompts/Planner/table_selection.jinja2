@@ -14,8 +14,8 @@ Analyze this query carefully and select up to 3 tables that would provide the mo
 
 ## EXAMINED SCHEMAS
 You have already examined these tables with their schemas:
-{%- for table_name, table_info in current_schemas.items() %}
-## `{{ table_info.source }}{{ separator }}{{ table_name }}`
+{%- for table_slug, table_info in current_schemas.items() %}
+## `{{ table_slug }}`
 ```yaml
 {{ table_info.schema }}
 ```
