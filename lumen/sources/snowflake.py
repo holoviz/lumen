@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import decimal
 import re
 
 from pathlib import Path
