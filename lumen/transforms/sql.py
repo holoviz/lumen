@@ -541,7 +541,7 @@ class SQLSample(SQLTransform):
         expression = self.parse_sql(sql_in)
         dialect = self.write or self.read
 
-        if dialect in ('postgres', 'redshift', 'snowflake', 'bigquery', 'sqlserver', 'duckdb'):
+        if dialect in ('sqlserver', 'duckdb') or (dialect in ('postgres', 'redshift', 'snowflake', 'bigquery') and not self.size):
             return self._apply_tablesample_dialect(expression)
         elif dialect in ('mysql', 'mariadb'):
             return self._apply_mysql_dialect(expression)
