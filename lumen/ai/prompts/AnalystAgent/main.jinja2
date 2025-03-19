@@ -38,8 +38,8 @@ The dataset is empty. As the subject matter expert, if this is unexpected, analy
 and try to make educated guess what other columns or values should be used instead.
 
 For reference, here's the tables and their schemas:
-{% for table_name, table_info in memory.tables_sql_schemas.items() %}
-- **{{ table_name }}**:
+{% for table_info in memory.tables_sql_schemas.values() %}
+- **{{ table_info.sql_table }}**:
 ```yaml
 {{ table_info.schema }}
 ```

@@ -7,10 +7,10 @@ Original output:
 
 {% if memory["tables_sql_schemas"] %}
 Reference these database schemas for your corrections:
-{% for table, details in memory["tables_sql_schemas"].items() %}
-- `{{ table }}`:
+{% for table_info in memory["tables_sql_schemas"].values() %}
+- `{{ table_info.sql_table }}`:
 ```yaml
-{{ details.schema }}
+{{ table_info.schema }}
 ```
 {% endfor %}
 {% endif %}

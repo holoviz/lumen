@@ -633,8 +633,9 @@ class Planner(Coordinator):
         normalized_table_name = source_obj.normalize_table(table_name)
         result = {
             "schema": yaml.dump(table_schema),
-            "sql": source_obj.get_sql_expr(table_name),
             "source": source_obj.name,
+            "sql_table": normalized_table_name,
+            "sql": source_obj.get_sql_expr(table_name),
         }
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{normalized_table_name}"
         return table_slug, result, source_table
