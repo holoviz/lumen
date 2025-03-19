@@ -33,8 +33,6 @@ class BigQuerySource(BaseSQLSource):
     tables = param.ClassSelector(class_=(list, dict), doc="""
        A list of tables or a dictionary mapping from table name to a SQL query.""")
 
-    enum_threshold = 0.10
-
     dialect = "bigquery"
 
     def __init__(self, **params) -> None:
@@ -154,10 +152,10 @@ class BigQuerySource(BaseSQLSource):
         return table_references
 
     def get_sql_expr(self, table: str) -> str:
-        if isinstance(self.tables, list | dict):
+        if isinstance(self.tables, dict):
             if table not in self.tables:
-                tables = self.tables if isinstance(self.tables, list) else list(self.tables.keys())
-                raise KeyError(f"Table {table} not found in {tables}.")
+                raise KeyError(f"Table {table} not found in {list(self.tables)}.")
+            return self.tables[table]
         return f"SELECT * FROM {table}"
 
     def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
@@ -332,7 +330,6 @@ class BigQuerySource(BaseSQLSource):
             schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
             schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
         return schema
-
 
     @cached_schema
     def get_schema(
