@@ -426,7 +426,7 @@ class TestSQLSelectFrom:
         """Test dialect-specific behavior."""
         sql_in = "my_table"
         result = SQLSelectFrom.apply_to(sql_in, identify=True, write="postgres")
-        expected = "SELECT * FROM my_table"
+        expected = 'SELECT * FROM "my_table"'
         assert result == expected
 
     def test_complex_query_table_replacement(self):
@@ -444,3 +444,9 @@ class TestSQLSelectFrom:
         normalized_result = " ".join(result.split())
         expected = "SELECT t1.col1, t2.col2 FROM new_table1 AS t1 JOIN new_table2 AS t2 ON t1.id = t2.id WHERE t1.col1 > 10 GROUP BY t1.col1"
         assert normalized_result == expected
+
+    def test_table_path(self):
+        sql_in = '/path/to/my_data.parquet'
+        result = SQLSelectFrom.apply_to(sql_in)
+        expected = 'SELECT * FROM "/path/to/my_data.parquet"'
+        assert result == expected
