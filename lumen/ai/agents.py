@@ -370,6 +370,8 @@ class TableListAgent(ListAgent):
         return len(source.get_tables()) > 1
 
     def _get_items(self) -> list[str]:
+        if "closest_tables" in self._memory:
+            return self._memory["closest_tables"]
         tables = []
         for source in self._memory["sources"]:
             tables += source.get_tables()
