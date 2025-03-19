@@ -408,7 +408,7 @@ class TableLookup(VectorLookupTool):
         if not table_name_key:
             return
         table_name = table_name_key
-        table_metadata = source_metadata[table_name]
+        table_metadata = dict(source_metadata[table_name])
 
         # IMPORTANT: re-insert using table slug
         # we need to store a copy of table_metadata so it can be used to inject context into the LLM
