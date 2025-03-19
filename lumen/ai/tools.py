@@ -491,14 +491,27 @@ class TableLookup(VectorLookupTool):
         """
         query = messages[-1]["content"]
 
-        # Perform search with refinement
-        final_query, results, best_similarity = await self._perform_search_with_refinement(query)
-
-        any_matches = any(result['similarity'] >= self.min_similarity for result in results)
-
-        # Process results as before
         closest_tables, descriptions = [], []
         table_similarities = {}
+
+        # Check if any tables are mentioned verbatim
+        for table in self._table_metadata:
+            if table.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
+                closest_tables.append(table)
+                table_similarities[table] = 1
+
+        # If so skip search
+        if closest_tables:
+            final_query = query
+            results = []
+            any_matches = True
+            best_similarity = 1
+        else:
+            # otherwise perform search with refinement
+            final_query, results, best_similarity = await self._perform_search_with_refinement(query)
+            any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+
+        # Process results as before
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
