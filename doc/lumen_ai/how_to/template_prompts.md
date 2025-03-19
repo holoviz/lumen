@@ -37,7 +37,7 @@ The base system prompt template follows this format:
 For example, the `ChatAgent`'s prompt template uses `instructions` and `context`:
 
 ```jinja2
-{% extends 'Actor/main.jinja2' %}
+{% extends 'Agent/main.jinja2' %}
 
 {% block instructions %}
 Act as a helpful assistant for high-level data exploration, focusing on available datasets and, only if data is
@@ -84,7 +84,7 @@ ui = lmai.ExplorerUI(agents=agents)
 This will result in the following prompt template:
 
 ```jinja2
-{% extends 'Actor/main.jinja2' %}
+{% extends 'Agent/main.jinja2' %}
 
 {% block instructions %}
 Act like the user's meteorologist, and explain jargon in the format of a weather report.
@@ -168,7 +168,7 @@ ui = lmai.ExplorerUI(agents=agents)
 Which produces the following prompt template:
 
 ```jinja2
-{% extends 'Actor/main.jinja2' %}
+{% extends 'Agent/main.jinja2' %}
 
 {% block instructions %}
 Speak like a pirate.

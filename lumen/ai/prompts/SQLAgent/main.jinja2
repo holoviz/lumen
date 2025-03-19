@@ -1,4 +1,4 @@
-{% extends 'Actor/main.jinja2' %}
+{% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
@@ -7,16 +7,6 @@ Use `SELECT * FROM table` if there is no specific column selection mentioned in 
 {%- endblock -%}
 
 {% block context -%}
-{%- if tables_sql_schemas -%}
-Here are YAML schemas for currently relevant tables:
-{% for table, details in tables_sql_schemas.items() %}
-- `{{ table }}`:
-```yaml
-{{ details.schema }}
-```
-{% endfor -%}
-{%- endif -%}
-
 Checklist:
 - Use only `{{ dialect }}` SQL syntax.
 - Do NOT include inlined comments in the SQL code, e.g. `-- comment`
@@ -44,7 +34,7 @@ Additionally, only if applicable:
 - Specify data types explicitly to avoid type mismatches.
 - Be sure to remove suspiciously large or small values that may be invalid, like -9999.
 - Use Common Table Expressions (CTEs) and subqueries to break down into manageable parts, only if the query requires more than one transformation.
-- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (greater than 1), especially if the data is large, but the lower limit should be at least 100k
+- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (at least 100,000 if unspecified), especially if the data is large
 - If the date columns are separated, e.g. year, month, day, then join them into a single date column.
 
 {%- if has_errors %}
@@ -55,12 +45,21 @@ CAST or TO_DATE
 - Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, only if needed.
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
 {% endif %}
-{%- endblock -%}
-
 {% if comments is defined -%}
 Here's additional guidance:
 {{ comments }}
 {%- endif -%}
+
+{%- if tables_sql_schemas %}
+Here are YAML schemas for currently relevant tables:
+{% for table, details in tables_sql_schemas.items() %}
+- `{{ table }}`:
+```yaml
+{{ details.schema }}
+```
+{% endfor -%}
+{%- endif -%}
+{%- endblock -%}
 
 {%- block examples %}
 {%- if has_errors -%}

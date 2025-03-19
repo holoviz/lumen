@@ -16,11 +16,11 @@ class Sql(BaseModel):
     chain_of_thought: str = Field(
         description="""
         You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        If it's simple, just provide one step. However, if applicable, be sure to carefully
-        study the schema, discuss the values in the columns, and whether you need to
-        wrangle the data before you can use it, before finally writing a correct and valid
+        If it's simple, give at max one sentence about using `SELECT * FROM ...`.
+        However, if applicable, be sure to carefully study the schema, discuss the values in the columns,
+        and whether you need to wrangle the data before you can use it, before finally writing a correct and valid
         SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
-        Everything should be made as simple as possible, but no simpler.
+        Everything should be made as simple as possible, but no simpler and be concise.
         """
     )
 
@@ -57,27 +57,42 @@ class RetrySpec(BaseModel):
     )
 
 
-def make_context_model(tools: list[str], tables: list[str]):
+def make_context_model(tools: list[str], required_tools: list[str]):
     fields = {}
-    if tables:
-        fields['tables'] = (
-            list[Literal[tuple(tables)]],
-            FieldInfo(
-                description="A list of the most relevant tables to explore and load into memory before coming up with a plan. Choose at most three tables. NOTE: Simple queries asking to list the tables/datasets do not require loading the tables. Table names MUST match verbatim including the quotations, apostrophes, periods, or lack thereof."
-            )
+    tool = create_model(
+        "Tool",
+        name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
+        instruction=(str, FieldInfo(description="Instructions for the tool.")),
+    )
+    fields["chain_of_thought"] = (
+        str,
+        FieldInfo(
+        description=(
+            "Explain what tool you'll choose to use based on user query. "
+            "If the user is asking for availability about tables, no tools are needed "
+            "because you'll use TableListAgent."
         )
-    if tools:
-        tool = create_model(
-            "Tool",
-            name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
-            instruction=(str, FieldInfo(description="Instructions for the tool.")),
         )
-        fields['tools'] = tools=(
-            list[tool],
-            FieldInfo(
-                description="A list of tools to call to provide context before launching into the planning stage. Use tools to gather additional context or clarification, tools should NEVER be used to obtain the actual data you will be working with."
-            )
+    )
+    fields["needs_lookup"] = (
+        bool,
+        FieldInfo(
+            description="Whether you need to use a tool to gather additional context before proceeding."
         )
+    )
+    description = (
+        "A list of tools to call to provide context before launching into the planning stage."
+        "Use tools to gather additional context or clarification, tools should NEVER be used"
+        "to obtain the actual data you will be working with. "
+        "Do not provide if the user query is asking for availability or "
+        "if you have enough context to proceed."
+    )
+    if required_tools:
+        description += f" You must include these required tools: {', '.join(required_tools)}"
+    fields['tools'] = (
+        list[tool],
+        FieldInfo(description=description)
+    )
     return create_model("Context", __base__=PartialBaseModel, **fields)
 
 
@@ -163,3 +178,63 @@ def make_tables_model(tables):
         __base__=PartialBaseModel
     )
     return table_model
+
+
+def make_coordinator_tables_model(tables):
+    """
+    Creates a model for table selection in the coordinator.
+    This is separate from the SQLAgent's table selection model to focus on context gathering
+    rather than query execution.
+    """
+    table_model = create_model(
+        "CoordinatorTable",
+        chain_of_thought=(str, FieldInfo(
+            description="""
+            Consider which tables would provide the most relevant context for understanding the user query.
+            Think about what information would help you better understand the domain and data relationships.
+            Please be as concise as possible.
+            """
+        )),
+        is_satisfied=(bool, FieldInfo(
+            description="""
+            Indicate whether you have sufficient context about the available data structures.
+            Set to True if you understand enough about the data model to proceed with the query.
+            Set to False if you need to examine additional tables to better understand the domain.
+            """
+        )),
+        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
+            description="""
+            If is_satisfied and a join is necessary, return a list of table names that will be used in the join.
+            If is_satisfied and no join is necessary, return a list of a single table name.
+            If not is_satisfied return a list of table names that you believe would provide
+            the most relevant context for understanding the user query that wasn't already seen before.
+            Focus on tables that contain key entities, relationships, or metrics mentioned in the query.
+            """
+        )),
+        __base__=PartialBaseModel
+    )
+    return table_model
+
+
+def make_refined_query_model(item_type_name: str = "items"):
+    """
+    Creates a model for refining search queries in vector lookup tools.
+    """
+    return create_model(
+        "RefinedQuery",
+        chain_of_thought=(str, Field(
+            description=f"""
+            Analyze the current search results for {item_type_name}. Consider whether the terms used
+            in the query match the terms that might be found in {item_type_name} names and descriptions.
+            Think about more specific or alternative terms that might yield better results.
+            """
+        )),
+        refined_search_query=(str, Field(
+            description=f"""
+            A refined search query that would help find more relevant {item_type_name}.
+            This should be a focused query with specific terms, entities, or concepts
+            that might appear in relevant {item_type_name}.
+            """
+        )),
+        __base__=PartialBaseModel
+    )

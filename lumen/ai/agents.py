@@ -37,12 +37,12 @@ from .memory import _Memory
 from .models import (
     PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
 )
-from .tools import DocumentLookup, TableLookup
+from .tools import DocumentLookup
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, gather_table_sources, get_data, get_pipeline,
-    get_schema, load_json, log_debug, mutate_user_message, report_error,
-    retry_llm_output,
+    clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
+    log_debug, mutate_user_message, report_error, retry_llm_output,
+    separate_source_table,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -243,7 +243,7 @@ class ChatAgent(Agent):
         default={
             "main": {
                 "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-                "tools": [TableLookup, DocumentLookup]
+                "tools": [DocumentLookup]
             },
         }
     )
@@ -257,21 +257,6 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
-        table = self._memory.get("table")
-        source = self._memory.get("source")
-        source_tables = source.get_tables() if source else []
-        if table:
-            schema = await get_schema(source, table, include_count=True, limit=1000)
-            context["table"] = table
-            context["schema"] = schema
-        elif "closest_tables" in self._memory and any(
-            table for table in self._memory["closest_tables"] if table in source_tables
-        ):
-            schemas = [
-                await get_schema(source, table, include_count=True, limit=1000)
-                for table in self._memory["closest_tables"] if table in source_tables
-            ]
-            context["tables_schemas"] = list(zip(self._memory["closest_tables"], schemas))
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
 
@@ -385,6 +370,8 @@ class TableListAgent(ListAgent):
         return len(source.get_tables()) > 1
 
     def _get_items(self) -> list[str]:
+        if "closest_tables" in self._memory:
+            return self._memory["closest_tables"]
         tables = []
         for source in self._memory["sources"]:
             tables += source.get_tables()
@@ -655,7 +642,7 @@ class SQLAgent(LumenBaseAgent):
         memory['sql'] = event.new
 
     @retry_llm_output()
-    async def _find_tables(self, messages: list[Message], tables_schema_str: str, errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
+    async def _find_tables(self, messages: list[Message], errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
         if errors:
             last_content = self.interface.objects[-1].object[-1][-1].object
             chain_of_thought = last_content.split("```")[0]
@@ -666,49 +653,40 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
             log_debug("\033[91mRetry find_tables\033[0m")
 
-        sep = SOURCE_TABLE_SEPARATOR
         sources = {source.name: source for source in self._memory["sources"]}
-        tables = [
-            f"{a_source}{sep}{a_table}" for a_source in sources.values()
-            for a_table in a_source.get_tables()
-        ]
-        if len(tables) == 1:
-            # if only one source and one table, return it directly
-            return {tables[0]: next(iter(sources.values()))}, ""
-
-        system = await self._render_prompt(
-            "find_tables", messages, separator=sep, tables_schema_str=tables_schema_str
-        )
-        tables_model = self._get_model("find_tables", tables=tables)
-        model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-        with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
-            response = self.llm.stream(
-                messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=tables_model,
+        tables = self._memory.get("closest_tables", next(iter(sources.values())).get_tables()[:5])
+        if len(tables) > 1:
+            system = await self._render_prompt(
+                "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
             )
-            async for output in response:
-                chain_of_thought = output.chain_of_thought or ""
-                selected_tables = output.selected_tables
-                if output.potential_join_issues is not None:
-                    chain_of_thought += output.potential_join_issues
-                if selected_tables is not None:
-                    chain_of_thought = chain_of_thought + f"\n\nRelevant tables: {selected_tables}"
-                step.stream(
-                    f'{chain_of_thought}',
-                    replace=True
+            tables_model = self._get_model("find_tables", tables=tables)
+            model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
+            with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+                response = self.llm.stream(
+                    messages,
+                    system=system,
+                    model_spec=model_spec,
+                    response_model=tables_model,
                 )
-            step.success_title = f'Found {len(selected_tables)} relevant table(s)'
+                async for output in response:
+                    chain_of_thought = output.chain_of_thought or ""
+                    selected_tables = output.selected_tables
+                    if output.potential_join_issues is not None:
+                        chain_of_thought += output.potential_join_issues
+                    if selected_tables is not None:
+                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_tables)}`"
+                    step.stream(
+                        f'{chain_of_thought}',
+                        replace=True
+                    )
+                step.success_title = f'Found {len(selected_tables)} relevant table(s)'
+        else:
+            selected_tables = tables[:1]
+            chain_of_thought = ""
 
         tables_to_source = {}
         for source_table in selected_tables:
-            if SOURCE_TABLE_SEPARATOR in source_table:
-                a_source_name, a_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                a_source_obj = sources.get(a_source_name)
-            else:
-                a_source_obj = next(iter(sources.values()))
-                a_table = source_table
+            a_source_obj, a_table = separate_source_table(source_table, sources)
             tables_to_source[a_table] = a_source_obj
         return tables_to_source, chain_of_thought
 
@@ -718,10 +696,7 @@ class SQLAgent(LumenBaseAgent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        sources = self._memory["sources"]
-        tables_to_source, tables_schema_str = await gather_table_sources(sources, include_sep=True)
-        tables_to_source, comments = await self._find_tables(messages, tables_schema_str)
-
+        tables_to_source, comments = await self._find_tables(messages)
         tables_sql_schemas = {}
         for source_table, source in tables_to_source.items():
             # Look up underlying table name
@@ -729,6 +704,7 @@ class SQLAgent(LumenBaseAgent):
                 _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
             table_schema = await get_schema(source, source_table, include_count=True)
             table_name = source.normalize_table(source_table)
+            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             if (
                 'tables' in source.param and
                 isinstance(source.tables, dict) and
@@ -736,9 +712,10 @@ class SQLAgent(LumenBaseAgent):
             ):
                 table_name = source.tables[table_name]
 
-            tables_sql_schemas[table_name] = {
+            tables_sql_schemas[table_slug] = {
                 "schema": yaml.dump(table_schema),
                 "sql": source.get_sql_expr(source_table),
+                "source": source.name,
             }
         self._memory["tables_sql_schemas"] = tables_sql_schemas
 

@@ -12,7 +12,9 @@ import param
 from ..config import config
 from ..serializers import Serializer
 from ..transforms import Filter
-from ..transforms.sql import SQLFilter, SQLSelectFrom
+from ..transforms.sql import (
+    SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
+)
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -274,13 +276,17 @@ class DuckDBSource(BaseSQLSource):
                     raise e
         return source
 
-    def execute(self, sql_query: str):
-        return self._connection.execute(sql_query).fetch_df()
+    def execute(self, sql_query: str, *args, **kwargs):
+        return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
-            return list(self.tables)
-        return [t[0] for t in self._connection.execute('SHOW TABLES').fetchall()]
+            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
+
+        return [
+            t[0] for t in self._connection.execute('SHOW TABLES').fetchall()
+            if not self._is_table_excluded(t[0])
+        ]
 
     def normalize_table(self, table: str):
         tables = self.get_tables()
@@ -288,23 +294,6 @@ class DuckDBSource(BaseSQLSource):
             # Extract table name from read_* function
             table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
         return table
-
-    def get_sql_expr(self, table: str):
-        if isinstance(self.tables, dict):
-            try:
-                table = self.tables[self.normalize_table(table)]
-            except KeyError:
-                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
-
-        # search if the so-called "table" already contains SELECT ... FROM
-        # if so, we don't need to wrap it in a SELECT * FROM
-        if re.search(r"(?i)\bselect\b[\s\S]+?\bfrom\b", table):
-            sql_expr = table
-        else:
-            if '(' not in table and ')' not in table:
-                table = f'"{table}"'
-            sql_expr = self.sql_expr.format(table=table)
-        return sql_expr.rstrip(";")
 
     @cached
     def get(self, table, **query):
@@ -329,3 +318,34 @@ class DuckDBSource(BaseSQLSource):
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
+
+    def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
+        """
+        Generate metadata for all tables or a single table (batched=False) in DuckDB.
+        Handles formats: database.schema.table_name, schema.table_name, or table_name.
+
+        Args:
+            table: Table name(s) to get metadata for
+
+        Returns:
+            Dictionary with table metadata including description, columns, row count, etc.
+        """
+        metadata = {}
+        for table_name in tables:
+            sql_expr = self.get_sql_expr(table_name)
+            schema_expr = SQLLimit(limit=0).apply(sql_expr)
+            count_expr = SQLCount().apply(sql_expr)
+            schema_result = self.execute(schema_expr)
+            count = self.execute(count_expr).iloc[0, 0]
+            table_metadata = {
+                "description": "",
+                "columns": {
+                    col: {"data_type": str(dtype), "description": ""}
+                    for col, dtype in zip(schema_result.columns, schema_result.dtypes)
+                },
+                "rows": count,
+                "updated_at": None,
+                "created_at": None,
+            }
+            metadata[table_name] = table_metadata
+        return metadata
