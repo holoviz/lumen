@@ -201,10 +201,7 @@ class Coordinator(Viewer, Actor):
             elif isinstance(tool, FunctionType):
                 self._tools["__main__"].append(FunctionTool(tool, llm=llm))
             else:
-                tool_kwargs = {}
-                if tool is TableLookup:
-                    tool_kwargs["n"] = 10
-                self._tools["__main__"].append(tool(llm=llm, **tool_kwargs))
+                self._tools["__main__"].append(tool(llm=llm))
 
         interface.send(
             "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
@@ -700,9 +697,11 @@ class Planner(Coordinator):
                             key=lambda x: table_similarities[x],
                             reverse=True
                         )[:5]
+                        table_list = '`\n- `'.join(selected_tables)
                         step.stream(
-                            f"\n\nSelected tables: `{'`\n- `'.join(selected_tables)}` based on a similarity "
-                            f"thresold of {self.table_similarity_threshold}", replace=False)
+                            f"\n\nSelected tables: `{table_list}`\nbased on a similarity threshold of {self.table_similarity_threshold}",
+                            replace=False
+                        )
                         fast_track = True
                     else:
                         # If not, select the top 3 tables to examine
