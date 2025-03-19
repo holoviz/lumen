@@ -235,7 +235,13 @@ class SQLSelectFrom(SQLFormat):
     transform_type: ClassVar[str] = "sql_select_from"
 
     def apply(self, sql_in: str) -> str:
-        expression = self.parse_sql(sql_in)
+        try:
+            expression = self.parse_sql(sql_in)
+        except sqlglot.ParseError:
+            # The expression has no SELECT statement, and invalid characters
+            # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
+            expression = Table(this=Identifier(this=sql_in, quoted=True))
+
         tables = {}
 
         # one word table names may be classified as a Column
@@ -296,8 +302,8 @@ class SQLSelectFrom(SQLFormat):
 
         # if Select is NOT found, use the default sql_expr
         # and if tables are provided, use that table
-        # else use the sql_in (which should be a table)
-        table = next(iter(tables.values()), Table(this=sql_in))
+        # else use the sql_in turned into expression (which should be a table)
+        table = next(iter(tables.values()), expression)
         self.parameters = {"table": table}
         return super().apply(self.sql_expr)
 
