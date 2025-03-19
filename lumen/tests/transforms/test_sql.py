@@ -426,7 +426,7 @@ class TestSQLSelectFrom:
         """Test dialect-specific behavior."""
         sql_in = "my_table"
         result = SQLSelectFrom.apply_to(sql_in, identify=True, write="postgres")
-        expected = "SELECT * FROM my_table"
+        expected = 'SELECT * FROM "my_table"'
         assert result == expected
 
     def test_complex_query_table_replacement(self):
