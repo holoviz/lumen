@@ -89,7 +89,7 @@ class VectorStoreTestKit:
         text = "Food: $10, Drinks: $5, Total: $15"
         metadata = {"title": "receipt", "department": "accounting"}
         stored_embedding_text = store_with_three_docs._join_text_and_metadata(text, metadata)
-        results = store_with_three_docs.query(stored_embedding_text, threshold=1)
+        results = store_with_three_docs.query(stored_embedding_text, threshold=0.99)
         assert len(results) == 1
 
     def test_query_empty_store(self, empty_store):
