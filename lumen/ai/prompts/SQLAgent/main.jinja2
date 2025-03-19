@@ -52,10 +52,10 @@ Here's additional guidance:
 
 {%- if tables_sql_schemas %}
 Here are YAML schemas for currently relevant tables:
-{% for table, details in tables_sql_schemas.items() %}
-- `{{ table }}`:
+{% for table_info in tables_sql_schemas.values() %}
+- `{{ table_info.sql_table }}`:
 ```yaml
-{{ details.schema }}
+{{ table_info.schema }}
 ```
 {% endfor -%}
 {%- endif -%}
