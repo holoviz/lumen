@@ -40,9 +40,9 @@ from .models import (
 from .tools import DocumentLookup
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
-    log_debug, mutate_user_message, report_error, retry_llm_output,
-    separate_source_table,
+    clean_sql, describe_data, fetch_table_schemas, get_data, get_pipeline,
+    get_schema, load_json, log_debug, mutate_user_message, report_error,
+    retry_llm_output, separate_table_slug,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -370,8 +370,6 @@ class TableListAgent(ListAgent):
         return len(source.get_tables()) > 1
 
     def _get_items(self) -> list[str]:
-        if "closest_tables" in self._memory:
-            return self._memory["closest_tables"]
         tables = []
         for source in self._memory["sources"]:
             tables += source.get_tables()
@@ -670,23 +668,26 @@ class SQLAgent(LumenBaseAgent):
                 )
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
-                    selected_tables = output.selected_tables
+                    selected_table_slugs = output.selected_table_slugs
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
-                    if selected_tables is not None:
-                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_tables)}`"
+                    if selected_table_slugs is not None:
+                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_table_slugs)}`"
                     step.stream(
                         f'{chain_of_thought}',
                         replace=True
                     )
-                step.success_title = f'Found {len(selected_tables)} relevant table(s)'
+                step.success_title = f'Found {len(selected_table_slugs)} relevant table(s)'
         else:
-            selected_tables = tables[:1]
+            selected_table_slugs = tables[:1]
             chain_of_thought = ""
 
+        tables_sql_schemas = await fetch_table_schemas(sources, selected_table_slugs, include_count=True)
+        self._memory["tables_sql_schemas"] = tables_sql_schemas
+
         tables_to_source = {}
-        for source_table in selected_tables:
-            a_source_obj, a_table = separate_source_table(source_table, sources)
+        for source_table in selected_table_slugs:
+            a_source_obj, a_table = separate_table_slug(source_table, sources)
             tables_to_source[a_table] = a_source_obj
         return tables_to_source, chain_of_thought
 
@@ -697,30 +698,7 @@ class SQLAgent(LumenBaseAgent):
         step_title: str | None = None,
     ) -> Any:
         tables_to_source, comments = await self._find_tables(messages)
-        tables_sql_schemas = {}
-        for source_table, source in tables_to_source.items():
-            # Look up underlying table name
-            if SOURCE_TABLE_SEPARATOR in source_table:
-                _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-            table_schema = await get_schema(source, source_table, include_count=True)
-            table_name = source.normalize_table(source_table)
-            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            if (
-                'tables' in source.param and
-                isinstance(source.tables, dict) and
-                'select ' not in source.tables[table_name].lower()
-            ):
-                table_name = source.tables[table_name]
-
-            tables_sql_schemas[table_slug] = {
-                "schema": yaml.dump(table_schema),
-                "source": source.name,
-                "sql_table": table_name,
-                "sql": source.get_sql_expr(source_table),
-            }
-        self._memory["tables_sql_schemas"] = tables_sql_schemas
-
-        dialect = source.dialect
+        dialect = self._memory["source"].dialect
         try:
             sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
             pipeline = self._memory['pipeline']
