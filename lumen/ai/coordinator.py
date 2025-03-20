@@ -99,9 +99,6 @@ class Coordinator(Viewer, Actor):
         those tables will be automatically selected for the closest_tables
         and there will not be an iterative table selection process.""")
 
-    max_concurrent = param.Integer(default=3, doc="""
-        The maximum number of concurrent tasks to run.""")
-
     __abstract = True
 
     def __init__(
@@ -112,7 +109,6 @@ class Coordinator(Viewer, Actor):
         logs_db_path: str = "",
         **params,
     ):
-        self._semaphore = asyncio.Semaphore(self.max_concurrent)
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
         def on_message(message, instance):
@@ -623,8 +619,7 @@ class Planner(Coordinator):
         }
     )
 
-    @staticmethod
-    async def _lookup_table_schema(source_table, sources):
+    async def _lookup_table_schema(self, source_table, sources):
         if SOURCE_TABLE_SEPARATOR in source_table:
             source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
             source_obj = sources.get(source_name)
@@ -638,8 +633,9 @@ class Planner(Coordinator):
         normalized_table_name = source_obj.normalize_table(table_name)
         result = {
             "schema": yaml.dump(table_schema),
-            "sql": source_obj.get_sql_expr(table_name),
             "source": source_obj.name,
+            "sql_table": normalized_table_name,
+            "sql": source_obj.get_sql_expr(table_name),
         }
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{normalized_table_name}"
         return table_slug, result, source_table
@@ -709,9 +705,7 @@ class Planner(Coordinator):
 
                 # For subsequent iterations, the LLM selects tables in the previous iteration
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
-                schema_tasks = [self._lookup_table_schema(source_table, sources) for source_table in selected_tables]
-                async with self._semaphore:
-                    schema_results = await asyncio.gather(*schema_tasks)
+                schema_results = [await self._lookup_table_schema(source_table, sources) for source_table in selected_tables]
                 for table_slug, schema_data, source_table in schema_results:
                     step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
                     tables_sql_schemas[table_slug] = schema_data

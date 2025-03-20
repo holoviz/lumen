@@ -1,4 +1,14 @@
-Your previous output requires revision. Please update the {{ language }} code below based on user feedback:
+{% extends 'Agent/main.jinja2' %}
+
+{% block instructions %}
+Your previous output requires revision.
+
+Provide only the corrected code with no additional comments or explanations and focus solely on addressing the issues
+while maintaining the original format and language.
+{% endblock %}
+
+{%- block context %}
+Please update the {{ language }} code below based on user feedback:
 
 Original output:
 ```{{ language }}
@@ -7,14 +17,11 @@ Original output:
 
 {% if memory["tables_sql_schemas"] %}
 Reference these database schemas for your corrections:
-{% for table, details in memory["tables_sql_schemas"].items() %}
-- `{{ table }}`:
+{% for table_info in memory["tables_sql_schemas"].values() %}
+- `{{ table_info.sql_table }}`:
 ```yaml
-{{ details.schema }}
+{{ table_info.schema }}
 ```
 {% endfor %}
 {% endif %}
-
-Provide only the corrected {{ language }} code with no additional comments or explanations.
-
-Focus solely on addressing the issues while maintaining the original format.
+{% endblock %}

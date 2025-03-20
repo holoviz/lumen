@@ -432,11 +432,16 @@ class AzureOpenAI(Llm):
 
     api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key.")
 
-    api_version = param.String(doc="The Azure AI Studio API version.")
+    api_version = param.String(default="2024-10-21", doc="The Azure AI Studio API version.")
 
     endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure AI Studio endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gpt-4o-mini"},
+        "reasoning": {"model": "gpt-4o"},
+    })
 
     temperature = param.Number(default=1, bounds=(0, None), constant=True)
 

@@ -945,8 +945,9 @@ class BaseSQLSource(Source):
                 table = self.tables[self.normalize_table(table)]
             except KeyError:
                 raise KeyError(f"Table {table} not found in {self.tables.keys()}")
+        else:
+            table = self.normalize_table(table)
 
-        table = self.normalize_table(table)
         sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
         return sql_expr
 

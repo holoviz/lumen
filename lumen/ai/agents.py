@@ -714,8 +714,9 @@ class SQLAgent(LumenBaseAgent):
 
             tables_sql_schemas[table_slug] = {
                 "schema": yaml.dump(table_schema),
-                "sql": source.get_sql_expr(source_table),
                 "source": source.name,
+                "sql_table": table_name,
+                "sql": source.get_sql_expr(source_table),
             }
         self._memory["tables_sql_schemas"] = tables_sql_schemas
 
@@ -937,8 +938,12 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         self._output_type._validate_spec(vega_spec)
-        if "projection" not in vega_spec:
-            # add pan/zoom controls to all plots except geographic maps
+
+        # using string comparison because these keys could be in different nested levels
+        vega_spec_str = yaml.dump(vega_spec)
+        if not ("latitude:" in vega_spec_str or "longitude:" in vega_spec_str or "point: true" in vega_spec_str):
+            # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
+            # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
 
