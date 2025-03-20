@@ -587,8 +587,8 @@ class ExplorerUI(UI):
             deduplicate = len(sources) > 1
             new = {}
             for source in sources:
-                source_tables = source.get_tables()
-                for t in source_tables:
+                tables = source.get_tables()
+                for t in tables:
                     if deduplicate:
                         t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
                     if t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:

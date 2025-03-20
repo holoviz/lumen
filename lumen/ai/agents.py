@@ -686,8 +686,8 @@ class SQLAgent(LumenBaseAgent):
         self._memory["tables_sql_schemas"] = tables_sql_schemas
 
         tables_to_source = {}
-        for source_table in selected_table_slugs:
-            a_source_obj, a_table = separate_table_slug(source_table, sources)
+        for table_slug in selected_table_slugs:
+            a_source_obj, a_table = separate_table_slug(table_slug, sources)
             tables_to_source[a_table] = a_source_obj
         return tables_to_source, chain_of_thought
 
