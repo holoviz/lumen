@@ -160,6 +160,16 @@ async def get_schema(
     shuffle: bool = True,
     **get_kwargs
 ):
+    def format_float(num):
+        if pd.isna(num) or math.isinf(num):
+            return num
+        # if is integer, round to 0 decimals
+        if num == int(num):
+            return f"{int(num)}"
+        elif 0.01 <= abs(num) < 100:
+            return f"{num:.1f}"  # Regular floating-point notation with one decimal
+        else:
+            return f"{num:.1e}"  # Exponential notation with one decimal
     if isinstance(source, Pipeline):
         schema = await asyncio.to_thread(source.get_schema)
     else:
@@ -180,9 +190,15 @@ async def get_schema(
     if include_min_max:
         for field, spec in schema.items():
             if "inclusiveMinimum" in spec:
-                spec["min"] = spec.pop("inclusiveMinimum")
+                min_val = spec.pop("inclusiveMinimum")
+                if isinstance(min_val, (int, float)):
+                    min_val = format_float(min_val)
+                spec["min"] = min_val
             if "inclusiveMaximum" in spec:
-                spec["max"] = spec.pop("inclusiveMaximum")
+                max_val = spec.pop("inclusiveMaximum")
+                if isinstance(max_val, (int, float)):
+                    max_val = format_float(max_val)
+                spec["max"] = max_val
     else:
         for field, spec in schema.items():
             if "inclusiveMinimum" in spec:
@@ -194,6 +210,7 @@ async def get_schema(
             if "max" in spec:
                 spec.pop("max")
 
+    num_cols = len(schema)
     for field, spec in schema.items():
         if "type" in spec:
             if spec["type"] == "string":
@@ -209,8 +226,8 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
-        max_enums = 10
-        truncate_limit = min(limit or 5, 5)
+        max_enums = 10 if num_cols < 10 else 3
+        truncate_limit = min(limit or 5, max_enums)
         if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
             continue
@@ -228,6 +245,12 @@ async def get_schema(
             enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
             for enum in spec["enum"]
         ]
+
+    # Format any other numeric values in the schema
+    for field, spec in schema.items():
+        for key, value in spec.items():
+            if isinstance(value, (int, float)) and key not in ['type']:
+                spec[key] = format_float(value)
 
     if count is not None and include_count:
         schema["__len__"] = count
@@ -279,9 +302,9 @@ async def describe_data(df: pd.DataFrame) -> str:
         if num == int(num):
             return f"{int(num)}"
         elif 0.01 <= abs(num) < 100:
-            return f"{num:.1f}"  # Regular floating-point notation with two decimals
+            return f"{num:.1f}"  # Regular floating-point notation with one decimal
         else:
-            return f"{num:.1e}"  # Exponential notation with two decimals
+            return f"{num:.1e}"  # Exponential notation with one decimal
 
     def describe_data_sync(df):
         size = df.size
