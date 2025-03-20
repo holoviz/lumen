@@ -84,7 +84,10 @@ def get_dataframe_schema(df, columns=None):
                 else:
                     cast = int
                     kind = 'integer'
-                vmin, vmax = cast(vmin), cast(vmax)
+                try:
+                    vmin, vmax = cast(vmin), cast(vmax)
+                except Exception:
+                    vmin, vmax = float('NaN'), float('NaN')
             properties[name] = {
                 'type': kind,
                 'inclusiveMinimum': vmin,
