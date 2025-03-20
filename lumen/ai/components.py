@@ -5,10 +5,9 @@ from panel.custom import Child, JSComponent
 CSS = """
 /* Max width for comfortable reading */
 .left-panel-content {
-    max-width: clamp(400px, 100vw, 1500px);
-    margin: 0 auto;
-    padding: 0 20px;
-    box-sizing: border-box;
+    max-width: clamp(450px, 95vw, 1200px);
+    margin: 0px auto;  /* Center the content */
+    padding: 0px;
 }
 
 @keyframes jumpLeftRight {
@@ -52,8 +51,8 @@ ul.nav.flex-column {
     cursor: pointer;
     z-index: 10;
     opacity: 0.65;
-    transition: opacity 0.2s;
-    left: -30px; /* Position it to the left of the gutter with more offset */
+    transition: opacity 0.2s, left 0.3s ease;
+    left: -30px; /* Default position - will be updated by JS */
     top: 50%;
     transform: translateY(-50%);
 }
@@ -68,8 +67,8 @@ ul.nav.flex-column {
     cursor: pointer;
     z-index: 10;
     opacity: 0.65;
-    transition: opacity 0.2s;
-    right: -30px; /* Position it to the right of the gutter with offset */
+    transition: opacity 0.2s, right 0.3s ease;
+    right: -30px; /* Default position - will be updated by JS */
     top: 50%;
     transform: translateY(-50%);
 }
@@ -164,11 +163,15 @@ class SplitJS(JSComponent):
         toggleIcon.innerHTML = model.collapsed
           ? `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`  // Right arrow when collapsed
           : `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`;  // Left arrow when expanded
+        // Set initial position based on collapsed state
+        toggleIcon.style.right = model.collapsed ? '-30px' : '5px';
       } else {
         toggleIcon.className = 'toggle-icon';
         toggleIcon.innerHTML = model.collapsed
           ? `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`  // Left arrow when collapsed
           : `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`;  // Right arrow when expanded
+        // Set initial position based on collapsed state
+        toggleIcon.style.left = model.collapsed ? '-30px' : '5px';
       }
 
       // Determine which panel gets the toggle based on invert parameter
@@ -202,10 +205,12 @@ class SplitJS(JSComponent):
 
             // Set arrow direction based on invert parameter
             if (model.invert) {
-              toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
+            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
+              toggleIcon.style.right = '-30px'; // Adjust position when collapsed
             } else {
               toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-            }
+            toggleIcon.style.left = '-30px'; // Adjust position when collapsed
+          }
           } else {
             model.collapsed = false;
             contentWrapper.className = '';
@@ -213,10 +218,12 @@ class SplitJS(JSComponent):
 
             // Set arrow direction based on invert parameter
             if (model.invert) {
-              toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
+            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
+              toggleIcon.style.right = '5px'; // Adjust position when expanded
             } else {
               toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-            }
+            toggleIcon.style.left = '5px'; // Adjust position when expanded
+          }
           }
         },
       });
@@ -235,8 +242,10 @@ class SplitJS(JSComponent):
           // Set arrow direction based on invert parameter
           if (model.invert) {
             toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
+            toggleIcon.style.right = '5px'; // Adjust position when expanded
           } else {
             toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
+            toggleIcon.style.left = '5px'; // Adjust position when expanded
           }
         } else {
           // Collapse with appropriate sizes based on invert parameter
@@ -256,8 +265,10 @@ class SplitJS(JSComponent):
           // Set arrow direction based on invert parameter
           if (model.invert) {
             toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
+            toggleIcon.style.right = '-30px'; // Adjust position when collapsed
           } else {
             toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
+            toggleIcon.style.left = '-30px'; // Adjust position when collapsed
           }
         }
         view.invalidate_layout();
