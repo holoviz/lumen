@@ -619,18 +619,6 @@ class Planner(Coordinator):
         }
     )
 
-    async def _lookup_table_schema(self, source_table, sources):
-        """Lookup schema for a single table."""
-        if SOURCE_TABLE_SEPARATOR in source_table:
-            source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-            source_obj = sources.get(source_name)
-        else:
-            source_obj = next(iter(sources.values()))
-            table_name = source_table
-
-        table_slug, result = fetch_table_schema(source_obj, table_name, include_count=True)
-        return table_slug, result, source_table
-
     async def _iterative_table_selection(self, sources: dict) -> dict:
         """
         Performs an iterative table selection process to gather context.
@@ -695,7 +683,7 @@ class Planner(Coordinator):
 
                 # For subsequent iterations, the LLM selects tables in the previous iteration
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
-                schema_results = [await self._lookup_table_schema(source_table, sources) for source_table in selected_tables]
+                schema_results = [await fetch_table_schema(sources, source_table, include_count=True) for source_table in selected_tables]
                 for table_slug, schema_data, source_table in schema_results:
                     step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
                     tables_sql_schemas[table_slug] = schema_data

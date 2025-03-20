@@ -234,16 +234,14 @@ async def get_schema(
     return schema
 
 
-async def fetch_table_schema(source_obj, table_name, **get_schema_kwargs):
+async def fetch_table_schema(sources: list[Source], table_slug: str, **get_schema_kwargs):
     """
     Fetch the schema for a single table from a data source.
 
     Parameters
     ----------
-    source_obj : Source
-        The data source object
-    table_name : str
-        The name of the table to fetch schema for
+    table_slug : str
+        Table name in format "source_name{SEP}table_name"
     **get_schema_kwargs
         Additional keyword arguments to pass to the get_schema method
 
@@ -253,28 +251,35 @@ async def fetch_table_schema(source_obj, table_name, **get_schema_kwargs):
         (table_slug, schema_data) where table_slug is the normalized table name
         and schema_data is a dict with the schema information
     """
+    if SOURCE_TABLE_SEPARATOR in table_slug:
+        source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+        source_obj = sources.get(source_name)
+    else:
+        source_obj = next(iter(sources.values()))
+        table_name = table_slug
+        table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+
     table_schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
     normalized_table_name = source_obj.normalize_table(table_name)
-    table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{normalized_table_name}"
     result = {
         "schema": yaml.dump(table_schema),
         "source": source_obj.name,
         "sql_table": normalized_table_name,
-        "sql": source_obj.get_sql_expr(table_name),
+        "sql": source_obj.get_sql_expr(normalized_table_name),
     }
     return table_slug, result
 
 
-async def fetch_table_schemas(sources, table_slugs, **get_schema_kwargs):
+async def fetch_table_schemas(sources: list[Source], table_slugs: list[str], **get_schema_kwargs) -> dict[str, dict]:
     """
     Fetch schemas for a list of tables.
 
     Parameters
     ----------
-    sources : dict
-        Dictionary mapping source names to source objects
     table_slugs : list
         List of table names in format "source_name::table_name"
+    sources : dict
+        Dictionary mapping source names to source objects
 
     Returns
     -------
@@ -283,16 +288,8 @@ async def fetch_table_schemas(sources, table_slugs, **get_schema_kwargs):
     """
     tables_sql_schemas = {}
     log_debug(f"Fetching schemas for {len(table_slugs)} tables")
-    for source_table in table_slugs:
-        if SOURCE_TABLE_SEPARATOR in source_table:
-            source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-            source_obj = sources.get(source_name)
-        else:
-            source_obj = next(iter(sources.values()))
-            table_name = source_table
-        if not source_obj:
-            continue
-        table_slug, table_schema = await fetch_table_schema(source_obj, table_name, **get_schema_kwargs)
+    for table_slug in table_slugs:
+        table_slug, table_schema = await fetch_table_schema(sources, table_slug, **get_schema_kwargs)
         tables_sql_schemas[table_slug] = table_schema
     return tables_sql_schemas
 
@@ -556,7 +553,7 @@ def load_json(json_spec: str) -> dict:
     return json.loads(json_spec.encode().decode('unicode_escape'))
 
 
-def separate_source_table(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+def separate_table_slug(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
     if SOURCE_TABLE_SEPARATOR in table:
         a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
         a_source_obj = sources.get(a_source_name)
