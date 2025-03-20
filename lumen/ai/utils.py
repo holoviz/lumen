@@ -38,6 +38,18 @@ if TYPE_CHECKING:
     from lumen.sources.base import Source
 
 
+def format_float(num):
+    if pd.isna(num) or math.isinf(num):
+        return num
+    # if is integer, round to 0 decimals
+    if num == int(num):
+        return f"{int(num)}"
+    elif 0.01 <= abs(num) < 100:
+        return f"{num:.1f}"  # Regular floating-point notation with one decimal
+    else:
+        return f"{num:.1e}"  # Exponential notation with one decimal
+
+
 def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     try:
         template_path = template_path.relative_to(relative_to).as_posix()
@@ -160,16 +172,6 @@ async def get_schema(
     shuffle: bool = True,
     **get_kwargs
 ):
-    def format_float(num):
-        if pd.isna(num) or math.isinf(num):
-            return num
-        # if is integer, round to 0 decimals
-        if num == int(num):
-            return f"{int(num)}"
-        elif 0.01 <= abs(num) < 100:
-            return f"{num:.1f}"  # Regular floating-point notation with one decimal
-        else:
-            return f"{num:.1e}"  # Exponential notation with one decimal
     if isinstance(source, Pipeline):
         schema = await asyncio.to_thread(source.get_schema)
     else:
@@ -296,17 +298,6 @@ async def get_data(pipeline):
 
 
 async def describe_data(df: pd.DataFrame) -> str:
-    def format_float(num):
-        if pd.isna(num) or math.isinf(num):
-            return num
-        # if is integer, round to 0 decimals
-        if num == int(num):
-            return f"{int(num)}"
-        elif 0.01 <= abs(num) < 100:
-            return f"{num:.1f}"  # Regular floating-point notation with one decimal
-        else:
-            return f"{num:.1e}"  # Exponential notation with one decimal
-
     def describe_data_sync(df):
         size = df.size
         shape = df.shape
