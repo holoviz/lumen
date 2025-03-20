@@ -226,7 +226,8 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
-        max_enums = 10 if num_cols < 10 else 3
+        # scale the number of enums based on the number of columns
+        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
         truncate_limit = min(limit or 5, max_enums)
         if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
