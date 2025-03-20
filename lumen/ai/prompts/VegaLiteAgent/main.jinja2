@@ -39,7 +39,7 @@ SCALES & FORMATTING:
 - For dual-axis: use separate scales with aligned axes
 
 SPECIFICS:
-- Geographic maps: underlay coastlines with `format: {type: topojson, feature: countries}` from https://vega.github.io/vega-datasets/data/world-110m.json with `fill: null stroke: black` under `layer`
+- Geographic maps with latitude/longitude: underlay coastlines with `format: {type: topojson, feature: countries}` from https://vega.github.io/vega-datasets/data/world-110m.json with `fill: null stroke: black` under `layer`. For the actual data, use a top-level data reference, then `encoding` in `layer`.
 - Multi-view: use `concat`/`repeat` for small multiples, coordinated views for filtering
 {% endblock %}
 

@@ -1,4 +1,14 @@
-Your previous output requires revision. Please update the {{ language }} code below based on user feedback:
+{% extends 'Agent/main.jinja2' %}
+
+{% block instructions %}
+Your previous output requires revision.
+
+Provide only the corrected code with no additional comments or explanations and focus solely on addressing the issues
+while maintaining the original format and language.
+{% endblock %}
+
+{%- block context %}
+Please update the {{ language }} code below based on user feedback:
 
 Original output:
 ```{{ language }}
@@ -14,7 +24,4 @@ Reference these database schemas for your corrections:
 ```
 {% endfor %}
 {% endif %}
-
-Provide only the corrected {{ language }} code with no additional comments or explanations.
-
-Focus solely on addressing the issues while maintaining the original format.
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends 'LumenBaseAgent/retry_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+- Reference the table name, i.e. `data: name: put_table_name_here`. Do not make up or copy data values.
+- For overlays, keep the data reference at the top level and use encoding inside the layer
+{% endblock %}
+
+
+{%- block examples -%}
+For overlays:
+```{{ language }}
+spec:
+  data:
+    name: put_table_name_here
+  layer:
+    - encoding:
+      # main data referencing table
+    - data:
+      # other data
+```
+{%- endblock -%}
