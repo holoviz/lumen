@@ -315,6 +315,11 @@ async def describe_data(df: pd.DataFrame) -> str:
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
+        sampled_columns = False
+        if len(df.columns) > 10:
+            df = df[df.columns[:10]]
+            sampled_columns = True
+
         describe_df = df.describe(percentiles=[])
         columns_to_drop = ["min", "max"] # present if any numeric
         columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
@@ -361,6 +366,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             "summary": {
                 "total_table_cells": size,
                 "total_shape": shape,
+                "sampled_columns": sampled_columns,
                 "is_summarized": is_summarized,
             },
             "stats": df_describe_dict,
