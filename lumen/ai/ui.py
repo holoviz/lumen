@@ -640,15 +640,7 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
-        # The intro message is handled by the coordinator now
-        self._overview_intro = Markdown(
-            "",
-            margin=(0, 0, 10, 15),
-            sizing_mode='stretch_width',
-            visible=self.interface.param["objects"].rx.len() <= 2
-        )
         return Column(
-            self._overview_intro,
             input_row,
             tabs,
             sizing_mode='stretch_both',
