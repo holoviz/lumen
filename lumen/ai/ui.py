@@ -447,13 +447,15 @@ class ExplorerUI(UI):
         chat = Column(self._exports, self._coordinator)
         if self.chat_ui_position == 'left':
             left, right = chat, output
-            sizes = (40, 60)
-            min_sizes = (200, 300)
+            invert_param = False
+            min_sizes = (300, 0)
+            expanded_sizes = (35, 65)
         else:
             left, right = output, chat
-            sizes = (60, 40)
-            min_sizes = (300, 200)
-        self._main = Column(SplitJS(left=left, right=right, sizes=sizes, min_sizes=min_sizes, sizing_mode='stretch_both'))
+            invert_param = True
+            min_sizes = (0, 300)
+            expanded_sizes = (65, 35)
+        self._main = Column(SplitJS(left=left, right=right, invert=invert_param, min_sizes=min_sizes, expanded_sizes=expanded_sizes, sizing_mode='stretch_both'))
         self._idle = asyncio.Event()
         self._idle.set()
         self._last_synced = None
