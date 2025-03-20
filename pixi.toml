@@ -17,6 +17,7 @@ test-core = ["py313", "test-core"]
 docs = ["py311", "doc", "ai", "sql"]
 build = ["py311", "build"]
 lint = ["py311", "lint"]
+bq-dev = ["py313", "ai", "ai-local", "ai-llama", "bigquery", "lint", "sql", "test", "test-core"]
 
 [dependencies]
 bokeh = "*"
@@ -64,7 +65,7 @@ pydantic-extra-types = "*"
 [feature.ai-local.dependencies]
 huggingface_hub = "*"
 
-[feature.ai-llama.dependencies]
+[feature.ai-llama.pypi-dependencies]
 llama-cpp-python = ">=0.3.0"
 
 [feature.sql.dependencies]
@@ -72,9 +73,10 @@ duckdb = "*"
 intake-sql = "*"
 sqlalchemy = "*"
 
-[feature.bigquery.dependencies]
-google-cloud-bigquery = "*"
-google-cloud-sdk = "*"
+# Windows does not have google-cloud-sdk available in conda-forge.
+[feature.bigquery]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+dependencies = {google-cloud-bigquery = "*", google-cloud-sdk = "*"}
 
 # =============================================
 # =================== TESTS ===================
