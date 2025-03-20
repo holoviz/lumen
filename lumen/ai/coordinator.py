@@ -712,10 +712,10 @@ class Planner(Coordinator):
                 # For subsequent iterations, the LLM selects tables in the previous iteration
                 step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
                 schema_results = [await fetch_table_schema(sources, source_table, include_count=True) for source_table in selected_tables]
-                for table_slug, schema_data, source_table in schema_results:
+                for table_slug, schema_data in schema_results:
                     step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
                     tables_sql_schemas[table_slug] = schema_data
-                    examined_tables.add(source_table)
+                    examined_tables.add(table_slug)
 
                 if fast_track:
                     # based on similarity search alone, if we have selected tables, we're done!!
