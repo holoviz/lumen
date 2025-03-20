@@ -438,6 +438,11 @@ class AzureOpenAI(Llm):
 
     mode = param.Selector(default=Mode.TOOLS)
 
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gpt-4o-mini"},
+        "reasoning": {"model": "gpt-4o"},
+    })
+
     temperature = param.Number(default=1, bounds=(0, None), constant=True)
 
     @property
