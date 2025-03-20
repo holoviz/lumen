@@ -446,7 +446,15 @@ class ExplorerUI(UI):
             invert_param = True
             min_sizes = (0, 300)
             expanded_sizes = (65, 35)
-        self._main = Column(SplitJS(left=left, right=right, invert=invert_param, min_sizes=min_sizes, expanded_sizes=expanded_sizes, sizing_mode='stretch_both'))
+        self._split = SplitJS(
+            left=left,
+            right=right,
+            invert=invert_param,
+            min_sizes=min_sizes,
+            expanded_sizes=expanded_sizes,
+            sizing_mode='stretch_both'
+        )
+        self._main = Column(self._split)
         self._idle = asyncio.Event()
         self._idle.set()
         self._last_synced = None
@@ -707,6 +715,8 @@ class ExplorerUI(UI):
         tabs.active = len(tabs)-1
 
     def _wrap_callback(self, callback):
+        self._first_exploration_created = False
+
         async def wrapper(contents: list | str, user: str, instance: ChatInterface):
             if not self._explorations:
                 prev_memory = memory
@@ -721,9 +731,14 @@ class ExplorerUI(UI):
                 nonlocal index, new_exploration
                 plan = local_memory["plan"]
                 if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
+                    # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1
                     new_exploration = True
+                    self._split.param.update(
+                        collapsed=False,
+                        sizes=self._split.expanded_sizes,
+                    )
 
             def sync_available_sources_memory(_, __, sources):
                 """

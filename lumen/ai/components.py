@@ -274,6 +274,21 @@ class SplitJS(JSComponent):
         view.invalidate_layout();
       });
 
+      // Listen for parameter changes as they're the proper way to update
+      model.on(['collapsed', 'sizes'], () => {
+        if (!model.collapsed) {
+          splitInstance.setSizes(model.sizes || model.expanded_sizes);
+        } else {
+          // When collapsing, use the appropriate sizes based on invert parameter
+          if (model.invert) {
+            splitInstance.setSizes([0, 100]);
+          } else {
+            splitInstance.setSizes([100, 0]);
+          }
+        }
+        view.invalidate_layout();
+      });
+
       model.on("after_layout", () => {
         setTimeout(() => {
           splitDiv.style.visibility = 'visible';
