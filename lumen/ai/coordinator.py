@@ -671,7 +671,7 @@ class Planner(Coordinator):
         )
         current_query = "\n".join(message["content"] for message in messages)
 
-        selected_tables = None
+        selected_table_slugs = None
         for iteration in range(1, max_iterations + 1):
             # Don't increment iteration since we're using the for loop counter
             with self.interface.add_step(
@@ -694,12 +694,12 @@ class Planner(Coordinator):
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
                     table_similarities = self._memory.get("table_similarities", {})
                     if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-                        self._memory["closest_tables"] = selected_tables = sorted(
+                        self._memory["closest_tables"] = selected_table_slugs = sorted(
                             table_similarities,
                             key=lambda x: table_similarities[x],
                             reverse=True
                         )[:5]
-                        table_list = '`\n- `'.join(selected_tables)
+                        table_list = '`\n- `'.join(selected_table_slugs)
                         step.stream(
                             f"\n\nSelected tables: `{table_list}`\nbased on a similarity threshold of {self.table_similarity_threshold}",
                             replace=False
@@ -707,11 +707,11 @@ class Planner(Coordinator):
                         fast_track = True
                     else:
                         # If not, select the top 3 tables to examine
-                        selected_tables = available_tables[:3]
+                        selected_table_slugs = available_tables[:3]
 
                 # For subsequent iterations, the LLM selects tables in the previous iteration
-                step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
-                schema_results = [await fetch_table_schema(sources, source_table, include_count=True) for source_table in selected_tables]
+                step.stream(f"\n\nGathering complete schema information for {len(selected_table_slugs)} tables...")
+                schema_results = [await fetch_table_schema(sources, table_slug, include_count=True) for table_slug in selected_table_slugs]
                 for table_slug, schema_data in schema_results:
                     step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
                     tables_sql_schemas[table_slug] = schema_data
@@ -745,16 +745,16 @@ class Planner(Coordinator):
                     chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=False)
 
-                selected_tables = output.selected_tables or []
-                step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
+                selected_table_slugs = output.selected_table_slugs or []
+                step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_table_slugs)}`", replace=False)
                 # Check if we're done with table selection
                 if output.is_satisfied or not available_tables:
                     step.stream("\n\nSelection process complete - model is satisfied with selected tables", replace=False)
-                    self._memory["closest_tables"] = selected_tables
+                    self._memory["closest_tables"] = selected_table_slugs
                     break
         return {
             table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
-            if table_slug in selected_tables  # prevent it from getting too big and waste token
+            if table_slug in selected_table_slugs  # prevent it from getting too big and waste token
         }
 
     async def _get_tools_context(self, messages: list[Message]) -> dict:
