@@ -339,7 +339,9 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.columns:
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
-            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
+            nulls = int(df[col].isnull().sum())
+            if nulls > 0:
+                df_describe_dict[col]["nulls"] = nulls
 
         # select datetime64 columns
         for col in df.select_dtypes(include=["datetime64"]).columns:
