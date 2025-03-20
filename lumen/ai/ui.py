@@ -54,16 +54,6 @@ if TYPE_CHECKING:
 
 DataT = str | Path | Source | Pipeline
 
-
-OVERVIEW_INTRO = """
-👋 **Start chatting to get started!**
-
-- Ask for summaries, ask for plots, ask for inspiration--query away!
-- Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
-- Download the chat into a reproducible notebook to share with others!
-- Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
-"""
-
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
 
@@ -159,7 +149,8 @@ class UI(Viewer):
             interface=self.interface,
             llm=self.llm,
             tools=self.tools,
-            logs_db_path=self.logs_db_path
+            logs_db_path=self.logs_db_path,
+            within_ui=True
         )
         self._notebook_export = FileDownload(
             icon="notebook",
@@ -641,8 +632,9 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
+        # The intro message is handled by the coordinator now
         self._overview_intro = Markdown(
-            OVERVIEW_INTRO,
+            "",
             margin=(0, 0, 10, 15),
             sizing_mode='stretch_width',
             visible=self.interface.param["objects"].rx.len() <= 2
