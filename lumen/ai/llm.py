@@ -278,11 +278,10 @@ class LlamaCpp(Llm):
         if isinstance(model_spec, dict):
             return model_spec
 
+        model_kwargs = self.model_kwargs["default"]
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            model_kwargs = self.model_kwargs["default"]
             return super()._get_model_kwargs(model_kwargs)
         else:
-            model_kwargs = self.model_kwargs["default"]
             repo, model_spec = model_spec.rsplit("/", 1)
             if ":" in model_spec:
                 model_file, chat_format = model_spec.split(":")
