@@ -19,8 +19,8 @@ from panel.io.application import Application
 
 try:
     from lumen.ai.config import THIS_DIR
-except ImportError:
-    print('You need to install lumen-ai with "lumen[ai]"')
+except ImportError as e:
+    print(f'You need to install lumen-ai with "lumen[ai]": {e}')
     sys.exit(1)
 
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
