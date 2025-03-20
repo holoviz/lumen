@@ -279,7 +279,8 @@ class LlamaCpp(Llm):
             return model_spec
 
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            return super()._get_model_kwargs()
+            model_kwargs = self.model_kwargs["default"]
+            return super()._get_model_kwargs(model_kwargs)
         else:
             model_kwargs = self.model_kwargs["default"]
             repo, model_spec = model_spec.rsplit("/", 1)
