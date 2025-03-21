@@ -24,7 +24,7 @@ CSS = """
 .left-panel-content {
     max-width: clamp(450px, 95vw, 1200px);
     margin: 0px auto;  /* Center the content */
-    background-color: #ffffff; /* Brighter white background for better contrast */
+    background-color: var(--panel-background-color);
     border-radius: 10px; /* Slight rounded corners */
     overflow-y: auto;   /* Enable scrolling if content is taller than the area */
     box-sizing: border-box; /* Include padding in size calculations */
