@@ -54,16 +54,6 @@ if TYPE_CHECKING:
 
 DataT = str | Path | Source | Pipeline
 
-
-OVERVIEW_INTRO = """
-👋 **Start chatting to get started!**
-
-- Ask for summaries, ask for plots, ask for inspiration--query away!
-- Select a table, or upload one, to explore the table with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
-- Download the chat into a reproducible notebook to share with others!
-- Check out [Using Lumen AI](https://holoviz-dev.github.io/lumen/lumen_ai/getting_started/using_lumen_ai.html) for more tips & tricks!
-"""
-
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
 
@@ -159,7 +149,8 @@ class UI(Viewer):
             interface=self.interface,
             llm=self.llm,
             tools=self.tools,
-            logs_db_path=self.logs_db_path
+            logs_db_path=self.logs_db_path,
+            within_ui=True
         )
         self._notebook_export = FileDownload(
             icon="notebook",
@@ -446,15 +437,13 @@ class ExplorerUI(UI):
         )
         output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'auto'}, sizing_mode='stretch_both')
         chat = Column(self._exports, self._coordinator)
-        if self.chat_ui_position == 'left':
-            left, right = chat, output
-            sizes = (40, 60)
-            min_sizes = (200, 300)
-        else:
-            left, right = output, chat
-            sizes = (60, 40)
-            min_sizes = (300, 200)
-        self._main = Column(SplitJS(left=left, right=right, sizes=sizes, min_sizes=min_sizes, sizing_mode='stretch_both'))
+        self._split = SplitJS(
+            left=chat,
+            right=output,
+            invert=self.chat_ui_position != 'left',
+            sizing_mode='stretch_both'
+        )
+        self._main = Column(self._split)
         self._idle = asyncio.Event()
         self._idle.set()
         self._last_synced = None
@@ -640,14 +629,7 @@ class ExplorerUI(UI):
                 tabs.objects = explorers + [controls]
                 table_select.value = []
 
-        self._overview_intro = Markdown(
-            OVERVIEW_INTRO,
-            margin=(0, 0, 10, 15),
-            sizing_mode='stretch_width',
-            visible=self.interface.param["objects"].rx.len() <= 2
-        )
         return Column(
-            self._overview_intro,
             input_row,
             tabs,
             sizing_mode='stretch_both',
@@ -728,9 +710,14 @@ class ExplorerUI(UI):
                 nonlocal index, new_exploration
                 plan = local_memory["plan"]
                 if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
+                    # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1
                     new_exploration = True
+                    self._split.param.update(
+                        collapsed=False,
+                        sizes=self._split.expanded_sizes,
+                    )
 
             def sync_available_sources_memory(_, __, sources):
                 """

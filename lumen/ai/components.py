@@ -1,70 +1,237 @@
+from pathlib import Path
+
 import param
 
 from panel.custom import Child, JSComponent
 
 CSS = """
+/* Base styles for the split container */
 .split {
     display: flex;
     flex-direction: row;
     height: 100%;
     width: 100%;
+    background-color: var(--panel-surface-color);
+    overflow-y: clip; /* Clip overflow to prevent scrollbars; inner content will have their own */
 }
 
+/* Style for initial load to prevent FOUC */
+.split.loading {
+    visibility: hidden;
+}
+
+/* Max width for comfortable reading */
+.left-panel-content {
+    max-width: clamp(450px, 95vw, 1200px);
+    margin: 0px auto;  /* Center the content */
+    background-color: var(--panel-background-color); /* Use theme variable for content background */
+    border-radius: 10px; /* Slight rounded corners */
+    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
+    box-sizing: border-box; /* Include padding in size calculations */
+}
+
+/* Split panel styles */
+.split > div {
+    position: relative;
+}
+
+.split > div:nth-child(2) {
+    overflow: visible;
+    position: relative;
+    width: 100%;
+}
+
+/* Content wrapper styles */
+.content-wrapper {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background-color: var(--panel-background-color);
+}
+
+.left-content-wrapper {
+    width: 100%;
+    height: 100%;
+}
+
+/* Toggle icon basic styles */
+.toggle-icon, .toggle-icon-inverted {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    opacity: 0.75;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* Regular toggle icon */
+.toggle-icon {
+    transition: opacity 0.2s, left 0.3s ease;
+    left: 5px; /* Default expanded position */
+}
+
+.toggle-icon.collapsed {
+    left: -30px; /* Position when collapsed */
+}
+
+/* Inverted toggle icon */
+.toggle-icon-inverted {
+    transition: opacity 0.2s, right 0.3s ease;
+    right: 5px; /* Default expanded position */
+}
+
+.toggle-icon-inverted.collapsed {
+    right: -30px; /* Position when collapsed */
+}
+
+.toggle-icon:hover, .toggle-icon-inverted:hover {
+    opacity: 1;
+}
+
+/* SVG icon styling */
+.toggle-icon svg, .toggle-icon-inverted svg {
+    width: 50px;
+    height: 50px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Collapsed state */
+.collapsed-content {
+    display: none;
+}
+
+/* Gutter styles */
 .gutter {
     background-color: var(--panel-surface-color);
     background-repeat: no-repeat;
     background-position: 50%;
     cursor: col-resize;
+    transition: background-color 0.2s;
+}
+
+.gutter:hover {
+    background-color: var(--panel-border-color);
 }
 
 .gutter.gutter-horizontal {
     background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==');
+    z-index: 1;
+    width: 8px !important;
 }
 
+.split > div:nth-child(2) > div:not(.toggle-icon) {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding-top: 36px; /* Space for the toggle icon */
+}
+
+/* Animation for toggle icon */
+@keyframes jumpLeftRight {
+    0%, 100% { transform: translateY(-50%); }
+    25% { transform: translate(-4px, -50%); }
+    50% { transform: translateY(-50%); }
+    75% { transform: translate(4px, -50%); }
+}
+
+.toggle-icon.animated, .toggle-icon-inverted.animated {
+    animation-name: jumpLeftRight;
+    animation-duration: 0.5s;
+    animation-timing-function: ease;
+    animation-iteration-count: 3;
+}
+
+/* List navigation styles */
 ul.nav.flex-column {
-    padding-inline-start: 0 !important;
-    margin: 0 !important;
+    padding-inline-start: 0;
+    margin: 0;
 }
 """
 
 
 class SplitJS(JSComponent):
-    """Custom component for resizable and collapsible sidebar."""
+    """
+    SplitJS is a component for creating a responsive split panel layout with a collapsible sidebar.
 
-    left = Child()
-    right = Child()
-    sizes = param.NumericTuple(default=(60, 40), length=2)
-    min_sizes = param.NumericTuple(default=(300, 200), length=2)
+    This component uses split.js to create a draggable split layout with two panels.
+    Key features include:
+    - Collapsible panels with toggle button
+    - Minimum size constraints for each panel
+    - Invertible layout to support different UI configurations
+    - Responsive sizing with automatic adjustments
+    - Animation for better user experience
 
-    _esm = """
-    import Split from 'https://esm.sh/split.js@1.6.5'
+    The component is ideal for creating application layouts with a main content area
+    and a secondary panel that can be toggled (like a chat interface with output display).
+    """
 
-    export function render({ model, view }) {
-      const splitDiv = document.createElement('div');
-      splitDiv.className = 'split';
-      splitDiv.style.visibility = 'hidden';
+    left = Child(doc="""
+        The component to place in the left panel.
+        When invert=True, this will appear on the right side.""")
 
-      const split0 = document.createElement('div');
-      const split1 = document.createElement('div');
-      splitDiv.append(split0, split1);
+    right = Child(doc="""
+        The component to place in the right panel.
+        When invert=True, this will appear on the left side.""")
 
-      const splitInstance = Split([split0, split1], {
-        sizes: model.sizes,
-        minSize: model.min_sizes,
-        gutterSize: 10,
-        onDragEnd: (sizes) => {
-          view.invalidate_layout();
-        },
-      });
+    sizes = param.NumericTuple(default=(100, 0), length=2, doc="""
+        The initial sizes of the two panels (as percentages).
+        Default is (100, 0) which means the left panel takes up all the space
+        and the right panel is not visible.""")
 
-      model.on("after_layout", () => {
-        setTimeout(() => { splitDiv.style.visibility = 'visible'; }, 100);
-      })
+    expanded_sizes = param.NumericTuple(default=(35, 65), length=2, doc="""
+        The sizes of the two panels when expanded (as percentages).
+        Default is (35, 65) which means the left panel takes up 35% of the space
+        and the right panel takes up 65% when expanded.
+        When invert=True, these percentages are automatically swapped.""")
 
-      split0.append(model.get_child("left"));
-      split1.append(model.get_child("right"));
+    min_sizes = param.NumericTuple(default=(300, 0), length=2, doc="""
+        The minimum sizes of the two panels (in pixels).
+        Default is (300, 0) which means the left panel has a minimum width of 300px
+        and the right panel has no minimum width.
+        When invert=True, these values are automatically swapped.""")
 
-      return splitDiv;
-    }"""
+    collapsed = param.Boolean(default=True, doc="""
+        Whether the secondary panel is collapsed.
+        When True, only one panel is visible (determined by invert).
+        When False, both panels are visible according to expanded_sizes.""")
+
+    invert = param.Boolean(default=False, constant=True, doc="""
+        Whether to invert the layout, changing the toggle button side and panel styles.""")
+
+    _esm = Path(__file__).parent / "models" / "split.js"
 
     _stylesheets = [CSS]
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.invert:
+            # Swap min_sizes when inverted
+            left_min, right_min = self.min_sizes
+            self.min_sizes = (right_min, left_min)
+
+            # Swap expanded_sizes when inverted
+            left_exp, right_exp = self.expanded_sizes
+            self.expanded_sizes = (right_exp, left_exp)
+
+    @param.depends("collapsed", watch=True)
+    def _send_collapsed_update(self):
+        """Send message to JS when collapsed state changes in Python"""
+        self._send_msg({"type": "update_collapsed", "collapsed": self.collapsed})
+
+    def _handle_msg(self, msg):
+        """Handle messages from JS"""
+        if 'collapsed' in msg:
+            collapsed = msg['collapsed']
+            with param.discard_events(self):
+                # Important to discard so when user drags the panel, it doesn't
+                # expand to the expanded sizes
+                self.collapsed = collapsed

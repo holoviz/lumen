@@ -46,6 +46,30 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 
+UI_INTRO_MESSAGE = """
+👋 Click a suggestion below or upload a data source to get started!
+
+Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
+and visualize data without writing code.
+
+On the chat interface...
+
+💬 Ask questions in plain English to generate SQL queries and visualizations
+🔍 Inspect and validate results through conversation
+📝 Get summaries and key insights from your data
+🧩 Apply custom analyses with a click of a button
+
+Click the toggle, or drag the edge, to expand the sidebar and...
+
+📚 Upload sources (tables and documents) by dragging or selecting files
+🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
+💾 Access all generated tables and visualizations under tabs
+📤 Export your session as a reproducible notebook
+
+📖 Learn more about [Lumen AI](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html)
+"""
+
+
 class ExecutionNode(param.Parameterized):
     """
     Defines a node in an execution graph.
@@ -69,6 +93,9 @@ class Coordinator(Viewer, Actor):
     computing an execution graph and then executing each
     step along the graph.
     """
+
+    within_ui = param.Boolean(default=False, constant=True, doc="""
+        Whether this coordinator is being used within the UI.""")
 
     agents = param.List(default=[ChatAgent], doc="""
         List of agents to coordinate.""")
@@ -199,8 +226,9 @@ class Coordinator(Viewer, Actor):
             else:
                 self._tools["__main__"].append(tool(llm=llm))
 
+        welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
         interface.send(
-            "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!",
+            welcome_message,
             user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
         )
         interface.button_properties={
