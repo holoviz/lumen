@@ -38,6 +38,18 @@ if TYPE_CHECKING:
     from lumen.sources.base import Source
 
 
+def format_float(num):
+    if pd.isna(num) or math.isinf(num):
+        return num
+    # if is integer, round to 0 decimals
+    if num == int(num):
+        return f"{int(num)}"
+    elif 0.01 <= abs(num) < 100:
+        return f"{num:.1f}"  # Regular floating-point notation with one decimal
+    else:
+        return f"{num:.1e}"  # Exponential notation with one decimal
+
+
 def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     try:
         template_path = template_path.relative_to(relative_to).as_posix()
@@ -180,9 +192,15 @@ async def get_schema(
     if include_min_max:
         for field, spec in schema.items():
             if "inclusiveMinimum" in spec:
-                spec["min"] = spec.pop("inclusiveMinimum")
+                min_val = spec.pop("inclusiveMinimum")
+                if isinstance(min_val, (int, float)):
+                    min_val = format_float(min_val)
+                spec["min"] = min_val
             if "inclusiveMaximum" in spec:
-                spec["max"] = spec.pop("inclusiveMaximum")
+                max_val = spec.pop("inclusiveMaximum")
+                if isinstance(max_val, (int, float)):
+                    max_val = format_float(max_val)
+                spec["max"] = max_val
     else:
         for field, spec in schema.items():
             if "inclusiveMinimum" in spec:
@@ -194,6 +212,7 @@ async def get_schema(
             if "max" in spec:
                 spec.pop("max")
 
+    num_cols = len(schema)
     for field, spec in schema.items():
         if "type" in spec:
             if spec["type"] == "string":
@@ -209,8 +228,9 @@ async def get_schema(
             continue
 
         limit = get_kwargs.get("limit")
-        max_enums = 10
-        truncate_limit = min(limit or 5, 5)
+        # scale the number of enums based on the number of columns
+        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+        truncate_limit = min(limit or 5, max_enums)
         if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
             continue
@@ -228,6 +248,12 @@ async def get_schema(
             enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
             for enum in spec["enum"]
         ]
+
+    # Format any other numeric values in the schema
+    for field, spec in schema.items():
+        for key, value in spec.items():
+            if isinstance(value, (int, float)) and key not in ['type']:
+                spec[key] = format_float(value)
 
     if count is not None and include_count:
         schema["__len__"] = count
@@ -272,17 +298,6 @@ async def get_data(pipeline):
 
 
 async def describe_data(df: pd.DataFrame) -> str:
-    def format_float(num):
-        if pd.isna(num) or math.isinf(num):
-            return num
-        # if is integer, round to 0 decimals
-        if num == int(num):
-            return f"{int(num)}"
-        elif 0.01 <= abs(num) < 100:
-            return f"{num:.1f}"  # Regular floating-point notation with two decimals
-        else:
-            return f"{num:.1e}"  # Exponential notation with two decimals
-
     def describe_data_sync(df):
         size = df.size
         shape = df.shape
@@ -299,6 +314,11 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.columns:
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
+
+        sampled_columns = False
+        if len(df.columns) > 10:
+            df = df[df.columns[:10]]
+            sampled_columns = True
 
         describe_df = df.describe(percentiles=[])
         columns_to_drop = ["min", "max"] # present if any numeric
@@ -324,7 +344,9 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.columns:
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
-            df_describe_dict[col]["nulls"] = int(df[col].isnull().sum())
+            nulls = int(df[col].isnull().sum())
+            if nulls > 0:
+                df_describe_dict[col]["nulls"] = nulls
 
         # select datetime64 columns
         for col in df.select_dtypes(include=["datetime64"]).columns:
@@ -344,6 +366,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             "summary": {
                 "total_table_cells": size,
                 "total_shape": shape,
+                "sampled_columns": sampled_columns,
                 "is_summarized": is_summarized,
             },
             "stats": df_describe_dict,
