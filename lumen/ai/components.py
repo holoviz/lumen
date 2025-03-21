@@ -163,10 +163,6 @@ class SplitJS(JSComponent):
 
     def __init__(self, **params):
         super().__init__(**params)
-        # Set up a watcher for the collapsed parameter
-        self.param.watch(self._send_collapsed_update, 'collapsed')
-
-        # Auto-adjust parameters based on invert value
         if self.invert:
             # Swap min_sizes when inverted
             left_min, right_min = self.min_sizes
@@ -176,6 +172,7 @@ class SplitJS(JSComponent):
             left_exp, right_exp = self.expanded_sizes
             self.expanded_sizes = (right_exp, left_exp)
 
+    @param.depends("collapsed", watch=True)
     def _send_collapsed_update(self, event):
         """Send message to JS when collapsed state changes in Python"""
         self._send_msg({"type": "update_collapsed", "collapsed": event.new})
@@ -185,4 +182,6 @@ class SplitJS(JSComponent):
         if 'collapsed' in msg:
             collapsed = msg['collapsed']
             with param.discard_events(self):
+                # Important to discard so when user drags the panel, it doesn't
+                # expand to the expanded sizes
                 self.collapsed = collapsed
