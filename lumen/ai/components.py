@@ -129,7 +129,7 @@ CSS = """
 .gutter.gutter-horizontal {
     background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==');
     z-index: 1;
-    width: 8px !important;
+    width: 8px;
 }
 
 .split > div:nth-child(2) > div:not(.toggle-icon) {
@@ -256,22 +256,22 @@ class StatusBadge(Button):
     }
 
     /* Base badge styles */
-    .bk-btn {
-        border-radius: 16px !important;
-        padding: 6px 10px !important;
+    :host(.solid) .bk-btn.bk-btn-default {
+        border-radius: 16px;
+        padding: 6px 10px;
         transition: all 0.3s ease;
         cursor: not-allowed;
-        pointer-events: none !important;
+        pointer-events: none;
     }
 
-    .bk-btn .bk-TablerIcon {
+    :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
         display: inline-flex;
         border-radius: 50%;
         margin-right: 5px;
         margin-bottom: 2px;
     }
 
-    .bk-btn .bk-TablerIcon path {
+    :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
         stroke: inherit;
         fill: inherit;
     }
@@ -281,35 +281,35 @@ class StatusBadge(Button):
     _status_stylesheets = {
         "pending": """
             /* Badge pending state */
-            .bk-btn {
-                background-color: #f0f0f0 !important;
-                border-color: #d0d0d0 !important;
-                color: #606060 !important;
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #f0f0f0;
+                border-color: #d0d0d0;
+                color: #606060;
             }
 
-            .bk-btn .bk-TablerIcon {
-                color: #808080 !important;
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #808080;
             }
 
-            .bk-btn .bk-TablerIcon path {
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
                 stroke: #808080;
                 fill: #808080;
             }
         """,
         "running": """
             /* Badge running state */
-            .bk-btn {
-                background-color: #fffceb !important;
-                border-color: #ffe066 !important;
-                color: #997a00 !important;
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #fffceb;
+                border-color: #ffe066;
+                color: #997a00;
             }
 
-            .bk-btn .bk-TablerIcon {
-                color: #FFD700 !important;
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #FFD700;
                 animation: pulse-gold 2.5s infinite;
             }
 
-            .bk-btn .bk-TablerIcon path {
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
                 stroke: #FFD700;
                 fill: #FFD700;
             }
@@ -328,34 +328,34 @@ class StatusBadge(Button):
         """,
         "success": """
             /* Badge success state */
-            .bk-btn {
-                background-color: #e8f5e9 !important;
-                border-color: #a5d6a7 !important;
-                color: #2e7d32 !important;
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #e8f5e9;
+                border-color: #a5d6a7;
+                color: #2e7d32;
             }
 
-            .bk-btn .bk-TablerIcon {
-                color: #4CAF50 !important;
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #4CAF50;
             }
 
-            .bk-btn .bk-TablerIcon path {
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
                 stroke: #4CAF50;
                 fill: #4CAF50;
             }
         """,
         "failed": """
             /* Badge failed state */
-            .bk-btn {
-                background-color: #ffebee !important;
-                border-color: #ef9a9a !important;
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #ffebee;
+                border-color: #ef9a9a;
                 color: #c62828 !important;
             }
 
-            .bk-btn .bk-TablerIcon {
-                color: #f44336 !important;
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #f44336;
             }
 
-            .bk-btn .bk-TablerIcon path {
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
                 stroke: #f44336;
                 fill: #f44336;
             }
