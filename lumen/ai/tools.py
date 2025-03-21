@@ -6,6 +6,7 @@ from textwrap import indent
 from typing import Any
 
 import param
+import yaml
 
 from panel.viewable import Viewable
 
@@ -14,7 +15,7 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_refined_query_model
+from .models import make_column_lookup_model, make_refined_query_model
 from .translate import function_to_model
 from .utils import log_debug
 from .vector_store import NumpyVectorStore, VectorStore
@@ -332,7 +333,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables", "table_similarities"], readonly=True, doc="""
+    provides = param.List(default=["closest_tables", "table_similarities", "table_metadata"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     batched = param.Boolean(default=True, doc="""
@@ -545,9 +546,147 @@ class TableLookup(VectorLookupTool):
 
         self._memory["closest_tables"] = closest_tables
         self._memory["table_similarities"] = table_similarities
+        # Store table metadata for other tools to use (particularly ColumnLookup)
+        self._memory["table_metadata"] = self._table_metadata
         if "refined_search_query" in self._memory and final_query != query:
             message = f"\n\nRefined search query: '{final_query}'\n\n" + message
         return message + "\n".join(descriptions)
+
+
+class ColumnLookup(Tool):
+    """
+    ColumnLookup tool that analyzes a user query and selects the most relevant columns
+    from the provided table schemas. This optimization reduces token usage and improves
+    query generation by focusing the model on relevant columns.
+    """
+
+    purpose = param.String(default="""
+        Looks up and selects the most relevant columns from tables based on the user query.
+        This helps optimize token usage and improves SQL query generation.
+        Should be run automatically after table selection to optimize column usage.
+        """)
+
+    requires = param.List(default=["tables_sql_schemas", "table_metadata"], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
+    provides = param.List(default=["tables_sql_schemas_subsets"], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
+
+    always_use = param.Boolean(default=True, doc="""
+        This tool should be used automatically whenever tables are selected.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "ColumnLookup" / "main.jinja2",
+                "response_model": make_column_lookup_model,
+            },
+        },
+        doc="Dictionary of available prompts for the tool."
+    )
+
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        """
+        Analyzes the user query and selects the most relevant columns from the table schemas.
+        """
+        tables_sql_schemas = self._memory["tables_sql_schemas"]
+        if not tables_sql_schemas:
+            return "No table schemas available to analyze."
+
+        # Get table metadata (contains column descriptions from TableLookup)
+        table_metadata = self._memory.get("table_metadata", {})
+
+        # Extract the current query from messages
+        current_query = "\n".join(message["content"] for message in messages if message["role"] == "user")
+
+        # Get fused messages for context
+        fused_messages = self._fuse_messages(messages)
+
+        # Extract all columns from the table schemas and their descriptions
+        all_columns = {}
+        column_descriptions = {}
+        for table_slug, table_info in tables_sql_schemas.items():
+            schema_dict = yaml.safe_load(table_info["schema"])
+            all_columns[table_slug] = [col for col in schema_dict.keys() if not col.startswith("__")]
+
+            # Get column descriptions from table_metadata if available
+            if table_slug in table_metadata and "columns" in table_metadata[table_slug]:
+                column_descriptions[table_slug] = {}
+                for col_name, col_info in table_metadata[table_slug]["columns"].items():
+                    if "description" in col_info:
+                        column_descriptions[table_slug][col_name] = col_info["description"]
+
+        # Get system prompt
+        system_prompt = await self._render_prompt(
+            "main",
+            fused_messages,
+            current_query=current_query,
+            tables_sql_schemas=tables_sql_schemas,
+            column_descriptions=column_descriptions
+        )
+
+        # Get the model based on available tables and columns
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+        response_model = self._get_model("main",
+                                      tables=list(tables_sql_schemas.keys()),
+                                      columns=all_columns)
+
+        # Get the LLM's column selections
+        response = await self.llm.invoke(
+            messages=fused_messages,
+            system=system_prompt,
+            model_spec=model_spec,
+            response_model=response_model
+        )
+
+        # Create subset schemas based on selected columns
+        tables_sql_schemas_subsets = {}
+        selected_column_counts = {}
+
+        for table_slug, columns in response.selected_columns.items():
+            if table_slug in tables_sql_schemas and columns:
+                # Load the YAML schema
+                full_schema = tables_sql_schemas[table_slug]
+                schema_dict = yaml.safe_load(full_schema["schema"])
+
+                # Create subset schema with only selected columns
+                subset_schema = {col: schema_dict[col] for col in columns if col in schema_dict}
+
+                # Always include metadata fields like __len__
+                for key in schema_dict:
+                    if key.startswith("__"):
+                        subset_schema[key] = schema_dict[key]
+
+                # Create a copy of the full schema and replace the schema field
+                subset_data = full_schema.copy()
+                subset_data["schema"] = yaml.dump(subset_schema)
+                tables_sql_schemas_subsets[table_slug] = subset_data
+                selected_column_counts[table_slug] = len(columns)
+
+        # Store the subset schemas in memory
+        self._memory["tables_sql_schemas_subsets"] = tables_sql_schemas_subsets
+
+        # Generate report
+        total_original_columns = sum(len(yaml.safe_load(info["schema"])) -
+                                    sum(1 for k in yaml.safe_load(info["schema"]) if k.startswith("__"))
+                                    for info in tables_sql_schemas.values())
+        total_selected_columns = sum(selected_column_counts.values())
+        reduction_percentage = ((total_original_columns - total_selected_columns) / total_original_columns * 100) if total_original_columns > 0 else 0
+
+        report = "Column selection analysis complete:\n\n"
+        report += f"Based on the query: '{current_query}'\n\n"
+        report += response.chain_of_thought + "\n\n"
+
+        if tables_sql_schemas_subsets:
+            report += f"Selected {total_selected_columns} columns out of {total_original_columns} total columns ({reduction_percentage:.1f}% reduction).\n\n"
+            report += "Column selections per table:\n"
+            for table_slug, columns in response.selected_columns.items():
+                if table_slug in tables_sql_schemas_subsets:
+                    report += f"- {table_slug}: {', '.join(columns)}\n"
+        else:
+            report += "No columns were selected. Using full schemas instead."
+
+        return report
 
 
 class FunctionTool(Tool):

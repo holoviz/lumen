@@ -11,6 +11,37 @@ class PartialBaseModel(BaseModel, PartialLiteralMixin):
     ...
 
 
+def make_column_lookup_model(tables, columns):
+    """
+    Creates a model for column selection in the coordinator.
+    This provides a structured way to identify relevant columns per table.
+    """
+    tables_dict = {}
+    for table in tables:
+        tables_dict[table] = list[Literal[tuple(columns.get(table, []))]] if columns.get(table) else list[str]
+
+    column_model = create_model(
+        "CoordinatorColumns",
+        chain_of_thought=(str, FieldInfo(
+            description="""
+            Explain your reasoning for selecting specific columns based on the user query.
+            Consider what fields are directly relevant to calculations, filters, or outputs required.
+            Please be as concise as possible.
+            """
+        )),
+        selected_columns=(tables_dict, FieldInfo(
+            description="""
+            For each table, provide an array of column names that should be included in the subset schema.
+            Include only the columns that are most relevant to answering the query.
+            Make sure to include columns needed for joins, filtering, grouping, and calculations.
+            """
+        )),
+        __base__=PartialBaseModel
+    )
+    return column_model
+
+
+
 class Sql(BaseModel):
 
     chain_of_thought: str = Field(

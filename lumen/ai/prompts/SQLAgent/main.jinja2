@@ -50,10 +50,30 @@ Here's additional guidance:
 {{ comments }}
 {%- endif -%}
 
-{%- if tables_sql_schemas %}
-Here are YAML schemas for currently relevant tables:
-{% for table_info in tables_sql_schemas.values() %}
+{%- if tables_sql_schemas_subsets is defined and tables_sql_schemas_subsets %}
+Here are YAML schemas for currently relevant tables (with most relevant columns):
+{% for table_slug, table_info in tables_sql_schemas_subsets.items() %}
 - `{{ table_info.sql_table }}`:
+```yaml
+{{ table_info.schema }}
+```
+{% endfor -%}
+{%- endif -%}
+
+{%- if not tables_sql_schemas_subsets and tables_sql_schemas %}
+Here are YAML schemas for currently relevant tables:
+{% for table_slug, table_info in tables_sql_schemas.items() %}
+- `{{ table_info.sql_table }}`:
+```yaml
+{{ table_info.schema }}
+```
+{% endfor -%}
+{%- endif -%}
+
+{%- if tables_sql_schemas_subsets is defined and tables_sql_schemas_subsets and tables_sql_schemas %}
+# If you need additional columns not shown above, here are the complete schemas:
+{% for table_slug, table_info in tables_sql_schemas.items() %}
+- `{{ table_info.sql_table }}` (full schema):
 ```yaml
 {{ table_info.schema }}
 ```
