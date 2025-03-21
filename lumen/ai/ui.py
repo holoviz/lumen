@@ -297,6 +297,7 @@ class UI(Viewer):
             template = state.template
             if isinstance(template, FastListTemplate):
                 template.main_layout = None
+            template.favicon = "https://lumen.holoviz.org/_static/favicon.ico"
             template.title = self.title
             template.config.css_files.append(
                 'https://fonts.googleapis.com/css2?family=Nunito:wght@700'
