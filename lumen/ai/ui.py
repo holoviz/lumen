@@ -436,22 +436,10 @@ class ExplorerUI(UI):
         )
         output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'auto'}, sizing_mode='stretch_both')
         chat = Column(self._exports, self._coordinator)
-        if self.chat_ui_position == 'left':
-            left, right = chat, output
-            invert_param = False
-            min_sizes = (300, 0)
-            expanded_sizes = (35, 65)
-        else:
-            left, right = output, chat
-            invert_param = True
-            min_sizes = (0, 300)
-            expanded_sizes = (65, 35)
         self._split = SplitJS(
-            left=left,
-            right=right,
-            invert=invert_param,
-            min_sizes=min_sizes,
-            expanded_sizes=expanded_sizes,
+            left=chat,
+            right=output,
+            invert=self.chat_ui_position != 'left',
             sizing_mode='stretch_both'
         )
         self._main = Column(self._split)

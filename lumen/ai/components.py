@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import param
 
 from panel.custom import Child, JSComponent
@@ -37,8 +39,8 @@ CSS = """
 }
 
 ul.nav.flex-column {
-    padding-inline-start: 0 !important;
-    margin: 0 !important;
+    padding-inline-start: 0;
+    margin: 0;
 }
 
 .toggle-icon {
@@ -88,7 +90,7 @@ ul.nav.flex-column {
 }
 
 .collapsed-content {
-    display: none !important;
+    display: none !important;  /* required to expand / collapse properly */
 }
 
 /* Ensure the right panel and its contents are visible when expanded */
@@ -108,231 +110,79 @@ ul.nav.flex-column {
 
 class SplitJS(JSComponent):
     """
-    Professional split panel component with collapsible sidebar.
+    SplitJS is a component for creating a responsive split panel layout with a collapsible sidebar.
 
-    The component uses an icon in the top-right corner of each panel section
-    for toggling between expanded and collapsed states.
+    This component uses split.js to create a draggable split layout with two panels.
+    Key features include:
+    - Collapsible panels with toggle button
+    - Minimum size constraints for each panel
+    - Invertible layout to support different UI configurations
+    - Responsive sizing with automatic adjustments
+    - Animation for better user experience
+
+    The component is ideal for creating application layouts with a main content area
+    and a secondary panel that can be toggled (like a chat interface with output display).
     """
 
-    left = Child()
-    right = Child()
-    sizes = param.NumericTuple(default=(100, 0), length=2)
-    expanded_sizes = param.NumericTuple(default=(35, 65), length=2)
-    min_sizes = param.NumericTuple(default=(300, 0), length=2)
-    collapsed = param.Boolean(default=True)
-    invert = param.Boolean(default=False, doc="""
-        Whether to invert the layout, changing the toggle button side and panel styles.
-        This is useful for supporting different panel layouts like chat-left vs chat-right.
-        """)
+    left = Child(doc="""
+        The component to place in the left panel.
+        When invert=True, this will appear on the right side.""")
 
-    _esm = """
-    import Split from 'https://esm.sh/split.js@1.6.5'
+    right = Child(doc="""
+        The component to place in the right panel.
+        When invert=True, this will appear on the left side.""")
 
-    export function render({ model, view }) {
-      const splitDiv = document.createElement('div');
-      splitDiv.className = 'split';
-      splitDiv.style.visibility = 'hidden';
+    sizes = param.NumericTuple(default=(100, 0), length=2, doc="""
+        The initial sizes of the two panels (as percentages).
+        Default is (100, 0) which means the left panel takes up all the space
+        and the right panel is not visible.""")
 
-      const split0 = document.createElement('div');
-      const split1 = document.createElement('div');
-      splitDiv.append(split0, split1);
+    expanded_sizes = param.NumericTuple(default=(35, 65), length=2, doc="""
+        The sizes of the two panels when expanded (as percentages).
+        Default is (35, 65) which means the left panel takes up 35% of the space
+        and the right panel takes up 65% when expanded.
+        When invert=True, these percentages are automatically swapped.""")
 
-      split1.style.position = 'relative';
-      split1.style.width = '100%';
+    min_sizes = param.NumericTuple(default=(300, 0), length=2, doc="""
+        The minimum sizes of the two panels (in pixels).
+        Default is (300, 0) which means the left panel has a minimum width of 300px
+        and the right panel has no minimum width.
+        When invert=True, these values are automatically swapped.""")
 
-      // Create content wrapper for right panel
-      const contentWrapper = document.createElement('div');
-      // In inverted mode, the right content should always be visible when collapsed
-      contentWrapper.style.width = '100%';
-      contentWrapper.style.height = '100%';
-      contentWrapper.style.display = 'block';
+    collapsed = param.Boolean(default=True, doc="""
+        Whether the secondary panel is collapsed.
+        When True, only one panel is visible (determined by invert).
+        When False, both panels are visible according to expanded_sizes.""")
 
-      // Apply background color based on invert parameter
-      if (model.invert) {
-        split0.style.backgroundColor = 'whitesmoke';
-      } else {
-        contentWrapper.style.backgroundColor = 'whitesmoke';
-      }
+    invert = param.Boolean(default=False, constant=True, doc="""
+        Whether to invert the layout, changing the toggle button side and panel styles.""")
 
-      // Create toggle icon for panel toggling
-      const toggleIcon = document.createElement('div');
-
-      // Set class and initial arrow direction based on invert parameter
-      if (model.invert) {
-        toggleIcon.className = 'toggle-icon-inverted';
-        toggleIcon.innerHTML = model.collapsed
-          ? `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`  // Right arrow when collapsed
-          : `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`;  // Left arrow when expanded
-        // Set initial position based on collapsed state
-        toggleIcon.style.right = model.collapsed ? '-30px' : '5px';
-      } else {
-        toggleIcon.className = 'toggle-icon';
-        toggleIcon.innerHTML = model.collapsed
-          ? `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`  // Left arrow when collapsed
-          : `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`;  // Right arrow when expanded
-        // Set initial position based on collapsed state
-        toggleIcon.style.left = model.collapsed ? '-30px' : '5px';
-      }
-
-      // Determine which panel gets the toggle based on invert parameter
-      const togglePanel = model.invert ? split0 : split1;
-      const toggleTarget = model.invert ? split1 : split0;
-
-      // Add the toggle icon to the appropriate panel but positioned relative to the gutter
-      togglePanel.style.position = 'relative'; // Ensure the container has relative positioning
-      togglePanel.appendChild(toggleIcon);
-
-      // Determine initial state based on the invert parameter
-      let initSizes;
-      if (model.invert) {
-        // In inverted mode, right panel is shown first
-        initSizes = model.collapsed ? [0, 100] : model.expanded_sizes;
-      } else {
-        // In normal mode, left panel is shown first
-        initSizes = model.collapsed ? [100, 0] : model.expanded_sizes;
-      }
-
-      const splitInstance = Split([split0, split1], {
-        sizes: initSizes,
-        minSize: model.min_sizes,
-        gutterSize: 6,
-        onDragEnd: (sizes) => {
-          view.invalidate_layout();
-
-          // Update collapsed state based on panel size and invert parameter
-          if (model.invert ? sizes[0] <= 5 : sizes[1] <= 5) {
-            model.collapsed = true;
-
-            // Set arrow direction based on invert parameter
-            if (model.invert) {
-            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-              toggleIcon.style.right = '-30px'; // Adjust position when collapsed
-            } else {
-              toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-            toggleIcon.style.left = '-30px'; // Adjust position when collapsed
-          }
-          } else {
-            model.collapsed = false;
-            contentWrapper.className = '';
-            contentWrapper.style.display = 'block';
-
-            // Set arrow direction based on invert parameter
-            if (model.invert) {
-            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-              toggleIcon.style.right = '5px'; // Adjust position when expanded
-            } else {
-              toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-            toggleIcon.style.left = '5px'; // Adjust position when expanded
-          }
-          }
-        },
-      });
-
-      // Toggle button event listener
-      toggleIcon.addEventListener('click', () => {
-        if (model.collapsed) {
-          // Expand
-          splitInstance.setSizes(model.expanded_sizes);
-          model.collapsed = false;
-
-          // Make sure content is visible when expanding
-          contentWrapper.className = '';
-          contentWrapper.style.display = 'block';
-
-          // Set arrow direction based on invert parameter
-          if (model.invert) {
-            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-            toggleIcon.style.right = '5px'; // Adjust position when expanded
-          } else {
-            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-            toggleIcon.style.left = '5px'; // Adjust position when expanded
-          }
-        } else {
-          // Collapse with appropriate sizes based on invert parameter
-          if (model.invert) {
-            splitInstance.setSizes([0, 100]);
-          } else {
-            splitInstance.setSizes([100, 0]);
-          }
-          model.collapsed = true;
-
-          // Only hide content in non-inverted mode
-          if (!model.invert) {
-            contentWrapper.className = 'collapsed-content';
-            contentWrapper.style.display = 'none';
-          }
-
-          // Set arrow direction based on invert parameter
-          if (model.invert) {
-            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-            toggleIcon.style.right = '-30px'; // Adjust position when collapsed
-          } else {
-            toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-            toggleIcon.style.left = '-30px'; // Adjust position when collapsed
-          }
-        }
-        view.invalidate_layout();
-      });
-
-      // Listen for parameter changes as they're the proper way to update
-      model.on(['collapsed', 'sizes'], () => {
-        if (!model.collapsed) {
-          splitInstance.setSizes(model.sizes || model.expanded_sizes);
-        } else {
-          // When collapsing, use the appropriate sizes based on invert parameter
-          if (model.invert) {
-            splitInstance.setSizes([0, 100]);
-          } else {
-            splitInstance.setSizes([100, 0]);
-          }
-        }
-        view.invalidate_layout();
-      });
-
-      model.on("after_layout", () => {
-        setTimeout(() => {
-          splitDiv.style.visibility = 'visible';
-
-          // Only add animation on initial load
-          if (!window._toggleAnimationShown) {
-            // Add animation on first load only
-            toggleIcon.style.animationName = 'jumpLeftRight';
-            toggleIcon.style.animationDuration = '0.5s';
-            toggleIcon.style.animationTimingFunction = 'ease';
-            toggleIcon.style.animationIterationCount = '3';
-
-            // Remove animation after it completes and set flag
-            setTimeout(() => {
-              toggleIcon.style.animationName = '';
-              toggleIcon.style.animationDuration = '';
-              toggleIcon.style.animationTimingFunction = '';
-              toggleIcon.style.animationIterationCount = '';
-              window._toggleAnimationShown = true;
-            }, 1500);
-          }
-
-          window.dispatchEvent(new Event('resize'));
-        }, 100);
-      });
-
-      // Create a centered content wrapper for the left panel
-      const leftContentWrapper = document.createElement('div');
-
-      // Apply left-panel-content class to the appropriate panel based on invert parameter
-      if (model.invert) {
-        contentWrapper.className += ' left-panel-content';
-      } else {
-        leftContentWrapper.className = 'left-panel-content';
-      }
-
-      leftContentWrapper.style.width = '100%';
-      leftContentWrapper.style.height = '100%';
-      leftContentWrapper.append(model.get_child("left"));
-      split0.append(leftContentWrapper);
-      contentWrapper.append(model.get_child("right"));
-      split1.append(contentWrapper);
-
-      return splitDiv;
-    }"""
+    _esm = Path(__file__).parent / "models" / "split.js"
 
     _stylesheets = [CSS]
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Set up a watcher for the collapsed parameter
+        self.param.watch(self._send_collapsed_update, 'collapsed')
+
+        # Auto-adjust parameters based on invert value
+        if self.invert:
+            # Swap min_sizes when inverted
+            left_min, right_min = self.min_sizes
+            self.min_sizes = (right_min, left_min)
+
+            # Swap expanded_sizes when inverted
+            left_exp, right_exp = self.expanded_sizes
+            self.expanded_sizes = (right_exp, left_exp)
+
+    def _send_collapsed_update(self, event):
+        """Send message to JS when collapsed state changes in Python"""
+        self._send_msg({"type": "update_collapsed", "collapsed": event.new})
+
+    def _handle_msg(self, msg):
+        """Handle messages from JS"""
+        if 'collapsed' in msg:
+            collapsed = msg['collapsed']
+            with param.discard_events(self):
+                self.collapsed = collapsed
