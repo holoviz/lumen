@@ -5,80 +5,95 @@ import param
 from panel.custom import Child, JSComponent
 
 CSS = """
-/* Max width for comfortable reading */
-.left-panel-content {
-    max-width: clamp(450px, 95vw, 1200px);
-    margin: 0px auto;  /* Center the content */
-    padding: 0px;
-}
-
-@keyframes jumpLeftRight {
-    0%, 100% { transform: translateY(-50%); }
-    25% { transform: translate(-4px, -50%); }
-    50% { transform: translateY(-50%); }
-    75% { transform: translate(4px, -50%); }
-}
-
+/* Base styles for the split container */
 .split {
     display: flex;
     flex-direction: row;
     height: 100%;
     width: 100%;
-}
-
-.gutter {
     background-color: var(--panel-surface-color);
-    background-repeat: no-repeat;
-    background-position: 50%;
-    cursor: col-resize;
+    overflow-y: clip; /* Clip overflow to prevent scrollbars; inner content will have their own */
 }
 
-.gutter.gutter-horizontal {
-    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==');
-    z-index: 1;
+/* Style for initial load to prevent FOUC */
+.split.loading {
+    visibility: hidden;
 }
 
-ul.nav.flex-column {
-    padding-inline-start: 0;
-    margin: 0;
+/* Max width for comfortable reading */
+.left-panel-content {
+    max-width: clamp(450px, 95vw, 1200px);
+    margin: 0px auto;  /* Center the content */
+    background-color: var(--panel-background-color); /* Use theme variable for content background */
+    border-radius: 10px; /* Slight rounded corners */
+    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
+    box-sizing: border-box; /* Include padding in size calculations */
 }
 
+/* Split panel styles */
+.split > div {
+    position: relative;
+}
+
+.split > div:nth-child(2) {
+    overflow: visible;
+    position: relative;
+    width: 100%;
+}
+
+/* Content wrapper styles */
+.content-wrapper {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background-color: var(--panel-background-color);
+}
+
+.left-content-wrapper {
+    width: 100%;
+    height: 100%;
+}
+
+/* Toggle icon basic styles */
+.toggle-icon, .toggle-icon-inverted {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    opacity: 0.75;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* Regular toggle icon */
 .toggle-icon {
-    position: absolute;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 10;
-    opacity: 0.65;
     transition: opacity 0.2s, left 0.3s ease;
-    left: -30px; /* Default position - will be updated by JS */
-    top: 50%;
-    transform: translateY(-50%);
+    left: 5px; /* Default expanded position */
 }
 
+.toggle-icon.collapsed {
+    left: -30px; /* Position when collapsed */
+}
+
+/* Inverted toggle icon */
 .toggle-icon-inverted {
-    position: absolute;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 10;
-    opacity: 0.65;
     transition: opacity 0.2s, right 0.3s ease;
-    right: -30px; /* Default position - will be updated by JS */
-    top: 50%;
-    transform: translateY(-50%);
+    right: 5px; /* Default expanded position */
+}
+
+.toggle-icon-inverted.collapsed {
+    right: -30px; /* Position when collapsed */
 }
 
 .toggle-icon:hover, .toggle-icon-inverted:hover {
     opacity: 1;
 }
 
+/* SVG icon styling */
 .toggle-icon svg, .toggle-icon-inverted svg {
     width: 50px;
     height: 50px;
@@ -89,14 +104,28 @@ ul.nav.flex-column {
     stroke-linejoin: round;
 }
 
+/* Collapsed state */
 .collapsed-content {
     display: none;
 }
 
-/* Ensure the right panel and its contents are visible when expanded */
-.split > div:nth-child(2) {
-    overflow: visible;
-    position: relative;
+/* Gutter styles */
+.gutter {
+    background-color: var(--panel-surface-color);
+    background-repeat: no-repeat;
+    background-position: 50%;
+    cursor: col-resize;
+    transition: background-color 0.2s;
+}
+
+.gutter:hover {
+    background-color: var(--panel-border-color);
+}
+
+.gutter.gutter-horizontal {
+    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==');
+    z-index: 1;
+    width: 8px !important;
 }
 
 .split > div:nth-child(2) > div:not(.toggle-icon) {
@@ -104,6 +133,27 @@ ul.nav.flex-column {
     height: 100%;
     overflow: auto;
     padding-top: 36px; /* Space for the toggle icon */
+}
+
+/* Animation for toggle icon */
+@keyframes jumpLeftRight {
+    0%, 100% { transform: translateY(-50%); }
+    25% { transform: translate(-4px, -50%); }
+    50% { transform: translateY(-50%); }
+    75% { transform: translate(4px, -50%); }
+}
+
+.toggle-icon.animated, .toggle-icon-inverted.animated {
+    animation-name: jumpLeftRight;
+    animation-duration: 0.5s;
+    animation-timing-function: ease;
+    animation-iteration-count: 3;
+}
+
+/* List navigation styles */
+ul.nav.flex-column {
+    padding-inline-start: 0;
+    margin: 0;
 }
 """
 
