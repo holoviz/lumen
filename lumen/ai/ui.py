@@ -695,8 +695,6 @@ class ExplorerUI(UI):
         tabs.active = len(tabs)-1
 
     def _wrap_callback(self, callback):
-        self._first_exploration_created = False
-
         async def wrapper(contents: list | str, user: str, instance: ChatInterface):
             if not self._explorations:
                 prev_memory = memory
