@@ -244,7 +244,6 @@ class SplitJS(JSComponent):
 class StatusBadge(Button):
     """
     A customizable badge component that can show different statuses with visual effects.
-    Now enhanced with reactive expressions, dynamic stylesheets, and rounded corners.
     """
 
     status = param.Selector(
@@ -390,11 +389,7 @@ class StatusBadge(Button):
             icon=self.param.status.rx().rx.pipe(
                 lambda status: self._status_mapping[status]["icon"]
             ),
+            stylesheets=self.param.status.rx().rx.pipe(
+                lambda status: [self._base_stylesheet, self._status_stylesheets[status]]
+            ),
         )
-
-    @param.depends("status", watch=True, on_init=True)
-    def _update_stylesheets(self):
-        """Update the button's stylesheets based on the current status"""
-        status = self.status
-        combined_stylesheet = [self._base_stylesheet, self._status_stylesheets[status]]
-        self.stylesheets = combined_stylesheet
