@@ -173,9 +173,9 @@ class SplitJS(JSComponent):
             self.expanded_sizes = (right_exp, left_exp)
 
     @param.depends("collapsed", watch=True)
-    def _send_collapsed_update(self, event):
+    def _send_collapsed_update(self):
         """Send message to JS when collapsed state changes in Python"""
-        self._send_msg({"type": "update_collapsed", "collapsed": event.new})
+        self._send_msg({"type": "update_collapsed", "collapsed": self.collapsed})
 
     def _handle_msg(self, msg):
         """Handle messages from JS"""
