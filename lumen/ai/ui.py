@@ -189,13 +189,13 @@ class UI(Viewer):
                 [{'role': 'user', 'content': 'Are you there? YES | NO'}],
                 model_spec="ui"
             )
-            self._llm_status_badge.param.update(status="success", name='LLM is ready')
+            self._llm_status_badge.param.update(status="success", name='LLM ready')
             self.interface.disabled = False
         except Exception as e:
             traceback.print_exc()
             self._llm_status_badge.param.update(
                 status="failed",
-                name="LLM is not connected",
+                name="LLM not connected",
                 description='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else "Failed to connect to LLM"),
             )
 
@@ -213,7 +213,7 @@ class UI(Viewer):
                     break
 
         self._vector_store_status_badge.param.update(
-            status="success", name='Vector store is ready!')
+            status="success", name='Vector store ready')
 
 
     def _destroy(self, session_context):
