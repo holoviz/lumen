@@ -35,7 +35,9 @@ from .models import (
     make_agent_model, make_context_model, make_coordinator_tables_model,
     make_plan_models,
 )
-from .tools import FunctionTool, TableLookup, Tool
+from .tools import (
+    ColumnLookup, FunctionTool, TableLookup, Tool,
+)
 from .utils import (
     fetch_table_schema, fetch_table_schemas, log_debug, mutate_user_message,
     retry_llm_output,
@@ -91,7 +93,7 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[TableLookup], doc="""
+    tools = param.List(default=[TableLookup, ColumnLookup], doc="""
         List of tools to use to provide context.""")
 
     table_similarity_threshold = param.Number(default=0.5, doc="""
@@ -619,6 +621,8 @@ class Planner(Coordinator):
         }
     )
 
+
+
     async def _iterative_table_selection(self, sources: dict) -> dict:
         """
         Performs an iterative table selection process to gather context.
@@ -729,94 +733,180 @@ class Planner(Coordinator):
             if table_slug in selected_table_slugs  # prevent it from getting too big and waste token
         }
 
+    async def _handle_direct_table_access(self, sources, messages):
+        """Handle small table sets directly without using the TableLookup tool."""
+        # Skip if no sources or too many tables
+        if not sources:
+            return False
+
+        all_tables = set()
+        for source in sources.values():
+            all_tables |= set(source.get_tables())
+
+        # Skip direct handling for larger table sets
+        if len(all_tables) > 5:
+            return False
+
+        log_debug("Small number of tables detected, fetching all schemas directly")
+
+        # If we don't have closest_tables yet, add all tables
+        if "closest_tables" not in self._memory or not self._memory["closest_tables"]:
+            self._memory["closest_tables"] = [
+                f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                for source in sources.values()
+                for table in source.get_tables()
+            ]
+
+        # Skip if we already have schemas or no tables were found
+        if not self._memory["closest_tables"] or self._memory.get("tables_sql_schemas"):
+            return False
+
+        # Fetch and add schemas for all tables
+        tables_sql_schemas = await fetch_table_schemas(
+            sources, self._memory["closest_tables"], include_count=True
+        )
+
+        # Store schemas in memory
+        self._memory["tables_sql_schemas"] = tables_sql_schemas
+        self._memory["tools_context"]["TableLookup000000"] = tables_sql_schemas
+
+        # Make sure table_metadata is populated for ColumnLookup
+        if "table_metadata" not in self._memory:
+            table_lookup_tool = next((tool for tool in self._tools["__main__"]
+                                     if isinstance(tool, TableLookup)), None)
+            if table_lookup_tool:
+                self._memory["table_metadata"] = table_lookup_tool._table_metadata
+                log_debug("Populated table_metadata from TableLookup")
+
+        return True
+
+    async def _apply_column_optimization(self, messages, step=None):
+        """Apply ColumnLookup tool to optimize columns if tables are available."""
+        if "tables_sql_schemas" not in self._memory:
+            return False
+
+        column_lookup_tool = next((tool for tool in self._tools["__main__"]
+                                   if isinstance(tool, ColumnLookup)), None)
+        if column_lookup_tool:
+            log_debug("Applying ColumnLookup tool to optimize columns")
+            result = await column_lookup_tool.respond(list(messages))
+
+            if step and result:
+                # Extract the summary part for the UI
+                summary = result.split('Selected')[0] if 'Selected' in result else result
+                step.stream(f"\n\nColumn optimization applied:\n{summary}")
+            return True
+        return False
+
+    async def _process_table_lookup(self, sources, tools, messages, step, output):
+        """Process TableLookup tool selection and perform iterative table selection."""
+        # Skip if TableLookup wasn't selected or we don't have closest_tables
+        has_table_lookup = output and any(tool.name.startswith("TableLookup") for tool in getattr(output, "tools", []))
+        if not (has_table_lookup and "closest_tables" in self._memory):
+            return False
+
+        step.stream("\n\nPerforming iterative table selection to explore relevant schemas...", replace=False)
+
+        # Perform iterative table selection
+        tables_sql_schemas = await self._iterative_table_selection(sources)
+        if not tables_sql_schemas:
+            return False
+
+        # Store the schemas in memory
+        self._memory["tables_sql_schemas"] = tables_sql_schemas
+
+        # Ensure table_metadata is populated
+        if "table_metadata" not in self._memory:
+            table_lookup_tool = next((tool for name, tool in tools.items()
+                                     if isinstance(tool, TableLookup)), None)
+            if table_lookup_tool:
+                self._memory["table_metadata"] = table_lookup_tool._table_metadata
+
+        # Update tools context and remove TableLookup tools
+        for tool_name in list(tools):
+            if tool_name.startswith("TableLookup"):
+                self._memory["tools_context"][tool_name] = tables_sql_schemas
+                tools.pop(tool_name)
+
+        step.stream(f"\n\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
+        return True
+
+    async def _process_tools_with_llm(self, tools, messages, step):
+        """Process tools using LLM to decide which to run."""
+        required_tools = [tool.name for tool in tools.values() if tool.always_use]
+        system = await self._render_prompt(
+            "context",
+            messages,
+            tools=list(tools.values()),
+            required_tools=required_tools
+        )
+        model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
+        context_model = make_context_model(
+            tools=list(tools),
+            required_tools=required_tools,
+        )
+        response = self.llm.stream(
+            messages=messages,
+            system=system,
+            model_spec=model_spec,
+            response_model=context_model,
+            max_retries=3,
+        )
+        async for output in response:
+            chain_of_thought = output.chain_of_thought or ""
+        step.stream(chain_of_thought, replace=False)
+
+        if not output.needs_lookup:
+            return None
+
+        # Process each tool that needs to be run
+        if output.tools:
+            for output_tool in output.tools:
+                tool_context = ''
+                tool_messages = list(messages)
+                if output_tool.instruction:
+                    mutate_user_message(
+                        f"-- Here are instructions of the context you are to provide: {output_tool.instruction!r}",
+                        tool_messages, suffix=True, wrap=True, inplace=False
+                    )
+                if output_tool.name not in tools:
+                    continue
+                callable_tool = tools[output_tool.name]
+                response = await callable_tool.respond(tool_messages)
+                if response is not None:
+                    step.stream(f'\n{output_tool.name}:\n{response}\n')
+                    tool_context += f'\n- {response}'
+                self._memory["tools_context"][output_tool.name] = tool_context
+
+        return output
+
     async def _get_tools_context(self, messages: list[Message]) -> dict:
         tools = {tool.name: tool for tool in self._tools["__main__"]}
         if not tools:
             return {}
 
         sources = {source.name: source for source in self._memory.get("sources", [])}
-        all_tables = set()
-        for source in sources.values():
-            all_tables |= set(source.get_tables())
-        if len(all_tables) <= 5:  # if there's not many tables, just use all
-            # For small number of tables, fetch schemas for all tables upfront
-            if "closest_tables" not in self._memory or not self._memory["closest_tables"]:
-                # If we don't have closest_tables yet, add all tables
-                self._memory["closest_tables"] = closest_tables = [
-                    f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    for source in sources.values()
-                    for table in source.get_tables()
-                ]
 
-            # Fetch and add schemas for all tables
-            if "closest_tables" in self._memory and not self._memory.get("tables_sql_schemas"):
-                tables_sql_schemas = await fetch_table_schemas(
-                    sources, closest_tables, include_count=True
-                )
-                self._memory["tools_context"]["TableLookup000000"] = tables_sql_schemas
-                self._memory["tables_sql_schemas"] = tables_sql_schemas
-            return tools.values()
-
-        # TODO: find a better way to make LLM always use a tool
+        # Handle tools context gathering in a UI step
         with self.interface.add_step(
             success_title="Obtained necessary context",
             title="Obtaining additional context...",
             user="Assistant"
         ) as step:
-            required_tools = [tool.name for tool in tools.values() if tool.always_use]
-            system = await self._render_prompt(
-                "context",
-                messages,
-                tools=list(tools.values()),
-                required_tools=required_tools
-            )
-            model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
-            context_model = make_context_model(
-                tools=list(tools),
-                required_tools=required_tools,
-            )
-            response = self.llm.stream(
-                messages=messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=context_model,
-                max_retries=3,
-            )
-            async for output in response:
-                chain_of_thought = output.chain_of_thought or ""
-            step.stream(chain_of_thought, replace=False)
-
-            if not output.needs_lookup:
+            # Try direct table access for small table sets first
+            if await self._handle_direct_table_access(sources, messages):
+                await self._apply_column_optimization(messages, step)
+                step.stream("\n\nAutomatically processed tables and optimized columns")
                 return tools.values()
 
-            if output.tools:
-                for output_tool in output.tools:
-                    tool_context = ''
-                    tool_messages = list(messages)
-                    if output_tool.instruction:
-                        mutate_user_message(
-                            f"-- Here are instructions of the context you are to provide: {output_tool.instruction!r}",
-                            tool_messages, suffix=True, wrap=True, inplace=False
-                        )
-                    if output_tool.name not in tools:
-                        continue
-                    callable_tool = tools[output_tool.name]
-                    response = await callable_tool.respond(tool_messages)
-                    if response is not None:
-                        step.stream(f'\n{output_tool.name}:\n{response}\n')
-                        tool_context += f'\n- {response}'
-                    self._memory["tools_context"][output_tool.name] = tool_context
+            # For larger table sets, use LLM to guide tool selection
+            output = await self._process_tools_with_llm(tools, messages, step)
 
-            if any(tool.name.startswith("TableLookup") for tool in output.tools) and "closest_tables" in self._memory:
-                step.stream("\n\nPerforming iterative table selection to explore relevant schemas...", replace=False)
-                tables_sql_schemas = await self._iterative_table_selection(sources)
-                if tables_sql_schemas:
-                    self._memory["tables_sql_schemas"] = tables_sql_schemas
-                    for tool_name in list(tools):
-                        if tool_name.startswith("TableLookup"):
-                            self._memory["tools_context"][tool_name] = tables_sql_schemas
-                            tools.pop(tool_name)
-                    step.stream(f"\n\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
+            # Process table selection if TableLookup was chosen
+            if await self._process_table_lookup(sources, tools, messages, step, output):
+                await self._apply_column_optimization(messages, step)
+                step.stream("\n\nOptimized columns for better SQL query generation", replace=False)
+
         return tools.values()
 
     async def _make_plan(
