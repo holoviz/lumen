@@ -9,7 +9,6 @@ from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
-import yaml
 
 from panel import bind
 from panel.chat import ChatInterface, ChatStep
@@ -38,7 +37,8 @@ from .models import (
 )
 from .tools import FunctionTool, TableLookup, Tool
 from .utils import (
-    get_schema, log_debug, mutate_user_message, retry_llm_output,
+    fetch_table_schema, fetch_table_schemas, log_debug, mutate_user_message,
+    retry_llm_output,
 )
 from .views import LumenOutput
 
@@ -647,28 +647,6 @@ class Planner(Coordinator):
         }
     )
 
-    async def _lookup_table_schema(self, source_table, sources):
-        if SOURCE_TABLE_SEPARATOR in source_table:
-            source_name, table_name = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-            source_obj = sources.get(source_name)
-        else:
-            source_obj = next(iter(sources.values()))
-            table_name = source_table
-
-        table_schema = await get_schema(
-            source_obj, table_name, include_count=True, include_enum=False, include_type=False
-        )
-        normalized_table_name = source_obj.normalize_table(table_name)
-        result = {
-            "schema": yaml.dump(table_schema),
-            "source": source_obj.name,
-            "sql_table": normalized_table_name,
-            "sql": source_obj.get_sql_expr(table_name),
-        }
-        table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{normalized_table_name}"
-        return table_slug, result, source_table
-
-
     async def _iterative_table_selection(self, sources: dict) -> dict:
         """
         Performs an iterative table selection process to gather context.
@@ -693,7 +671,7 @@ class Planner(Coordinator):
         )
         current_query = "\n".join(message["content"] for message in messages)
 
-        selected_tables = None
+        selected_table_slugs = None
         for iteration in range(1, max_iterations + 1):
             # Don't increment iteration since we're using the for loop counter
             with self.interface.add_step(
@@ -716,12 +694,12 @@ class Planner(Coordinator):
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
                     table_similarities = self._memory.get("table_similarities", {})
                     if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-                        self._memory["closest_tables"] = selected_tables = sorted(
+                        self._memory["closest_tables"] = selected_table_slugs = sorted(
                             table_similarities,
                             key=lambda x: table_similarities[x],
                             reverse=True
                         )[:5]
-                        table_list = '`\n- `'.join(selected_tables)
+                        table_list = '`\n- `'.join(selected_table_slugs)
                         step.stream(
                             f"\n\nSelected tables: `{table_list}`\nbased on a similarity threshold of {self.table_similarity_threshold}",
                             replace=False
@@ -729,15 +707,15 @@ class Planner(Coordinator):
                         fast_track = True
                     else:
                         # If not, select the top 3 tables to examine
-                        selected_tables = available_tables[:3]
+                        selected_table_slugs = available_tables[:3]
 
                 # For subsequent iterations, the LLM selects tables in the previous iteration
-                step.stream(f"\n\nGathering complete schema information for {len(selected_tables)} tables...")
-                schema_results = [await self._lookup_table_schema(source_table, sources) for source_table in selected_tables]
-                for table_slug, schema_data, source_table in schema_results:
+                step.stream(f"\n\nGathering complete schema information for {len(selected_table_slugs)} tables...")
+                schema_results = [await fetch_table_schema(sources, table_slug, include_count=True) for table_slug in selected_table_slugs]
+                for table_slug, schema_data in schema_results:
                     step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
                     tables_sql_schemas[table_slug] = schema_data
-                    examined_tables.add(source_table)
+                    examined_tables.add(table_slug)
 
                 if fast_track:
                     # based on similarity search alone, if we have selected tables, we're done!!
@@ -767,16 +745,16 @@ class Planner(Coordinator):
                     chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=False)
 
-                selected_tables = output.selected_tables or []
-                step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_tables)}`", replace=False)
+                selected_table_slugs = output.selected_table_slugs or []
+                step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_table_slugs)}`", replace=False)
                 # Check if we're done with table selection
                 if output.is_satisfied or not available_tables:
                     step.stream("\n\nSelection process complete - model is satisfied with selected tables", replace=False)
-                    self._memory["closest_tables"] = selected_tables
+                    self._memory["closest_tables"] = selected_table_slugs
                     break
         return {
             table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
-            if table_slug in selected_tables  # prevent it from getting too big and waste token
+            if table_slug in selected_table_slugs  # prevent it from getting too big and waste token
         }
 
     async def _get_tools_context(self, messages: list[Message]) -> dict:
@@ -789,6 +767,22 @@ class Planner(Coordinator):
         for source in sources.values():
             all_tables |= set(source.get_tables())
         if len(all_tables) <= 5:  # if there's not many tables, just use all
+            # For small number of tables, fetch schemas for all tables upfront
+            if "closest_tables" not in self._memory or not self._memory["closest_tables"]:
+                # If we don't have closest_tables yet, add all tables
+                self._memory["closest_tables"] = closest_tables = [
+                    f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                    for source in sources.values()
+                    for table in source.get_tables()
+                ]
+
+            # Fetch and add schemas for all tables
+            if "closest_tables" in self._memory and not self._memory.get("tables_sql_schemas"):
+                tables_sql_schemas = await fetch_table_schemas(
+                    sources, closest_tables, include_count=True
+                )
+                self._memory["tools_context"]["TableLookup000000"] = tables_sql_schemas
+                self._memory["tables_sql_schemas"] = tables_sql_schemas
             return tools.values()
 
         # TODO: find a better way to make LLM always use a tool
