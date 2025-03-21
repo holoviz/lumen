@@ -90,7 +90,7 @@ ul.nav.flex-column {
 }
 
 .collapsed-content {
-    display: none !important;  /* required to expand / collapse properly */
+    display: none;
 }
 
 /* Ensure the right panel and its contents are visible when expanded */
