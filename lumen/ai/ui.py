@@ -176,8 +176,8 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
-        self._llm_status_badge = StatusBadge(name="Checking LLM")
-        self._vector_store_status_badge = StatusBadge(name="Preparing vector store")
+        self._llm_status_badge = StatusBadge(name="LLM Pending")
+        self._vector_store_status_badge = StatusBadge(name="Vector Store Pending")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._verify_llm)
@@ -189,13 +189,13 @@ class UI(Viewer):
                 [{'role': 'user', 'content': 'Are you there? YES | NO'}],
                 model_spec="ui"
             )
-            self._llm_status_badge.param.update(status="success", name='LLM ready')
+            self._llm_status_badge.param.update(status="success", name='LLM Ready')
             self.interface.disabled = False
         except Exception as e:
             traceback.print_exc()
             self._llm_status_badge.param.update(
                 status="failed",
-                name="LLM not connected",
+                name="LLM Not Connected",
                 description='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else "Failed to connect to LLM"),
             )
 
@@ -213,7 +213,7 @@ class UI(Viewer):
                     break
 
         self._vector_store_status_badge.param.update(
-            status="success", name='Vector store ready')
+            status="success", name='Vector Store Ready')
 
 
     def _destroy(self, session_context):
