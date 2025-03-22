@@ -19,7 +19,7 @@ from panel.io.state import state
 from panel.layout import (
     Column, HSpacer, Row, Tabs,
 )
-from panel.pane import SVG, Alert, Markdown
+from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.template import FastListTemplate
 from panel.theme import Material
@@ -39,7 +39,7 @@ from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, VegaLiteAgent,
 )
-from .components import SplitJS
+from .components import SplitJS, StatusBadge
 from .controls import SourceControls
 from .coordinator import Coordinator, Planner
 from .export import (
@@ -144,6 +144,7 @@ class UI(Viewer):
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
+        self.interface.disabled = True
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -175,37 +176,28 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
+        self._llm_status_badge = StatusBadge(name="LLM Pending")
+        self._vector_store_status_badge = StatusBadge(name="Vector Store Pending")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._verify_llm)
 
     async def _verify_llm(self):
-        alert = Alert(
-            'Initializing LLM and vector store ⌛',
-            alert_type='primary',
-            margin=5,
-            sizing_mode='stretch_width',
-            styles={'background-color': 'var(--primary-bg-subtle)'}
-        )
-        self.interface.send(alert, respond=False, user='System')
         try:
+            self._llm_status_badge.status = "running"
             await self.llm.invoke(
                 [{'role': 'user', 'content': 'Are you there? YES | NO'}],
                 model_spec="ui"
             )
-            success = True
+            self._llm_status_badge.param.update(status="success", name='LLM Ready')
+            self.interface.disabled = False
         except Exception as e:
             traceback.print_exc()
-            alert.param.update(
-                alert_type='danger',
-                object='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else 0),
-                styles={
-                    'background-color': 'var(--danger-bg-subtle)',
-                    'overflow-x': 'auto',
-                    'padding-bottom': '0.8em'
-                }
+            self._llm_status_badge.param.update(
+                status="failed",
+                name="LLM Not Connected",
+                description='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else "Failed to connect to LLM"),
             )
-            success = False
 
         table_lookup = None
         for tool in self._coordinator._tools["__main__"]:
@@ -213,18 +205,16 @@ class UI(Viewer):
                 table_lookup = tool
                 break
 
+        self._vector_store_status_badge.status = "running"
         if table_lookup is not None:
             while True:
                 await asyncio.sleep(1)
                 if table_lookup._ready:
                     break
 
-        if success:
-            alert.param.update(
-                alert_type='success',
-                object='Successfully initialized LLM and vector store ✅︎',
-                styles={'background-color': 'var(--success-bg-subtle)'}
-            )
+        self._vector_store_status_badge.param.update(
+            status="success", name='Vector Store Ready')
+
 
     def _destroy(self, session_context):
         """
@@ -297,6 +287,14 @@ class UI(Viewer):
                 "#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"
                 "#main { padding: 0 } .main .card-margin.stretch_both { margin: 0; height: 100%; }"
             ]
+            template.header.append(
+                Row(
+                    self._llm_status_badge,
+                    self._vector_store_status_badge,
+                    sizing_mode="stretch_width",
+                    align="center",
+                )
+            )
             template.main.append(self._main)
             return template
         return super()._create_view()

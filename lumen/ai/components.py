@@ -3,6 +3,7 @@ from pathlib import Path
 import param
 
 from panel.custom import Child, JSComponent
+from panel.widgets import Button
 
 CSS = """
 /* Base styles for the split container */
@@ -50,6 +51,12 @@ CSS = """
     height: 100%;
     display: block;
     background-color: var(--panel-background-color);
+    border-radius: 10px; /* Slight rounded corners */
+    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
+    box-sizing: border-box; /* Include padding in size calculations */
+    padding-inline: 0.5rem; /* Increased padding for better visual spacing */
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08); /* Subtle shadow for depth */
+    border: 1px solid rgba(0, 0, 0, 0.08); /* Subtle border for definition */
 }
 
 .left-content-wrapper {
@@ -128,7 +135,7 @@ CSS = """
 .gutter.gutter-horizontal {
     background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==');
     z-index: 1;
-    width: 8px !important;
+    width: 8px;
 }
 
 .split > div:nth-child(2) > div:not(.toggle-icon) {
@@ -238,3 +245,157 @@ class SplitJS(JSComponent):
                 # Important to discard so when user drags the panel, it doesn't
                 # expand to the expanded sizes
                 self.collapsed = collapsed
+
+
+class StatusBadge(Button):
+    """
+    A customizable badge component that can show different statuses with visual effects.
+    """
+
+    status = param.Selector(
+        default="pending", objects=["pending", "running", "success", "failed"]
+    )
+
+    _base_stylesheet = """
+    :host {
+        position: relative;
+    }
+
+    /* Base badge styles */
+    :host(.solid) .bk-btn.bk-btn-default {
+        border-radius: 16px;
+        padding: 6px 10px;
+        transition: all 0.3s ease;
+        cursor: not-allowed;
+        pointer-events: none;
+    }
+
+    :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+        display: inline-flex;
+        border-radius: 50%;
+        margin-right: 5px;
+        margin-bottom: 2px;
+    }
+
+    :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
+        stroke: inherit;
+        fill: inherit;
+    }
+    """
+
+    # Status-specific stylesheets
+    _status_stylesheets = {
+        "pending": """
+            /* Badge pending state */
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #f0f0f0;
+                border-color: #d0d0d0;
+                color: #606060;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #808080;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
+                stroke: #808080;
+                fill: #808080;
+            }
+        """,
+        "running": """
+            /* Badge running state */
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #fffceb;
+                border-color: #ffe066;
+                color: #997a00;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #FFD700;
+                animation: pulse-gold 2.5s infinite;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
+                stroke: #FFD700;
+                fill: #FFD700;
+            }
+
+            @keyframes pulse-gold {
+                0% {
+                    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7);
+                }
+                70% {
+                    box-shadow: 0 0 0 7px rgba(255, 215, 0, 0);
+                }
+                100% {
+                    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0);
+                }
+            }
+        """,
+        "success": """
+            /* Badge success state */
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #e8f5e9;
+                border-color: #a5d6a7;
+                color: #2e7d32;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #4CAF50;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
+                stroke: #4CAF50;
+                fill: #4CAF50;
+            }
+        """,
+        "failed": """
+            /* Badge failed state */
+            :host(.solid) .bk-btn.bk-btn-default {
+                background-color: #ffebee;
+                border-color: #ef9a9a;
+                color: #c62828 !important;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
+                color: #f44336;
+            }
+
+            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
+                stroke: #f44336;
+                fill: #f44336;
+            }
+        """,
+    }
+
+    # Status mapping for other properties
+    _status_mapping = {
+        "pending": {
+            "icon": "circle",
+        },
+        "running": {
+            "icon": "circle-filled",
+        },
+        "success": {
+            "icon": "circle-check",
+        },
+        "failed": {
+            "icon": "circle-x",
+        },
+    }
+
+    _rename = {
+        "status": None,
+        **Button._rename,
+    }
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.param.update(
+            icon=self.param.status.rx().rx.pipe(
+                lambda status: self._status_mapping[status]["icon"]
+            ),
+            stylesheets=self.param.status.rx().rx.pipe(
+                lambda status: [self._base_stylesheet, self._status_stylesheets[status]]
+            ),
+        )
