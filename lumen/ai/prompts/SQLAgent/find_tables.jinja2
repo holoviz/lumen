@@ -5,4 +5,8 @@ Determine which tables are necessary to answer the user query, paying special at
 {% if separator %}
 Use table names verbatim, and be sure to include the delimiters {{ separator }}, like '<source>{{ separator }}<table>'
 {% endif %}
+Here are the tables you should consider:
+{% for table in tables %}
+- {{ table }}
+{% endfor %}
 {% endblock %}

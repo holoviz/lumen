@@ -156,7 +156,7 @@ def make_tables_model(tables):
             Concisely consider which tables are necessary to answer the user query.
             """
         )),
-        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
+        selected_tables=(list[str], FieldInfo(
             description="""
             The most relevant tables based on the user query; if none are relevant,
             use the first table. At least one table must be provided.
