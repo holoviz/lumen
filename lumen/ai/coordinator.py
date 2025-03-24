@@ -25,20 +25,13 @@ from .actor import Actor
 from .agents import (
     Agent, AnalysisAgent, ChatAgent, SQLAgent,
 )
-from .config import (
-    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
-    SOURCE_TABLE_SEPARATOR,
-)
+from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import (
-    make_agent_model, make_context_model, make_coordinator_tables_model,
-    make_plan_models,
-)
+from .models import make_agent_model, make_plan_models
 from .tools import FunctionTool, TableLookup, Tool
 from .utils import (
-    fetch_table_schema, fetch_table_schemas, log_debug, mutate_user_message,
-    retry_llm_output,
+    fuse_messages, log_debug, mutate_user_message, retry_llm_output,
 )
 from .views import LumenOutput
 
@@ -120,11 +113,6 @@ class Coordinator(Viewer, Actor):
 
     tools = param.List(default=[TableLookup], doc="""
         List of tools to use to provide context.""")
-
-    table_similarity_threshold = param.Number(default=0.5, doc="""
-        If any tables have a similarity score above this threshold,
-        those tables will be automatically selected for the closest_tables
-        and there will not be an iterative table selection process.""")
 
     __abstract = True
 
@@ -467,30 +455,6 @@ class Coordinator(Viewer, Actor):
             obj = obj.value
         return str(obj)
 
-    def _fuse_messages(self, messages: list[Message], max_user_messages: int = 2) -> list[Message]:
-        """
-        Fuses the chat history into a single system message, followed by the last user message.
-        """
-        user_indices = [i for i, msg in enumerate(messages) if msg['role'] == 'user']
-        if user_indices:
-            first_user_index = user_indices[0] if len(user_indices) <= max_user_messages else user_indices[-max_user_messages]
-            last_user_index = user_indices[-1]
-            last_user_message = messages[last_user_index]
-        else:
-            first_user_index = 0
-            last_user_index = -1
-        history_messages = messages[first_user_index:last_user_index]
-        if not history_messages:
-            return [last_user_message] if user_indices else []
-        formatted_history = "\n\n".join(
-            f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_messages if msg['content'].strip()
-        )
-        system_prompt = {
-            "role": "system",
-            "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
-        }
-        return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
-
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         self._memory["tools_context"] = {}
         with self.interface.param.update(loading=True):
@@ -500,7 +464,7 @@ class Coordinator(Viewer, Actor):
                     step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     await self.llm.get_client("default")  # caches the model for future use
 
-            messages = self._fuse_messages(
+            messages = fuse_messages(
                 self.interface.serialize(custom_serializer=self._serialize, limit=10),
                 max_user_messages=self.history
             )
@@ -632,220 +596,12 @@ class Planner(Coordinator):
 
     prompts = param.Dict(
         default={
-            "context": {
-                "template":  PROMPTS_DIR / "Planner" / "context.jinja2",
-                "response_model": make_context_model
-            },
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
             },
-            "table_selection": {
-                "template": PROMPTS_DIR / "Planner" / "table_selection.jinja2",
-                "response_model": make_coordinator_tables_model,
-            }
         }
     )
-
-    async def _iterative_table_selection(self, sources: dict) -> dict:
-        """
-        Performs an iterative table selection process to gather context.
-        This function:
-        1. From the top tables in TableLookup results, presents all tables and columns to the LLM
-        2. Has the LLM select ~3 tables for deeper examination
-        3. Gets complete schemas for these tables
-        4. Repeats until the LLM is satisfied with the context
-        """
-        sources = {source.name: source for source in self._memory.get("sources", [])}
-        if not sources:
-            return {}
-
-        max_iterations = 3
-        tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
-        examined_tables = set(tables_sql_schemas.keys())
-
-        # fuse old context into the messages to provide context for the LLM
-        messages = self._fuse_messages(
-            self.interface.serialize(custom_serializer=self._serialize, limit=10),
-            max_user_messages=self.history
-        )
-        current_query = "\n".join(message["content"] for message in messages)
-
-        selected_table_slugs = None
-        for iteration in range(1, max_iterations + 1):
-            # Don't increment iteration since we're using the for loop counter
-            with self.interface.add_step(
-                title=f"Iterative table selection ({iteration} / {max_iterations})",
-                user="Assistant",
-                success_title=f"Iteration {iteration} completed",
-            ) as step:
-                step.stream(f"\n\nIteration {iteration} of table selection", replace=False)
-                available_tables = [
-                    table for table in self._memory.get("closest_tables", [])
-                    if table not in examined_tables
-                ]
-                if not available_tables:
-                    step.stream("\nNo more tables available to examine")
-                    break
-
-                fast_track = False
-                if iteration == 1:
-                    # For the first iteration, select tables based on similarity
-                    # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    table_similarities = self._memory.get("table_similarities", {})
-                    if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-                        self._memory["closest_tables"] = selected_table_slugs = sorted(
-                            table_similarities,
-                            key=lambda x: table_similarities[x],
-                            reverse=True
-                        )[:5]
-                        table_list = '`\n- `'.join(selected_table_slugs)
-                        step.stream(
-                            f"\n\nSelected tables: `{table_list}`\nbased on a similarity threshold of {self.table_similarity_threshold}",
-                            replace=False
-                        )
-                        fast_track = True
-                    else:
-                        # If not, select the top 3 tables to examine
-                        selected_table_slugs = available_tables[:3]
-
-                # For subsequent iterations, the LLM selects tables in the previous iteration
-                step.stream(f"\n\nGathering complete schema information for {len(selected_table_slugs)} tables...")
-                schema_results = [await fetch_table_schema(sources, table_slug, include_count=True) for table_slug in selected_table_slugs]
-                for table_slug, schema_data in schema_results:
-                    step.stream(f"\n\nAdded schema for `{table_slug}`", replace=False)
-                    tables_sql_schemas[table_slug] = schema_data
-                    examined_tables.add(table_slug)
-
-                if fast_track:
-                    # based on similarity search alone, if we have selected tables, we're done!!
-                    break
-
-                system = await self._render_prompt(
-                    "table_selection",
-                    messages,
-                    current_query=current_query,
-                    available_tables=available_tables,
-                    examined_tables=examined_tables,
-                    separator=SOURCE_TABLE_SEPARATOR,
-                    current_schemas=tables_sql_schemas,
-                    iteration=iteration
-                )
-                step.stream(f"\n\nSelecting tables from {len(available_tables)} available options...")
-                model_spec = self.prompts["table_selection"].get("llm_spec", self.llm_spec_key)
-                tables_model = make_coordinator_tables_model(available_tables + list(examined_tables))
-                response = self.llm.stream(
-                    messages,
-                    system=system,
-                    model_spec=model_spec,
-                    response_model=tables_model,
-                )
-                async for output in response:
-                    # the entire string comes out all at once; no point in streaming to step
-                    chain_of_thought = output.chain_of_thought or ""
-                step.stream(chain_of_thought, replace=False)
-
-                selected_table_slugs = output.selected_table_slugs or []
-                step.stream(f"\n\nSelected tables: `{'`, `'.join(selected_table_slugs)}`", replace=False)
-                # Check if we're done with table selection
-                if output.is_satisfied or not available_tables:
-                    step.stream("\n\nSelection process complete - model is satisfied with selected tables", replace=False)
-                    self._memory["closest_tables"] = selected_table_slugs
-                    break
-        return {
-            table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
-            if table_slug in selected_table_slugs  # prevent it from getting too big and waste token
-        }
-
-    async def _get_tools_context(self, messages: list[Message]) -> dict:
-        tools = {tool.name: tool for tool in self._tools["__main__"]}
-        if not tools:
-            return {}
-
-        sources = {source.name: source for source in self._memory.get("sources", [])}
-        all_tables = set()
-        for source in sources.values():
-            all_tables |= set(source.get_tables())
-        if len(all_tables) <= 5:  # if there's not many tables, just use all
-            # For small number of tables, fetch schemas for all tables upfront
-            if "closest_tables" not in self._memory or not self._memory["closest_tables"]:
-                # If we don't have closest_tables yet, add all tables
-                self._memory["closest_tables"] = closest_tables = [
-                    f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    for source in sources.values()
-                    for table in source.get_tables()
-                ]
-
-            # Fetch and add schemas for all tables
-            if "closest_tables" in self._memory and not self._memory.get("tables_sql_schemas"):
-                tables_sql_schemas = await fetch_table_schemas(
-                    sources, closest_tables, include_count=True
-                )
-                self._memory["tools_context"]["TableLookup000000"] = tables_sql_schemas
-                self._memory["tables_sql_schemas"] = tables_sql_schemas
-            return tools.values()
-
-        # TODO: find a better way to make LLM always use a tool
-        with self.interface.add_step(
-            success_title="Obtained necessary context",
-            title="Obtaining additional context...",
-            user="Assistant"
-        ) as step:
-            required_tools = [tool.name for tool in tools.values() if tool.always_use]
-            system = await self._render_prompt(
-                "context",
-                messages,
-                tools=list(tools.values()),
-                required_tools=required_tools
-            )
-            model_spec = self.prompts["context"].get("llm_spec", self.llm_spec_key)
-            context_model = make_context_model(
-                tools=list(tools),
-                required_tools=required_tools,
-            )
-            response = self.llm.stream(
-                messages=messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=context_model,
-                max_retries=3,
-            )
-            async for output in response:
-                chain_of_thought = output.chain_of_thought or ""
-            step.stream(chain_of_thought, replace=False)
-
-            if not output.needs_lookup:
-                return tools.values()
-
-            if output.tools:
-                for output_tool in output.tools:
-                    tool_context = ''
-                    tool_messages = list(messages)
-                    if output_tool.instruction:
-                        mutate_user_message(
-                            f"-- Here are instructions of the context you are to provide: {output_tool.instruction!r}",
-                            tool_messages, suffix=True, wrap=True, inplace=False
-                        )
-                    if output_tool.name not in tools:
-                        continue
-                    callable_tool = tools[output_tool.name]
-                    response = await callable_tool.respond(tool_messages)
-                    if response is not None:
-                        step.stream(f'\n{output_tool.name}:\n{response}\n')
-                        tool_context += f'\n- {response}'
-                    self._memory["tools_context"][output_tool.name] = tool_context
-
-            if any(tool.name.startswith("TableLookup") for tool in output.tools) and "closest_tables" in self._memory:
-                step.stream("\n\nPerforming iterative table selection to explore relevant schemas...", replace=False)
-                tables_sql_schemas = await self._iterative_table_selection(sources)
-                if tables_sql_schemas:
-                    self._memory["tables_sql_schemas"] = tables_sql_schemas
-                    for tool_name in list(tools):
-                        if tool_name.startswith("TableLookup"):
-                            self._memory["tools_context"][tool_name] = tables_sql_schemas
-                            tools.pop(tool_name)
-                    step.stream(f"\n\nCollected detailed schemas for {len(tables_sql_schemas)} tables", replace=False)
-        return tools.values()
 
     async def _make_plan(
         self,
@@ -857,7 +613,7 @@ class Planner(Coordinator):
         plan_model: type[BaseModel],
         step: ChatStep,
     ) -> BaseModel:
-        tools = await self._get_tools_context(messages)
+        tools = self._tools["__main__"]
         reasoning = None
         while reasoning is None:
             system = await self._render_prompt(

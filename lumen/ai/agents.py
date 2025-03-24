@@ -507,7 +507,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data", "tables_sql_schemas"], readonly=True)
 
-    requires = param.List(default=["source"], readonly=True)
+    requires = param.List(default=["source", "closest_tables"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -653,6 +653,9 @@ class SQLAgent(LumenBaseAgent):
 
         sources = {source.name: source for source in self._memory["sources"]}
         tables = self._memory.get("closest_tables", next(iter(sources.values())).get_tables()[:5])
+
+        chain_of_thought = ""
+        selected_table_slugs = tables[:1]
         if len(tables) > 1:
             system = await self._render_prompt(
                 "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
@@ -668,7 +671,7 @@ class SQLAgent(LumenBaseAgent):
                 )
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
-                    selected_table_slugs = output.selected_table_slugs
+                    selected_table_slugs = output.selected_tables
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
                     if selected_table_slugs is not None:
@@ -678,9 +681,6 @@ class SQLAgent(LumenBaseAgent):
                         replace=True
                     )
                 step.success_title = f'Found {len(selected_table_slugs)} relevant table(s)'
-        else:
-            selected_table_slugs = tables[:1]
-            chain_of_thought = ""
 
         tables_sql_schemas = await fetch_table_schemas(sources, selected_table_slugs, include_count=True)
         self._memory["tables_sql_schemas"] = tables_sql_schemas

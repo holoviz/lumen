@@ -50,6 +50,45 @@ def format_float(num):
         return f"{num:.1e}"  # Exponential notation with one decimal
 
 
+def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict]:
+    """
+    Fuses the chat history into a single system message, followed by the last user message.
+    This function is reusable across different components that need to combine
+    multiple messages into a simplified format for LLM processing.
+
+    Parameters
+    ----------
+    messages : list[dict]
+        List of message dictionaries with 'role' and 'content' keys
+    max_user_messages : int
+        Maximum number of user messages to include in the history
+
+    Returns
+    -------
+    list[dict]
+        Processed messages with the chat history as a system message
+    """
+    user_indices = [i for i, msg in enumerate(messages) if msg['role'] == 'user']
+    if user_indices:
+        first_user_index = user_indices[0] if len(user_indices) <= max_user_messages else user_indices[-max_user_messages]
+        last_user_index = user_indices[-1]
+        last_user_message = messages[last_user_index]
+    else:
+        first_user_index = 0
+        last_user_index = -1
+    history_messages = messages[first_user_index:last_user_index]
+    if not history_messages:
+        return [last_user_message] if user_indices else []
+    formatted_history = "\n\n".join(
+        f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_messages if msg['content'].strip()
+    )
+    system_prompt = {
+        "role": "system",
+        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+    }
+    return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
+
+
 def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     try:
         template_path = template_path.relative_to(relative_to).as_posix()

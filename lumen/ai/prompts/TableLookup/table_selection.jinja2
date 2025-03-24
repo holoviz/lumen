@@ -1,0 +1,37 @@
+You are a data expert who excels at identifying the most relevant tables for a given query.
+You need to select tables from a database to help answer this query:
+
+{{ current_query }}
+
+You have already examined these tables and their schemas:
+{% for table in examined_tables %}
+### {{ table }}
+```
+{{ current_schemas[table] }}
+```
+{% endfor %}
+
+You need to select additional tables from these available options:
+{% for table in available_tables %}
+- {{ table }}
+{% endfor %}
+
+In this iteration (#{{ iteration }}), please select up to 3 tables that would be most relevant for answering the query.
+Choose tables that would provide complementary information to what you've already examined.
+
+Think through this step by step:
+1. Identify what information you're still missing to properly answer the query
+2. Determine which tables are most likely to contain that information based on table names
+3. For each table, explain why you think it would be useful
+4. Provide your final selection of up to 3 tables in the specified format
+
+When you're done, please provide:
+1. Whether you are satisfied with the tables selected or if you need more tables
+2. Your final selected table list
+
+Output only in this JSON format:
+{
+  "chain_of_thought": "Your detailed reasoning about which tables to select and why",
+  "is_satisfied": true/false,
+  "selected_table_slugs": ["table1", "table2", "table3"] // Maximum of 3 tables
+}

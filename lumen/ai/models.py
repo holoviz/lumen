@@ -57,45 +57,6 @@ class RetrySpec(BaseModel):
     )
 
 
-def make_context_model(tools: list[str], required_tools: list[str]):
-    fields = {}
-    tool = create_model(
-        "Tool",
-        name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
-        instruction=(str, FieldInfo(description="Instructions for the tool.")),
-    )
-    fields["chain_of_thought"] = (
-        str,
-        FieldInfo(
-        description=(
-            "Explain what tool you'll choose to use based on user query. "
-            "If the user is asking for availability about tables, no tools are needed "
-            "because you'll use TableListAgent."
-        )
-        )
-    )
-    fields["needs_lookup"] = (
-        bool,
-        FieldInfo(
-            description="Whether you need to use a tool to gather additional context before proceeding."
-        )
-    )
-    description = (
-        "A list of tools to call to provide context before launching into the planning stage."
-        "Use tools to gather additional context or clarification, tools should NEVER be used"
-        "to obtain the actual data you will be working with. "
-        "Do not provide if the user query is asking for availability or "
-        "if you have enough context to proceed."
-    )
-    if required_tools:
-        description += f" You must include these required tools: {', '.join(required_tools)}"
-    fields['tools'] = (
-        list[tool],
-        FieldInfo(description=description)
-    )
-    return create_model("Context", __base__=PartialBaseModel, **fields)
-
-
 def make_plan_models(agents: list[str], tools: list[str]):
     step = create_model(
         "Step",

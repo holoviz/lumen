@@ -7,6 +7,7 @@ from typing import Any
 
 import param
 
+from graphql import Source
 from panel.viewable import Viewable
 
 from ..views.base import View
@@ -14,9 +15,11 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_refined_query_model
+from .models import make_coordinator_tables_model, make_refined_query_model
 from .translate import function_to_model
-from .utils import log_debug
+from .utils import (
+    fetch_table_schema, fetch_table_schemas, fuse_messages, log_debug,
+)
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -51,6 +54,10 @@ class VectorLookupTool(Tool):
             "refine_query": {
                 "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
                 "response_model": make_refined_query_model,
+            },
+            "table_selection": {
+                "template": PROMPTS_DIR / "TableLookup" / "table_selection.jinja2",
+                "response_model": make_coordinator_tables_model,
             },
         },
         doc="Dictionary of available prompts for the tool."
@@ -147,7 +154,7 @@ class VectorLookupTool(Tool):
             log_debug(f"Error refining query: {e}")
             return original_query
 
-    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[str, list[dict[str, Any]], float]:
+    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[str, list[dict[str, Any]]]:
         """
         Performs a vector search with optional query refinement.
 
@@ -163,9 +170,7 @@ class VectorLookupTool(Tool):
         tuple[str, list[dict[str, Any]], float]
             - The final query used (original or refined)
             - The search results
-            - The best similarity score
         """
-        original_query = query
         final_query = query
         current_query = query
         iteration = 0
@@ -176,12 +181,9 @@ class VectorLookupTool(Tool):
         best_results = results
         log_debug(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}")
 
-        self._memory["original_query"] = original_query
-        self._memory["original_similarity"] = best_similarity
-
         refinement_history = []
         if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
-            return final_query, best_results, best_similarity
+            return final_query, best_results
 
         log_debug(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
 
@@ -230,7 +232,7 @@ class VectorLookupTool(Tool):
             self._memory["refined_search_query"] = final_query
             log_debug(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
 
-        return final_query, best_results, best_similarity
+        return final_query, best_results
 
 
 class DocumentLookup(VectorLookupTool):
@@ -297,7 +299,6 @@ class DocumentLookup(VectorLookupTool):
 
         # Perform search with refinement
         final_query, results, best_similarity = await self._perform_search_with_refinement(query)
-
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - "
             f"Metadata: {result['metadata']})"
@@ -332,7 +333,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables", "table_similarities"], readonly=True, doc="""
+    provides = param.List(default=["closest_tables", "tables_sql_schemas"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     batched = param.Boolean(default=True, doc="""
@@ -350,6 +351,18 @@ class TableLookup(VectorLookupTool):
 
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
+
+    enable_iterative_selection = param.Boolean(default=True, doc="""
+        Whether to enable iterative table selection process that uses LLM to
+        select tables in multiple passes, examining schemas in detail.""")
+
+    table_similarity_threshold = param.Number(default=0.5, doc="""
+        If any tables have a similarity score above this threshold,
+        those tables will be automatically selected and there will not be an
+        iterative table selection process.""")
+
+    max_selection_iterations = param.Integer(default=3, doc="""
+        Maximum number of iterations for the iterative table selection process.""")
 
     _item_type_name = "database tables"
 
@@ -484,34 +497,138 @@ class TableLookup(VectorLookupTool):
         log_debug("All table metadata tasks completed.")
         self._ready = True
 
+    async def _iterative_table_selection(
+        self,
+        sources: dict[str, Source],
+        messages: list[dict[str, str]],
+        closest_tables: list[str],
+        table_similarities: dict[str, float]
+    ) -> dict:
+        """
+        Performs an iterative table selection process to gather context.
+        This function:
+        1. From the top tables in TableLookup results, presents all tables and columns to the LLM
+        2. Has the LLM select ~3 tables for deeper examination
+        3. Gets complete schemas for these tables
+        4. Repeats until the LLM is satisfied with the context
+        """
+        if not sources:
+            return {}
+
+        max_iterations = self.max_selection_iterations
+        tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
+        examined_tables = set(tables_sql_schemas.keys())
+
+        for iteration in range(1, max_iterations + 1):
+            log_debug(f"Iterative table selection iteration {iteration} / {max_iterations}")
+
+            available_tables = [
+                table for table in closest_tables
+                if table not in examined_tables
+            ]
+            if not available_tables:
+                log_debug("No more tables available to examine")
+                break
+
+            fast_track = False
+            if iteration == 1:
+                # For the first iteration, select tables based on similarity
+                # If any tables have a similarity score above the threshold, select up to 5 of those tables
+                if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
+                    closest_tables = selected_table_slugs = sorted(
+                        table_similarities,
+                        key=lambda x: table_similarities[x],
+                        reverse=True
+                    )[:5]
+                    log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_table_slugs)}")
+                    fast_track = True
+                else:
+                    # If not, select the top 3 tables to examine
+                    selected_table_slugs = available_tables[:3]
+                    log_debug(f"Selected initial tables: {', '.join(selected_table_slugs)}")
+
+            # For subsequent iterations, the LLM selects tables in the previous iteration
+            log_debug(f"Gathering complete schema information for {len(selected_table_slugs)} tables")
+
+            schema_results = [
+                await fetch_table_schema(sources, table_slug, include_count=True) for table_slug in selected_table_slugs
+            ]
+            for table_slug, schema_data in schema_results:
+                log_debug(f"Added schema for {table_slug}")
+                tables_sql_schemas[table_slug] = schema_data
+                examined_tables.add(table_slug)
+
+            if fast_track:
+                # based on similarity search alone, if we have selected tables, we're done!!
+                break
+
+            try:
+                # Render the prompt using the proper template system
+                system = await self._render_prompt(
+                    "table_selection",
+                    messages,
+                    current_query=messages[-1]["content"],
+                    available_tables=available_tables,
+                    examined_tables=examined_tables,
+                    separator=SOURCE_TABLE_SEPARATOR,
+                    current_schemas=tables_sql_schemas,
+                    iteration=iteration
+                )
+
+                log_debug(f"Selecting tables from {len(available_tables)} available options")
+
+                # Get the model from the prompt definition
+                model_spec = self.prompts["table_selection"].get("llm_spec", self.llm_spec_key)
+                tables_model = self._get_model("table_selection", available_tables + list(examined_tables))
+
+                output = await self.llm.invoke(
+                    messages,
+                    system=system,
+                    model_spec=model_spec,
+                    response_model=tables_model,
+                )
+
+                selected_table_slugs = output.selected_table_slugs or []
+                log_debug(f"Selected tables: {', '.join(selected_table_slugs)}")
+
+                # Check if we're done with table selection
+                if output.is_satisfied or not available_tables:
+                    log_debug("Selection process complete - model is satisfied with selected tables")
+                    break
+            except Exception as e:
+                log_debug(f"Error during table selection: {e!s}")
+                break
+
+        tables_sql_schemas = {
+            table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
+            if table_slug in (selected_table_slugs or [])  # prevent it from getting too big and waste token
+        }
+        return tables_sql_schemas
+
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
         Fetches the closest tables based on the user query, with query refinement
         if enabled and initial results don't meet threshold.
         """
         query = messages[-1]["content"]
-
         closest_tables, descriptions = [], []
         table_similarities = {}
 
         # Check if any tables are mentioned verbatim
-        for table in self._table_metadata:
-            if table.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
-                closest_tables.append(table)
-                table_similarities[table] = 1
+        for table_slug in self._table_metadata:
+            if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
+                closest_tables.append(table_slug)
+                table_similarities[table_slug] = 1
 
         # If so skip search
-        if closest_tables:
+        if len(self._table_metadata) <= 5 or closest_tables:
             final_query = query
             results = []
-            any_matches = True
-            best_similarity = 1
         else:
             # otherwise perform search with refinement
-            final_query, results, best_similarity = await self._perform_search_with_refinement(query)
-            any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+            final_query, results = await self._perform_search_with_refinement(query)
 
-        # Process results as before
+        any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
@@ -536,21 +653,27 @@ class TableLookup(VectorLookupTool):
             closest_tables.append(table_slug)
             descriptions.append(description)
 
-        if any_matches:
-            message = "Based on the vector search, the most relevant tables are:\n"
+        sources = {source.name: source for source in self._memory.get("sources", [])}
+        if self.enable_iterative_selection and closest_tables:
+            fused_messages = fuse_messages(messages, max_user_messages=3)
+            tables_sql_schemas = await self._iterative_table_selection(
+                sources, fused_messages, closest_tables, table_similarities)
+            self._memory["closest_tables"] = list(tables_sql_schemas.keys())
         else:
-            message = "Based on the vector search, was unable to find tables relevant to the query.\n"
-            if closest_tables:
-                message += "Here are some other tables:\n"
+            tables_sql_schemas = fetch_table_schemas(
+                sources, closest_tables, include_count=True)
+            self._memory["closest_tables"] = closest_tables
 
-        self._memory["closest_tables"] = closest_tables
-        self._memory["table_similarities"] = table_similarities
-        if "refined_search_query" in self._memory and final_query != query:
-            message = f"\n\nRefined search query: '{final_query}'\n\n" + message
-        return message + "\n".join(descriptions)
+        self._memory["tables_sql_schemas"] = tables_sql_schemas
+        context = (
+            f"Here are the relevant tables based on {final_query!r}:"
+            f"\n\n```json\n{tables_sql_schemas}\n```"
+        )
+        return context
 
 
 class FunctionTool(Tool):
+
     """
     FunctionTool wraps arbitrary functions and makes them available as a tool
     for an LLM to call. It inspects the arguments of the function and generates
