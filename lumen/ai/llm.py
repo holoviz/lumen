@@ -307,7 +307,7 @@ class LlamaCpp(Llm):
         raw_client = llm.create_chat_completion_openai_v1
         # patch works with/without response_model
         client_callable = patch(create=raw_client, mode=mode)
-        pn.state.cache[model_spec] = client_callable
+        pn.state.cache[(model_spec, mode)] = client_callable
         return client_callable
 
     @classmethod
