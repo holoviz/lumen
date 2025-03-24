@@ -8,6 +8,7 @@ from typing import Any
 import param
 
 from graphql import Source
+from panel.chat import ChatInterface
 from panel.viewable import Viewable
 
 from ..views.base import View
@@ -33,6 +34,9 @@ class Tool(Actor, ContextProvider):
     always_use = param.Boolean(default=False, doc="""
         Whether to always use this tool, even if it is not explicitly
         required by the current context.""")
+
+    interface = param.ClassSelector(class_=ChatInterface, allow_None=True, doc="""
+        The interface to report progress to.""")
 
 
 class VectorLookupTool(Tool):
@@ -151,7 +155,9 @@ class VectorLookupTool(Tool):
 
             return output.refined_search_query
         except Exception as e:
-            log_debug(f"Error refining query: {e}")
+            with self.interface.add_step(title="Query refinement error") as step:
+                step.stream(f"Error refining query: {e}")
+                step.status = "failed"
             return original_query
 
     async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[str, list[dict[str, Any]]]:
@@ -175,62 +181,67 @@ class VectorLookupTool(Tool):
         current_query = query
         iteration = 0
 
-        log_debug(f"Performing initial search with query: '{query}'")
-        results = self.vector_store.query(query, top_k=self.n, **kwargs)
-        best_similarity = max([result.get('similarity', 0) for result in results], default=0)
-        best_results = results
-        log_debug(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}")
+        with self.interface.add_step(title="Initial search") as step:
+            step.stream(f"Performing initial search with query: '{query}'")
+            results = self.vector_store.query(query, top_k=self.n, **kwargs)
+            best_similarity = max([result.get('similarity', 0) for result in results], default=0)
+            best_results = results
+            step.stream(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}")
 
         refinement_history = []
         if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
             return final_query, best_results
 
-        log_debug(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
+        with self.interface.add_step(title="Refining query") as step:
+            step.stream(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
 
         while iteration < self.max_refinement_iterations and best_similarity < self.refinement_similarity_threshold:
             iteration += 1
-            log_debug(f"Refinement iteration {iteration}/{self.max_refinement_iterations}")
 
-            refined_query = await self._refine_query(current_query, results)
+            with self.interface.add_step(title=f"Refinement iteration {iteration}/{self.max_refinement_iterations}") as step:
+                step.stream(f"Processing refinement iteration {iteration}")
 
-            if refined_query == current_query:
-                log_debug("Refinement returned unchanged query, stopping iterations")
-                break
+                refined_query = await self._refine_query(current_query, results)
 
-            current_query = refined_query
-            log_debug(f"Query refined to: \033[92m'{refined_query}'\033[0m")
+                if refined_query == current_query:
+                    step.stream("Refinement returned unchanged query, stopping iterations")
+                    break
 
-            new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
-            new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
+                current_query = refined_query
+                step.stream(f"Query refined to: '{refined_query}'")
 
-            improvement = new_best_similarity - best_similarity
-            refinement_history.append({
-                "iteration": iteration,
-                "query": refined_query,
-                "similarity": new_best_similarity,
-                "improvement": improvement
-            })
+                new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
+                new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
 
-            log_debug(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})")
+                improvement = new_best_similarity - best_similarity
+                refinement_history.append({
+                    "iteration": iteration,
+                    "query": refined_query,
+                    "similarity": new_best_similarity,
+                    "improvement": improvement
+                })
 
-            if new_best_similarity > best_similarity + self.min_refinement_improvement:
-                log_debug(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}")
-                best_similarity = new_best_similarity
-                best_results = new_results
-                final_query = refined_query
-                results = new_results  # Update results for next iteration's refinement
-            else:
-                log_debug(f"Insufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations")
-                break
+                step.stream(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})")
 
-            # Break if we've reached an acceptable similarity
-            if best_similarity >= self.refinement_similarity_threshold:
-                log_debug(f"Reached acceptable similarity threshold: {best_similarity:.3f}")
-                break
+                if new_best_similarity > best_similarity + self.min_refinement_improvement:
+                    step.stream(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}")
+                    best_similarity = new_best_similarity
+                    best_results = new_results
+                    final_query = refined_query
+                    results = new_results  # Update results for next iteration's refinement
+                else:
+                    step.stream(f"Insufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations")
+                    break
+
+                # Break if we've reached an acceptable similarity
+                if best_similarity >= self.refinement_similarity_threshold:
+                    step.stream(f"Reached acceptable similarity threshold: {best_similarity:.3f}")
+                    break
 
         if refinement_history:
             self._memory["refined_search_query"] = final_query
-            log_debug(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
+            with self.interface.add_step(title="Final query") as step:
+                step.stream(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
 
         return final_query, best_results
 
@@ -548,13 +559,14 @@ class TableLookup(VectorLookupTool):
                     log_debug(f"Selected initial tables: {', '.join(selected_table_slugs)}")
 
             # For subsequent iterations, the LLM selects tables in the previous iteration
-            log_debug(f"Gathering complete schema information for {len(selected_table_slugs)} tables")
-
-            schema_results = [
-                await fetch_table_schema(sources, table_slug, include_count=True) for table_slug in selected_table_slugs
-            ]
+            with self.interface.add_step(title="Fetching detailed schemas") as step:
+                step.stream(f"Fetching detailed schema information for {len(selected_table_slugs)} tables\n")
+                schema_results = []
+                for table_slug in selected_table_slugs:
+                    result = await fetch_table_schema(sources, table_slug, include_count=True)
+                    schema_results.append(result)
+                    step.stream(f"- Added schema for {table_slug}")
             for table_slug, schema_data in schema_results:
-                log_debug(f"Added schema for {table_slug}")
                 tables_sql_schemas[table_slug] = schema_data
                 examined_tables.add(table_slug)
 
@@ -660,13 +672,15 @@ class TableLookup(VectorLookupTool):
                 sources, fused_messages, closest_tables, table_similarities)
             self._memory["closest_tables"] = list(tables_sql_schemas.keys())
         else:
-            tables_sql_schemas = fetch_table_schemas(
-                sources, closest_tables, include_count=True)
+            with self.interface.add_step(title="Fetching schemas") as step:
+                step.stream(f"Fetching schemas for {len(closest_tables)} tables")
+                tables_sql_schemas = await fetch_table_schemas(
+                    sources, closest_tables, include_count=True)
             self._memory["closest_tables"] = closest_tables
 
         self._memory["tables_sql_schemas"] = tables_sql_schemas
         context = (
-            f"Here are the relevant tables based on {final_query!r}:"
+            f"\n\nHere are the relevant tables based on {final_query!r}:"
             f"\n\n```json\n{tables_sql_schemas}\n```"
         )
         return context

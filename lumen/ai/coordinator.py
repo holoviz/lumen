@@ -208,11 +208,13 @@ class Coordinator(Viewer, Actor):
             if isinstance(tool, Actor):
                 if tool.llm is None:
                     tool.llm = llm
+                if tool.interface is None:
+                    tool.interface = interface
                 self._tools["__main__"].append(tool)
             elif isinstance(tool, FunctionType):
-                self._tools["__main__"].append(FunctionTool(tool, llm=llm))
+                self._tools["__main__"].append(FunctionTool(tool, llm=llm, interface=interface))
             else:
-                self._tools["__main__"].append(tool(llm=llm))
+                self._tools["__main__"].append(tool(llm=llm, interface=interface))
 
         welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
         interface.send(
