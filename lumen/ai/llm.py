@@ -300,16 +300,13 @@ class LlamaCpp(Llm):
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def _cache_model(self, model_spec: str | dict, **kwargs):
+    def _cache_model(self, model_spec: str | dict, mode: str, **kwargs):
         from llama_cpp import Llama as LlamaCpp
         llm = LlamaCpp(**kwargs)
 
         raw_client = llm.create_chat_completion_openai_v1
         # patch works with/without response_model
-        client_callable = patch(
-            create=raw_client,
-            mode=self.mode,
-        )
+        client_callable = patch(create=raw_client, mode=mode)
         pn.state.cache[model_spec] = client_callable
         return client_callable
 
@@ -336,6 +333,7 @@ class LlamaCpp(Llm):
         if client_callable := pn.state.cache.get(model_spec):
             return client_callable
         model_kwargs = self._get_model_kwargs(model_spec)
+        mode = model_kwargs.pop("mode", self.mode)
         if 'repo' in model_kwargs:
             from huggingface_hub import hf_hub_download
             repo = model_kwargs.pop('repo', model_kwargs.get('repo_id'))
@@ -358,7 +356,7 @@ class LlamaCpp(Llm):
             verbose=False,
             **model_kwargs
         )
-        client_callable = await asyncio.to_thread(self._cache_model, model_spec, **llm_kwargs)
+        client_callable = await asyncio.to_thread(self._cache_model, model_spec, mode=mode, **llm_kwargs)
         return client_callable
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
@@ -398,6 +396,7 @@ class OpenAI(Llm):
 
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
         if self.endpoint:
             model_kwargs["base_url"] = self.endpoint
         if self.api_key:
@@ -410,7 +409,7 @@ class OpenAI(Llm):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm, mode=self.mode)
+            llm = patch(llm, mode=mode)
 
         if self.interceptor:
             # must be called after instructor
@@ -454,6 +453,7 @@ class AzureOpenAI(Llm):
 
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
         if self.api_version:
             model_kwargs["api_version"] = self.api_version
         if self.api_key:
@@ -466,7 +466,7 @@ class AzureOpenAI(Llm):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm, mode=self.mode)
+            llm = patch(llm, mode=mode)
 
         if self.interceptor:
             # must be called after instructor
@@ -504,6 +504,7 @@ class MistralAI(Llm):
         model_kwargs = self._get_model_kwargs(model_spec)
         model_kwargs["api_key"] = self.api_key
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
         llm = Mistral(**model_kwargs)
 
         stream = kwargs.get("stream", False)
@@ -514,7 +515,7 @@ class MistralAI(Llm):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm, mode=self.mode)
+            llm = patch(llm, mode=mode)
 
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
@@ -553,6 +554,7 @@ class AzureMistralAI(MistralAI):
         model_kwargs["api_key"] = self.api_key
         model_kwargs["azure_endpoint"] = self.endpoint
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
         llm = MistralAzure(**model_kwargs)
 
         stream = kwargs.get("stream", False)
@@ -563,7 +565,7 @@ class AzureMistralAI(MistralAI):
             self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm, mode=self.mode)
+            llm = patch(llm, mode=mode)
 
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
