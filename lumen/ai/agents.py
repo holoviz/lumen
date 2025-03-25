@@ -689,7 +689,6 @@ class SQLAgent(LumenBaseAgent):
             a_source_obj, a_table = parse_table_slug(table_slug, sources)
             tables_to_source[a_table] = a_source_obj
 
-        print(tables_to_source, chain_of_thought)
         return tables_to_source, chain_of_thought
 
     async def respond(
