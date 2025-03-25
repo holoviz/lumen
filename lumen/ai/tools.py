@@ -20,6 +20,7 @@ from .models import make_coordinator_tables_model, make_refined_query_model
 from .translate import function_to_model
 from .utils import (
     fetch_table_schema, fetch_table_schemas, fuse_messages, log_debug,
+    stream_details,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -190,7 +191,7 @@ class VectorLookupTool(Tool):
 
         refinement_history = []
         if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
-            return final_query, best_results
+            return best_results
 
         with self.interface.add_step(title="Refining query") as step:
             step.stream(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
@@ -239,11 +240,10 @@ class VectorLookupTool(Tool):
                     break
 
         if refinement_history:
-            self._memory["refined_search_query"] = final_query
             with self.interface.add_step(title="Final query") as step:
                 step.stream(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
 
-        return final_query, best_results
+        return best_results
 
 
 class DocumentLookup(VectorLookupTool):
@@ -309,7 +309,7 @@ class DocumentLookup(VectorLookupTool):
         query = messages[-1]["content"]
 
         # Perform search with refinement
-        final_query, results, best_similarity = await self._perform_search_with_refinement(query)
+        results = await self._perform_search_with_refinement(query)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - "
             f"Metadata: {result['metadata']})"
@@ -321,11 +321,6 @@ class DocumentLookup(VectorLookupTool):
             return ""
 
         message = "Please augment your response with the following context if relevant:\n"
-
-        # If refined query was used, note this in the response
-        if "refined_search_query" in self._memory and final_query != query:
-            message = f"Refined search query '{final_query}' yielded these results:\n\n" + message
-
         message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
         return message
 
@@ -344,7 +339,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables", "tables_sql_schemas"], readonly=True, doc="""
+    provides = param.List(default=["tables_sql_schemas"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     batched = param.Boolean(default=True, doc="""
@@ -561,12 +556,13 @@ class TableLookup(VectorLookupTool):
             # For subsequent iterations, the LLM selects tables in the previous iteration
             with self.interface.add_step(title="Fetching detailed schemas") as step:
                 step.stream(f"Fetching detailed schema information for {len(selected_table_slugs)} tables\n")
-                schema_results = []
+                tables_schema = []
                 for table_slug in selected_table_slugs:
-                    result = await fetch_table_schema(sources, table_slug, include_count=True)
-                    schema_results.append(result)
-                    step.stream(f"- Added schema for {table_slug}")
-            for table_slug, schema_data in schema_results:
+                    table_schema = await fetch_table_schema(sources, table_slug, include_count=True)
+                    tables_schema.append(table_schema)
+                    stream_details(f"\n- {table_slug}\n```json\n{table_schema}\n```", step)
+
+            for table_slug, schema_data in tables_schema:
                 tables_sql_schemas[table_slug] = schema_data
                 examined_tables.add(table_slug)
 
@@ -623,22 +619,20 @@ class TableLookup(VectorLookupTool):
         if enabled and initial results don't meet threshold.
         """
         query = messages[-1]["content"]
-        closest_tables, descriptions = [], []
+        results = []
         table_similarities = {}
-
-        # Check if any tables are mentioned verbatim
-        for table_slug in self._table_metadata:
-            if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
-                closest_tables.append(table_slug)
-                table_similarities[table_slug] = 1
-
-        # If so skip search
-        if len(self._table_metadata) <= 5 or closest_tables:
-            final_query = query
-            results = []
+        if len(self._table_metadata) <= 5:
+            table_similarities = {table_slug: 1 for table_slug in self._table_metadata}
         else:
-            # otherwise perform search with refinement
-            final_query, results = await self._perform_search_with_refinement(query)
+            table_similarities = {
+                table_slug: 1
+                for table_slug in self._table_metadata
+                if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower()
+            }
+
+        closest_tables = list(table_similarities)
+        if not closest_tables:
+            results = await self._perform_search_with_refinement(query)
 
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         for result in results:
@@ -663,24 +657,23 @@ class TableLookup(VectorLookupTool):
                         break
                 description += f"\n{indent(columns_description, ' ' * 2)}"
             closest_tables.append(table_slug)
-            descriptions.append(description)
 
         sources = {source.name: source for source in self._memory.get("sources", [])}
-        if self.enable_iterative_selection and closest_tables:
+        if self.enable_iterative_selection and len(closest_tables) > 5:
             fused_messages = fuse_messages(messages, max_user_messages=3)
             tables_sql_schemas = await self._iterative_table_selection(
                 sources, fused_messages, closest_tables, table_similarities)
-            self._memory["closest_tables"] = list(tables_sql_schemas.keys())
         else:
             with self.interface.add_step(title="Fetching schemas") as step:
                 step.stream(f"Fetching schemas for {len(closest_tables)} tables")
                 tables_sql_schemas = await fetch_table_schemas(
                     sources, closest_tables, include_count=True)
-            self._memory["closest_tables"] = closest_tables
+                for table_slug, table_schema in tables_sql_schemas.items():
+                    stream_details(f"\n- {table_slug}\n```json\n{table_schema}\n```", step)
 
         self._memory["tables_sql_schemas"] = tables_sql_schemas
         context = (
-            f"\n\nHere are the relevant tables based on {final_query!r}:"
+            f"\n\nHere are the relevant tables and their schemas:"
             f"\n\n```json\n{tables_sql_schemas}\n```"
         )
         return context

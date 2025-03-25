@@ -13,7 +13,7 @@ from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
 from textwrap import dedent
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
 import pandas as pd
@@ -27,6 +27,7 @@ from markupsafe import escape
 from lumen.pipeline import Pipeline
 
 from ..util import log
+from .components import Details
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
     RetriesExceededError,
@@ -491,6 +492,45 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
         error_msg = error_msg[:50] + "..."
     step.failed_title = error_msg
     step.status = "failed"
+
+
+def stream_details(content: Any, step: ChatStep, title: str | None = None) -> str:
+    """
+    Process content to place code blocks inside collapsible details elements
+
+    Parameters
+    ----------
+    content : str
+        The content to format
+    step : ChatStep
+        The chat step to stream the formatted content to
+
+    Returns
+    -------
+    str
+        The formatted content with code blocks in details components
+    """
+    pattern = r'```([\w-]*)\n(.*?)```'
+    last_end = 0
+    for match in re.finditer(pattern, content, re.DOTALL):
+        if match.start() > last_end:
+            step.stream(content[last_end:match.start()])
+
+        language = match.group(1)
+        code = match.group(2)
+
+        details = Details(
+            title=title or "Expand to see details",
+            object=f"```{language}\n\n{code}\n\n```",
+            collapsed=True,
+            margin=(-5, 20, 15, 20),
+        )
+        step.append(details)
+        last_end = match.end()
+
+    if last_end < len(content):
+        step.stream(content[last_end:])
+    return content
 
 
 def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):

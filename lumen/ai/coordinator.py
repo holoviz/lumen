@@ -32,6 +32,7 @@ from .models import make_agent_model, make_plan_models
 from .tools import FunctionTool, TableLookup, Tool
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, retry_llm_output,
+    stream_details,
 )
 from .views import LumenOutput
 
@@ -419,7 +420,8 @@ class Coordinator(Viewer, Actor):
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
                     self._memory["tools_context"][subagent.name] = result
-                    step.stream(f"{subagent.name}:\n{result}")
+                    step.stream(f"{subagent.name}:")
+                    stream_details(result, step)
                 elif isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))

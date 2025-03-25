@@ -40,9 +40,9 @@ from .models import (
 from .tools import DocumentLookup
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, fetch_table_schemas, get_data, get_pipeline,
-    get_schema, load_json, log_debug, mutate_user_message, report_error,
-    retry_llm_output, separate_table_slug,
+    clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
+    log_debug, mutate_user_message, report_error, retry_llm_output,
+    separate_table_slug,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -505,9 +505,9 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data", "tables_sql_schemas"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "closest_tables"], readonly=True)
+    requires = param.List(default=["source", "tables_sql_schemas"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -652,15 +652,14 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        tables = self._memory.get("closest_tables", next(iter(sources.values())).get_tables()[:5])
+        selected_table_slugs = list(self._memory["tables_sql_schemas"])
 
         chain_of_thought = ""
-        selected_table_slugs = tables[:1]
-        if len(tables) > 1:
+        if len(selected_table_slugs) > 1:
             system = await self._render_prompt(
                 "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
             )
-            tables_model = self._get_model("find_tables", tables=tables)
+            tables_model = self._get_model("find_tables", tables=selected_table_slugs)
             model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
             with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
                 response = self.llm.stream(
@@ -682,13 +681,12 @@ class SQLAgent(LumenBaseAgent):
                     )
                 step.success_title = f'Found {len(selected_table_slugs)} relevant table(s)'
 
-        tables_sql_schemas = await fetch_table_schemas(sources, selected_table_slugs, include_count=True)
-        self._memory["tables_sql_schemas"] = tables_sql_schemas
-
         tables_to_source = {}
         for table_slug in selected_table_slugs:
             a_source_obj, a_table = separate_table_slug(table_slug, sources)
             tables_to_source[a_table] = a_source_obj
+
+        print(tables_to_source, chain_of_thought)
         return tables_to_source, chain_of_thought
 
     async def respond(
