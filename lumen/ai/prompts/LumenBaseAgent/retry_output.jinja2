@@ -14,14 +14,6 @@ Original output:
 ```{{ language }}
 {{ spec }}
 ```
-
-{% if memory["tables_sql_schemas"] %}
-Reference these database schemas for your corrections:
-{% for table_info in memory["tables_sql_schemas"].values() %}
-- `{{ table_info.sql_table }}`:
-```yaml
-{{ table_info.schema }}
-```
 {% endfor %}
 {% endif %}
 {% endblock %}

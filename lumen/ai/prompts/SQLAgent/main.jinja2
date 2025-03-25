@@ -49,16 +49,6 @@ CAST or TO_DATE
 Here's additional guidance:
 {{ comments }}
 {%- endif -%}
-
-{%- if tables_sql_schemas %}
-Here are YAML schemas for currently relevant tables:
-{% for table_info in tables_sql_schemas.values() %}
-- `{{ table_info.sql_table }}`:
-```yaml
-{{ table_info.schema }}
-```
-{% endfor -%}
-{%- endif -%}
 {%- endblock -%}
 
 {%- block examples %}
