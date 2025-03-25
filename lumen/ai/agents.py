@@ -369,9 +369,14 @@ class TableListAgent(ListAgent):
 
     def _get_items(self) -> list[str]:
         tables = []
+        if "closest_tables" in self._memory:
+            tables = self._memory["closest_tables"]
+
         for source in self._memory["sources"]:
             tables += source.get_tables()
-        return tables
+
+        # remove duplicates, keeps order in which they were added
+        return pd.unique(tables).tolist()
 
 
 class DocumentListAgent(ListAgent):
