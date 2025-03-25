@@ -268,7 +268,7 @@ def test_sql_format():
 
 def test_sql_select_from_basic():
     result = SQLSelectFrom.apply_to("my_table")
-    expected = 'SELECT * FROM "my_table"'
+    expected = 'SELECT * FROM my_table'
     assert result == expected
 
 
@@ -280,7 +280,7 @@ def test_sql_select_from_replace_table():
 
 def test_sql_select_from_custom_expr():
     result = SQLSelectFrom.apply_to("my_table", sql_expr="SELECT id, name FROM {table}")
-    expected = 'SELECT id, name FROM "my_table"'
+    expected = 'SELECT id, name FROM my_table'
     assert result == expected
 
 
