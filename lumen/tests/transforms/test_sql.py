@@ -294,7 +294,7 @@ def test_sql_sample_tablesample_percent():
 def test_sql_sample_tablesample_size():
     """Test size-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="postgres")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery TABLESAMPLE (100)"
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RANDOM() LIMIT 100"
     assert result == expected
 
 
