@@ -242,6 +242,9 @@ class SQLSelectFrom(SQLFormat):
             # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
+        if " / " in expression.sql():
+            expression = Table(this=Identifier(this=sql_in, quoted="/" in sql_in))
+
         tables = {}
 
         # one word table names may be classified as a Column
