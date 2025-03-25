@@ -296,6 +296,32 @@ def test_sql_select_from_duckdb_path():
     assert result == expected
 
 
+def test_sql_select_from_expression():
+    result = SQLSelectFrom.apply_to("""
+        SELECT
+            arr,
+            churn,
+            CASE
+                WHEN arr > 0
+                THEN ROUND((churn / churn) * 100, 2)
+                ELSE NULL
+            END AS churn_pct
+        FROM current_arr
+        """, sql_expr="SELECT id, name FROM {table}")
+    expected = """
+        SELECT
+            arr,
+            churn,
+            CASE
+                WHEN arr > 0
+                THEN ROUND((churn / churn) * 100, 2)
+                ELSE NULL
+            END AS churn_pct
+        FROM current_arr
+        """
+    assert result == expected
+
+
 def test_sql_sample_tablesample_percent():
     """Test percent-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="postgres")
