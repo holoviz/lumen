@@ -243,7 +243,7 @@ class SQLSelectFrom(SQLFormat):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         # if 'data/life-expectancy.csv' becomes 'data / life-expectancy.csv'
-        if not expression.find_all(Select) and " / " in expression.sql():
+        if not list(expression.find_all(Select)) and " / " in expression.sql():
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         tables = {}
