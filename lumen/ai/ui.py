@@ -77,6 +77,10 @@ class UI(Viewer):
         The Coordinator class that will be responsible for coordinating the Agents."""
     )
 
+    coordinator_params = param.Dict(
+        default={}, doc="""Keyword arguments to pass to the Coordinator."""
+    )
+
     agents = param.List(default=[], doc="""
         List of additional Agents to add beyond the default_agents."""
     )
@@ -151,7 +155,8 @@ class UI(Viewer):
             llm=self.llm,
             tools=self.tools,
             logs_db_path=self.logs_db_path,
-            within_ui=True
+            within_ui=True,
+            **self.coordinator_params
         )
         self._notebook_export = FileDownload(
             icon="notebook",
