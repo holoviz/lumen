@@ -655,7 +655,7 @@ def load_json(json_spec: str) -> dict:
     return json.loads(json_spec.encode().decode('unicode_escape'))
 
 
-def separate_table_slug(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
     if SOURCE_TABLE_SEPARATOR in table:
         a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
         a_source_obj = sources.get(a_source_name)

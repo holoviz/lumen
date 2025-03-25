@@ -41,8 +41,8 @@ from .tools import DocumentLookup
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
-    log_debug, mutate_user_message, report_error, retry_llm_output,
-    separate_table_slug,
+    log_debug, mutate_user_message, parse_table_slug, report_error,
+    retry_llm_output,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -681,7 +681,7 @@ class SQLAgent(LumenBaseAgent):
 
         tables_to_source = {}
         for table_slug in selected_table_slugs:
-            a_source_obj, a_table = separate_table_slug(table_slug, sources)
+            a_source_obj, a_table = parse_table_slug(table_slug, sources)
             tables_to_source[a_table] = a_source_obj
 
         print(tables_to_source, chain_of_thought)
