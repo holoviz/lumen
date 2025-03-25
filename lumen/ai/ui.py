@@ -121,7 +121,6 @@ class UI(Viewer):
         data: DataT | list[DataT] | None = None,
         **params
     ):
-        params["tools"] = params.get("tools", params.get("coordinator", Coordinator.param["tools"]).default)
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         log.setLevel(self.log_level)
@@ -201,7 +200,7 @@ class UI(Viewer):
             )
 
         table_lookup = None
-        for tool in self._coordinator._tools["__main__"]:
+        for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
                 table_lookup = tool
                 break

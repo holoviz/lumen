@@ -5,7 +5,6 @@ import re
 import traceback
 
 from copy import deepcopy
-from types import FunctionType
 from typing import TYPE_CHECKING, Any
 
 import param
@@ -30,7 +29,7 @@ from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import make_agent_model, make_plan_models
 from .tools import (
-    FunctionTool, IterativeTableLookup, TableLookup, Tool,
+    IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, retry_llm_output,
@@ -82,7 +81,7 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Coordinator(Viewer, Actor):
+class Coordinator(Viewer, ToolUser):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -111,7 +110,7 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[TableLookup, IterativeTableLookup], doc="""
+    tools = param.List(default=[], doc="""
         List of tools to use to provide context.""")
 
     __abstract = True
@@ -121,6 +120,7 @@ class Coordinator(Viewer, Actor):
         llm: Llm | None = None,
         interface: ChatFeed | ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
+        tools: list[Tool | type[Tool]] | None = None,
         logs_db_path: str = "",
         **params,
     ):
@@ -201,19 +201,9 @@ class Coordinator(Viewer, Actor):
             agent.interface = interface
             instantiated.append(agent)
 
+        # Add user-provided tools to the list of tools of the coordinator
+        self.prompts["main"]["tools"] += [tool for tool in self.tools]
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
-        self._tools["__main__"] = []
-        for tool in self.tools:
-            if isinstance(tool, Actor):
-                if tool.llm is None:
-                    tool.llm = llm
-                if tool.interface is None:
-                    tool.interface = interface
-                self._tools["__main__"].append(tool)
-            elif isinstance(tool, FunctionType):
-                self._tools["__main__"].append(FunctionTool(tool, llm=llm, interface=interface))
-            else:
-                self._tools["__main__"].append(tool(llm=llm, interface=interface))
 
         welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
         interface.send(
@@ -520,7 +510,7 @@ class DependencyResolver(Coordinator):
         if agents is None:
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies(self._memory)]
-        tools = self._tools["__main__"]
+        tools = self._tools["main"]
         agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
@@ -537,7 +527,7 @@ class DependencyResolver(Coordinator):
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
-            tools = {tool.name: tool for tool in self._tools["__main__"]}
+            tools = {tool.name: tool for tool in self._tools["main"]}
             agent = None
             with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
                 try:
@@ -601,6 +591,7 @@ class Planner(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
+                "tools": [TableLookup, IterativeTableLookup]
             },
         }
     )
@@ -615,7 +606,7 @@ class Planner(Coordinator):
         plan_model: type[BaseModel],
         step: ChatStep,
     ) -> BaseModel:
-        tools = self._tools["__main__"]
+        tools = self._tools["main"]
         reasoning = None
         while reasoning is None:
             system = await self._render_prompt(
@@ -652,7 +643,7 @@ class Planner(Coordinator):
         execution_graph = []
         provided = set(self._memory)
         unmet_dependencies = set()
-        tools = {tool.name: tool for tool in self._tools["__main__"]}
+        tools = {tool.name: tool for tool in self._tools["main"]}
         steps = []
         for step in plan.steps:
             key = step.expert_or_tool
@@ -719,7 +710,7 @@ class Planner(Coordinator):
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
-        tool_names = [tool.name for tool in self._tools["__main__"]]
+        tool_names = [tool.name for tool in self._tools["main"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
 
         reason_model, plan_model = self._get_model(

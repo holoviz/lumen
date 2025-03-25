@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from textwrap import indent
+from types import FunctionType
 from typing import Any
 
 import param
@@ -18,6 +19,43 @@ from .models import make_coordinator_tables_model, make_refined_query_model
 from .translate import function_to_model
 from .utils import fetch_table_info, log_debug, stream_details
 from .vector_store import NumpyVectorStore, VectorStore
+
+
+class ToolUser(Actor):
+    """
+    ToolUser is a mixin class for actors that use tools.
+    """
+
+    tools = param.List(default=[], doc="""
+        List of tools to use.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._tools = {}
+
+        for prompt_name in self.prompts:
+            self._tools[prompt_name] = []
+            for tool in self._lookup_prompt_key(prompt_name, "tools"):
+                if isinstance(tool, Actor):
+                    if tool.llm is None:
+                        tool.llm = self.llm
+                    if tool.interface is None:
+                        tool.interface = self.interface
+                    self._tools[prompt_name].append(tool)
+                elif isinstance(tool, FunctionType):
+                    self._tools[prompt_name].append(FunctionTool(tool, llm=self.llm, interface=self.interface))
+                else:
+                    self._tools[prompt_name].append(tool(llm=self.llm, interface=self.interface))
+
+    async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
+        tools_context = ""
+        for tool in self._tools.get(prompt_name, []):
+            if all(requirement in self._memory for requirement in tool.requires):
+                with tool.param.update(memory=self.memory):
+                    tool_context = await tool.respond(messages)
+                    if tool_context:
+                        tools_context += f"\n{tool_context}"
+        return tools_context
 
 
 class Tool(Actor, ContextProvider):
@@ -148,7 +186,7 @@ class VectorLookupTool(Tool):
 
             return output.refined_search_query
         except Exception as e:
-            with self.interface.add_step(title="Query refinement error") as step:
+            with self._add_step(title="Query refinement error") as step:
                 step.stream(f"Error refining query: {e}")
                 step.status = "failed"
             return original_query
@@ -174,7 +212,7 @@ class VectorLookupTool(Tool):
         current_query = query
         iteration = 0
 
-        with self.interface.add_step(title="Initial search") as step:
+        with self._add_step(title="Initial search") as step:
             step.stream(f"Performing initial search with query: '{query}'")
             results = self.vector_store.query(query, top_k=self.n, **kwargs)
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
@@ -185,13 +223,13 @@ class VectorLookupTool(Tool):
         if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
             return best_results
 
-        with self.interface.add_step(title="Refining query") as step:
+        with self._add_step(title="Refining query") as step:
             step.stream(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
 
         while iteration < self.max_refinement_iterations and best_similarity < self.refinement_similarity_threshold:
             iteration += 1
 
-            with self.interface.add_step(title=f"Refinement iteration {iteration}/{self.max_refinement_iterations}") as step:
+            with self._add_step(title=f"Refinement iteration {iteration}/{self.max_refinement_iterations}") as step:
                 step.stream(f"Processing refinement iteration {iteration}")
 
                 refined_query = await self._refine_query(current_query, results)
@@ -232,7 +270,7 @@ class VectorLookupTool(Tool):
                     break
 
         if refinement_history:
-            with self.interface.add_step(title="Final query") as step:
+            with self._add_step(title="Final query") as step:
                 step.stream(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
 
         return best_results
@@ -482,7 +520,7 @@ class TableLookup(VectorLookupTool):
 
     async def _select_tables(self, sources, messages, closest_tables, table_similarities):
         """Select tables to include in the response."""
-        with self.interface.add_step(title="Fetching schemas") as step:
+        with self._add_step(title="Fetching schemas") as step:
             step.stream(f"Fetching schemas for {len(closest_tables)} tables\n")
             tables_info = {}
             for table_slug in closest_tables:
@@ -614,7 +652,7 @@ class IterativeTableLookup(TableLookup):
                     log_debug(f"Selected initial tables: {', '.join(selected_table_slugs)}")
 
             # For subsequent iterations, the LLM selects tables in the previous iteration
-            with self.interface.add_step(title="Fetching detailed schemas") as step:
+            with self._add_step(title="Fetching detailed schemas") as step:
                 step.stream(f"Fetching detailed schema information for {len(selected_table_slugs)} tables\n")
                 tables_schema = []
                 for table_slug in selected_table_slugs:
@@ -647,7 +685,7 @@ class IterativeTableLookup(TableLookup):
 
                 # Get the model from the prompt definition
                 model_spec = self.prompts["table_selection"].get("llm_spec", self.llm_spec_key)
-                tables_model = self._get_model("table_selection", available_tables + list(examined_tables))
+                tables_model = self._get_model("table_selection", tables=available_tables + list(examined_tables))
 
                 output = await self.llm.invoke(
                     messages,

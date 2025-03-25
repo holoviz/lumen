@@ -461,7 +461,7 @@ def clean_sql(sql_expr):
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = ""):
     error_msg = str(exc)
-    step.stream(f'\n```{language}\n{error_msg}\n```\n')
+    stream_details(f'\n```{language}\n{error_msg}\n```\n', step)
     if context:
         step.stream(context)
     if len(error_msg) > 50:
@@ -470,7 +470,7 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
     step.status = "failed"
 
 
-def stream_details(content: Any, step: ChatStep, title: str | None = None) -> str:
+def stream_details(content: Any, step: Any, title: str | None = None) -> str:
     """
     Process content to place code blocks inside collapsible details elements
 
@@ -478,14 +478,19 @@ def stream_details(content: Any, step: ChatStep, title: str | None = None) -> st
     ----------
     content : str
         The content to format
-    step : ChatStep
-        The chat step to stream the formatted content to
+    step : Any
+        The chat step to stream the formatted content to, or NullStep if interface is None
 
     Returns
     -------
     str
         The formatted content with code blocks in details components
     """
+    if not hasattr(step, 'stream') or not hasattr(step, 'append'):
+        # If the step is a NullStep without append method, just log the content
+        log_debug(content)
+        return content
+
     pattern = r'```([\w-]*)\n(.*?)```'
     last_end = 0
     for match in re.finditer(pattern, content, re.DOTALL):

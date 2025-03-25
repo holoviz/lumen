@@ -29,7 +29,7 @@ from ..transforms.sql import SQLLimit, SQLTransform
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
-from .actor import Actor, ContextProvider
+from .actor import ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RetriesExceededError
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
@@ -37,19 +37,19 @@ from .memory import _Memory
 from .models import (
     PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
 )
-from .tools import DocumentLookup
+from .tools import DocumentLookup, ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
     log_debug, mutate_user_message, parse_table_slug, report_error,
-    retry_llm_output,
+    retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
 )
 
 
-class Agent(Viewer, Actor, ContextProvider):
+class Agent(Viewer, ToolUser, ContextProvider):
     """
     Agents are actors responsible for taking a user query and
     performing a particular task and responding by adding context to
@@ -132,6 +132,12 @@ class Agent(Viewer, Actor, ContextProvider):
                 output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
             )
         return message
+
+    async def _gather_prompt_context(self, prompt_name: str, messages: list, **context):
+        context = await super()._gather_prompt_context(prompt_name, messages, **context)
+        if "tool_context" not in context:
+            context["tool_context"] = await self._use_tools(prompt_name, messages)
+        return context
 
     # Public API
 
@@ -271,7 +277,10 @@ class AnalystAgent(ChatAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2"},
+            "main": {
+                "template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2",
+                "tools": []
+            },
         }
     )
 
@@ -558,7 +567,7 @@ class SQLAgent(LumenBaseAgent):
             comments=comments,
             has_errors=bool(errors),
         )
-        with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
+        with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
@@ -616,7 +625,7 @@ class SQLAgent(LumenBaseAgent):
             for sql_transform in sql_transforms:
                 transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
                 if transformed_sql_query != sql_query:
-                    step.stream(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```')
+                    stream_details(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```', step)
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
@@ -664,7 +673,7 @@ class SQLAgent(LumenBaseAgent):
             )
             tables_model = self._get_model("find_tables", tables=selected_table_slugs)
             model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-            with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+            with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
                 response = self.llm.stream(
                     messages,
                     system=system,
@@ -766,7 +775,7 @@ class BaseViewAgent(LumenBaseAgent):
         )
 
         error = ""
-        with self.interface.add_step(
+        with self._add_step(
             title=step_title or "Generating view...",
             steps_layout=self._steps_layout
         ) as step:
@@ -968,7 +977,7 @@ class AnalysisAgent(LumenBaseAgent):
                 analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
+            with self._add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -995,7 +1004,7 @@ class AnalysisAgent(LumenBaseAgent):
 
         view = None
         with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
+            with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
                 analysis_callable = analyses[analysis_name].instance(agents=agents)
 
