@@ -284,6 +284,18 @@ def test_sql_select_from_custom_expr():
     assert result == expected
 
 
+def test_sql_select_from_path():
+    result = SQLSelectFrom.apply_to("data/life_expectancy.csv", sql_expr="SELECT id, name FROM {table}")
+    expected = 'SELECT id, name FROM "data/life_expectancy.csv"'
+    assert result == expected
+
+
+def test_sql_select_from_duckdb_path():
+    result = SQLSelectFrom.apply_to("read_csv('data/life_expectancy.csv')", sql_expr="SELECT id, name FROM {table}")
+    expected = "SELECT id, name FROM READ_CSV('data/life_expectancy.csv')"
+    assert result == expected
+
+
 def test_sql_sample_tablesample_percent():
     """Test percent-based sampling with TABLESAMPLE (PostgreSQL, etc.)"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="postgres")
