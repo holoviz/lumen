@@ -235,12 +235,10 @@ class SQLSelectFrom(SQLFormat):
     transform_type: ClassVar[str] = "sql_select_from"
 
     def apply(self, sql_in: str) -> str:
-        try:
-            expression = self.parse_sql(sql_in)
-        except sqlglot.ParseError:
-            # The expression has no SELECT statement, and invalid characters
-            # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
+        if "SELECT" not in sql_in:
             expression = Table(this=Identifier(this=sql_in, quoted=True))
+        else:
+            expression = self.parse_sql(sql_in)
 
         tables = {}
 
