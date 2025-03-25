@@ -7,7 +7,6 @@ from typing import Any
 
 import param
 
-from panel.chat import ChatInterface
 from panel.viewable import Viewable
 
 from ..views.base import View
@@ -31,9 +30,6 @@ class Tool(Actor, ContextProvider):
     always_use = param.Boolean(default=False, doc="""
         Whether to always use this tool, even if it is not explicitly
         required by the current context.""")
-
-    interface = param.ClassSelector(class_=ChatInterface, allow_None=True, doc="""
-        The interface to report progress to.""")
 
 
 class VectorLookupTool(Tool):

@@ -5,7 +5,7 @@ from typing import Any
 
 import param
 
-from panel.chat import ChatInterface
+from panel.chat import ChatFeed
 from pydantic import BaseModel
 
 from .llm import Llm, Message
@@ -15,8 +15,8 @@ from .utils import log_debug, render_template, warn_on_unused_variables
 
 class Actor(param.Parameterized):
 
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface for the Coordinator to interact with.""")
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")

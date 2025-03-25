@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import param
 
 from panel import bind
-from panel.chat import ChatInterface, ChatStep
+from panel.chat import ChatFeed, ChatInterface, ChatStep
 from panel.layout import (
     Card, Column, FlexBox, Tabs,
 )
@@ -119,7 +119,7 @@ class Coordinator(Viewer, Actor):
     def __init__(
         self,
         llm: Llm | None = None,
-        interface: ChatInterface | None = None,
+        interface: ChatFeed | ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         logs_db_path: str = "",
         **params,

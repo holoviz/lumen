@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import param
 
-from panel.chat import ChatInterface, ChatMessage
+from panel.chat import ChatFeed, ChatInterface, ChatMessage
 from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
 from panel.io.document import hold
@@ -97,8 +97,8 @@ class UI(Viewer):
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface for the Coordinator to interact with.""")
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
