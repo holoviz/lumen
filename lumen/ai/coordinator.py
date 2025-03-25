@@ -100,9 +100,6 @@ class Coordinator(Viewer, Actor):
     history = param.Integer(default=3, doc="""
         Number of previous user-assistant interactions to include in the chat history.""")
 
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface for the Coordinator to interact with.""")
-
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
@@ -203,7 +200,6 @@ class Coordinator(Viewer, Actor):
             instantiated.append(agent)
 
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
-
         self._tools["__main__"] = []
         for tool in self.tools:
             if isinstance(tool, Actor):

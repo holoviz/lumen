@@ -5,6 +5,7 @@ from typing import Any
 
 import param
 
+from panel.chat import ChatInterface
 from pydantic import BaseModel
 
 from .llm import Llm, Message
@@ -13,6 +14,9 @@ from .utils import log_debug, render_template, warn_on_unused_variables
 
 
 class Actor(param.Parameterized):
+
+    interface = param.ClassSelector(class_=ChatInterface, doc="""
+        The ChatInterface for the Coordinator to interact with.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
@@ -37,15 +41,18 @@ class Actor(param.Parameterized):
         self._validate_template_overrides()
         self._validate_prompts()
         self._tools = {}
+
         for prompt_name in self.prompts:
             self._tools[prompt_name] = []
             for tool in self._lookup_prompt_key(prompt_name, "tools"):
                 if isinstance(tool, Actor):
                     if tool.llm is None:
                         tool.llm = self.llm
+                    if tool.interface is None:
+                        tool.interface = self.interface
                     self._tools[prompt_name].append(tool)
                 else:
-                    self._tools[prompt_name].append(tool(llm=self.llm))
+                    self._tools[prompt_name].append(tool(llm=self.llm, interface=self.interface))
 
     def _validate_template_overrides(self):
         valid_prompt_names = self.param["prompts"].default.keys()

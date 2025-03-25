@@ -66,9 +66,6 @@ class Agent(Viewer, Actor, ContextProvider):
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
 
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface to report progress to.""")
-
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
 
@@ -220,6 +217,7 @@ class SourceAgent(Agent):
                 return None
         return source_controls
 
+
 class ChatAgent(Agent):
     """
     ChatAgent provides general information about available data
@@ -248,7 +246,7 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=[], readonly=True)
+    requires = param.List(default=["tables_info"], readonly=True)
 
     async def respond(
         self,
@@ -271,13 +269,13 @@ class AnalystAgent(ChatAgent):
         relationships within the data, while avoiding general overviews or
         superficial descriptions.""")
 
-    requires = param.List(default=["source", "pipeline"], readonly=True)
-
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2"},
         }
     )
+
+    requires = param.List(default=["source", "pipeline"], readonly=True)
 
 
 class ListAgent(Agent):
@@ -507,7 +505,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "tables_sql_schemas"], readonly=True)
+    requires = param.List(default=["source", "tables_info"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -550,7 +548,7 @@ class SQLAgent(LumenBaseAgent):
             "main",
             messages,
             join_required=join_required,
-            tables_sql_schemas=self._memory["tables_sql_schemas"],
+            tables_info=self._memory["tables_info"],
             dialect=dialect,
             comments=comments,
             has_errors=bool(errors),
@@ -652,7 +650,7 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_table_slugs = list(self._memory["tables_sql_schemas"])
+        selected_table_slugs = list(self._memory["tables_info"])
 
         chain_of_thought = ""
         if len(selected_table_slugs) > 1:

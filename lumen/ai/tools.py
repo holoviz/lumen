@@ -339,11 +339,12 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_sql_schemas"], readonly=True, doc="""
+    provides = param.List(default=["tables_info"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
-    batched = param.Boolean(default=True, doc="""
-        Whether to batch the table metadata fetches.""")
+    iteratively_select = param.Boolean(default=True, doc="""
+        Whether to enable iterative table selection process that uses LLM to
+        select tables in multiple passes, examining schemas in detail.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -358,17 +359,13 @@ class TableLookup(VectorLookupTool):
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
-    enable_iterative_selection = param.Boolean(default=True, doc="""
-        Whether to enable iterative table selection process that uses LLM to
-        select tables in multiple passes, examining schemas in detail.""")
+    max_selection_iterations = param.Integer(default=3, doc="""
+        Maximum number of iterations for the iterative table selection process.""")
 
     table_similarity_threshold = param.Number(default=0.5, doc="""
         If any tables have a similarity score above this threshold,
         those tables will be automatically selected and there will not be an
         iterative table selection process.""")
-
-    max_selection_iterations = param.Integer(default=3, doc="""
-        Maximum number of iterations for the iterative table selection process.""")
 
     _item_type_name = "database tables"
 
@@ -522,8 +519,8 @@ class TableLookup(VectorLookupTool):
             return {}
 
         max_iterations = self.max_selection_iterations
-        tables_sql_schemas = self._memory.get("tables_sql_schemas", {})
-        examined_tables = set(tables_sql_schemas.keys())
+        tables_info = self._memory.get("tables_info", {})
+        examined_tables = set(tables_info.keys())
 
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Iterative table selection iteration {iteration} / {max_iterations}")
@@ -563,7 +560,7 @@ class TableLookup(VectorLookupTool):
                     stream_details(f"\n- {table_slug}\n```json\n{table_schema}\n```", step)
 
             for table_slug, schema_data in tables_schema:
-                tables_sql_schemas[table_slug] = schema_data
+                tables_info[table_slug] = schema_data
                 examined_tables.add(table_slug)
 
             if fast_track:
@@ -579,7 +576,7 @@ class TableLookup(VectorLookupTool):
                     available_tables=available_tables,
                     examined_tables=examined_tables,
                     separator=SOURCE_TABLE_SEPARATOR,
-                    current_schemas=tables_sql_schemas,
+                    current_schemas=tables_info,
                     iteration=iteration
                 )
 
@@ -607,11 +604,11 @@ class TableLookup(VectorLookupTool):
                 log_debug(f"Error during table selection: {e!s}")
                 break
 
-        tables_sql_schemas = {
-            table_slug: schema_data for table_slug, schema_data in tables_sql_schemas.items()
+        tables_info = {
+            table_slug: schema_data for table_slug, schema_data in tables_info.items()
             if table_slug in (selected_table_slugs or [])  # prevent it from getting too big and waste token
         }
-        return tables_sql_schemas
+        return tables_info
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -659,22 +656,22 @@ class TableLookup(VectorLookupTool):
             closest_tables.append(table_slug)
 
         sources = {source.name: source for source in self._memory.get("sources", [])}
-        if self.enable_iterative_selection and len(closest_tables) > 5:
+        if self.iteratively_select and len(closest_tables) > 5:
             fused_messages = fuse_messages(messages, max_user_messages=3)
-            tables_sql_schemas = await self._iterative_table_selection(
+            tables_info = await self._iterative_table_selection(
                 sources, fused_messages, closest_tables, table_similarities)
         else:
             with self.interface.add_step(title="Fetching schemas") as step:
                 step.stream(f"Fetching schemas for {len(closest_tables)} tables")
-                tables_sql_schemas = await fetch_table_schemas(
+                tables_info = await fetch_table_schemas(
                     sources, closest_tables, include_count=True)
-                for table_slug, table_schema in tables_sql_schemas.items():
+                for table_slug, table_schema in tables_info.items():
                     stream_details(f"\n- {table_slug}\n```json\n{table_schema}\n```", step)
 
-        self._memory["tables_sql_schemas"] = tables_sql_schemas
+        self._memory["tables_info"] = tables_info
         context = (
             f"\n\nHere are the relevant tables and their schemas:"
-            f"\n\n```json\n{tables_sql_schemas}\n```"
+            f"\n\n```json\n{tables_info}\n```"
         )
         return context
 

@@ -352,12 +352,12 @@ async def fetch_table_schemas(sources: list[Source], table_slugs: list[str], **g
     dict
         Dictionary mapping table slugs to schema information
     """
-    tables_sql_schemas = {}
+    tables_info = {}
     log_debug(f"Fetching schemas for {len(table_slugs)} tables")
     for table_slug in table_slugs:
         table_slug, table_schema = await fetch_table_schema(sources, table_slug, **get_schema_kwargs)
-        tables_sql_schemas[table_slug] = table_schema
-    return tables_sql_schemas
+        tables_info[table_slug] = table_schema
+    return tables_info
 
 
 async def format_table_schema(
