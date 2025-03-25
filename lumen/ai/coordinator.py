@@ -29,7 +29,9 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import make_agent_model, make_plan_models
-from .tools import FunctionTool, TableLookup, Tool
+from .tools import (
+    FunctionTool, IterativeTableLookup, TableLookup, Tool,
+)
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, retry_llm_output,
     stream_details,
@@ -109,7 +111,7 @@ class Coordinator(Viewer, Actor):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[TableLookup], doc="""
+    tools = param.List(default=[TableLookup, IterativeTableLookup], doc="""
         List of tools to use to provide context.""")
 
     __abstract = True

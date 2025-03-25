@@ -300,7 +300,7 @@ async def get_schema(
     return schema
 
 
-async def fetch_table_schema(sources: list[Source], table_slug: str, **get_schema_kwargs):
+async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_kwargs):
     """
     Fetch the schema for a single table from a data source.
 
@@ -325,10 +325,10 @@ async def fetch_table_schema(sources: list[Source], table_slug: str, **get_schem
         table_name = table_slug
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
-    table_schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
+    table_info = await get_schema(source_obj, table_name, **get_schema_kwargs)
     normalized_table_name = source_obj.normalize_table(table_name)
     result = {
-        "schema": yaml.dump(table_schema),
+        "schema": yaml.dump(table_info),
         "source": source_obj.name,
         "sql_table": normalized_table_name,
         "sql": source_obj.get_sql_expr(normalized_table_name),
@@ -336,7 +336,7 @@ async def fetch_table_schema(sources: list[Source], table_slug: str, **get_schem
     return table_slug, result
 
 
-async def fetch_table_schemas(sources: list[Source], table_slugs: list[str], **get_schema_kwargs) -> dict[str, dict]:
+async def fetch_table_infos(sources: list[Source], table_slugs: list[str], **get_schema_kwargs) -> dict[str, dict]:
     """
     Fetch schemas for a list of tables.
 
@@ -353,14 +353,14 @@ async def fetch_table_schemas(sources: list[Source], table_slugs: list[str], **g
         Dictionary mapping table slugs to schema information
     """
     tables_info = {}
-    log_debug(f"Fetching schemas for {len(table_slugs)} tables")
+    log_debug(f"Fetching info for {len(table_slugs)} tables")
     for table_slug in table_slugs:
-        table_slug, table_schema = await fetch_table_schema(sources, table_slug, **get_schema_kwargs)
-        tables_info[table_slug] = table_schema
+        table_slug, table_info = await fetch_table_info(sources, table_slug, **get_schema_kwargs)
+        tables_info[table_slug] = table_info
     return tables_info
 
 
-async def format_table_schema(
+async def format_table_info(
     source: Source, table_name: str, prefix_table: bool = True,
     as_slug: bool = False, limit: int = 5, **get_schema_kwargs
 ) -> str:

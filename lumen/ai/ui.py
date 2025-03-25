@@ -111,7 +111,7 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
-    tools = param.List(default=[TableLookup], doc="""
+    tools = param.List(doc="""
        List of Tools that can be invoked by the coordinator.""")
 
     __abstract = True
@@ -121,6 +121,7 @@ class UI(Viewer):
         data: DataT | list[DataT] | None = None,
         **params
     ):
+        params["tools"] = params.get("tools", params.get("coordinator", Coordinator.param["tools"]).default)
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         log.setLevel(self.log_level)
