@@ -17,9 +17,7 @@ from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import make_coordinator_tables_model, make_refined_query_model
 from .translate import function_to_model
-from .utils import (
-    fetch_table_info, fuse_messages, log_debug, stream_details,
-)
+from .utils import fetch_table_info, log_debug, stream_details
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -591,8 +589,6 @@ class IterativeTableLookup(TableLookup):
         tables_info = self._memory.get("tables_info", {})
         examined_tables = set(tables_info.keys())
 
-        fused_messages = fuse_messages(messages, max_user_messages=3)
-
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Iterative table selection iteration {iteration} / {max_iterations}")
 
@@ -642,7 +638,7 @@ class IterativeTableLookup(TableLookup):
                 # Render the prompt using the proper template system
                 system = await self._render_prompt(
                     "table_selection",
-                    fused_messages,
+                    messages,
                     current_query=messages[-1]["content"],
                     available_tables=available_tables,
                     examined_tables=examined_tables,
@@ -658,7 +654,7 @@ class IterativeTableLookup(TableLookup):
                 tables_model = self._get_model("table_selection", available_tables + list(examined_tables))
 
                 output = await self.llm.invoke(
-                    fused_messages,
+                    messages,
                     system=system,
                     model_spec=model_spec,
                     response_model=tables_model,
