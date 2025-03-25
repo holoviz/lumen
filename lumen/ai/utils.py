@@ -336,30 +336,6 @@ async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_
     return table_slug, result
 
 
-async def fetch_table_infos(sources: list[Source], table_slugs: list[str], **get_schema_kwargs) -> dict[str, dict]:
-    """
-    Fetch schemas for a list of tables.
-
-    Parameters
-    ----------
-    table_slugs : list
-        List of table names in format "source_name::table_name"
-    sources : dict
-        Dictionary mapping source names to source objects
-
-    Returns
-    -------
-    dict
-        Dictionary mapping table slugs to schema information
-    """
-    tables_info = {}
-    log_debug(f"Fetching info for {len(table_slugs)} tables")
-    for table_slug in table_slugs:
-        table_slug, table_info = await fetch_table_info(sources, table_slug, **get_schema_kwargs)
-        tables_info[table_slug] = table_info
-    return tables_info
-
-
 async def format_table_info(
     source: Source, table_name: str, prefix_table: bool = True,
     as_slug: bool = False, limit: int = 5, **get_schema_kwargs
