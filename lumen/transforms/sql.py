@@ -242,8 +242,9 @@ class SQLSelectFrom(SQLFormat):
             # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
-        if " / " in expression.sql():
-            expression = Table(this=Identifier(this=sql_in, quoted="/" in sql_in))
+        # if 'data/life-expectancy.csv' becomes 'data / life-expectancy.csv'
+        if not expression.find_all(Select) and " / " in expression.sql():
+            expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         tables = {}
 
