@@ -644,20 +644,20 @@ class IterativeTableLookup(TableLookup):
                 break
 
             fast_track = False
-            # if iteration == 1:
-            #     # For the first iteration, select tables based on similarity
-            #     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-            #     if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-            #         closest_tables = selected_slugs = sorted(
-            #             table_similarities,
-            #             key=lambda x: table_similarities[x],
-            #             reverse=True
-            #         )[:5]
-            #         log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_slugs)}")
-            #         fast_track = True
-            #     else:
-            # If not, select the top 3 tables to examine
-            selected_slugs = available_slugs[:3]
+            if iteration == 1:
+                # For the first iteration, select tables based on similarity
+                # If any tables have a similarity score above the threshold, select up to 5 of those tables
+                if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
+                    closest_tables = selected_slugs = sorted(
+                        table_similarities,
+                        key=lambda x: table_similarities[x],
+                        reverse=True
+                    )[:5]
+                    log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_slugs)}")
+                    fast_track = True
+                else:
+                    # If not, select the top 3 tables to examine
+                    selected_slugs = available_slugs[:3]
             log_debug(f"Selected initial tables: {', '.join(selected_slugs)}")
 
             # For subsequent iterations, the LLM selects tables in the previous iteration
