@@ -498,15 +498,10 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
 
     pattern = r'```([\w-]*)\n(.*?)```'
     last_end = 0
-    replace = stream_kwargs.pop("replace", False)
-
     if not auto:
         details = Details(content, title=title, collapsed=True, margin=(-5, 20, 15, 20))
-        step.stream(details, **stream_kwargs)
+        step.append(details, **stream_kwargs)
         return content
-
-    if replace:
-        step.clear()
 
     for match in re.finditer(pattern, content, re.DOTALL):
         if match.start() > last_end:
@@ -516,7 +511,7 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
         code = match.group(2)
 
         details = Details(
-            object=f"```{language}\n\n{code}\n\n```",
+            f"```{language}\n\n{code}\n\n```",
             title=title or "Expand to see details",
             collapsed=True,
             margin=(-5, 20, 15, 20),
