@@ -997,7 +997,6 @@ class BaseSQLSource(Source):
             data_sql_expr = sql_expr
             for sql_transform in sql_transforms:
                 data_sql_expr = sql_transform.apply(data_sql_expr)
-            print(data_sql_expr, "SQL SQL\n\n")
             data = self.execute(data_sql_expr)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
 
