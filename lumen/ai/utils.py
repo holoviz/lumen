@@ -516,8 +516,8 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
         code = match.group(2)
 
         details = Details(
-            title=title or "Expand to see details",
             object=f"```{language}\n\n{code}\n\n```",
+            title=title or "Expand to see details",
             collapsed=True,
             margin=(-5, 20, 15, 20),
         )
