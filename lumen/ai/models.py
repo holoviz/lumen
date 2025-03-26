@@ -109,7 +109,7 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
     )
 
 
-def make_tables_model(tables):
+def make_find_tables_model(tables):
     table_model = create_model(
         "Table",
         chain_of_thought=(str, FieldInfo(

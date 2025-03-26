@@ -470,7 +470,7 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
     step.status = "failed"
 
 
-def stream_details(content: Any, step: Any, title: str | None = None, **stream_kwargs) -> str:
+def stream_details(content: Any, step: Any, title: str | None = None, auto: bool = True, **stream_kwargs) -> str:
     """
     Process content to place code blocks inside collapsible details elements
 
@@ -480,6 +480,11 @@ def stream_details(content: Any, step: Any, title: str | None = None, **stream_k
         The content to format
     step : Any
         The chat step to stream the formatted content to, or NullStep if interface is None
+    title : str
+        The title of the details component
+    auto : bool
+        Whether to automatically determine what to put in details or all.
+        If False, all of content will be placed in details components.
 
     Returns
     -------
@@ -493,17 +498,21 @@ def stream_details(content: Any, step: Any, title: str | None = None, **stream_k
 
     pattern = r'```([\w-]*)\n(.*?)```'
     last_end = 0
-    replace = stream_kwargs.pop("replace", False)
-    for i, match in enumerate(re.finditer(pattern, content, re.DOTALL)):
+    if not auto:
+        details = Details(content, title=title, collapsed=True, margin=(-5, 20, 15, 20))
+        step.append(details, **stream_kwargs)
+        return content
+
+    for match in re.finditer(pattern, content, re.DOTALL):
         if match.start() > last_end:
-            step.stream(content[last_end:match.start()], replace=replace if i == 0 else False, **stream_kwargs)
+            step.stream(content[last_end:match.start()], **stream_kwargs)
 
         language = match.group(1)
         code = match.group(2)
 
         details = Details(
+            f"```{language}\n\n{code}\n\n```",
             title=title or "Expand to see details",
-            object=f"```{language}\n\n{code}\n\n```",
             collapsed=True,
             margin=(-5, 20, 15, 20),
         )

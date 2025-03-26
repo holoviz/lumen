@@ -14,6 +14,7 @@ Ground Rules:
 {%- endif %}
 
 Important Agent Rules:
+- The SourceAgent is only useful for uploading new table or document sources; not for showing what's already available.
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.

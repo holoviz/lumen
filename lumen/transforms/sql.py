@@ -551,7 +551,7 @@ class SQLSample(SQLTransform):
         expression = self.parse_sql(sql_in)
         dialect = self.write or self.read
 
-        if dialect in ('sqlserver', 'duckdb') or (dialect in ('postgres', 'redshift', 'snowflake', 'bigquery') and not self.size):
+        if dialect in ('sqlserver', 'duckdb') or (dialect in ('postgres', 'redshift', 'snowflake', 'bigquery')):
             return self._apply_tablesample_dialect(expression)
         elif dialect in ('mysql', 'mariadb'):
             return self._apply_mysql_dialect(expression)
@@ -572,7 +572,7 @@ class SQLSample(SQLTransform):
             sample_clause.args["seed"] = SQLLiteral(this=str(self.seed), is_string=False)
 
         if "method" in self.sample_kwargs:
-            sample_clause.args["method"] = SQLLiteral(this=str(self.sample_kwargs["method"]), is_string=True)
+            sample_clause.args["method"] = self.sample_kwargs["method"]
 
         if "bucket_numerator" in self.sample_kwargs:
             sample_clause.args["bucket_numerator"] = SQLLiteral(this=str(self.sample_kwargs["bucket_numerator"]), is_string=False)

@@ -35,7 +35,7 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
+    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_find_tables_model,
 )
 from .tools import DocumentLookup, ToolUser
 from .translate import param_to_pydantic
@@ -220,6 +220,7 @@ class SourceAgent(Agent):
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
                 self.interface.undo()
+                self.interface.disabled = False
                 return None
         return source_controls
 
@@ -511,7 +512,7 @@ class SQLAgent(LumenBaseAgent):
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
             "find_tables": {
-                "response_model": make_tables_model,
+                "response_model": make_find_tables_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "find_tables.jinja2"
             },
         }
@@ -574,11 +575,11 @@ class SQLAgent(LumenBaseAgent):
             try:
                 async for output in response:
                     step_message = output.chain_of_thought or ""
-                    if output.query:
-                        sql_query = clean_sql(output.query)
-                    if sql_query is not None:
-                        step_message += f"\n```sql\n{sql_query}\n```"
-                    stream_details(step_message, replace=True)
+                    step.stream(step_message, replace=True)
+                if output.query:
+                    sql_query = clean_sql(output.query)
+                if sql_query and output.expr_slug:
+                    stream_details(f"\n```sql\n{sql_query}\n```", step, title=f"`{output.expr_slug}` SQL", auto=False)
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled SQL query generation"
                 raise e
@@ -612,7 +613,7 @@ class SQLAgent(LumenBaseAgent):
         try:
             sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True, identify=False).to_sql()
             if sql_query != sql_clean:
-                stream_details(f'\n\nSQL was cleaned up and prettified.\n```sql\n{sql_clean}\n```')
+                stream_details(f'\n\nSQL was cleaned up and prettified.\n```sql\n{sql_clean}\n```', step)
                 sql_query = sql_clean
         except Exception:
             pass
@@ -671,23 +672,23 @@ class SQLAgent(LumenBaseAgent):
             system = await self._render_prompt(
                 "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
             )
-            tables_model = self._get_model("find_tables", tables=selected_slugs)
+            find_tables_model = self._get_model("find_tables", tables=selected_slugs)
             model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
             with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
                 response = self.llm.stream(
                     messages,
                     system=system,
                     model_spec=model_spec,
-                    response_model=tables_model,
+                    response_model=find_tables_model,
                 )
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
                     selected_slugs = output.selected_tables
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
-                    step.stream(f'{chain_of_thought}', replace=True)
-                    selected_slugs_str = '\n- '.join(selected_slugs)
-                    stream_details(f"```\n{selected_slugs_str}\n```", title="Relevant tables")
+                    step.stream(chain_of_thought, replace=True)
+                    if selected_slugs:
+                        stream_details('\n- '.join(selected_slugs), step, title="Relevant tables", auto=False)
                 step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
         tables_to_source = {}

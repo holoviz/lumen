@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import param
 
@@ -267,6 +268,9 @@ class Details(JSComponent):
         Whether the details element is collapsed by default.""")
 
     _esm = Path(__file__).parent / "models" / "details.js"
+
+    def __init__(self, object: Any, **params):
+        super().__init__(object=object, **params)
 
     @param.depends("collapsed", watch=True)
     def _send_collapsed_update(self):
