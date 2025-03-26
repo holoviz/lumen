@@ -578,7 +578,7 @@ class SQLAgent(LumenBaseAgent):
                 if output.query:
                     sql_query = clean_sql(output.query)
                 if sql_query and output.expr_slug:
-                    stream_details(f"\n```sql\n{sql_query}\n```", step, title=output.expr_slug, auto=False)
+                    stream_details(f"\n```sql\n{sql_query}\n```", step, title=f"`{output.expr_slug}` SQL", auto=False)
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled SQL query generation"
                 raise e
