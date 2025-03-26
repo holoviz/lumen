@@ -223,7 +223,7 @@ class VectorLookupTool(Tool):
             step.stream(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})\n\n")
             while iteration < self.max_refinement_iterations and best_similarity < self.refinement_similarity_threshold:
                 iteration += 1
-                step.stream(f"Processing refinement iteration {iteration}/{self.max_refinement_iterations}")
+                step.stream(f"Processing refinement iteration {iteration}/{self.max_refinement_iterations}\n\n")
 
                 refined_query = await self._refine_query(current_query, results)
 
@@ -233,7 +233,7 @@ class VectorLookupTool(Tool):
 
                 current_query = refined_query
                 step.stream("Query refined.")
-                stream_details(refined_query, step, title="Refined query")
+                stream_details(refined_query, step, title="Refined query", auto=False)
 
                 new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
                 new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
@@ -246,7 +246,7 @@ class VectorLookupTool(Tool):
                     "improvement": improvement
                 })
 
-                step.stream(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})\n")
+                step.stream(f"\n\nRefined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})\n")
 
                 if new_best_similarity > best_similarity + self.min_refinement_improvement:
                     step.stream(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}\n")
