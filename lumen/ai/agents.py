@@ -220,6 +220,7 @@ class SourceAgent(Agent):
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
                 self.interface.undo()
+                self.interface.disabled = False
                 return None
         return source_controls
 
