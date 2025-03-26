@@ -578,7 +578,7 @@ class SQLAgent(LumenBaseAgent):
                         sql_query = clean_sql(output.query)
                     if sql_query is not None:
                         step_message += f"\n```sql\n{sql_query}\n```"
-                    step.stream(step_message, replace=True)
+                    stream_details(step_message, replace=True)
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled SQL query generation"
                 raise e
@@ -612,7 +612,7 @@ class SQLAgent(LumenBaseAgent):
         try:
             sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True, identify=False).to_sql()
             if sql_query != sql_clean:
-                step.stream(f'\n\nSQL was cleaned up and prettified:\n\n```sql\n{sql_clean}\n```')
+                stream_details(f'\n\nSQL was cleaned up and prettified.\n```sql\n{sql_clean}\n```')
                 sql_query = sql_clean
         except Exception:
             pass
@@ -685,12 +685,9 @@ class SQLAgent(LumenBaseAgent):
                     selected_slugs = output.selected_tables
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
-                    if selected_slugs is not None:
-                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_slugs)}`"
-                    step.stream(
-                        f'{chain_of_thought}',
-                        replace=True
-                    )
+                    step.stream(f'{chain_of_thought}', replace=True)
+                    selected_slugs_str = '\n- '.join(selected_slugs)
+                    stream_details(f"```\n{selected_slugs_str}\n```", title="Relevant tables")
                 step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
         tables_to_source = {}

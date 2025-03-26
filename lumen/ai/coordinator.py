@@ -408,8 +408,7 @@ class Coordinator(Viewer, ToolUser):
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
                     self._memory["tools_context"][subagent.name] = result
-                    step.stream(f"{subagent.name}:")
-                    stream_details(result, step)
+                    stream_details(result, step, title=subagent.name)
                 elif isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))

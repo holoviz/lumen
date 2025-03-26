@@ -470,7 +470,7 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
     step.status = "failed"
 
 
-def stream_details(content: Any, step: Any, title: str | None = None) -> str:
+def stream_details(content: Any, step: Any, title: str | None = None, **stream_kwargs) -> str:
     """
     Process content to place code blocks inside collapsible details elements
 
@@ -493,9 +493,10 @@ def stream_details(content: Any, step: Any, title: str | None = None) -> str:
 
     pattern = r'```([\w-]*)\n(.*?)```'
     last_end = 0
-    for match in re.finditer(pattern, content, re.DOTALL):
+    replace = stream_kwargs.pop("replace", False)
+    for i, match in enumerate(re.finditer(pattern, content, re.DOTALL)):
         if match.start() > last_end:
-            step.stream(content[last_end:match.start()])
+            step.stream(content[last_end:match.start()], replace=replace if i == 0 else False, **stream_kwargs)
 
         language = match.group(1)
         code = match.group(2)
@@ -510,7 +511,7 @@ def stream_details(content: Any, step: Any, title: str | None = None) -> str:
         last_end = match.end()
 
     if last_end < len(content):
-        step.stream(content[last_end:])
+        step.stream(content[last_end:], **stream_kwargs)
     return content
 
 
