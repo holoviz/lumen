@@ -517,7 +517,8 @@ class TableLookup(VectorLookupTool):
             tables_info = {}
             for table_slug in closest_tables:
                 table_info = await fetch_table_info(sources, table_slug, include_count=True)
-                stream_details(f"```json\n{table_info}\n```", step, title=table_slug)
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                stream_details(f"```json\n{table_info}\n```", step, title=table_name)
                 tables_info[table_slug] = table_info
         return tables_info
 
@@ -690,13 +691,13 @@ class IterativeTableLookup(TableLookup):
 
                 # Get the model from the prompt definition
                 model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
-                tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
+                find_tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
 
                 output = await self.llm.invoke(
                     messages,
                     system=system,
                     model_spec=model_spec,
-                    response_model=tables_model,
+                    response_model=find_tables_model,
                 )
 
                 selected_slugs = output.selected_slugs or []
