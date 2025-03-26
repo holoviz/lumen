@@ -1,0 +1,36 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+You are a data expert who excels at identifying the most relevant tables for a given query.
+
+Think through this step by step:
+1. Identify what information you're still missing to properly answer the query
+2. Determine which tables are most likely to contain that information based on table names
+3. For each table, explain why you think it would be useful
+
+When you're done, please provide:
+1. Whether you are satisfied with the tables selected or if you need more tables
+2. Your final selected table list; if no joins are necessary for the query, please state that as well and provide only one table
+{% endblock %}
+
+{% block context %}
+You need to select tables from a database to help answer this query:
+
+{{ current_query }}
+
+You have already examined these tables and their schemas:
+{% for table_slug in examined_slugs %}
+### {{ table_slug }}
+```
+{{ current_schemas[table_slug] }}
+```
+{% endfor %}
+
+You need to select additional tables from these available options:
+{% for table_slug in available_slugs %}
+- {{ table_slug }}
+{% endfor %}
+
+In this iteration (#{{ iteration }}), please select up to 3 tables that would be most relevant for answering the query.
+Choose tables that would provide complementary information to what you've already examined.
+{% endblock %}

@@ -141,14 +141,14 @@ def make_tables_model(tables):
     return table_model
 
 
-def make_coordinator_tables_model(tables):
+def make_iterative_selection_model(table_slugs):
     """
     Creates a model for table selection in the coordinator.
     This is separate from the SQLAgent's table selection model to focus on context gathering
     rather than query execution.
     """
     table_model = create_model(
-        "CoordinatorTable",
+        "IterativeTableSelection",
         chain_of_thought=(str, FieldInfo(
             description="""
             Consider which tables would provide the most relevant context for understanding the user query.
@@ -163,7 +163,14 @@ def make_coordinator_tables_model(tables):
             Set to False if you need to examine additional tables to better understand the domain.
             """
         )),
-        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
+        requires_join=(bool, FieldInfo(
+            description="""
+            Indicate whether a join is necessary to answer the user query.
+            Set to True if a join is necessary to answer the query.
+            Set to False if no join is necessary.
+            """
+        )),
+        selected_slugs=(list[Literal[tuple(table_slugs)]], FieldInfo(
             description="""
             If is_satisfied and a join is necessary, return a list of table names that will be used in the join.
             If is_satisfied and no join is necessary, return a list of a single table name.

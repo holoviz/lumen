@@ -15,7 +15,7 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_coordinator_tables_model, make_refined_query_model
+from .models import make_iterative_selection_model, make_refined_query_model
 from .translate import function_to_model
 from .utils import fetch_table_info, log_debug, stream_details
 from .vector_store import NumpyVectorStore, VectorStore
@@ -89,10 +89,6 @@ class VectorLookupTool(Tool):
             "refine_query": {
                 "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
                 "response_model": make_refined_query_model,
-            },
-            "table_selection": {
-                "template": PROMPTS_DIR / "TableLookup" / "table_selection.jinja2",
-                "response_model": make_coordinator_tables_model,
             },
         },
         doc="Dictionary of available prompts for the tool."
@@ -603,6 +599,19 @@ class IterativeTableLookup(TableLookup):
         those tables will be automatically selected and there will not be an
         iterative table selection process.""")
 
+    prompts = param.Dict(
+        default={
+            "refine_query": {
+                "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
+                "response_model": make_refined_query_model,
+            },
+            "iterative_selection": {
+                "template": PROMPTS_DIR / "IterativeTableLookup" / "iterative_selection.jinja2",
+                "response_model": make_iterative_selection_model,
+            },
+        },
+    )
+
     async def _select_tables(self, sources, messages, closest_tables, table_similarities):
         """
         Performs an iterative table selection process to gather context.
@@ -615,54 +624,54 @@ class IterativeTableLookup(TableLookup):
         if not sources:
             return {}
 
-        # For small number of tables, just use the basic approach
-        if len(closest_tables) <= 5:
-            return await super()._select_tables(sources, messages, closest_tables, table_similarities)
+        # # For small number of tables, just use the basic approach
+        # if len(closest_tables) <= 5:
+        #     return await super()._select_tables(sources, messages, closest_tables, table_similarities)
 
         max_iterations = self.max_selection_iterations
         tables_info = self._memory.get("tables_info", {})
-        examined_tables = set(tables_info.keys())
+        examined_slugs = set(tables_info.keys())
 
         for iteration in range(1, max_iterations + 1):
             log_debug(f"Iterative table selection iteration {iteration} / {max_iterations}")
 
-            available_tables = [
-                table for table in closest_tables
-                if table not in examined_tables
+            available_slugs = [
+                table_slug for table_slug in closest_tables
+                if table_slug not in examined_slugs
             ]
-            if not available_tables:
+            if not available_slugs:
                 log_debug("No more tables available to examine")
                 break
 
             fast_track = False
-            if iteration == 1:
-                # For the first iteration, select tables based on similarity
-                # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-                    closest_tables = selected_table_slugs = sorted(
-                        table_similarities,
-                        key=lambda x: table_similarities[x],
-                        reverse=True
-                    )[:5]
-                    log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_table_slugs)}")
-                    fast_track = True
-                else:
-                    # If not, select the top 3 tables to examine
-                    selected_table_slugs = available_tables[:3]
-                    log_debug(f"Selected initial tables: {', '.join(selected_table_slugs)}")
+            # if iteration == 1:
+            #     # For the first iteration, select tables based on similarity
+            #     # If any tables have a similarity score above the threshold, select up to 5 of those tables
+            #     if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
+            #         closest_tables = selected_slugs = sorted(
+            #             table_similarities,
+            #             key=lambda x: table_similarities[x],
+            #             reverse=True
+            #         )[:5]
+            #         log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_slugs)}")
+            #         fast_track = True
+            #     else:
+            # If not, select the top 3 tables to examine
+            selected_slugs = available_slugs[:3]
+            log_debug(f"Selected initial tables: {', '.join(selected_slugs)}")
 
             # For subsequent iterations, the LLM selects tables in the previous iteration
             with self._add_step(title="Fetching detailed schemas") as step:
-                step.stream(f"Fetching detailed schema information for {len(selected_table_slugs)} tables\n")
+                step.stream(f"Fetching detailed schema information for {len(selected_slugs)} tables\n")
                 tables_schema = []
-                for table_slug in selected_table_slugs:
+                for table_slug in selected_slugs:
                     table_info = await fetch_table_info(sources, table_slug, include_count=True)
                     tables_schema.append(table_info)
                     stream_details(f"\n`{table_slug}`\n```json\n{table_info}\n```", step)
 
             for table_slug, schema_data in tables_schema:
                 tables_info[table_slug] = schema_data
-                examined_tables.add(table_slug)
+                examined_slugs.add(table_slug)
 
             if fast_track:
                 # based on similarity search alone, if we have selected tables, we're done!!
@@ -671,21 +680,21 @@ class IterativeTableLookup(TableLookup):
             try:
                 # Render the prompt using the proper template system
                 system = await self._render_prompt(
-                    "table_selection",
+                    "iterative_selection",
                     messages,
                     current_query=messages[-1]["content"],
-                    available_tables=available_tables,
-                    examined_tables=examined_tables,
+                    available_slugs=available_slugs,
+                    examined_slugs=examined_slugs,
                     separator=SOURCE_TABLE_SEPARATOR,
                     current_schemas=tables_info,
                     iteration=iteration
                 )
 
-                log_debug(f"Selecting tables from {len(available_tables)} available options")
+                log_debug(f"Selecting tables from {len(available_slugs)} available options")
 
                 # Get the model from the prompt definition
-                model_spec = self.prompts["table_selection"].get("llm_spec", self.llm_spec_key)
-                tables_model = self._get_model("table_selection", tables=available_tables + list(examined_tables))
+                model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
+                tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
 
                 output = await self.llm.invoke(
                     messages,
@@ -694,11 +703,11 @@ class IterativeTableLookup(TableLookup):
                     response_model=tables_model,
                 )
 
-                selected_table_slugs = output.selected_table_slugs or []
-                log_debug(f"Selected tables: {', '.join(selected_table_slugs)}")
+                selected_slugs = output.selected_slugs or []
+                log_debug(f"Selected tables: {', '.join(selected_slugs)}")
 
                 # Check if we're done with table selection
-                if output.is_satisfied or not available_tables:
+                if output.is_satisfied or not available_slugs:
                     log_debug("Selection process complete - model is satisfied with selected tables")
                     break
             except Exception as e:
@@ -707,7 +716,7 @@ class IterativeTableLookup(TableLookup):
 
         tables_info = {
             table_slug: schema_data for table_slug, schema_data in tables_info.items()
-            if table_slug in (selected_table_slugs or [])  # prevent it from getting too big and waste token
+            if table_slug in (selected_slugs or [])  # prevent it from getting too big and waste token
         }
         return tables_info
 

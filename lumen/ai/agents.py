@@ -664,14 +664,14 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_table_slugs = list(self._memory["tables_info"])
+        selected_slugs = list(self._memory["tables_info"])
 
         chain_of_thought = ""
-        if len(selected_table_slugs) > 1:
+        if len(selected_slugs) > 1:
             system = await self._render_prompt(
                 "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
             )
-            tables_model = self._get_model("find_tables", tables=selected_table_slugs)
+            tables_model = self._get_model("find_tables", tables=selected_slugs)
             model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
             with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
                 response = self.llm.stream(
@@ -682,19 +682,19 @@ class SQLAgent(LumenBaseAgent):
                 )
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
-                    selected_table_slugs = output.selected_tables
+                    selected_slugs = output.selected_tables
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
-                    if selected_table_slugs is not None:
-                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_table_slugs)}`"
+                    if selected_slugs is not None:
+                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_slugs)}`"
                     step.stream(
                         f'{chain_of_thought}',
                         replace=True
                     )
-                step.success_title = f'Found {len(selected_table_slugs)} relevant table(s)'
+                step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
         tables_to_source = {}
-        for table_slug in selected_table_slugs:
+        for table_slug in selected_slugs:
             a_source_obj, a_table = parse_table_slug(table_slug, sources)
             tables_to_source[a_table] = a_source_obj
 
