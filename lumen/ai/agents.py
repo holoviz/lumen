@@ -29,7 +29,7 @@ from ..transforms.sql import SQLLimit, SQLTransform
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
-from .actor import Actor, ContextProvider
+from .actor import ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RetriesExceededError
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
@@ -37,19 +37,19 @@ from .memory import _Memory
 from .models import (
     PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_tables_model,
 )
-from .tools import DocumentLookup
+from .tools import DocumentLookup, ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
-    log_debug, mutate_user_message, report_error, retry_llm_output,
-    separate_source_table,
+    log_debug, mutate_user_message, parse_table_slug, report_error,
+    retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
 )
 
 
-class Agent(Viewer, Actor, ContextProvider):
+class Agent(Viewer, ToolUser, ContextProvider):
     """
     Agents are actors responsible for taking a user query and
     performing a particular task and responding by adding context to
@@ -65,9 +65,6 @@ class Agent(Viewer, Actor, ContextProvider):
 
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
-
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface to report progress to.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
@@ -135,6 +132,12 @@ class Agent(Viewer, Actor, ContextProvider):
                 output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width
             )
         return message
+
+    async def _gather_prompt_context(self, prompt_name: str, messages: list, **context):
+        context = await super()._gather_prompt_context(prompt_name, messages, **context)
+        if "tool_context" not in context:
+            context["tool_context"] = await self._use_tools(prompt_name, messages)
+        return context
 
     # Public API
 
@@ -220,6 +223,7 @@ class SourceAgent(Agent):
                 return None
         return source_controls
 
+
 class ChatAgent(Agent):
     """
     ChatAgent provides general information about available data
@@ -248,7 +252,7 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=[], readonly=True)
+    requires = param.List(default=["tables_info"], readonly=True)
 
     async def respond(
         self,
@@ -271,13 +275,16 @@ class AnalystAgent(ChatAgent):
         relationships within the data, while avoiding general overviews or
         superficial descriptions.""")
 
-    requires = param.List(default=["source", "pipeline"], readonly=True)
-
     prompts = param.Dict(
         default={
-            "main": {"template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2"},
+            "main": {
+                "template": PROMPTS_DIR / "AnalystAgent" / "main.jinja2",
+                "tools": []
+            },
         }
     )
+
+    requires = param.List(default=["source", "pipeline"], readonly=True)
 
 
 class ListAgent(Agent):
@@ -510,9 +517,9 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data", "tables_sql_schemas"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source"], readonly=True)
+    requires = param.List(default=["source", "tables_info"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -555,12 +562,12 @@ class SQLAgent(LumenBaseAgent):
             "main",
             messages,
             join_required=join_required,
-            tables_sql_schemas=self._memory["tables_sql_schemas"],
+            tables_info=self._memory["tables_info"],
             dialect=dialect,
             comments=comments,
             has_errors=bool(errors),
         )
-        with self.interface.add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
+        with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
             sql_query = None
@@ -571,7 +578,7 @@ class SQLAgent(LumenBaseAgent):
                         sql_query = clean_sql(output.query)
                     if sql_query is not None:
                         step_message += f"\n```sql\n{sql_query}\n```"
-                    step.stream(step_message, replace=True)
+                    stream_details(step_message, replace=True)
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled SQL query generation"
                 raise e
@@ -605,7 +612,7 @@ class SQLAgent(LumenBaseAgent):
         try:
             sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True, identify=False).to_sql()
             if sql_query != sql_clean:
-                step.stream(f'\n\nSQL was cleaned up and prettified:\n\n```sql\n{sql_clean}\n```')
+                stream_details(f'\n\nSQL was cleaned up and prettified.\n```sql\n{sql_clean}\n```')
                 sql_query = sql_clean
         except Exception:
             pass
@@ -618,7 +625,7 @@ class SQLAgent(LumenBaseAgent):
             for sql_transform in sql_transforms:
                 transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
                 if transformed_sql_query != sql_query:
-                    step.stream(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```')
+                    stream_details(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```', step)
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
@@ -657,14 +664,16 @@ class SQLAgent(LumenBaseAgent):
             log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
-        tables = self._memory.get("closest_tables", next(iter(sources.values())).get_tables()[:5])
-        if len(tables) > 1:
+        selected_slugs = list(self._memory["tables_info"])
+
+        chain_of_thought = ""
+        if len(selected_slugs) > 1:
             system = await self._render_prompt(
                 "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
             )
-            tables_model = self._get_model("find_tables", tables=tables)
+            tables_model = self._get_model("find_tables", tables=selected_slugs)
             model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-            with self.interface.add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+            with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
                 response = self.llm.stream(
                     messages,
                     system=system,
@@ -673,24 +682,19 @@ class SQLAgent(LumenBaseAgent):
                 )
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
-                    selected_tables = output.selected_tables
+                    selected_slugs = output.selected_tables
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
-                    if selected_tables is not None:
-                        chain_of_thought = chain_of_thought + f"\n\nRelevant tables: `{'` '.join(selected_tables)}`"
-                    step.stream(
-                        f'{chain_of_thought}',
-                        replace=True
-                    )
-                step.success_title = f'Found {len(selected_tables)} relevant table(s)'
-        else:
-            selected_tables = tables[:1]
-            chain_of_thought = ""
+                    step.stream(f'{chain_of_thought}', replace=True)
+                    selected_slugs_str = '\n- '.join(selected_slugs)
+                    stream_details(f"```\n{selected_slugs_str}\n```", title="Relevant tables")
+                step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
         tables_to_source = {}
-        for source_table in selected_tables:
-            a_source_obj, a_table = separate_source_table(source_table, sources)
+        for table_slug in selected_slugs:
+            a_source_obj, a_table = parse_table_slug(table_slug, sources)
             tables_to_source[a_table] = a_source_obj
+
         return tables_to_source, chain_of_thought
 
     async def respond(
@@ -700,30 +704,7 @@ class SQLAgent(LumenBaseAgent):
         step_title: str | None = None,
     ) -> Any:
         tables_to_source, comments = await self._find_tables(messages)
-        tables_sql_schemas = {}
-        for source_table, source in tables_to_source.items():
-            # Look up underlying table name
-            if SOURCE_TABLE_SEPARATOR in source_table:
-                _, source_table = source_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-            table_schema = await get_schema(source, source_table, include_count=True)
-            table_name = source.normalize_table(source_table)
-            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            if (
-                'tables' in source.param and
-                isinstance(source.tables, dict) and
-                'select ' not in source.tables[table_name].lower()
-            ):
-                table_name = source.tables[table_name]
-
-            tables_sql_schemas[table_slug] = {
-                "schema": yaml.dump(table_schema),
-                "source": source.name,
-                "sql_table": table_name,
-                "sql": source.get_sql_expr(source_table),
-            }
-        self._memory["tables_sql_schemas"] = tables_sql_schemas
-
-        dialect = source.dialect
+        dialect = self._memory["source"].dialect
         try:
             sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
             pipeline = self._memory['pipeline']
@@ -791,7 +772,7 @@ class BaseViewAgent(LumenBaseAgent):
         )
 
         error = ""
-        with self.interface.add_step(
+        with self._add_step(
             title=step_title or "Generating view...",
             steps_layout=self._steps_layout
         ) as step:
@@ -993,7 +974,7 @@ class AnalysisAgent(LumenBaseAgent):
                 analyses = {analysis: analyses[analysis]}
 
         if len(analyses) > 1:
-            with self.interface.add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
+            with self._add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
                 type_ = Literal[tuple(analyses)]
                 analysis_model = create_model(
                     "Analysis",
@@ -1020,7 +1001,7 @@ class AnalysisAgent(LumenBaseAgent):
 
         view = None
         with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
+            with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
                 analysis_callable = analyses[analysis_name].instance(agents=agents)
 

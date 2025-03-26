@@ -57,45 +57,6 @@ class RetrySpec(BaseModel):
     )
 
 
-def make_context_model(tools: list[str], required_tools: list[str]):
-    fields = {}
-    tool = create_model(
-        "Tool",
-        name=(Literal[tuple(tools)], FieldInfo(description="The name of the tool.")),
-        instruction=(str, FieldInfo(description="Instructions for the tool.")),
-    )
-    fields["chain_of_thought"] = (
-        str,
-        FieldInfo(
-        description=(
-            "Explain what tool you'll choose to use based on user query. "
-            "If the user is asking for availability about tables, no tools are needed "
-            "because you'll use TableListAgent."
-        )
-        )
-    )
-    fields["needs_lookup"] = (
-        bool,
-        FieldInfo(
-            description="Whether you need to use a tool to gather additional context before proceeding."
-        )
-    )
-    description = (
-        "A list of tools to call to provide context before launching into the planning stage."
-        "Use tools to gather additional context or clarification, tools should NEVER be used"
-        "to obtain the actual data you will be working with. "
-        "Do not provide if the user query is asking for availability or "
-        "if you have enough context to proceed."
-    )
-    if required_tools:
-        description += f" You must include these required tools: {', '.join(required_tools)}"
-    fields['tools'] = (
-        list[tool],
-        FieldInfo(description=description)
-    )
-    return create_model("Context", __base__=PartialBaseModel, **fields)
-
-
 def make_plan_models(agents: list[str], tools: list[str]):
     step = create_model(
         "Step",
@@ -180,14 +141,14 @@ def make_tables_model(tables):
     return table_model
 
 
-def make_coordinator_tables_model(tables):
+def make_iterative_selection_model(table_slugs):
     """
     Creates a model for table selection in the coordinator.
     This is separate from the SQLAgent's table selection model to focus on context gathering
     rather than query execution.
     """
     table_model = create_model(
-        "CoordinatorTable",
+        "IterativeTableSelection",
         chain_of_thought=(str, FieldInfo(
             description="""
             Consider which tables would provide the most relevant context for understanding the user query.
@@ -202,7 +163,14 @@ def make_coordinator_tables_model(tables):
             Set to False if you need to examine additional tables to better understand the domain.
             """
         )),
-        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
+        requires_join=(bool, FieldInfo(
+            description="""
+            Indicate whether a join is necessary to answer the user query.
+            Set to True if a join is necessary to answer the query.
+            Set to False if no join is necessary.
+            """
+        )),
+        selected_slugs=(list[Literal[tuple(table_slugs)]], FieldInfo(
             description="""
             If is_satisfied and a join is necessary, return a list of table names that will be used in the join.
             If is_satisfied and no join is necessary, return a list of a single table name.

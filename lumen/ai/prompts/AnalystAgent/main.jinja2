@@ -36,14 +36,6 @@ Here is the current SQL query:
 {%- if memory.data|length == 0 %}
 The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
 and try to make educated guess what other columns or values should be used instead.
-
-For reference, here's the tables and their schemas:
-{% for table_info in memory.tables_sql_schemas.values() -%}
-- **{{ table_info.sql_table }}**:
-```yaml
-{{ table_info.schema }}
-```
-{%- endfor %}
 {%- endif %}
 {%- endblock %}
 {%- block examples %}

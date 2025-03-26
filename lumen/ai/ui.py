@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import param
 
-from panel.chat import ChatInterface, ChatMessage
+from panel.chat import ChatFeed, ChatInterface, ChatMessage
 from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
 from panel.io.document import hold
@@ -101,8 +101,8 @@ class UI(Viewer):
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
-    interface = param.ClassSelector(class_=ChatInterface, doc="""
-        The ChatInterface for the Coordinator to interact with.""")
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
@@ -115,7 +115,7 @@ class UI(Viewer):
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
-    tools = param.List(default=[TableLookup], doc="""
+    tools = param.List(doc="""
        List of Tools that can be invoked by the coordinator.""")
 
     __abstract = True
@@ -205,7 +205,7 @@ class UI(Viewer):
             )
 
         table_lookup = None
-        for tool in self._coordinator._tools["__main__"]:
+        for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
                 table_lookup = tool
                 break
@@ -580,8 +580,8 @@ class ExplorerUI(UI):
             deduplicate = len(sources) > 1
             new = {}
             for source in sources:
-                source_tables = source.get_tables()
-                for t in source_tables:
+                tables = source.get_tables()
+                for t in tables:
                     if deduplicate:
                         t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
                     if t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:

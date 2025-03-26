@@ -1,10 +1,12 @@
 from abc import abstractmethod
+from contextlib import nullcontext
 from pathlib import Path
 from types import FunctionType
 from typing import Any
 
 import param
 
+from panel.chat import ChatFeed
 from pydantic import BaseModel
 
 from .llm import Llm, Message
@@ -12,7 +14,18 @@ from .memory import _Memory, memory
 from .utils import log_debug, render_template, warn_on_unused_variables
 
 
+class NullStep:
+    def __init__(self):
+        self.status = None
+
+    def stream(self, text):
+        log_debug(f"[{text}")
+
+
 class Actor(param.Parameterized):
+
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
@@ -36,16 +49,8 @@ class Actor(param.Parameterized):
         super().__init__(**params)
         self._validate_template_overrides()
         self._validate_prompts()
-        self._tools = {}
-        for prompt_name in self.prompts:
-            self._tools[prompt_name] = []
-            for tool in self._lookup_prompt_key(prompt_name, "tools"):
-                if isinstance(tool, Actor):
-                    if tool.llm is None:
-                        tool.llm = self.llm
-                    self._tools[prompt_name].append(tool)
-                else:
-                    self._tools[prompt_name].append(tool(llm=self.llm))
+        if self.interface is None:
+            self._null_step = NullStep()
 
     def _validate_template_overrides(self):
         valid_prompt_names = self.param["prompts"].default.keys()
@@ -107,22 +112,22 @@ class Actor(param.Parameterized):
             model = model_spec
         return model
 
-    async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
-        tools_context = ""
-        for tool in self._tools.get(prompt_name, []):
-            if all(requirement in self._memory for requirement in tool.requires):
-                with tool.param.update(memory=self.memory):
-                    tool_context = await tool.respond(messages)
-                    if tool_context:
-                        tools_context += f"\n{tool_context}"
-        return tools_context
+    def _add_step(self, title: str = "", **kwargs):
+        """Private contextmanager for adding steps to the interface.
+
+        If self.interface is None, returns a nullcontext that captures calls.
+        Otherwise, returns the interface's add_step contextmanager.
+        """
+        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+
+    async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
+        context["memory"] = self._memory
+        return context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
         prompt_template = self._lookup_prompt_key(prompt_name, "template")
         overrides = self.template_overrides.get(prompt_name, {})
-        context["memory"] = self._memory
-        if "tool_context" not in context:
-            context["tool_context"] = await self._use_tools(prompt_name, messages)
+        context = await self._gather_prompt_context(prompt_name, messages, **context)
 
         prompt_label = f"\033[92m{self.name}.prompts['{prompt_name}']['template']\033[0m"
         if isinstance(prompt_template, str) and not Path(prompt_template).exists():
@@ -184,6 +189,7 @@ class Actor(param.Parameterized):
             else:
                 result += char
         return result
+
 
 class ContextProvider(param.Parameterized):
     """

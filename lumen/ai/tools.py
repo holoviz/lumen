@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from textwrap import indent
+from types import FunctionType
 from typing import Any
 
 import param
@@ -14,10 +15,47 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_refined_query_model
+from .models import make_iterative_selection_model, make_refined_query_model
 from .translate import function_to_model
-from .utils import log_debug
+from .utils import fetch_table_info, log_debug, stream_details
 from .vector_store import NumpyVectorStore, VectorStore
+
+
+class ToolUser(Actor):
+    """
+    ToolUser is a mixin class for actors that use tools.
+    """
+
+    tools = param.List(default=[], doc="""
+        List of tools to use.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._tools = {}
+
+        for prompt_name in self.prompts:
+            self._tools[prompt_name] = []
+            for tool in self._lookup_prompt_key(prompt_name, "tools"):
+                if isinstance(tool, Actor):
+                    if tool.llm is None:
+                        tool.llm = self.llm
+                    if tool.interface is None:
+                        tool.interface = self.interface
+                    self._tools[prompt_name].append(tool)
+                elif isinstance(tool, FunctionType):
+                    self._tools[prompt_name].append(FunctionTool(tool, llm=self.llm, interface=self.interface))
+                else:
+                    self._tools[prompt_name].append(tool(llm=self.llm, interface=self.interface))
+
+    async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
+        tools_context = ""
+        for tool in self._tools.get(prompt_name, []):
+            if all(requirement in self._memory for requirement in tool.requires):
+                with tool.param.update(memory=self.memory):
+                    tool_context = await tool.respond(messages)
+                    if tool_context:
+                        tools_context += f"\n{tool_context}"
+        return tools_context
 
 
 class Tool(Actor, ContextProvider):
@@ -144,10 +182,12 @@ class VectorLookupTool(Tool):
 
             return output.refined_search_query
         except Exception as e:
-            log_debug(f"Error refining query: {e}")
+            with self._add_step(title="Query refinement error") as step:
+                step.stream(f"Error refining query: {e}")
+                step.status = "failed"
             return original_query
 
-    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[str, list[dict[str, Any]], float]:
+    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[list[dict[str, Any]]]:
         """
         Performs a vector search with optional query refinement.
 
@@ -160,77 +200,72 @@ class VectorLookupTool(Tool):
 
         Returns
         -------
-        tuple[str, list[dict[str, Any]], float]
-            - The final query used (original or refined)
-            - The search results
-            - The best similarity score
+        list[dict[str, Any]]
+            The search results
         """
-        original_query = query
         final_query = query
         current_query = query
         iteration = 0
 
-        log_debug(f"Performing initial search with query: '{query}'")
-        results = self.vector_store.query(query, top_k=self.n, **kwargs)
-        best_similarity = max([result.get('similarity', 0) for result in results], default=0)
-        best_results = results
-        log_debug(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}")
+        with self._add_step(title="Vector Search with Refinement") as step:
+            step.stream(f"Performing initial search: {query!r}'\n")
+            results = self.vector_store.query(query, top_k=self.n, **kwargs)
+            best_similarity = max([result.get('similarity', 0) for result in results], default=0)
+            best_results = results
+            step.stream(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}\n")
 
-        self._memory["original_query"] = original_query
-        self._memory["original_similarity"] = best_similarity
+            refinement_history = []
+            if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
+                step.stream("Search complete - no refinement needed")
+                return best_results
 
-        refinement_history = []
-        if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
-            return final_query, best_results, best_similarity
+            step.stream(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})\n")
 
-        log_debug(f"Attempting to refine query (similarity {best_similarity:.3f} below threshold {self.refinement_similarity_threshold:.3f})")
+            while iteration < self.max_refinement_iterations and best_similarity < self.refinement_similarity_threshold:
+                iteration += 1
+                step.stream(f"Processing refinement iteration {iteration}/{self.max_refinement_iterations}")
 
-        while iteration < self.max_refinement_iterations and best_similarity < self.refinement_similarity_threshold:
-            iteration += 1
-            log_debug(f"Refinement iteration {iteration}/{self.max_refinement_iterations}")
+                refined_query = await self._refine_query(current_query, results)
 
-            refined_query = await self._refine_query(current_query, results)
+                if refined_query == current_query:
+                    step.stream("Refinement returned unchanged query, stopping iterations\n")
+                    break
 
-            if refined_query == current_query:
-                log_debug("Refinement returned unchanged query, stopping iterations")
-                break
+                current_query = refined_query
+                step.stream(f"Query refined to: '{refined_query}'\n")
 
-            current_query = refined_query
-            log_debug(f"Query refined to: \033[92m'{refined_query}'\033[0m")
+                new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
+                new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
 
-            new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
-            new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
+                improvement = new_best_similarity - best_similarity
+                refinement_history.append({
+                    "iteration": iteration,
+                    "query": refined_query,
+                    "similarity": new_best_similarity,
+                    "improvement": improvement
+                })
 
-            improvement = new_best_similarity - best_similarity
-            refinement_history.append({
-                "iteration": iteration,
-                "query": refined_query,
-                "similarity": new_best_similarity,
-                "improvement": improvement
-            })
+                step.stream(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})\n")
 
-            log_debug(f"Refined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})")
+                if new_best_similarity > best_similarity + self.min_refinement_improvement:
+                    step.stream(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}\n")
+                    best_similarity = new_best_similarity
+                    best_results = new_results
+                    final_query = refined_query
+                    results = new_results  # Update results for next iteration's refinement
+                else:
+                    step.stream(f"Insufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations\n")
+                    break
 
-            if new_best_similarity > best_similarity + self.min_refinement_improvement:
-                log_debug(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}")
-                best_similarity = new_best_similarity
-                best_results = new_results
-                final_query = refined_query
-                results = new_results  # Update results for next iteration's refinement
-            else:
-                log_debug(f"Insufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations")
-                break
+                # Break if we've reached an acceptable similarity
+                if best_similarity >= self.refinement_similarity_threshold:
+                    step.stream(f"Reached acceptable similarity threshold: {best_similarity:.3f}\n")
+                    break
 
-            # Break if we've reached an acceptable similarity
-            if best_similarity >= self.refinement_similarity_threshold:
-                log_debug(f"Reached acceptable similarity threshold: {best_similarity:.3f}")
-                break
+            if refinement_history:
+                step.stream(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n")
 
-        if refinement_history:
-            self._memory["refined_search_query"] = final_query
-            log_debug(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}")
-
-        return final_query, best_results, best_similarity
+        return best_results
 
 
 class DocumentLookup(VectorLookupTool):
@@ -296,8 +331,7 @@ class DocumentLookup(VectorLookupTool):
         query = messages[-1]["content"]
 
         # Perform search with refinement
-        final_query, results, best_similarity = await self._perform_search_with_refinement(query)
-
+        results = await self._perform_search_with_refinement(query)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - "
             f"Metadata: {result['metadata']})"
@@ -309,11 +343,6 @@ class DocumentLookup(VectorLookupTool):
             return ""
 
         message = "Please augment your response with the following context if relevant:\n"
-
-        # If refined query was used, note this in the response
-        if "refined_search_query" in self._memory and final_query != query:
-            message = f"Refined search query '{final_query}' yielded these results:\n\n" + message
-
         message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
         return message
 
@@ -332,11 +361,8 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["closest_tables", "table_similarities"], readonly=True, doc="""
+    provides = param.List(default=["tables_info"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
-
-    batched = param.Boolean(default=True, doc="""
-        Whether to batch the table metadata fetches.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -484,34 +510,39 @@ class TableLookup(VectorLookupTool):
         log_debug("All table metadata tasks completed.")
         self._ready = True
 
+    async def _select_tables(self, sources, messages, closest_tables, table_similarities):
+        """Select tables to include in the response."""
+        with self._add_step(title="Fetching schemas") as step:
+            step.stream(f"Fetching schemas for {len(closest_tables)} tables\n")
+            tables_info = {}
+            for table_slug in closest_tables:
+                table_info = await fetch_table_info(sources, table_slug, include_count=True)
+                stream_details(f"```json\n{table_info}\n```", step, title=table_slug)
+                tables_info[table_slug] = table_info
+        return tables_info
+
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
         Fetches the closest tables based on the user query, with query refinement
         if enabled and initial results don't meet threshold.
         """
         query = messages[-1]["content"]
-
-        closest_tables, descriptions = [], []
+        results = []
         table_similarities = {}
-
-        # Check if any tables are mentioned verbatim
-        for table in self._table_metadata:
-            if table.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
-                closest_tables.append(table)
-                table_similarities[table] = 1
-
-        # If so skip search
-        if closest_tables:
-            final_query = query
-            results = []
-            any_matches = True
-            best_similarity = 1
+        if len(self._table_metadata) <= 5:
+            table_similarities = {table_slug: 1 for table_slug in self._table_metadata}
         else:
-            # otherwise perform search with refinement
-            final_query, results, best_similarity = await self._perform_search_with_refinement(query)
-            any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+            table_similarities = {
+                table_slug: 1
+                for table_slug in self._table_metadata
+                if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower()
+            }
 
-        # Process results as before
+        closest_tables = list(table_similarities)
+        if not closest_tables:
+            results = await self._perform_search_with_refinement(query)
+
+        any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
                 continue
@@ -534,23 +565,160 @@ class TableLookup(VectorLookupTool):
                         break
                 description += f"\n{indent(columns_description, ' ' * 2)}"
             closest_tables.append(table_slug)
-            descriptions.append(description)
 
-        if any_matches:
-            message = "Based on the vector search, the most relevant tables are:\n"
-        else:
-            message = "Based on the vector search, was unable to find tables relevant to the query.\n"
-            if closest_tables:
-                message += "Here are some other tables:\n"
+        sources = {source.name: source for source in self._memory.get("sources", [])}
+        tables_info = await self._select_tables(sources, messages, closest_tables, table_similarities)
 
-        self._memory["closest_tables"] = closest_tables
-        self._memory["table_similarities"] = table_similarities
-        if "refined_search_query" in self._memory and final_query != query:
-            message = f"\n\nRefined search query: '{final_query}'\n\n" + message
-        return message + "\n".join(descriptions)
+        self._memory["tables_info"] = tables_info
+        context = (
+            f"\n\nBelow are the relevant tables and their schemas."
+            f"\n\n```json\n{tables_info}\n```"
+        )
+        return context
+
+
+class IterativeTableLookup(TableLookup):
+    """
+    Extended version of TableLookup that performs an iterative table selection process.
+    This tool uses an LLM to select tables in multiple passes, examining schemas in detail.
+    """
+
+    purpose = param.String(default="""
+        Looks up relevant tables based on the user query with an iterative selection process.
+        Uses LLM to select tables in multiple passes, examining schemas in detail.""")
+
+    max_selection_iterations = param.Integer(default=3, doc="""
+        Maximum number of iterations for the iterative table selection process.""")
+
+    table_similarity_threshold = param.Number(default=0.5, doc="""
+        If any tables have a similarity score above this threshold,
+        those tables will be automatically selected and there will not be an
+        iterative table selection process.""")
+
+    prompts = param.Dict(
+        default={
+            "refine_query": {
+                "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
+                "response_model": make_refined_query_model,
+            },
+            "iterative_selection": {
+                "template": PROMPTS_DIR / "IterativeTableLookup" / "iterative_selection.jinja2",
+                "response_model": make_iterative_selection_model,
+            },
+        },
+    )
+
+    async def _select_tables(self, sources, messages, closest_tables, table_similarities):
+        """
+        Performs an iterative table selection process to gather context.
+        This function:
+        1. From the top tables in TableLookup results, presents all tables and columns to the LLM
+        2. Has the LLM select ~3 tables for deeper examination
+        3. Gets complete schemas for these tables
+        4. Repeats until the LLM is satisfied with the context
+        """
+        if not sources:
+            return {}
+
+        # # For small number of tables, just use the basic approach
+        # if len(closest_tables) <= 5:
+        #     return await super()._select_tables(sources, messages, closest_tables, table_similarities)
+
+        max_iterations = self.max_selection_iterations
+        tables_info = self._memory.get("tables_info", {})
+        examined_slugs = set(tables_info.keys())
+
+        for iteration in range(1, max_iterations + 1):
+            log_debug(f"Iterative table selection iteration {iteration} / {max_iterations}")
+
+            available_slugs = [
+                table_slug for table_slug in closest_tables
+                if table_slug not in examined_slugs
+            ]
+            if not available_slugs:
+                log_debug("No more tables available to examine")
+                break
+
+            fast_track = False
+            if iteration == 1:
+                # For the first iteration, select tables based on similarity
+                # If any tables have a similarity score above the threshold, select up to 5 of those tables
+                if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
+                    closest_tables = selected_slugs = sorted(
+                        table_similarities,
+                        key=lambda x: table_similarities[x],
+                        reverse=True
+                    )[:5]
+                    log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_slugs)}")
+                    fast_track = True
+                else:
+                    # If not, select the top 3 tables to examine
+                    selected_slugs = available_slugs[:3]
+            log_debug(f"Selected initial tables: {', '.join(selected_slugs)}")
+
+            # For subsequent iterations, the LLM selects tables in the previous iteration
+            with self._add_step(title="Fetching detailed schemas") as step:
+                step.stream(f"Fetching detailed schema information for {len(selected_slugs)} tables\n")
+                tables_schema = []
+                for table_slug in selected_slugs:
+                    table_info = await fetch_table_info(sources, table_slug, include_count=True)
+                    tables_schema.append(table_info)
+                    stream_details(f"```json\n{table_info}\n```", step, title=table_slug)
+
+            for table_slug, schema_data in tables_schema:
+                tables_info[table_slug] = schema_data
+                examined_slugs.add(table_slug)
+
+            if fast_track:
+                # based on similarity search alone, if we have selected tables, we're done!!
+                break
+
+            try:
+                # Render the prompt using the proper template system
+                system = await self._render_prompt(
+                    "iterative_selection",
+                    messages,
+                    current_query=messages[-1]["content"],
+                    available_slugs=available_slugs,
+                    examined_slugs=examined_slugs,
+                    separator=SOURCE_TABLE_SEPARATOR,
+                    current_schemas=tables_info,
+                    iteration=iteration
+                )
+
+                log_debug(f"Selecting tables from {len(available_slugs)} available options")
+
+                # Get the model from the prompt definition
+                model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
+                tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
+
+                output = await self.llm.invoke(
+                    messages,
+                    system=system,
+                    model_spec=model_spec,
+                    response_model=tables_model,
+                )
+
+                selected_slugs = output.selected_slugs or []
+                log_debug(f"Selected tables: {', '.join(selected_slugs)}")
+
+                # Check if we're done with table selection
+                if output.is_satisfied or not available_slugs:
+                    log_debug("Selection process complete - model is satisfied with selected tables")
+                    break
+            except Exception as e:
+                log_debug(f"Error during table selection: {e!s}")
+                break
+
+        tables_info = {
+            table_slug: schema_data for table_slug, schema_data in tables_info.items()
+            if table_slug in (selected_slugs or [])  # prevent it from getting too big and waste token
+        }
+        return tables_info
 
 
 class FunctionTool(Tool):
+
     """
     FunctionTool wraps arbitrary functions and makes them available as a tool
     for an LLM to call. It inspects the arguments of the function and generates

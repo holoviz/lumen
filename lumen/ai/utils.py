@@ -13,7 +13,7 @@ from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
 from textwrap import dedent
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
 import pandas as pd
@@ -27,6 +27,7 @@ from markupsafe import escape
 from lumen.pipeline import Pipeline
 
 from ..util import log
+from .components import Details
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
     RetriesExceededError,
@@ -48,6 +49,45 @@ def format_float(num):
         return f"{num:.1f}"  # Regular floating-point notation with one decimal
     else:
         return f"{num:.1e}"  # Exponential notation with one decimal
+
+
+def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict]:
+    """
+    Fuses the chat history into a single system message, followed by the last user message.
+    This function is reusable across different components that need to combine
+    multiple messages into a simplified format for LLM processing.
+
+    Parameters
+    ----------
+    messages : list[dict]
+        List of message dictionaries with 'role' and 'content' keys
+    max_user_messages : int
+        Maximum number of user messages to include in the history
+
+    Returns
+    -------
+    list[dict]
+        Processed messages with the chat history as a system message
+    """
+    user_indices = [i for i, msg in enumerate(messages) if msg['role'] == 'user']
+    if user_indices:
+        first_user_index = user_indices[0] if len(user_indices) <= max_user_messages else user_indices[-max_user_messages]
+        last_user_index = user_indices[-1]
+        last_user_message = messages[last_user_index]
+    else:
+        first_user_index = 0
+        last_user_index = -1
+    history_messages = messages[first_user_index:last_user_index]
+    if not history_messages:
+        return [last_user_message] if user_indices else []
+    formatted_history = "\n\n".join(
+        f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_messages if msg['content'].strip()
+    )
+    system_prompt = {
+        "role": "system",
+        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+    }
+    return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
 
 def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
@@ -260,7 +300,43 @@ async def get_schema(
     return schema
 
 
-async def format_table_schema(
+async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_kwargs):
+    """
+    Fetch the schema for a single table from a data source.
+
+    Parameters
+    ----------
+    table_slug : str
+        Table name in format "source_name{SEP}table_name"
+    **get_schema_kwargs
+        Additional keyword arguments to pass to the get_schema method
+
+    Returns
+    -------
+    tuple
+        (table_slug, schema_data) where table_slug is the normalized table name
+        and schema_data is a dict with the schema information
+    """
+    if SOURCE_TABLE_SEPARATOR in table_slug:
+        source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+        source_obj = sources.get(source_name)
+    else:
+        source_obj = next(iter(sources.values()))
+        table_name = table_slug
+        table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+
+    table_info = await get_schema(source_obj, table_name, **get_schema_kwargs)
+    normalized_table_name = source_obj.normalize_table(table_name)
+    result = {
+        "schema": yaml.dump(table_info),
+        "source": source_obj.name,
+        "sql_table": normalized_table_name,
+        "sql": source_obj.get_sql_expr(normalized_table_name),
+    }
+    return table_slug, result
+
+
+async def format_table_info(
     source: Source, table_name: str, prefix_table: bool = True,
     as_slug: bool = False, limit: int = 5, **get_schema_kwargs
 ) -> str:
@@ -385,13 +461,58 @@ def clean_sql(sql_expr):
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = ""):
     error_msg = str(exc)
-    step.stream(f'\n```{language}\n{error_msg}\n```\n')
+    stream_details(f'\n```{language}\n{error_msg}\n```\n', step)
     if context:
         step.stream(context)
     if len(error_msg) > 50:
         error_msg = error_msg[:50] + "..."
     step.failed_title = error_msg
     step.status = "failed"
+
+
+def stream_details(content: Any, step: Any, title: str | None = None, **stream_kwargs) -> str:
+    """
+    Process content to place code blocks inside collapsible details elements
+
+    Parameters
+    ----------
+    content : str
+        The content to format
+    step : Any
+        The chat step to stream the formatted content to, or NullStep if interface is None
+
+    Returns
+    -------
+    str
+        The formatted content with code blocks in details components
+    """
+    if not hasattr(step, 'stream') or not hasattr(step, 'append'):
+        # If the step is a NullStep without append method, just log the content
+        log_debug(content)
+        return content
+
+    pattern = r'```([\w-]*)\n(.*?)```'
+    last_end = 0
+    replace = stream_kwargs.pop("replace", False)
+    for i, match in enumerate(re.finditer(pattern, content, re.DOTALL)):
+        if match.start() > last_end:
+            step.stream(content[last_end:match.start()], replace=replace if i == 0 else False, **stream_kwargs)
+
+        language = match.group(1)
+        code = match.group(2)
+
+        details = Details(
+            title=title or "Expand to see details",
+            object=f"```{language}\n\n{code}\n\n```",
+            collapsed=True,
+            margin=(-5, 20, 15, 20),
+        )
+        step.append(details)
+        last_end = match.end()
+
+    if last_end < len(content):
+        step.stream(content[last_end:], **stream_kwargs)
+    return content
 
 
 def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
@@ -516,7 +637,7 @@ def load_json(json_spec: str) -> dict:
     return json.loads(json_spec.encode().decode('unicode_escape'))
 
 
-def separate_source_table(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
     if SOURCE_TABLE_SEPARATOR in table:
         a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
         a_source_obj = sources.get(a_source_name)
