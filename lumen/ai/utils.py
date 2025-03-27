@@ -157,6 +157,7 @@ def retry_llm_output(retries=3, sleep=1):
             async def async_wrapper(*args, **kwargs):
                 errors = []
                 for i in range(retries):
+                    log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
                     if errors:
                         kwargs["errors"] = errors
                     try:
@@ -166,6 +167,7 @@ def retry_llm_output(retries=3, sleep=1):
                         return output
                     except Exception as e:
                         if isinstance(e, UNRECOVERABLE_ERRORS):
+                            log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
                         elif i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
@@ -181,6 +183,7 @@ def retry_llm_output(retries=3, sleep=1):
             def sync_wrapper(*args, **kwargs):
                 errors = []
                 for i in range(retries):
+                    log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
                     if errors:
                         kwargs["errors"] = errors
                     try:
@@ -190,10 +193,12 @@ def retry_llm_output(retries=3, sleep=1):
                         return output
                     except Exception as e:
                         if isinstance(e, UNRECOVERABLE_ERRORS):
+                            log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
                         elif i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
+                        traceback.print_exc()
                         if sleep:
                             time.sleep(sleep)
 
@@ -209,6 +214,8 @@ async def get_schema(
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
+    include_null_types: bool = False,
+    include_nans: bool = False,
     shuffle: bool = True,
     **get_kwargs
 ):
@@ -235,12 +242,14 @@ async def get_schema(
                 min_val = spec.pop("inclusiveMinimum")
                 if isinstance(min_val, (int, float)):
                     min_val = format_float(min_val)
-                spec["min"] = min_val
+                if include_nans or not pd.isna(min_val):
+                    spec["min"] = min_val
             if "inclusiveMaximum" in spec:
                 max_val = spec.pop("inclusiveMaximum")
                 if isinstance(max_val, (int, float)):
                     max_val = format_float(max_val)
-                spec["max"] = max_val
+                if include_nans or not pd.isna(max_val):
+                    spec["max"] = max_val
     else:
         for field, spec in schema.items():
             if "inclusiveMinimum" in spec:
@@ -255,6 +264,9 @@ async def get_schema(
     num_cols = len(schema)
     for field, spec in schema.items():
         if "type" in spec:
+            if not include_null_types and spec["type"] is None:
+                spec.pop("type")
+                continue
             if spec["type"] == "string":
                 spec["type"] = "str"
             elif spec["type"] == "integer":
@@ -300,7 +312,7 @@ async def get_schema(
     return schema
 
 
-async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_kwargs):
+async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_kwargs) -> dict:
     """
     Fetch the schema for a single table from a data source.
 
@@ -333,7 +345,7 @@ async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_
         "sql_table": normalized_table_name,
         "sql": source_obj.get_sql_expr(normalized_table_name),
     }
-    return table_slug, result
+    return result
 
 
 async def format_table_info(
@@ -461,7 +473,7 @@ def clean_sql(sql_expr):
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = ""):
     error_msg = str(exc)
-    stream_details(f'\n```{language}\n{error_msg}\n```\n', step)
+    stream_details(f'\n\n```{language}\n{error_msg}\n```\n', step, title="Error")
     if context:
         step.stream(context)
     if len(error_msg) > 50:
@@ -499,7 +511,7 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
     pattern = r'```([\w-]*)\n(.*?)```'
     last_end = 0
     if not auto:
-        details = Details(content, title=title, collapsed=True, margin=(-5, 20, 15, 20))
+        details = Details(content, title=title, collapsed=True, margin=(-5, 20, 5, 20), sizing_mode="stretch_width")
         step.append(details, **stream_kwargs)
         return content
 
@@ -514,7 +526,8 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
             f"```{language}\n\n{code}\n\n```",
             title=title or "Expand to see details",
             collapsed=True,
-            margin=(-5, 20, 15, 20),
+            margin=(-5, 20, 0, 20),
+            sizing_mode="stretch_width",
         )
         step.append(details)
         last_end = match.end()

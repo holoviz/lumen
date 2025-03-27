@@ -537,25 +537,17 @@ class SQLAgent(LumenBaseAgent):
         errors=None
     ):
         if errors:
-            last_content = self.interface.objects[-1].object[-1][-1].object
-            sql_code_match = re.search(r'(?s)```sql\s*(.*?)```', last_content, re.DOTALL)
-            chain_of_thought = last_content.split("```")[0]
-            if sql_code_match:
-                last_query = sql_code_match.group(1)
-            else:
-                return
+            last_query = self._memory["sql"]
             num_errors = len(errors)
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
             content = (
                 f"\n\nYou are a world-class SQL user. Identify why this query failed:\n```sql\n{last_query}\n```\n\n"
                 f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors}\n```\n\n"
-                f"Please build upon your previous thought: {chain_of_thought!r}, but note, a penalty of $100 will be incurred "
-                f"for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
+                f"Note a penalty of $100 will be incurred for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
                 f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
                 f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present."
             )
             messages = mutate_user_message(content, messages)
-            log_debug("\033[91mRetry SQLAgent\033[0m")
 
         join_required = len(tables_to_source) > 1
         comments = comments if join_required else ""  # comments are about joins
@@ -579,7 +571,8 @@ class SQLAgent(LumenBaseAgent):
                 if output.query:
                     sql_query = clean_sql(output.query)
                 if sql_query and output.expr_slug:
-                    stream_details(f"\n```sql\n{sql_query}\n```", step, title=f"`{output.expr_slug}` SQL", auto=False)
+                    step.stream(f"\n`{output.expr_slug}`\n```sql\n{sql_query}\n```", replace=True)
+                self._memory["sql"] = sql_query
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled SQL query generation"
                 raise e
@@ -626,7 +619,7 @@ class SQLAgent(LumenBaseAgent):
             for sql_transform in sql_transforms:
                 transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
                 if transformed_sql_query != sql_query:
-                    stream_details(f'\n\nSQL after applying {sql_transform.__class__.__name__}:\n\n```sql\n{transformed_sql_query}\n```', step)
+                    stream_details(f'```sql\n{transformed_sql_query}\n```', step, title=f"{sql_transform.__class__.__name__} Applied")
             pipeline = await get_pipeline(
                 source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
             )
@@ -646,7 +639,6 @@ class SQLAgent(LumenBaseAgent):
         self._memory["source"] = sql_expr_source
         self._memory["pipeline"] = pipeline
         self._memory["table"] = pipeline.table
-        self._memory["sql"] = sql_query
         return sql_query
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
@@ -655,14 +647,11 @@ class SQLAgent(LumenBaseAgent):
     @retry_llm_output()
     async def _find_tables(self, messages: list[Message], errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
         if errors:
-            last_content = self.interface.objects[-1].object[-1][-1].object
-            chain_of_thought = last_content.split("```")[0]
             content = (
                 "Your goal is to try to address the question while avoiding these issues:\n"
                 f"```\n{errors}\n```\n\n"
             )
             messages = mutate_user_message(content, messages)
-            log_debug("\033[91mRetry find_tables\033[0m")
 
         sources = {source.name: source for source in self._memory["sources"]}
         selected_slugs = list(self._memory["tables_info"])
@@ -683,13 +672,13 @@ class SQLAgent(LumenBaseAgent):
                 )
                 async for output in response:
                     chain_of_thought = output.chain_of_thought or ""
-                    selected_slugs = output.selected_tables
                     if output.potential_join_issues is not None:
                         chain_of_thought += output.potential_join_issues
                     step.stream(chain_of_thought, replace=True)
-                    if selected_slugs:
-                        stream_details('\n- '.join(selected_slugs), step, title="Relevant tables", auto=False)
-                step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
+
+                if selected_slugs := output.selected_tables:
+                    stream_details('\n'.join(selected_slugs), step, title="Relevant tables", auto=False)
+                    step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
         tables_to_source = {}
         for table_slug in selected_slugs:

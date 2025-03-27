@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import re
 
 from pathlib import Path
@@ -15,7 +16,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from ..transforms.sql import SQLFilter
-from .base import BaseSQLSource, cached
+from .base import BaseSQLSource, cached, cached_schema
 
 # PEM certificates have the pattern:
 #   -----BEGIN PKEY-----  # renamed private... to pkey to prevent ruff from flagging
@@ -88,6 +89,9 @@ class SnowflakeSource(BaseSQLSource):
         The items can be fully qualified (database.schema.table), partially
         qualified (schema.table), simply table names, or wildcards
         (e.g. database.schema.*).""")
+
+    schema_timeout_seconds = param.Integer(default=30, doc="""
+        Timeout in seconds for schema retrieval. If None, no timeout is applied.""")
 
     dialect = 'snowflake'
 
@@ -248,6 +252,61 @@ class SnowflakeSource(BaseSQLSource):
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
+
+    @contextlib.contextmanager
+    def _timeout_context(self, seconds=None):
+        """Context manager to apply a timeout for operations using Snowflake's
+        ALTER SESSION statement to set a query timeout.
+
+        Parameters
+        ----------
+        seconds : int or None
+            Timeout in seconds. If None, no timeout is applied.
+        """
+        if seconds is None:
+            yield
+            return
+
+        try:
+            # Set the timeout in seconds
+            self._cursor.execute(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {seconds}")
+            yield
+        finally:
+            # Restore the original timeout
+            self._cursor.execute("ALTER SESSION UNSET STATEMENT_TIMEOUT_IN_SECONDS")
+
+    @cached_schema
+    def get_schema(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
+        """Returns JSON schema describing the tables returned by the Source.
+
+        Parameters
+        ----------
+        table : str | None
+            The name of the table to return the schema for. If None
+            returns schema for all available tables.
+        limit : int | None
+            Limits the number of rows considered for the schema calculation
+        shuffle : bool
+            Whether to shuffle the rows when sampling
+
+        Returns
+        -------
+        dict
+            JSON schema(s) for one or all the tables.
+        """
+        try:
+            with self._timeout_context(self.schema_timeout_seconds):
+                return super().get_schema(table, limit, shuffle)
+        except snowflake.connector.errors.ProgrammingError as e:
+            if "exceeded" in str(e) and "timeout" in str(e).lower():
+                self.param.warning(f"Schema retrieval timed out: {e}")
+            else:
+                # Re-raise if it's not a timeout error
+                raise
+            if table is None:
+                return {t: {} for t in self.get_tables()}
+            else:
+                return {}
 
     def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
         """
