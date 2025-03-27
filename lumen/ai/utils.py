@@ -656,3 +656,10 @@ def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = T
     if normalize:
         a_table = a_source_obj.normalize_table(a_table)
     return a_source_obj, a_table
+
+
+def truncate_string(s, max_length=20, ellipsis="..."):
+    if len(s) <= max_length:
+        return s
+    part_length = (max_length - len(ellipsis)) // 2
+    return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"

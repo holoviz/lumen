@@ -17,7 +17,9 @@ from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import make_iterative_selection_model, make_refined_query_model
 from .translate import function_to_model
-from .utils import fetch_table_sql_info, log_debug, stream_details
+from .utils import (
+    fetch_table_sql_info, log_debug, stream_details, truncate_string,
+)
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -310,7 +312,7 @@ class DocumentLookup(VectorLookupTool):
         for i, result in enumerate(results):
             metadata = result.get('metadata', {})
             filename = metadata.get('filename', 'Unknown document')
-            text_preview = result.get('text', '')[:150] + '...' if len(result.get('text', '')) > 150 else result.get('text', '')
+            text_preview = truncate_string(result.get('text', ''), max_length=150)
 
             description = f"- {filename} (Similarity: {result.get('similarity', 0):.3f})"
             if text_preview:
@@ -550,7 +552,7 @@ class TableLookup(VectorLookupTool):
                         continue
                     if i <= 15:
                         # Save on tokens by truncating long column names and letting the LLM infer the rest
-                        col_label = col_name if len(col_name) <= 20 else f"{col_name[:10]}...{col_name[-10:]}"
+                        col_label = truncate_string(col_name, max_length=20)
                         columns_description += f"\n- {col_label}{col_desc}"
                     else:
                         columns_description += f"\n  ... (out of {len(table_metadata['columns'])} columns)"
@@ -720,7 +722,9 @@ class IterativeTableLookup(TableLookup):
                     step.stream(f"`{table_name}` (Similarity: {similarity:.2f})")
                     stream_details(caption, step, title="Caption", auto=False)
                     try:
-                        view_definition = self._tables_metadata.get(table_slug, {}).get("view_definition", "")
+                        view_definition = truncate_string(
+                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""), max_length=2000
+                        )
                         table_sql_info = await fetch_table_sql_info(
                             sources,
                             table_slug,
@@ -765,7 +769,7 @@ class IterativeTableLookup(TableLookup):
                 context += f"\n- {col}{col_description}"
                 schema = tables_sql_info.get(table_slug, {}).get("schema", {})
                 if "view_definition" in schema:
-                    context += f"\n  View definition:\n```sql\n{schema['view_definition'][:4000]}\n```"
+                    context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
                 elif col in schema:
                     context += f": {schema[col]}"
         return context
