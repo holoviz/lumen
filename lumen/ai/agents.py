@@ -654,14 +654,17 @@ class SQLAgent(LumenBaseAgent):
         sources = {source.name: source for source in self._memory["sources"]}
         selected_slugs = list(self._memory["tables_sql_info"])
 
+        if len(selected_slugs) == 0:
+            raise ValueError("No tables found in memory.")
+
         chain_of_thought = ""
-        if len(selected_slugs) > 1:
-            system = await self._render_prompt(
-                "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
-            )
-            find_tables_model = self._get_model("find_tables", tables=selected_slugs)
-            model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-            with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+            if len(selected_slugs) > 1:
+                system = await self._render_prompt(
+                    "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
+                )
+                find_tables_model = self._get_model("find_tables", tables=selected_slugs)
+                model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
                 response = self.llm.stream(
                     messages,
                     system=system,
@@ -678,10 +681,11 @@ class SQLAgent(LumenBaseAgent):
                     stream_details('\n'.join(selected_slugs), step, title="Relevant tables", auto=False)
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
-        tables_to_source = {}
-        for table_slug in selected_slugs:
-            a_source_obj, a_table = parse_table_slug(table_slug, sources)
-            tables_to_source[a_table] = a_source_obj
+            tables_to_source = {}
+            for table_slug in selected_slugs:
+                a_source_obj, a_table = parse_table_slug(table_slug, sources)
+                tables_to_source[a_table] = a_source_obj
+                step.stream(f"Planning to use: {table_slug!r}")
 
         return tables_to_source, chain_of_thought
 

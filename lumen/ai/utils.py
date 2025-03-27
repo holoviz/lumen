@@ -339,7 +339,7 @@ async def fetch_table_sql_info(sources: dict[str, Source], table_slug: str, view
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
     if view_definition:
-        schema = {"view_definition": view_definition[:4000]}
+        schema = {"view_definition": view_definition}
     else:
         schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
     normalized_table_name = source_obj.normalize_table(table_name)
@@ -663,3 +663,22 @@ def truncate_string(s, max_length=20, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def format_info(tables_vector_info: dict, tables_sql_info: dict) -> str:
+    context = "Below are the relevant tables:\n"
+    for table_slug, table_vector_info in tables_vector_info.items():
+        if table_slug not in tables_sql_info:
+            continue
+        table_description = table_vector_info.get("description", "")
+        context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
+        schema = tables_sql_info.get(table_slug, {}).get("schema", {})
+        if "view_definition" in schema:
+            context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
+            return context
+
+        for col, col_description in table_vector_info.get("columns_description", {}).items():
+            context += f"\n- {col}{col_description}"
+            if col in schema:
+                context += f": {schema[col]}"
+    return context

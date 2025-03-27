@@ -18,7 +18,8 @@ from .llm import Message
 from .models import make_iterative_selection_model, make_refined_query_model
 from .translate import function_to_model
 from .utils import (
-    fetch_table_sql_info, log_debug, stream_details, truncate_string,
+    fetch_table_sql_info, format_info, log_debug, stream_details,
+    truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -460,7 +461,7 @@ class TableLookup(VectorLookupTool):
         if description := table_vector_info.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
         if self.include_columns and (columns := table_vector_info.pop('columns', {})):
-            enriched_text += "\nColumns:"
+            enriched_text += "\nCols:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
                 if col_info.get("description"):
@@ -541,7 +542,7 @@ class TableLookup(VectorLookupTool):
                     tables_vector_info[table_slug]["description"] = table_description
 
                 columns = table_metadata.get("columns", {})
-                columns_description = "Columns:" if columns else ""
+                columns_description = "Cols:" if columns else ""
                 tables_vector_info[table_slug]["columns_description"] = {}
                 already_truncated = False
                 for i, (col_name, col_info) in enumerate(columns.items()):
@@ -671,6 +672,7 @@ class IterativeTableLookup(TableLookup):
                     try:
                         step.stream(f"Selecting tables from {len(available_slugs)} available options\n\n")
                         # Render the prompt using the proper template system
+
                         system = await self._render_prompt(
                             "iterative_selection",
                             messages,
@@ -705,13 +707,15 @@ class IterativeTableLookup(TableLookup):
                             step.stream("Selection process complete - model is satisfied with selected tables")
                             satisfied_slugs = selected_slugs
                             break
-                        if iteration != 1:
+                        if iteration != max_iterations:
                             step.stream("Unsatisfied with selected tables - continuing selection process...")
-                        elif iteration == max_iterations:
+                        else:
                             step.stream("Maximum iterations reached - stopping selection process")
+                            satisfied_slugs = selected_slugs or list(examined_slugs)
+                            break
                     except Exception as e:
                         stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
-                        break
+                        continue
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
@@ -723,7 +727,7 @@ class IterativeTableLookup(TableLookup):
                     stream_details(caption, step, title="Caption", auto=False)
                     try:
                         view_definition = truncate_string(
-                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""), max_length=2000
+                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""), max_length=300
                         )
                         table_sql_info = await fetch_table_sql_info(
                             sources,
@@ -737,9 +741,6 @@ class IterativeTableLookup(TableLookup):
                     except Exception as e:
                         failed_slugs.append(table_slug)
                         stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
-
-                log_debug(f"Examined slugs: {examined_slugs}")
-                log_debug(f"Available slugs: {available_slugs}")
 
                 if fast_track:
                     step.stream("Fast-tracked selection process based on similarity threshold.")
@@ -759,20 +760,7 @@ class IterativeTableLookup(TableLookup):
         """Combines tables vector and sql info into a single context string."""
         tables_vector_info = self._memory.get("tables_vector_info", {})
         tables_sql_info = self._memory.get("tables_sql_info", {})
-        context = "Below are the relevant tables and their descriptions."
-        for table_slug, table_vector_info in tables_vector_info.items():
-            if table_slug not in tables_sql_info:
-                continue
-            table_description = table_vector_info.get("description", "")
-            context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
-            for col, col_description in table_vector_info.get("columns_description", {}).items():
-                context += f"\n- {col}{col_description}"
-                schema = tables_sql_info.get(table_slug, {}).get("schema", {})
-                if "view_definition" in schema:
-                    context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
-                elif col in schema:
-                    context += f": {schema[col]}"
-        return context
+        return format_info(tables_vector_info, tables_sql_info)
 
 
 class FunctionTool(Tool):
