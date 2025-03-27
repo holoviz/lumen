@@ -187,7 +187,7 @@ class VectorLookupTool(Tool):
                 step.status = "failed"
             return original_query
 
-    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[list[dict[str, Any]]]:
+    async def _perform_search_with_refinement(self, query: str, **kwargs) -> list[dict[str, Any]]:
         """
         Performs a vector search with optional query refinement.
 
@@ -214,6 +214,9 @@ class VectorLookupTool(Tool):
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}\n\n")
+            stream_details("\n".join(
+                result['metadata']["table_name"] for result in results
+            ), step, title=f"{len(results)} {self._item_type_name}", auto=False)
 
             refinement_history = []
             if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
