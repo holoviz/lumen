@@ -641,6 +641,7 @@ class IterativeTableLookup(TableLookup):
         failed_slugs = []
 
         satisfied_slugs = []
+        selected_slugs = []
         chain_of_thought = ""
         for iteration in range(1, max_iterations + 1):
             with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
@@ -648,6 +649,7 @@ class IterativeTableLookup(TableLookup):
                     table_slug for table_slug in closest_tables
                     if table_slug not in examined_slugs
                 ]
+                log_debug(available_slugs)
                 if not available_slugs:
                     step.stream("No more tables available to examine.")
                     break
@@ -664,13 +666,53 @@ class IterativeTableLookup(TableLookup):
                         )[:5]
                         step.stream("Selected tables based on similarity threshold.\n\n")
                         fast_track = True
-                    else:
-                        # If not, select the top 3 tables to examine
-                        selected_slugs = available_slugs[:3]
-                        step.stream("Selected initial tables.\n\n")
 
-                # For subsequent iterations, the LLM selects tables in the previous iteration
-                step.stream("Fetching detailed schema information for tables\n")
+                if not fast_track:
+                    try:
+                        step.stream(f"Selecting tables from {len(available_slugs)} available options\n\n")
+                        # Render the prompt using the proper template system
+                        system = await self._render_prompt(
+                            "iterative_selection",
+                            messages,
+                            chain_of_thought=chain_of_thought,
+                            current_query=messages[-1]["content"],
+                            available_slugs=available_slugs,
+                            examined_slugs=examined_slugs,
+                            selected_slugs=selected_slugs,
+                            failed_slugs=failed_slugs,
+                            separator=SOURCE_TABLE_SEPARATOR,
+                            tables_info=tables_info,
+                            iteration=iteration,
+                            max_iterations=max_iterations,
+                        )
+                        model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
+                        find_tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
+                        output = await self.llm.invoke(
+                            messages,
+                            system=system,
+                            model_spec=model_spec,
+                            response_model=find_tables_model,
+                        )
+
+                        selected_slugs = output.selected_slugs or []
+                        chain_of_thought = output.chain_of_thought
+                        step.stream(chain_of_thought)
+                        stream_details('\n'.join(selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
+
+                        # Check if we're done with table selection
+                        if output.is_done or not available_slugs:
+                            step.stream("Selection process complete - model is satisfied with selected tables")
+                            satisfied_slugs = selected_slugs
+                            break
+                        if iteration != max_iterations:
+                            step.stream("Unsatisfied with selected tables - continuing selection process")
+                        else:
+                            step.stream("Maximum iterations reached - stopping selection process")
+                    except Exception as e:
+                        stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
+                        break
+
+                step.stream("\nFetching detailed schema information for tables\n")
                 tables_schema = []
                 for table_slug in selected_slugs:
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
@@ -688,57 +730,13 @@ class IterativeTableLookup(TableLookup):
                     tables_info[table_slug] = schema_data
                     examined_slugs.add(table_slug)
 
+                log_debug(f"Examined slugs: {examined_slugs}")
+                log_debug(f"Available slugs: {available_slugs}")
+
                 if fast_track:
                     step.stream("Fast-tracked selection process based on similarity threshold.")
                     satisfied_slugs = selected_slugs
                     # based on similarity search alone, if we have selected tables, we're done!!
-                    break
-
-                log_debug(f"Examined slugs: {examined_slugs}")
-                log_debug(f"Available slugs: {available_slugs}")
-
-                try:
-                    step.stream(f"Selecting tables from {len(available_slugs)} available options\n\n")
-                    # Render the prompt using the proper template system
-                    system = await self._render_prompt(
-                        "iterative_selection",
-                        messages,
-                        chain_of_thought=chain_of_thought,
-                        current_query=messages[-1]["content"],
-                        available_slugs=available_slugs,
-                        examined_slugs=examined_slugs,
-                        selected_slugs=selected_slugs,
-                        failed_slugs=failed_slugs,
-                        separator=SOURCE_TABLE_SEPARATOR,
-                        tables_info=tables_info,
-                        iteration=iteration,
-                        max_iterations=max_iterations,
-                    )
-                    model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
-                    find_tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
-                    output = await self.llm.invoke(
-                        messages,
-                        system=system,
-                        model_spec=model_spec,
-                        response_model=find_tables_model,
-                    )
-
-                    selected_slugs = output.selected_slugs or []
-                    chain_of_thought = output.chain_of_thought
-                    step.stream(chain_of_thought)
-                    stream_details('\n'.join(selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
-
-                    # Check if we're done with table selection
-                    if output.is_done or not available_slugs:
-                        step.stream("Selection process complete - model is satisfied with selected tables")
-                        satisfied_slugs = selected_slugs
-                        break
-                    if iteration != max_iterations:
-                        step.stream("Unsatisfied with selected tables - continuing selection process")
-                    else:
-                        step.stream("Maximum iterations reached - stopping selection process")
-                except Exception as e:
-                    stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
                     break
 
         tables_info = {
