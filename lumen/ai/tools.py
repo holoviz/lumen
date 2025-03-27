@@ -187,7 +187,7 @@ class VectorLookupTool(Tool):
                 step.status = "failed"
             return original_query
 
-    async def _perform_search_with_refinement(self, query: str, **kwargs) -> tuple[list[dict[str, Any]]]:
+    async def _perform_search_with_refinement(self, query: str, **kwargs) -> list[dict[str, Any]]:
         """
         Performs a vector search with optional query refinement.
 
@@ -208,12 +208,15 @@ class VectorLookupTool(Tool):
         iteration = 0
 
         with self._add_step(title="Vector Search with Refinement") as step:
-            step.stream("Performing initial search'\n\n")
-            stream_details(query, step, title="Initial query")
+            step.stream("Performing initial search\n\n")
+            stream_details(query, step, title="Initial query", auto=False)
             results = self.vector_store.query(query, top_k=self.n, **kwargs)
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}\n\n")
+            stream_details("\n".join(
+                result['metadata']["table_name"] for result in results
+            ), step, title=f"{len(results)} {self._item_type_name}", auto=False)
 
             refinement_history = []
             if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
@@ -513,14 +516,20 @@ class TableLookup(VectorLookupTool):
 
     async def _select_tables(self, sources, messages, closest_tables, table_similarities):
         """Select tables to include in the response."""
-        with self._add_step(title="Fetching schemas") as step:
-            step.stream(f"Fetching schemas for {len(closest_tables)} tables\n")
+        with self._add_step(title="Fetching schemas", success_title="Fetching completed") as step:
+            step.stream(f"Fetching schemas for {len(closest_tables[:3])} tables\n")
             tables_info = {}
-            for table_slug in closest_tables:
-                table_info = await fetch_table_info(sources, table_slug, include_count=True)
-                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                stream_details(f"```json\n{table_info}\n```", step, title=table_name)
-                tables_info[table_slug] = table_info
+            for table_slug in closest_tables[:3]:
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].split(".")[-1]
+                table_similarity = table_similarities[table_slug]
+                step.stream(f"`{table_name}` (Similarity: {table_similarity:.2f})")
+                try:
+                    table_info = await fetch_table_info(sources, table_slug, include_count=True)
+                    tables_info[table_slug] = table_info
+                    schema = table_info["schema"]
+                    stream_details(f"```yaml\n{schema}\n```", step, title="Schema")
+                except Exception as e:
+                    stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
         return tables_info
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
@@ -572,9 +581,12 @@ class TableLookup(VectorLookupTool):
         tables_info = await self._select_tables(sources, messages, closest_tables, table_similarities)
 
         self._memory["tables_info"] = tables_info
+        tables_info_str = ""
+        for table_slug, table_info in tables_info.items():
+            sql = table_info["sql"]
+            tables_info_str += f"\n```\n{table_slug}\n`{sql}`\n{table_info['schema']}\n```\n"
         context = (
-            f"\n\nBelow are the relevant tables and their schemas."
-            f"\n\n```json\n{tables_info}\n```"
+            "\n\nBelow are the relevant tables and their schemas.\n" + tables_info_str
         )
         return context
 
@@ -623,99 +635,113 @@ class IterativeTableLookup(TableLookup):
             return {}
 
         # # For small number of tables, just use the basic approach
-        # if len(closest_tables) <= 5:
-        #     return await super()._select_tables(sources, messages, closest_tables, table_similarities)
+        if len(closest_tables) <= 5:
+            return await super()._select_tables(sources, messages, closest_tables, table_similarities)
 
         max_iterations = self.max_selection_iterations
         tables_info = self._memory.get("tables_info", {})
         examined_slugs = set(tables_info.keys())
+        failed_slugs = []
 
+        satisfied_slugs = []
+        selected_slugs = []
+        chain_of_thought = ""
         for iteration in range(1, max_iterations + 1):
-            log_debug(f"Iterative table selection iteration {iteration} / {max_iterations}")
-
-            available_slugs = [
-                table_slug for table_slug in closest_tables
-                if table_slug not in examined_slugs
-            ]
-            if not available_slugs:
-                log_debug("No more tables available to examine")
-                break
-
-            fast_track = False
-            if iteration == 1:
-                # For the first iteration, select tables based on similarity
-                # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-                    closest_tables = selected_slugs = sorted(
-                        table_similarities,
-                        key=lambda x: table_similarities[x],
-                        reverse=True
-                    )[:5]
-                    log_debug(f"Selected tables based on similarity threshold: {', '.join(selected_slugs)}")
-                    fast_track = True
-                else:
-                    # If not, select the top 3 tables to examine
-                    selected_slugs = available_slugs[:3]
-            log_debug(f"Selected initial tables: {', '.join(selected_slugs)}")
-
-            # For subsequent iterations, the LLM selects tables in the previous iteration
-            with self._add_step(title=f"Fetching detailed schemas ({iteration} / {max_iterations})") as step:
-                step.stream(f"Fetching detailed schema information for {len(selected_slugs)} tables\n")
-                tables_schema = []
-                for table_slug in selected_slugs:
-                    table_info = await fetch_table_info(sources, table_slug, include_count=True)
-                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                    stream_details(f"```json\n{table_info}\n```", step, title=table_name)
-                    tables_schema.append(table_info)
-
-            for table_slug, schema_data in tables_schema:
-                tables_info[table_slug] = schema_data
-                examined_slugs.add(table_slug)
-
-            if fast_track:
-                # based on similarity search alone, if we have selected tables, we're done!!
-                break
-
-            try:
-                # Render the prompt using the proper template system
-                system = await self._render_prompt(
-                    "iterative_selection",
-                    messages,
-                    current_query=messages[-1]["content"],
-                    available_slugs=available_slugs,
-                    examined_slugs=examined_slugs,
-                    separator=SOURCE_TABLE_SEPARATOR,
-                    current_schemas=tables_info,
-                    iteration=iteration
-                )
-
-                log_debug(f"Selecting tables from {len(available_slugs)} available options")
-
-                # Get the model from the prompt definition
-                model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
-                find_tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
-
-                output = await self.llm.invoke(
-                    messages,
-                    system=system,
-                    model_spec=model_spec,
-                    response_model=find_tables_model,
-                )
-
-                selected_slugs = output.selected_slugs or []
-                log_debug(f"Selected tables: {', '.join(selected_slugs)}")
-
-                # Check if we're done with table selection
-                if output.is_satisfied or not available_slugs:
-                    log_debug("Selection process complete - model is satisfied with selected tables")
+            with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
+                available_slugs = [
+                    table_slug for table_slug in closest_tables
+                    if table_slug not in examined_slugs
+                ]
+                log_debug(available_slugs)
+                if not available_slugs:
+                    step.stream("No more tables available to examine.")
                     break
-            except Exception as e:
-                log_debug(f"Error during table selection: {e!s}")
-                break
+
+                fast_track = False
+                if iteration == 1:
+                    # For the first iteration, select tables based on similarity
+                    # If any tables have a similarity score above the threshold, select up to 5 of those tables
+                    if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
+                        closest_tables = selected_slugs = sorted(
+                            table_similarities,
+                            key=lambda x: table_similarities[x],
+                            reverse=True
+                        )[:5]
+                        step.stream("Selected tables based on similarity threshold.\n\n")
+                        fast_track = True
+
+                if not fast_track:
+                    try:
+                        step.stream(f"Selecting tables from {len(available_slugs)} available options\n\n")
+                        # Render the prompt using the proper template system
+                        system = await self._render_prompt(
+                            "iterative_selection",
+                            messages,
+                            chain_of_thought=chain_of_thought,
+                            current_query=messages[-1]["content"],
+                            available_slugs=available_slugs,
+                            examined_slugs=examined_slugs,
+                            selected_slugs=selected_slugs,
+                            failed_slugs=failed_slugs,
+                            separator=SOURCE_TABLE_SEPARATOR,
+                            tables_info=tables_info,
+                            iteration=iteration,
+                            max_iterations=max_iterations,
+                        )
+                        model_spec = self.prompts["iterative_selection"].get("llm_spec", self.llm_spec_key)
+                        find_tables_model = self._get_model("iterative_selection", table_slugs=available_slugs + list(examined_slugs))
+                        output = await self.llm.invoke(
+                            messages,
+                            system=system,
+                            model_spec=model_spec,
+                            response_model=find_tables_model,
+                        )
+
+                        selected_slugs = output.selected_slugs or []
+                        chain_of_thought = output.chain_of_thought
+                        step.stream(chain_of_thought)
+                        stream_details('\n'.join(selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
+
+                        # Check if we're done with table selection
+                        if output.is_done or not available_slugs:
+                            step.stream("Selection process complete - model is satisfied with selected tables")
+                            satisfied_slugs = selected_slugs
+                            break
+                        if iteration != max_iterations:
+                            step.stream("Unsatisfied with selected tables - continuing selection process")
+                        else:
+                            step.stream("Maximum iterations reached - stopping selection process")
+                    except Exception as e:
+                        stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
+                        break
+
+                step.stream("\nFetching detailed schema information for tables\n")
+                for table_slug in selected_slugs:
+                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                    table_similarity = table_similarities.get(table_slug, 0)
+                    step.stream(f"`{table_name}` (Similarity: {table_similarity:.2f})")
+                    try:
+                        table_info = await fetch_table_info(sources, table_slug, include_count=True)
+                        tables_info[table_slug] = table_info
+                        examined_slugs.add(table_slug)
+                        stream_details(f"```yaml\n{table_info['schema']}\n```", step, title="Schema")
+                    except Exception as e:
+                        failed_slugs.append(table_slug)
+                        stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
+
+                log_debug(f"Examined slugs: {examined_slugs}")
+                log_debug(f"Available slugs: {available_slugs}")
+
+                if fast_track:
+                    step.stream("Fast-tracked selection process based on similarity threshold.")
+                    satisfied_slugs = selected_slugs
+                    # based on similarity search alone, if we have selected tables, we're done!!
+                    break
 
         tables_info = {
             table_slug: schema_data for table_slug, schema_data in tables_info.items()
-            if table_slug in (selected_slugs or [])  # prevent it from getting too big and waste token
+            # Only include tables that were selected in the final iteration or were fast-tracked
+            if len(satisfied_slugs) == 0 or table_slug in satisfied_slugs
         }
         return tables_info
 

@@ -179,15 +179,29 @@ class Actor(param.Parameterized):
 
     @property
     def llm_spec_key(self):
+        # Remove "Agent" suffix from class name
         name = self.__class__.__name__.replace("Agent", "")
+
         result = ""
-        for i, char in enumerate(name):
-            if char.isupper():
-                if i > 0:
-                    result += "_"
-                result += char.lower()
-            else:
-                result += char
+        i = 0
+        while i < len(name):
+            char = name[i]
+
+            # Check if this is part of an acronym (current char is uppercase and next char is uppercase too)
+            is_part_of_acronym = (
+                char.isupper() and
+                i + 1 < len(name) and
+                name[i + 1].isupper()
+            )
+
+            # Add underscore before uppercase letters, unless it's part of an acronym
+            if char.isupper() and i > 0 and not is_part_of_acronym and not name[i - 1].isupper():
+                result += "_"
+
+            # Add the lowercase character
+            result += char.lower()
+            i += 1
+
         return result
 
 

@@ -28,9 +28,7 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import make_agent_model, make_plan_models
-from .tools import (
-    IterativeTableLookup, TableLookup, Tool, ToolUser,
-)
+from .tools import IterativeTableLookup, Tool, ToolUser
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, retry_llm_output,
     stream_details,
@@ -408,7 +406,7 @@ class Coordinator(Viewer, ToolUser):
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
                     self._memory["tools_context"][subagent.name] = result
-                    stream_details(result, step, title=subagent.name)
+                    stream_details(result, step)
                 elif isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))
@@ -590,7 +588,7 @@ class Planner(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
-                "tools": [TableLookup, IterativeTableLookup]
+                "tools": [IterativeTableLookup]
             },
         }
     )
