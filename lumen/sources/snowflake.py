@@ -276,7 +276,7 @@ class SnowflakeSource(BaseSQLSource):
             self._cursor.execute("ALTER SESSION UNSET STATEMENT_TIMEOUT_IN_SECONDS")
 
     @cached_schema
-    def get_schema(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
+    def get_schema(self, table: str | None = None, limit: int | None = None, shuffle: bool = False) -> dict:
         """Returns JSON schema describing the tables returned by the Source.
 
         Parameters
