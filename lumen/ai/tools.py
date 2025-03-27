@@ -713,22 +713,18 @@ class IterativeTableLookup(TableLookup):
                         break
 
                 step.stream("\nFetching detailed schema information for tables\n")
-                tables_schema = []
                 for table_slug in selected_slugs:
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     table_similarity = table_similarities.get(table_slug, 0)
                     step.stream(f"`{table_name}` (Similarity: {table_similarity:.2f})")
                     try:
                         table_info = await fetch_table_info(sources, table_slug, include_count=True)
-                        tables_schema.append((table_slug, table_info))
+                        tables_info[table_slug] = table_info
+                        examined_slugs.add(table_slug)
                         stream_details(f"```yaml\n{table_info['schema']}\n```", step, title="Schema")
                     except Exception as e:
                         failed_slugs.append(table_slug)
                         stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
-
-                for table_slug, schema_data in tables_schema:
-                    tables_info[table_slug] = schema_data
-                    examined_slugs.add(table_slug)
 
                 log_debug(f"Examined slugs: {examined_slugs}")
                 log_debug(f"Available slugs: {available_slugs}")
