@@ -757,15 +757,17 @@ class IterativeTableLookup(TableLookup):
         tables_sql_info = self._memory.get("tables_sql_info", {})
         context = "Below are the relevant tables and their descriptions."
         for table_slug, table_vector_info in tables_vector_info.items():
+            if table_slug not in tables_sql_info:
+                continue
             table_description = table_vector_info.get("description", "")
             context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
             for col, col_description in table_vector_info.get("columns_description", {}).items():
                 context += f"\n- {col}{col_description}"
                 schema = tables_sql_info.get(table_slug, {}).get("schema", {})
                 if "view_definition" in schema:
-                    context += f"\n  View definition: {schema['view_definition']}"
+                    context += f"\n  View definition:\n```sql\n{schema['view_definition'][:4000]}\n```"
                 elif col in schema:
-                    context += str(schema)
+                    context += f": {schema[col]}"
         return context
 
 
