@@ -581,7 +581,7 @@ class TableLookup(VectorLookupTool):
         tables_info_str = ""
         for table_slug, table_info in tables_info.items():
             sql = table_info["sql"]
-            tables_info_str += f"\n```\n{table_slug}\n`{sql}`\n{table_info["schema"]}\n```\n"
+            tables_info_str += f"\n```\n{table_slug}\n`{sql}`\n{table_info['schema']}\n```\n"
         context = (
             "\n\nBelow are the relevant tables and their schemas.\n" + tables_info_str
         )
