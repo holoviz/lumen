@@ -232,11 +232,11 @@ class SnowflakeSource(BaseSQLSource):
     def get_tables(self) -> list[str]:
         # limited set of tables was provided
         if isinstance(self.tables, dict | list):
-            return [t for t in list(self.tables) if not self._is_table_excluded(t)]
+            return [t.upper() for t in list(self.tables) if not self._is_table_excluded(t)]
 
         tables_df = self.execute(f'SELECT TABLE_NAME, TABLE_SCHEMA FROM {self.database}.INFORMATION_SCHEMA.TABLES;')
         return [
-            f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}'
+            f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}'.upper()
             for _, row in tables_df.iterrows()
             if not self._is_table_excluded(f'{self.database}.{row.TABLE_SCHEMA}.{row.TABLE_NAME}')
         ]
@@ -340,7 +340,7 @@ class SnowflakeSource(BaseSQLSource):
         table_metadata = self.execute(
             """
             SELECT
-            TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COMMENT as TABLE_DESCRIPTION, ROW_COUNT, LAST_ALTERED, CREATED
+            TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, COMMENT as TABLE_DESCRIPTION, ROW_COUNT, LAST_ALTERED, CREATED
             FROM INFORMATION_SCHEMA.TABLES
             """
         )
@@ -364,6 +364,7 @@ class SnowflakeSource(BaseSQLSource):
             rows = None if pd.isna(rows) else int(rows)
             updated_at = first_row["LAST_ALTERED"].isoformat()
             created_at = first_row["CREATED"].isoformat()
+            table_type = first_row["TABLE_TYPE"]
             columns = (
                 group[["COLUMN_NAME", "COLUMN_DESCRIPTION", "DATA_TYPE"]]
                 .rename({"COLUMN_DESCRIPTION": "description", "DATA_TYPE": "data_type"}, axis=1)
@@ -378,4 +379,13 @@ class SnowflakeSource(BaseSQLSource):
                 "updated_at": updated_at,
                 "created_at": created_at,
             }
+            if table_type == "VIEW" and "INFORMATION_SCHEMA" not in table_slug:
+                try:
+                    # DATABASE.SCHEMA.TABLE -> SCHEMA.TABLE
+                    table_schema_slug = '.'.join(table_slug.split(".")[1:])
+                    result[table_slug]["view_definition"] = self.execute(
+                        "SELECT GET_DDL('VIEW', %s)", (table_schema_slug,)
+                    ).iloc[0, 0]
+                except Exception:
+                    result[table_slug]["view_definition"] = "N/A"
         return result
