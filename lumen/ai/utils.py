@@ -339,7 +339,7 @@ async def fetch_table_sql_info(sources: dict[str, Source], table_slug: str, view
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
     if view_definition:
-        schema = {"view_definition": view_definition}
+        schema = {"view_definition": view_definition[:4000]}
     else:
         schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
     normalized_table_name = source_obj.normalize_table(table_name)
