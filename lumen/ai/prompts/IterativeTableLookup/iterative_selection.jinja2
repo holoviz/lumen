@@ -20,13 +20,23 @@ You need to select tables from a database to help answer this query:
 
 {{ current_query }}
 
+{% if available_slugs|length > 0 %}
+Here are the tables available for selection:
+{% for table_slug in available_slugs %}
+{{ table_slug }} (Similarity: {{ tables_vector_info[table_slug].similarity | round(3) }})
+{{ tables_vector_info[table_slug].caption }}
+{% endfor %}
+{% else %}
+No tables are available for selection.
+{% endif %}
+
 {% if examined_slugs|length > 0 %}
-You have already examined these tables and their schemas:
+You have already examined these tables and their schemas; there's no need to select them again:
 {% for table_slug in examined_slugs %}
 {{ table_slug }}
 {% if table_slug in selected_slugs %}
-```yaml
-{{ tables_info[table_slug] }}
+```json
+{{ tables_sql_info[table_slug].schema }}
 ```
 {% endif %}
 {% endfor %}

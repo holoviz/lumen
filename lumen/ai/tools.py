@@ -17,7 +17,7 @@ from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import make_iterative_selection_model, make_refined_query_model
 from .translate import function_to_model
-from .utils import fetch_table_info, log_debug, stream_details
+from .utils import fetch_table_sql_info, log_debug, stream_details
 from .vector_store import NumpyVectorStore, VectorStore
 
 
@@ -358,14 +358,14 @@ class TableLookup(VectorLookupTool):
     """
 
     purpose = param.String(default="""
-        Looks up relevant tables based on the user query. Unnecessary if
-        the table doesn't need to change or the user is requesting a visualization
-        from the previous results.""")
+        Looks up relevant tables based on the user query with a vector store.
+        Useful for quickly gathering information about tables and their columns
+        to chat about.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_info"], readonly=True, doc="""
+    provides = param.List(default=["tables_vector_info"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     include_metadata = param.Boolean(default=True, doc="""
@@ -388,7 +388,7 @@ class TableLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._table_metadata = {}
+        self._tables_metadata = {}
         self._raw_metadata = {}
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -417,8 +417,8 @@ class TableLookup(VectorLookupTool):
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
             description = f"- {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
-            if table_metadata := self._table_metadata.get(table_slug):
-                if table_description := table_metadata.get("description"):
+            if tables_vector_info := self._tables_metadata.get(table_slug):
+                if table_description := tables_vector_info.get("description"):
                     description += f"\n  Description: {table_description}"
             formatted_results.append(description)
         return "\n".join(formatted_results)
@@ -438,13 +438,13 @@ class TableLookup(VectorLookupTool):
         if not table_name_key:
             return
         table_name = table_name_key
-        table_metadata = dict(source_metadata[table_name])
+        table_vector_info = dict(source_metadata[table_name])
 
         # IMPORTANT: re-insert using table slug
-        # we need to store a copy of table_metadata so it can be used to inject context into the LLM
+        # we need to store a copy of tables_vector_info so it can be used to inject context into the LLM
         table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        self._table_metadata[table_slug] = table_metadata.copy()
-        self._table_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
+        self._tables_metadata[table_slug] = table_vector_info.copy()
+        self._tables_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
 
         vector_metadata = {"source": source.name, "table_name": table_name}
         if existing_items := self.vector_store.filter_by(vector_metadata):
@@ -455,9 +455,9 @@ class TableLookup(VectorLookupTool):
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         vector_metadata["enriched"] = True
         enriched_text = f"Table: {table_name}"
-        if description := table_metadata.pop('description', ''):
+        if description := table_vector_info.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
-        if self.include_columns and (columns := table_metadata.pop('columns', {})):
+        if self.include_columns and (columns := table_vector_info.pop('columns', {})):
             enriched_text += "\nColumns:"
             for col_name, col_info in columns.items():
                 col_text = f"\n- {col_name}"
@@ -467,7 +467,7 @@ class TableLookup(VectorLookupTool):
             enriched_text += "\n"
         if self.include_misc:
             enriched_text += "\nMiscellaneous:"
-            for key, value in table_metadata.items():
+            for key, value in table_vector_info.items():
                 if key == "enriched":
                     continue
                 enriched_text += f"\n- {key}: {value}"
@@ -514,45 +514,12 @@ class TableLookup(VectorLookupTool):
         log_debug("All table metadata tasks completed.")
         self._ready = True
 
-    async def _select_tables(self, sources, messages, closest_tables, table_similarities):
-        """Select tables to include in the response."""
-        with self._add_step(title="Fetching schemas", success_title="Fetching completed") as step:
-            step.stream(f"Fetching schemas for {len(closest_tables[:3])} tables\n")
-            tables_info = {}
-            for table_slug in closest_tables[:3]:
-                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].split(".")[-1]
-                table_similarity = table_similarities[table_slug]
-                step.stream(f"`{table_name}` (Similarity: {table_similarity:.2f})")
-                try:
-                    table_info = await fetch_table_info(sources, table_slug, include_count=True)
-                    tables_info[table_slug] = table_info
-                    schema = table_info["schema"]
-                    stream_details(f"```yaml\n{schema}\n```", step, title="Schema")
-                except Exception as e:
-                    stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
-        return tables_info
-
-    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        """
-        Fetches the closest tables based on the user query, with query refinement
-        if enabled and initial results don't meet threshold.
-        """
+    async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
+        """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
-        results = []
-        table_similarities = {}
-        if len(self._table_metadata) <= 5:
-            table_similarities = {table_slug: 1 for table_slug in self._table_metadata}
-        else:
-            table_similarities = {
-                table_slug: 1
-                for table_slug in self._table_metadata
-                if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower()
-            }
+        results = await self._perform_search_with_refinement(query)
 
-        closest_tables = list(table_similarities)
-        if not closest_tables:
-            results = await self._perform_search_with_refinement(query)
-
+        tables_vector_info = {}
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         for result in results:
             if any_matches and result['similarity'] < self.min_similarity:
@@ -560,34 +527,62 @@ class TableLookup(VectorLookupTool):
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            description = f"- `{table_slug}`: {result['similarity']:.3f} similarity"
-            table_similarities[table_slug] = result['similarity']
-            if table_metadata := self._table_metadata.get(table_slug):
+            similarity_score = result['similarity']
+
+            if table_slug not in tables_vector_info:
+                tables_vector_info[table_slug] = {}
+            tables_vector_info[table_slug]["similarity"] = similarity_score
+            table_caption = ""
+            if table_metadata := self._tables_metadata.get(table_slug):
                 if table_description := table_metadata.get("description"):
-                    description += f"  Description: {table_description}"
-                columns_description = "Columns:"
-                for i, (col_name, col_info) in enumerate(table_metadata.get("columns", {}).items()):
-                    # Save on tokens by truncating long column names and letting the LLM infer the rest
-                    col_label = col_name if len(col_name) <= 50 else f"{col_name[:15]}...{col_name[-35:]}"
+                    table_caption += f"  Description: {table_description}"
+                    tables_vector_info[table_slug]["description"] = table_description
+
+                columns = table_metadata.get("columns", {})
+                columns_description = "Columns:" if columns else ""
+                tables_vector_info[table_slug]["columns_description"] = {}
+                already_truncated = False
+                for i, (col_name, col_info) in enumerate(columns.items()):
                     col_desc = f": {col_info['description']}" if col_info.get("description") else ""
-                    columns_description += f"\n- {col_label}{col_desc}"
-                    if i > 10:
+                    tables_vector_info[table_slug]["columns_description"][col_name] = col_desc
+                    if already_truncated:
+                        # Skip if already truncated
+                        continue
+                    if i <= 15:
+                        # Save on tokens by truncating long column names and letting the LLM infer the rest
+                        col_label = col_name if len(col_name) <= 20 else f"{col_name[:10]}...{col_name[-10:]}"
+                        columns_description += f"\n- {col_label}{col_desc}"
+                    else:
                         columns_description += f"\n  ... (out of {len(table_metadata['columns'])} columns)"
-                        break
-                description += f"\n{indent(columns_description, ' ' * 2)}"
-            closest_tables.append(table_slug)
+                        already_truncated = True
 
-        sources = {source.name: source for source in self._memory.get("sources", [])}
-        tables_info = await self._select_tables(sources, messages, closest_tables, table_similarities)
+                table_caption += f"\n{indent(columns_description, ' ' * 2)}"
+                tables_vector_info[table_slug]["caption"] = table_caption
 
-        self._memory["tables_info"] = tables_info
-        tables_info_str = ""
-        for table_slug, table_info in tables_info.items():
-            sql = table_info["sql"]
-            tables_info_str += f"\n```\n{table_slug}\n`{sql}`\n{table_info['schema']}\n```\n"
-        context = (
-            "\n\nBelow are the relevant tables and their schemas.\n" + tables_info_str
-        )
+        # If query contains an exact table name, mark it as max similarity
+        for table_slug in self._tables_metadata:
+            if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
+                tables_vector_info[table_slug]["similarity"] = 1
+
+        self._memory["tables_vector_info"] = tables_vector_info
+        return tables_vector_info
+
+    def _format_context(self) -> str:
+        tables_vector_info = self._memory.get("tables_vector_info", {})
+        context = "Below are the relevant tables and their descriptions."
+        for table_slug, table_info in tables_vector_info.items():
+            context += f"\n{table_slug} (Similarity: {table_info['similarity']:.3f})"
+            if caption := table_info.get("caption", "").strip():
+                context += f"\n```\n{caption}\n```\n"
+        return context
+
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        """
+        Fetches the closest tables based on the user query, with query refinement
+        if enabled and initial results don't meet threshold.
+        """
+        await self._gather_info(messages)
+        context = self._format_context()
         return context
 
 
@@ -598,8 +593,12 @@ class IterativeTableLookup(TableLookup):
     """
 
     purpose = param.String(default="""
-        Looks up relevant tables based on the user query with an iterative selection process.
-        Uses LLM to select tables in multiple passes, examining schemas in detail.""")
+        Looks up relevant tables based on the user query with a vector store and iterative selection process.
+        Uses LLM to select tables in multiple passes, examining schemas in detail.
+        Useful for SQLAgent, but not for ChatAgent.""")
+
+    provides = param.List(default=["tables_vector_info", "tables_sql_info"], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
         Maximum number of iterations for the iterative table selection process.""")
@@ -622,7 +621,7 @@ class IterativeTableLookup(TableLookup):
         },
     )
 
-    async def _select_tables(self, sources, messages, closest_tables, table_similarities):
+    async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """
         Performs an iterative table selection process to gather context.
         This function:
@@ -631,25 +630,21 @@ class IterativeTableLookup(TableLookup):
         3. Gets complete schemas for these tables
         4. Repeats until the LLM is satisfied with the context
         """
-        if not sources:
-            return {}
+        tables_vector_info = await super()._gather_info(messages)
 
-        # # For small number of tables, just use the basic approach
-        if len(closest_tables) <= 5:
-            return await super()._select_tables(sources, messages, closest_tables, table_similarities)
-
-        max_iterations = self.max_selection_iterations
-        tables_info = self._memory.get("tables_info", {})
-        examined_slugs = set(tables_info.keys())
+        tables_sql_info = self._memory.get("tables_sql_info", {})
+        examined_slugs = set(tables_sql_info.keys())
+        all_slugs = list(tables_vector_info.keys())
         failed_slugs = []
-
         satisfied_slugs = []
         selected_slugs = []
         chain_of_thought = ""
+        max_iterations = self.max_selection_iterations
+        sources = {source.name: source for source in self._memory["sources"]}
         for iteration in range(1, max_iterations + 1):
             with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
                 available_slugs = [
-                    table_slug for table_slug in closest_tables
+                    table_slug for table_slug in all_slugs
                     if table_slug not in examined_slugs
                 ]
                 log_debug(available_slugs)
@@ -661,10 +656,10 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    if any(similarity > self.table_similarity_threshold for similarity in table_similarities.values()):
-                        closest_tables = selected_slugs = sorted(
-                            table_similarities,
-                            key=lambda x: table_similarities[x],
+                    if any(meta.get('similarity', 0) > self.table_similarity_threshold for meta in tables_vector_info.values()):
+                        selected_slugs = sorted(
+                            tables_vector_info,
+                            key=lambda x: tables_vector_info[x].get('similarity', 0),
                             reverse=True
                         )[:5]
                         step.stream("Selected tables based on similarity threshold.\n\n")
@@ -684,7 +679,8 @@ class IterativeTableLookup(TableLookup):
                             selected_slugs=selected_slugs,
                             failed_slugs=failed_slugs,
                             separator=SOURCE_TABLE_SEPARATOR,
-                            tables_info=tables_info,
+                            tables_sql_info=tables_sql_info,
+                            tables_vector_info=tables_vector_info,
                             iteration=iteration,
                             max_iterations=max_iterations,
                         )
@@ -707,24 +703,33 @@ class IterativeTableLookup(TableLookup):
                             step.stream("Selection process complete - model is satisfied with selected tables")
                             satisfied_slugs = selected_slugs
                             break
-                        if iteration != max_iterations:
-                            step.stream("Unsatisfied with selected tables - continuing selection process")
-                        else:
+                        if iteration != 1:
+                            step.stream("Unsatisfied with selected tables - continuing selection process...")
+                        elif iteration == max_iterations:
                             step.stream("Maximum iterations reached - stopping selection process")
                     except Exception as e:
                         stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
                         break
 
-                step.stream("\nFetching detailed schema information for tables\n")
+                step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                    table_similarity = table_similarities.get(table_slug, 0)
-                    step.stream(f"`{table_name}` (Similarity: {table_similarity:.2f})")
+                    vector_info = tables_vector_info[table_slug]
+                    similarity = vector_info["similarity"]
+                    caption = vector_info["caption"]
+                    step.stream(f"`{table_name}` (Similarity: {similarity:.2f})")
+                    stream_details(caption, step, title="Caption", auto=False)
                     try:
-                        table_info = await fetch_table_info(sources, table_slug, include_count=True)
-                        tables_info[table_slug] = table_info
+                        view_definition = self._tables_metadata.get(table_slug, {}).get("view_definition", "")
+                        table_sql_info = await fetch_table_sql_info(
+                            sources,
+                            table_slug,
+                            view_definition=view_definition,
+                            include_count=True
+                        )
+                        tables_sql_info[table_slug] = table_sql_info
                         examined_slugs.add(table_slug)
-                        stream_details(f"```yaml\n{table_info['schema']}\n```", step, title="Schema")
+                        stream_details(f"```yaml\n{table_sql_info['schema']}\n```", step, title="Schema")
                     except Exception as e:
                         failed_slugs.append(table_slug)
                         stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
@@ -738,12 +743,30 @@ class IterativeTableLookup(TableLookup):
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
 
-        tables_info = {
-            table_slug: schema_data for table_slug, schema_data in tables_info.items()
+        tables_sql_info = {
+            table_slug: schema_data for table_slug, schema_data in tables_sql_info.items()
             # Only include tables that were selected in the final iteration or were fast-tracked
             if len(satisfied_slugs) == 0 or table_slug in satisfied_slugs
         }
-        return tables_info
+        self._memory["tables_sql_info"] = tables_sql_info
+        return tables_sql_info
+
+    def _format_context(self) -> str:
+        """Combines tables vector and sql info into a single context string."""
+        tables_vector_info = self._memory.get("tables_vector_info", {})
+        tables_sql_info = self._memory.get("tables_sql_info", {})
+        context = "Below are the relevant tables and their descriptions."
+        for table_slug, table_vector_info in tables_vector_info.items():
+            table_description = table_vector_info.get("description", "")
+            context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
+            for col, col_description in table_vector_info.get("columns_description", {}).items():
+                context += f"\n- {col}{col_description}"
+                schema = tables_sql_info.get(table_slug, {}).get("schema", {})
+                if "view_definition" in schema:
+                    context += f"\n  View definition: {schema['view_definition']}"
+                elif col in schema:
+                    context += str(schema)
+        return context
 
 
 class FunctionTool(Tool):

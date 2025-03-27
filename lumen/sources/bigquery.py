@@ -191,7 +191,7 @@ class BigQuerySource(BaseSQLSource):
             }
         return data
 
-    def _get_tables_metadata(self, project_id: str, dataset_id: str, tables: list[str] | None = None) -> dict:
+    def _get_table_metadata(self, project_id: str, dataset_id: str, tables: list[str] | None = None) -> dict:
         """Get metadata for all tables associated with the given dataset.
 
         Parameters
@@ -254,7 +254,7 @@ class BigQuerySource(BaseSQLSource):
         metadata = {}
         for dataset in datasets:
             if self.datasets is None or dataset in self.datasets:
-                metadata.update(self._get_tables_metadata(self.project_id, dataset, tables))
+                metadata.update(self._get_table_metadata(self.project_id, dataset, tables))
         return metadata
 
     def _get_table(self, table: str):

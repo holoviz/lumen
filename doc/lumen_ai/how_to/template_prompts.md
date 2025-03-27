@@ -39,27 +39,29 @@ For example, the `ChatAgent`'s prompt template uses `instructions` and `context`
 ```jinja2
 {% extends 'Agent/main.jinja2' %}
 
-{% block instructions %}
+{%- block instructions %}
 Act as a helpful assistant for high-level data exploration, focusing on available datasets and, only if data is
-available, explaining the purpose of each column. Offer suggestions for getting started if needed, remaining factual and avoiding speculation. Do not write code or give code related suggestions.
-{% endblock %}
+available, explaining the purpose of each column. Offer suggestions for getting started if needed, remaining factual and
+avoiding speculation. Do not write code or give code related suggestions.
+{%- endblock %}
 
 {% block context %}
-{% if 'data' in memory %}
+{%- if 'data' in memory %}
 Here's a summary of the dataset the user just asked about:
-\```
+```
 {{ memory['data'] }}
-\```
-{% endif %}
-{% if tables_schemas is defined %}
+```
+{%- endif %}
 Available tables:
-{% for table, schema in tables_schemas %}
-- **{{ table }}** with schema: {{ schema }}
+{% for table, info in memory['tables_vector_info'].items() %}
+- {{ table }}`
+  {{ info.caption }}
 {% endfor %}
-{% elif table is defined and schema is defined %}
-{{ table }} with schema: {{ schema }}
-{% endif %}
-{% endblock %}
+Here was the plan that was executed:
+"""
+{{ memory.reasoning }}
+"""
+{% endblock -%}
 ```
 
 Here, the instructions are:

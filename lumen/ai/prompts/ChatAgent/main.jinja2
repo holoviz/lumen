@@ -13,14 +13,11 @@ Here's a summary of the dataset the user just asked about:
 {{ memory['data'] }}
 ```
 {%- endif %}
-{% if tables_schemas is defined %}
-Available table schemas:
-{% for table, schema in tables_schemas %}
-- `{{ table }}`: {{ schema }}
+Available tables:
+{% for table, info in memory['tables_vector_info'].items() %}
+- {{ table }}`
+  {{ info.caption }}
 {% endfor %}
-{% elif table is defined and schema is defined %}
-- `{{ table }}`: {{ schema }}
-{% endif -%}
 Here was the plan that was executed:
 """
 {{ memory.reasoning }}

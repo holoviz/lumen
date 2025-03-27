@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
 import pandas as pd
-import yaml
 
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
@@ -312,7 +311,7 @@ async def get_schema(
     return schema
 
 
-async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_kwargs) -> dict:
+async def fetch_table_sql_info(sources: dict[str, Source], table_slug: str, view_definition: str = "", **get_schema_kwargs) -> dict:
     """
     Fetch the schema for a single table from a data source.
 
@@ -320,6 +319,8 @@ async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_
     ----------
     table_slug : str
         Table name in format "source_name{SEP}table_name"
+    view_definition : str
+        Optional view definition for the table to override the schema
     **get_schema_kwargs
         Additional keyword arguments to pass to the get_schema method
 
@@ -337,32 +338,18 @@ async def fetch_table_info(sources: list[Source], table_slug: str, **get_schema_
         table_name = table_slug
         table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
-    table_info = await get_schema(source_obj, table_name, **get_schema_kwargs)
+    if view_definition:
+        schema = {"view_definition": view_definition}
+    else:
+        schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
     normalized_table_name = source_obj.normalize_table(table_name)
     result = {
-        "schema": yaml.dump(table_info),
+        "schema": schema,
         "source": source_obj.name,
         "sql_table": normalized_table_name,
         "sql": source_obj.get_sql_expr(normalized_table_name),
     }
     return result
-
-
-async def format_table_info(
-    source: Source, table_name: str, prefix_table: bool = True,
-    as_slug: bool = False, limit: int = 5, **get_schema_kwargs
-) -> str:
-    """
-    Format a source schema as a markdown string.
-    """
-    tables_schema_str = ""
-    if prefix_table:
-        table_label = f"{source}{SOURCE_TABLE_SEPARATOR}{table_name}" if as_slug else table_name
-        tables_schema_str += f"`{table_label}`\n"
-    sql = source.get_sql_expr(table_name)
-    schema = await get_schema(source, table_name, limit=limit, **get_schema_kwargs)
-    tables_schema_str += f"Schema:\n```yaml\n{yaml.dump(schema)}```\nSQL:\n```sql\n{sql}\n```"
-    return tables_schema_str
 
 
 async def get_pipeline(**kwargs):
@@ -482,7 +469,7 @@ def report_error(exc: Exception, step: ChatStep, language: str = "python", conte
     step.status = "failed"
 
 
-def stream_details(content: Any, step: Any, title: str | None = None, auto: bool = True, **stream_kwargs) -> str:
+def stream_details(content: Any, step: Any, title: str = "Expand for details", auto: bool = True, **stream_kwargs) -> str:
     """
     Process content to place code blocks inside collapsible details elements
 
@@ -511,7 +498,7 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
     pattern = r'```([\w-]*)\n(.*?)```'
     last_end = 0
     if not auto:
-        details = Details(content, title=title, collapsed=True, margin=(-5, 20, 5, 20), sizing_mode="stretch_width")
+        details = Details(content, title=title, collapsed=True, margin=(0, 20, 5, 20), sizing_mode="stretch_width")
         step.append(details, **stream_kwargs)
         return content
 
@@ -524,9 +511,9 @@ def stream_details(content: Any, step: Any, title: str | None = None, auto: bool
 
         details = Details(
             f"```{language}\n\n{code}\n\n```",
-            title=title or "Expand to see details",
+            title=title,
             collapsed=True,
-            margin=(-5, 20, 0, 20),
+            margin=(0, 20, 5, 20),
             sizing_mode="stretch_width",
         )
         step.append(details)

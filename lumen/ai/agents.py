@@ -37,7 +37,7 @@ from .memory import _Memory
 from .models import (
     PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_find_tables_model,
 )
-from .tools import DocumentLookup, ToolUser
+from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
@@ -248,12 +248,11 @@ class ChatAgent(Agent):
         default={
             "main": {
                 "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-                "tools": [DocumentLookup]
             },
         }
     )
 
-    requires = param.List(default=["tables_info"], readonly=True)
+    requires = param.List(default=["tables_vector_info"], readonly=True)
 
     async def respond(
         self,
@@ -520,7 +519,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "tables_info"], readonly=True)
+    requires = param.List(default=["source", "tables_sql_info"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -555,7 +554,6 @@ class SQLAgent(LumenBaseAgent):
             "main",
             messages,
             join_required=join_required,
-            tables_info=self._memory["tables_info"],
             dialect=dialect,
             comments=comments,
             has_errors=bool(errors),
@@ -654,7 +652,7 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_slugs = list(self._memory["tables_info"])
+        selected_slugs = list(self._memory["tables_sql_info"])
 
         chain_of_thought = ""
         if len(selected_slugs) > 1:
