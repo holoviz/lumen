@@ -382,6 +382,6 @@ class SnowflakeSource(BaseSQLSource):
             if table_type == "VIEW" and "INFORMATION_SCHEMA" not in table_slug:
                 try:
                     result[table_slug]["view_definition"] = self.execute("SELECT GET_DDL('VIEW', %s)", ('.'.join(table_slug.split(".")[1:]),)).iloc[0, 0]
-                except Exception as e:
-                    print(f"Error retrieving view definition for {table_slug}: {e}")
+                except Exception:
+                    result[table_slug]["view_definition"] = "N/A"
         return result
