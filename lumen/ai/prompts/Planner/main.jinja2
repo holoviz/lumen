@@ -17,15 +17,24 @@ Important Agent Rules:
 - The SourceAgent is only useful for uploading new table or document sources; not for showing what's already available.
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
+- The SQLAgent usually needs help by *TableLookup if the current columns are insufficient.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - When plotting, instruct SQLAgent to select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations.
 - The ChatAgent usually can be used alone, but if the query is related to the data tables, please use AnalystAgent instead.
 
 Import Tools Rules:
-- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent.
+- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent, and both of these are useful for refreshing the available columns in memory.
 {% endblock -%}
 
 {% block context -%}
+{% if memory.get('tables_columns') %}
+The current selected columns in memory is:
+{{ memory['tables_columns'] }}
+Please consider whether this is enough information to proceed with the current user query.
+{% else %}
+The current selected columns for the query have not been set yet.
+{% endif %}
+
 {% if memory.get('document_sources') %}
 Here are the documents you have access to:
 {%- for document_source in memory['document_sources'] %}

@@ -24,7 +24,15 @@ You need to select tables from a database to help answer this query:
 Here are the tables available for selection:
 {% for table_slug in available_slugs %}
 {{ table_slug }} (Similarity: {{ tables_vector_info[table_slug].similarity | round(3) }})
-{{ tables_vector_info[table_slug].caption }}
+{% if tables_vector_info[table_slug].description is defined and tables_vector_info[table_slug].description %}
+  Description: {{ tables_vector_info[table_slug].description }}
+{% endif %}
+{% if tables_vector_info[table_slug].columns_description is defined and tables_vector_info[table_slug].columns_description|length > 0 %}
+  Cols:
+  {% for col_name, col_desc in tables_vector_info[table_slug].columns_description.items() %}
+  - {{ col_name }}{{ col_desc }}
+  {% endfor %}
+{% endif %}
 {% endfor %}
 {% else %}
 No tables are available for selection.
@@ -36,7 +44,7 @@ You have already examined these tables and their schemas; there's no need to sel
 {{ table_slug }}
 {% if table_slug in selected_slugs %}
 ```json
-{{ tables_sql_info[table_slug].schema }}
+{{ tables_sql_data[table_slug].schema }}
 ```
 {% endif %}
 {% endfor %}

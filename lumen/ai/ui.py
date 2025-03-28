@@ -47,6 +47,7 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .models import YesNo
 from .utils import format_exception
 
 if TYPE_CHECKING:
@@ -191,8 +192,9 @@ class UI(Viewer):
         try:
             self._llm_status_badge.status = "running"
             await self.llm.invoke(
-                [{'role': 'user', 'content': 'Are you there? YES | NO'}],
-                model_spec="ui"
+                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                model_spec="ui",
+                response_model=YesNo
             )
             self._llm_status_badge.param.update(status="success", name='LLM Ready')
             self.interface.disabled = False

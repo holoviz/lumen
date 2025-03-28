@@ -27,7 +27,7 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import make_agent_model, make_plan_models
+from .models import YesNo, make_agent_model, make_plan_models
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
@@ -88,6 +88,25 @@ class Coordinator(Viewer, ToolUser):
     computing an execution graph and then executing each
     step along the graph.
     """
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
+            },
+            "yesno_update": {
+                "template": PROMPTS_DIR / "Coordinator" / "yesno_update.jinja2",
+                "response_model": YesNo,
+            },
+            "next_instruction": {
+                "template": PROMPTS_DIR / "Coordinator" / "next_instruction.jinja2",
+            },
+            "tool_relevance": {
+                "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
+                "response_model": YesNo,
+            },
+        },
+    )
 
     within_ui = param.Boolean(default=False, constant=True, doc="""
         Whether this coordinator is being used within the UI.""")
@@ -347,7 +366,7 @@ class Coordinator(Viewer, ToolUser):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]) -> bool:
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> bool:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -405,11 +424,13 @@ class Coordinator(Viewer, ToolUser):
                 step.failed_title = f"{agent_name}Agent did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{agent_name} failed to provide declared context.")
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
+            # Handle Tool specific behaviors
             if isinstance(subagent, Tool):
+                # Handle string results from tools
                 if isinstance(result, str) and result:
-                    self._memory["tools_context"][subagent.name] = result
-                    stream_details(result, step, title="Results", auto=False)
-                elif isinstance(result, (View, Viewable)):
+                    await self._handle_tool_result(subagent, result, step, execution_graph, messages)
+                # Handle View/Viewable results regardless of agent type
+                if isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))
                     out = LumenOutput(
@@ -447,7 +468,7 @@ class Coordinator(Viewer, ToolUser):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        self._memory["tools_context"] = {}
+        self._memory["agent_tool_contexts"] = {}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
                 with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
@@ -469,8 +490,8 @@ class Coordinator(Viewer, ToolUser):
                 )
                 self.interface.stream(msg, user='Lumen')
                 return msg
-            for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages)
+            for i, node in enumerate(execution_graph):
+                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
                 if not succeeded:
                     break
             if "pipeline" in self._memory:
@@ -481,6 +502,100 @@ class Coordinator(Viewer, ToolUser):
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
                 break
+
+    async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
+        # Extract the user query from messages
+        user_query = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                user_query = msg["content"]
+                break
+
+        # Get tool info
+        tool = next((t for t in self._tools["main"] if t.name == tool_name), None)
+        tool_provides = getattr(tool, "provides", [])
+        tool_requires = getattr(tool, "requires", [])
+
+        # Get agent info
+        agent_provides = getattr(agent, "provides", [])
+        agent_requires = getattr(agent, "requires", [])
+
+        # Use _invoke_prompt to combine rendering the prompt and invoking the LLM
+        result = await self._invoke_prompt(
+            "tool_relevance",
+            messages,
+            tool_name=tool_name,
+            tool_description=getattr(tool, "description", ""),
+            tool_provides=tool_provides,
+            tool_requires=tool_requires,
+            tool_output=tool_output,
+            agent_name=agent.name,
+            agent_purpose=agent.purpose,
+            agent_task=agent_task,
+            agent_provides=agent_provides,
+            agent_requires=agent_requires,
+            user_query=user_query
+        )
+
+        return result.yes
+
+    async def _handle_tool_result(self, tool: Tool, result: str, step: ChatStep, execution_graph: list[ExecutionNode] | None = None, messages: list[Message] | None = None):
+        """Handle string tool results and determine relevance for future agents."""
+        # Caller should ensure result is a non-empty string before calling this method
+
+        # Display the result
+        stream_details(result, step, title="Results", auto=False)
+
+        # Early exit if no execution graph provided
+        if not execution_graph:
+            return
+
+        # Find agents that will be used in future nodes
+        future_agents = {}
+        for agent in self.agents:
+            # Skip tools, only interested in non-tool agents
+            if isinstance(agent, Tool):
+                continue
+
+            # Find if this agent appears in future nodes
+            for future_node in execution_graph:
+                if future_node.actor is agent:
+                    future_agents[agent] = future_node.instruction
+                    break
+
+        # Early exit if no future agents found
+        if not future_agents:
+            return
+
+        # Check relevance and store context for each future agent
+        for agent, task in future_agents.items():
+            # Get tool and agent provides/requires lists
+            tool_provides = getattr(tool, "provides", [])
+            agent_requires = getattr(agent, "requires", [])
+
+            # If tool provides at least one thing the agent requires, consider it relevant
+            # without performing the more expensive relevance check
+            direct_dependency = any(provided in agent_requires for provided in tool_provides)
+
+            is_relevant = False
+            if direct_dependency:
+                log_debug(f"Direct dependency detected: {tool.name} provides at least one requirement for {agent.name}")
+                # The agent already has it formatted in its template
+                continue
+            else:
+                # Otherwise, check semantic relevance
+                is_relevant = await self._check_tool_relevance(
+                    tool.name, result, agent, task, messages
+                )
+
+            if is_relevant:
+                # Initialize agent_tool_contexts if needed
+                if agent.name not in self._memory["agent_tool_contexts"]:
+                    self._memory["agent_tool_contexts"][agent.name] = {}
+
+                # Store the tool output in agent's context
+                self._memory["agent_tool_contexts"][agent.name][tool.name] = result
+                log_debug(f"Added {tool.name} output to {agent.name}'s context")
 
 
 class DependencyResolver(Coordinator):

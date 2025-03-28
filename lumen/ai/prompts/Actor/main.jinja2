@@ -5,11 +5,12 @@
 {%- endblock %}
 
 {% block tools -%}
-{%- if 'tools_context' in memory %}
-{#- Context from Coordinator.tools -#}
-{% for key, value in memory["tools_context"].items() %}
+{%- if 'agent_tool_contexts' in memory and actor_name in memory["agent_tool_contexts"] %}
+{#- Agent-specific tool contexts -#}
+{% for key, value in memory["agent_tool_contexts"][actor_name].items() %}
 `{{ key }}`: {{ value }}
 {% endfor %}
+{% else %}
 {% endif -%}
 {%- endblock -%}
 

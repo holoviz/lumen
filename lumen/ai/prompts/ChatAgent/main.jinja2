@@ -13,11 +13,9 @@ Here's a summary of the dataset the user just asked about:
 {{ memory['data'] }}
 ```
 {%- endif %}
-Available tables:
-{% for table, info in memory['tables_vector_info'].items() %}
-- {{ table }}`
-  {{ info.caption }}
-{% endfor %}
+
+{{ memory['tables_vector_context'] }}
+
 Here was the plan that was executed:
 """
 {{ memory.reasoning }}

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import traceback
 
-from textwrap import indent
 from types import FunctionType
 from typing import Any
 
@@ -16,10 +15,13 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_iterative_selection_model, make_refined_query_model
+from .models import (
+    ColumnSubsetResponse, YesNo, make_iterative_selection_model,
+    make_refined_query_model,
+)
 from .translate import function_to_model
 from .utils import (
-    fetch_table_sql_info, format_info, log_debug, stream_details,
+    create_tables_sql_context, fetch_table_sql_info, log_debug, stream_details,
     truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
@@ -93,6 +95,18 @@ class VectorLookupTool(Tool):
             "refine_query": {
                 "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
                 "response_model": make_refined_query_model,
+            },
+            "column_subset": {
+                "template": PROMPTS_DIR / "TableLookup" / "column_subset.jinja2",
+                "response_model": ColumnSubsetResponse,
+            },
+            "revalidate_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "revalidate_columns.jinja2",
+                "response_model": YesNo,
+            },
+            "revalidate_tables": {
+                "template": PROMPTS_DIR / "TableLookup" / "revalidate_tables.jinja2",
+                "response_model": YesNo,
             },
         },
         doc="Dictionary of available prompts for the tool."
@@ -366,15 +380,22 @@ class TableLookup(VectorLookupTool):
     """
 
     purpose = param.String(default="""
-        Looks up relevant tables based on the user query with a vector store.
+        Looks up and refreshes relevant tables and columns based on the user query with a vector store.
         Useful for quickly gathering information about tables and their columns
         to chat about.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_vector_info"], readonly=True, doc="""
+    provides = param.List(default=["tables_vector_info", "tables_columns"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
+
+    enable_column_subset = param.Boolean(default=True, doc="""
+        Whether to enable column subsetting to filter out irrelevant columns.""")
+
+    enable_table_validation = param.Boolean(default=True, doc="""
+        Whether to enable validation of tables between queries to determine
+        if the full TableLookup process needs to be rerun.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -396,6 +417,8 @@ class TableLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._previous_table_query = ""
+        self._previous_tables_vector_info = {}
         self._tables_metadata = {}
         self._raw_metadata = {}
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
@@ -542,16 +565,14 @@ class TableLookup(VectorLookupTool):
             if table_slug not in tables_vector_info:
                 tables_vector_info[table_slug] = {}
             tables_vector_info[table_slug]["similarity"] = similarity_score
-            table_caption = ""
+
             if table_metadata := self._tables_metadata.get(table_slug):
                 if table_description := table_metadata.get("description"):
-                    table_caption += f"  Description: {table_description}"
                     tables_vector_info[table_slug]["description"] = table_description
 
                 columns = table_metadata.get("columns", {})
-                columns_description = "Cols:" if columns else ""
                 tables_vector_info[table_slug]["columns_description"] = {}
-                already_truncated = False
+
                 total_columns = len(columns)
                 display_count = 15
                 if total_columns > display_count:
@@ -563,25 +584,14 @@ class TableLookup(VectorLookupTool):
                     tail_start = total_columns  # No tail section
 
                 for i, (col_name, col_info) in enumerate(columns.items()):
-                    col_desc = f": {col_info['description']}" if col_info.get("description") else ""
-                    tables_vector_info[table_slug]["columns_description"][col_name] = col_desc
-
                     # Skip the middle section if we're showing head and tail
                     if head_count < i < tail_start:
-                        if not already_truncated:
-                            middle_count = total_columns - head_count - tail_count
-                            columns_description += f"\n  ... ({middle_count} more) ..."
-                            already_truncated = True
                         continue
 
-                    # Save on tokens by truncating long column names and letting the LLM infer the rest
-                    col_label = truncate_string(col_name, max_length=20)
-                    columns_description += f"\n- {col_label}{col_desc}"
-
-                table_caption += f"\n{indent(columns_description, ' ' * 2)}"
-                tables_vector_info[table_slug]["caption"] = table_caption
+                    col_desc = f": {col_info['description']}" if col_info.get("description") else ""
+                    tables_vector_info[table_slug]["columns_description"][col_name] = col_desc
             else:
-                tables_vector_info[table_slug]["caption"] = "Instruct the user to try again; metadata was not yet loaded."
+                tables_vector_info[table_slug]["warning"] = "Metadata not yet loaded."
 
         # If query contains an exact table name, mark it as max similarity
         for table_slug in self._tables_metadata:
@@ -596,17 +606,258 @@ class TableLookup(VectorLookupTool):
         context = "Below are the relevant tables and their descriptions."
         for table_slug, table_info in tables_vector_info.items():
             context += f"\n{table_slug} (Similarity: {table_info['similarity']:.3f})"
-            if caption := table_info.get("caption", "").strip():
-                context += f"\n```\n{caption}\n```\n"
+            if description := table_info.get("description", ""):
+                context += f"\n  Description: {description}"
+
+            if column_descs := table_info.get("columns_description", {}):
+                context += "\n  Cols:"
+                for col_name, col_desc in column_descs.items():
+                    context += f"\n  - {col_name}{col_desc}"
+            context += "\n"
+
+        self._memory["tables_vector_context"] = context
         return context
+
+    async def _should_requery_tables(self, messages: list[dict[str, str]]) -> bool:
+        """
+        Determine if we should rerun the entire TableLookup process based on the new query.
+        """
+        # If no previous table info exists, we definitely need to run the full query
+        if self._previous_tables_vector_info:
+            return True
+
+        # Get current query and previous query
+        current_query = messages[-1]["content"]
+
+        # If no previous query, definitely run full query
+        if not self._previous_table_query:
+            return True
+
+        try:
+            # Use convenience method to render prompt and invoke LLM
+            result = await self._invoke_prompt(
+                "revalidate_tables",
+                messages,
+                current_query=current_query,
+            )
+
+            return result.yes
+
+        except Exception as e:
+            # On any error, be safe and requery tables
+            with self._add_step(title="Table Validation Error") as step:
+                step.stream(f"Error checking if tables need to be requeried: {e}")
+                step.status = "failed"
+            return True
+
+    async def _should_reselect_columns(self, messages: list[dict[str, str]]) -> bool:
+        """
+        Determine if we should rerun the column selection based on the new query.
+        """
+        # If no previous selection exists, we definitely need to run it
+        if "tables_columns" not in self._memory:
+            return True
+
+        # Get current query and previous query
+        current_query = messages[-1]["content"]
+
+        # If no previous query, definitely run selection
+        if not self._memory.get("previous_query"):
+            return True
+
+        try:
+            # Use convenience method to render prompt and invoke LLM
+            result = await self._invoke_prompt(
+                "revalidate_columns",
+                messages,
+                current_query=current_query,
+            )
+
+            return result.yes
+
+        except Exception as e:
+            # On any error, be safe and reselect columns
+            with self._add_step(title="Column Revalidation Error") as step:
+                step.stream(f"Error checking if column selection should be rerun: {e}")
+                step.status = "failed"
+            return True
+
+    async def _select_columns(self, messages: list[dict[str, str]]):
+        """
+        Select relevant columns from tables based on the user query.
+        This runs after _gather_info and before _format_context.
+        """
+        if not self.enable_column_subset:
+            return {}
+
+        tables_vector_info = self._memory.get("tables_vector_info", {})
+        if not tables_vector_info:
+            return {}
+
+        # Check if we should reuse previous column selection
+        current_query = messages[-1]["content"]
+        needs_reselection = await self._should_reselect_columns(messages)
+
+        if not needs_reselection and "tables_columns" in self._memory:
+            # Reuse previous selection
+            tables_columns = self._memory["tables_columns"]
+            with self._add_step(title="Column Selection (Cached)") as step:
+                step.stream("Reusing previous column selection as the query intent is similar.")
+                for table_slug, columns in tables_columns.items():
+                    if table_slug in tables_vector_info:
+                        table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                        all_columns = list(tables_vector_info[table_slug].get("columns_description", {}).keys())
+                        column_names = [all_columns[idx] for idx in columns if idx < len(all_columns)]
+                        stream_details(', '.join(column_names), step, title=f"Selected columns for {table_name}")
+
+            # Apply the cached selection and get the filtered tables info
+            self._apply_column_selection(tables_vector_info, tables_columns)
+            return tables_columns
+
+        try:
+            # Prepare enumerated columns for each table
+            enumerated_tables = {}
+            for table_slug, table_info in tables_vector_info.items():
+                columns = list(table_info.get("columns_description", {}).keys())
+                enumerated_tables[table_slug] = {
+                    "columns": columns,
+                    "description": table_info.get("description", "")
+                }
+
+            # Use convenience method to render prompt and invoke LLM
+            output = await self._invoke_prompt(
+                "column_subset",
+                messages,
+                current_query=current_query,
+                enumerated_tables=enumerated_tables,
+            )
+
+            # Store the selection for future reference
+            tables_columns_indices = output.tables_columns_indices
+            selected_indices = {
+                obj.table_slug: obj.column_indices for obj in tables_columns_indices
+            }
+            self._previous_table_query = current_query
+
+            tables_columns = {}
+            with self._add_step(title="Column Selection") as step:
+                step.stream(output.chain_of_thought)
+                for table_slug, indices in selected_indices.items():
+                    if table_slug in tables_vector_info:
+                        table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                        all_columns = list(tables_vector_info[table_slug].get("columns_description", {}).keys())
+                        column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
+                        tables_columns[table_slug] =column_names
+                        stream_details('\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
+
+            # Apply the selection and get the filtered tables info
+            # Store the column indices for future reference
+            self._memory["tables_columns"] = tables_columns
+            self._apply_column_selection(tables_vector_info, selected_indices)
+        except Exception as e:
+            with self._add_step(title="Column Selection Error") as step:
+                traceback.print_exc()
+                breakpoint()
+                step.stream(f"Error selecting columns: {e}")
+                step.status = "failed"
+            return {}
+
+    def _apply_column_selection(self, tables_vector_info: dict, selected_indices: dict) -> dict:
+        """
+        Filter tables_vector_info to only include selected columns.
+
+        Parameters
+        ----------
+        tables_vector_info: dict
+            Dictionary containing information about tables and their columns
+        selected_indices: dict
+            Dictionary mapping table slugs to lists of indices representing selected columns
+
+        Returns
+        -------
+        dict
+            A new dictionary with filtered column information
+        """
+        # Create a new dictionary to avoid mutating the input
+        filtered_tables_info = {}
+
+        # Process each table in the selected_indices
+        for table_slug, indices in selected_indices.items():
+            # Skip tables that don't exist in the original data
+            if table_slug not in tables_vector_info:
+                continue
+
+            # Get the original table info and create a copy
+            original_table_info = tables_vector_info[table_slug]
+            filtered_table_info = original_table_info.copy()
+
+            # Skip tables without column descriptions
+            if "columns_description" not in original_table_info:
+                filtered_tables_info[table_slug] = filtered_table_info
+                continue
+
+            # Get the original columns
+            all_columns = list(original_table_info["columns_description"].keys())
+
+            # Create a new filtered columns dictionary
+            filtered_columns = {}
+            for idx in indices:
+                if idx < len(all_columns):
+                    col_name = all_columns[idx]
+                    desc = original_table_info["columns_description"].get(col_name, "")
+                    filtered_columns[col_name] = desc
+
+            # Update the table info with filtered columns
+            filtered_table_info["columns_description"] = filtered_columns
+
+            # Add the filtered table info to our result
+            filtered_tables_info[table_slug] = filtered_table_info
+
+        # Update tables_vector_info with the filtered info
+        self._memory["tables_vector_info"] = filtered_tables_info
+        return filtered_tables_info
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
-        Fetches the closest tables based on the user query, with query refinement
-        if enabled and initial results don't meet threshold.
+        Fetches the closest tables based on the user query, selects relevant columns,
+        and formats the context for the LLM.
         """
-        await self._gather_info(messages)
+        # Check if we need to rerun the full TableLookup
+        requery_tables = True
+        if self.enable_table_validation:
+            requery_tables = await self._should_requery_tables(messages)
+
+        if requery_tables:
+            # Run the full TableLookup process
+            await self._gather_info(messages)
+
+            # Store the results for future comparison
+            self._previous_tables_vector_info = self._memory.get("tables_vector_info", {}).copy()
+            self._previous_table_query = messages[-1]["content"]
+
+            # Reset column selection cache when tables change
+            if "tables_columns" in self._memory:
+                del self._memory["tables_columns"]
+        else:
+            # Reuse previous table info
+            tables_vector_info = self._previous_tables_vector_info.copy()
+            self._memory["tables_vector_info"] = tables_vector_info
+
+            with self._add_step(title="Table Lookup (Cached)") as step:
+                step.stream("Reusing previous table selection as the query intent is similar.")
+                for table_slug, info in tables_vector_info.items():
+                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                    similarity = info.get('similarity', 0)
+                    stream_details(f"Similarity: {similarity:.3f}", step, title=f"Table: {table_name}")
+
+        # Handle column subsetting
+        if self.enable_column_subset:
+            # Make sure tables_vector_info is in memory for the template
+            self._memory["tables_vector_info"] = self._memory.get("tables_vector_info", {})
+            await self._select_columns(messages)
+
         context = self._format_context()
+        self._memory["tables_sql_context"] = context
         return context
 
 
@@ -617,11 +868,11 @@ class IterativeTableLookup(TableLookup):
     """
 
     purpose = param.String(default="""
-        Looks up relevant tables based on the user query with a vector store and iterative selection process.
+        Looks up and refreshes relevant tables and columns based on the user query with a vector store and iterative selection process.
         Uses LLM to select tables in multiple passes, examining schemas in detail.
         Useful for SQLAgent, but not for ChatAgent.""")
 
-    provides = param.List(default=["tables_vector_info", "tables_sql_info"], readonly=True, doc="""
+    provides = param.List(default=["tables_vector_info", "tables_sql_data", "tables_columns", "tables_sql_context"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
@@ -656,8 +907,8 @@ class IterativeTableLookup(TableLookup):
         """
         tables_vector_info = await super()._gather_info(messages)
 
-        tables_sql_info = self._memory.get("tables_sql_info", {})
-        examined_slugs = set(tables_sql_info.keys())
+        tables_sql_data = self._memory.get("tables_sql_data", {})
+        examined_slugs = set(tables_sql_data.keys())
         all_slugs = list(tables_vector_info.keys())
         failed_slugs = []
         satisfied_slugs = []
@@ -705,7 +956,7 @@ class IterativeTableLookup(TableLookup):
                             selected_slugs=selected_slugs,
                             failed_slugs=failed_slugs,
                             separator=SOURCE_TABLE_SEPARATOR,
-                            tables_sql_info=tables_sql_info,
+                            tables_sql_data=tables_sql_data,
                             tables_vector_info=tables_vector_info,
                             iteration=iteration,
                             max_iterations=max_iterations,
@@ -745,9 +996,22 @@ class IterativeTableLookup(TableLookup):
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     vector_info = tables_vector_info[table_slug]
                     similarity = vector_info["similarity"]
-                    caption = vector_info["caption"]
                     step.stream(f"`{table_name}` (Similarity: {similarity:.3f})")
-                    stream_details(caption, step, title="Caption", auto=False)
+
+                    # Display table description and columns
+                    description = vector_info.get("description", "")
+                    columns = vector_info.get("columns_description", {})
+
+                    caption_text = ""
+                    if description:
+                        caption_text += f"Description: {description}\n"
+
+                    if columns:
+                        caption_text += "Columns:\n"
+                        for col_name, col_desc in columns.items():
+                            caption_text += f"- {col_name}{col_desc}\n"
+
+                    stream_details(caption_text, step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
                             self._tables_metadata.get(table_slug, {}).get("view_definition", ""), max_length=300
@@ -758,7 +1022,7 @@ class IterativeTableLookup(TableLookup):
                             view_definition=view_definition,
                             include_count=True
                         )
-                        tables_sql_info[table_slug] = table_sql_info
+                        tables_sql_data[table_slug] = table_sql_info
                         examined_slugs.add(table_slug)
                         stream_details(f"```yaml\n{table_sql_info['schema']}\n```", step, title="Schema")
                     except Exception as e:
@@ -771,19 +1035,117 @@ class IterativeTableLookup(TableLookup):
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
 
-        tables_sql_info = {
-            table_slug: schema_data for table_slug, schema_data in tables_sql_info.items()
+        tables_sql_data = {
+            table_slug: schema_data for table_slug, schema_data in tables_sql_data.items()
             # Only include tables that were selected in the final iteration or were fast-tracked
             if len(satisfied_slugs) == 0 or table_slug in satisfied_slugs
         }
-        self._memory["tables_sql_info"] = tables_sql_info
-        return tables_sql_info
+        self._memory["tables_sql_data"] = tables_sql_data
+        return tables_sql_data
+
+    def _apply_column_selection(self, tables_vector_info: dict, selected_indices: dict) -> dict:
+        """
+        Apply column selection to both vector info and SQL info.
+        Extends parent method to also filter tables_sql_data.
+
+        Parameters
+        ----------
+        tables_vector_info: dict
+            Dictionary containing information about tables and their columns
+        selected_indices: dict
+            Dictionary mapping table slugs to lists of indices representing selected columns
+
+        Returns
+        -------
+        dict
+            A new dictionary with filtered column information
+        """
+        # Call parent implementation to filter vector info
+        filtered_tables_info = super()._apply_column_selection(tables_vector_info, selected_indices)
+
+        # Get tables_sql_data from memory
+        tables_sql_data = self._memory.get("tables_sql_data", {})
+
+        # Apply column filtering to tables_sql_data
+        filtered_sql_info = {}
+        for table_slug, indices in selected_indices.items():
+            if table_slug in tables_sql_data:
+                sql_info = tables_sql_data[table_slug]
+                filtered_sql_info[table_slug] = sql_info.copy()
+
+                # Filter schema to only include selected columns
+                if "schema" in sql_info:
+                    schema = sql_info["schema"].copy()
+                    all_columns = list(tables_vector_info[table_slug].get("columns_description", {}).keys())
+
+                    # Create a set of columns to keep
+                    selected_columns = set()
+                    for idx in indices:
+                        if idx < len(all_columns):
+                            selected_columns.add(all_columns[idx])
+
+                    # Filter schema to only keep selected columns and non-column metadata
+                    filtered_schema = {
+                        key: value for key, value in schema.items()
+                        if key in selected_columns or key.startswith("__") or not isinstance(value, dict)
+                    }
+
+                    filtered_sql_info[table_slug]["schema"] = filtered_schema
+
+        # Update memory with filtered SQL info
+        self._memory["tables_sql_data"] = filtered_sql_info
+
+        return filtered_tables_info
 
     def _format_context(self) -> str:
         """Combines tables vector and sql info into a single context string."""
         tables_vector_info = self._memory.get("tables_vector_info", {})
-        tables_sql_info = self._memory.get("tables_sql_info", {})
-        return format_info(tables_vector_info, tables_sql_info)
+        tables_sql_data = self._memory.get("tables_sql_data", {})
+        return create_tables_sql_context(tables_vector_info, tables_sql_data)
+
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        """
+        Extends the parent respond method to ensure column selection is properly applied
+        to both tables_vector_info and tables_sql_data.
+        """
+        # Check if we need to rerun the full lookup process
+        requery_tables = True
+        if self.enable_table_validation:
+            requery_tables = await self._should_requery_tables(messages)
+
+        if requery_tables:
+            # Run the full lookup process
+            await self._gather_info(messages)
+
+            # Store results for future comparison
+            self._previous_tables_vector_info = self._memory.get("tables_vector_info", {}).copy()
+            self._previous_table_query = messages[-1]["content"]
+
+            # Reset column selection cache when tables change
+            if "tables_columns" in self._memory:
+                del self._memory["tables_columns"]
+        else:
+            # Reuse previous table info
+            tables_vector_info = self._previous_tables_vector_info.copy()
+            self._memory["tables_vector_info"] = tables_vector_info
+
+            with self._add_step(title="Table Lookup (Cached)") as step:
+                step.stream("Reusing previous table selection as the query intent is similar.")
+                for table_slug, info in tables_vector_info.items():
+                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                    similarity = info.get('similarity', 0)
+                    stream_details(f"Similarity: {similarity:.3f}", step, title=f"Table: {table_name}")
+
+        # Handle column subsetting
+        if self.enable_column_subset:
+            # Make sure tables_vector_info is in memory for the template
+            self._memory["tables_vector_info"] = self._memory.get("tables_vector_info", {})
+            await self._select_columns(messages)
+
+        # Format the context
+        context = self._format_context()
+        self._memory["tables_sql_context"] = context
+        return context
 
 
 class FunctionTool(Tool):
