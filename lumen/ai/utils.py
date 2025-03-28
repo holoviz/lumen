@@ -678,6 +678,7 @@ def create_tables_sql_context(tables_vector_info: dict, tables_sql_data: dict) -
         if sql:
             context += f"\n```sql\n{sql}\n```"
         schema = tables_sql_data.get(table_slug, {}).get("schema", {})
+
         if "view_definition" in schema:
             context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
             return context
