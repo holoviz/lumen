@@ -672,6 +672,9 @@ def format_info(tables_vector_info: dict, tables_sql_info: dict) -> str:
             continue
         table_description = table_vector_info.get("description", "")
         context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
+        sql = tables_sql_info[table_slug].get("sql", "")
+        if sql:
+            context += f"\n  SQL:\n```sql\n{sql}\n```"
         schema = tables_sql_info.get(table_slug, {}).get("schema", {})
         if "view_definition" in schema:
             context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"

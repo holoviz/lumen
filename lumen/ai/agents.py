@@ -606,8 +606,8 @@ class SQLAgent(LumenBaseAgent):
             if sql_query != sql_clean:
                 stream_details(f'\n\nSQL was cleaned up and prettified.\n```sql\n{sql_clean}\n```', step)
                 sql_query = sql_clean
-        except Exception:
-            pass
+        except Exception as e:
+            print(e)
         try:
             # TODO: if original sql expr matches, don't recreate a new one!
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})

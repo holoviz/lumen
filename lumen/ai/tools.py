@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 
 from textwrap import indent
 from types import FunctionType
@@ -214,15 +215,19 @@ class VectorLookupTool(Tool):
             step.stream("Performing initial search\n\n")
             stream_details(query, step, title="Initial query", auto=False)
             results = self.vector_store.query(query, top_k=self.n, **kwargs)
+            # check if all metadata is the same; if so, skip
+            if all(result.get('metadata') == results[0].get('metadata') for result in results):
+                return results
+
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
-            step.stream(f"Initial search found {len(results)} results with best similarity: {best_similarity:.3f}\n\n")
+            step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
             stream_details("\n".join(
-                result['metadata']["table_name"] for result in results
-            ), step, title=f"{len(results)} {self._item_type_name}", auto=False)
+                f'{result["text"]} {result["metadata"]}' for result in results
+            ), step, title=f"{len(results)} chunks", auto=False)
 
             refinement_history = []
-            if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold:
+            if not self.enable_query_refinement or best_similarity >= self.refinement_similarity_threshold or len(results) == 1:
                 step.stream("Search complete - no refinement needed.")
                 return best_results
 
@@ -417,9 +422,10 @@ class TableLookup(VectorLookupTool):
         for i, result in enumerate(results):
             source_name = result['metadata'].get("source", "unknown")
             table_name = result['metadata'].get("table_name", "unknown")
+            text = result["text"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
-            description = f"- {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
+            description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
             if tables_vector_info := self._tables_metadata.get(table_slug):
                 if table_description := tables_vector_info.get("description"):
                     description += f"\n  Description: {table_description}"
@@ -525,7 +531,7 @@ class TableLookup(VectorLookupTool):
         tables_vector_info = {}
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         for result in results:
-            if any_matches and result['similarity'] < self.min_similarity:
+            if any_matches and result['similarity'] < self.min_similarity and len(results) > 1:
                 continue
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
@@ -659,7 +665,7 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    if any(meta.get('similarity', 0) > self.table_similarity_threshold for meta in tables_vector_info.values()):
+                    if any(meta.get('similarity', 0) > self.table_similarity_threshold for meta in tables_vector_info.values()) or len(all_slugs) == 1:
                         selected_slugs = sorted(
                             tables_vector_info,
                             key=lambda x: tables_vector_info[x].get('similarity', 0),
@@ -714,6 +720,7 @@ class IterativeTableLookup(TableLookup):
                             satisfied_slugs = selected_slugs or list(examined_slugs)
                             break
                     except Exception as e:
+                        traceback.print_exc()
                         stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
                         continue
 
