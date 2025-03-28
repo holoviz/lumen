@@ -90,7 +90,7 @@ class SnowflakeSource(BaseSQLSource):
         qualified (schema.table), simply table names, or wildcards
         (e.g. database.schema.*).""")
 
-    schema_timeout_seconds = param.Integer(default=30, doc="""
+    schema_timeout_seconds = param.Integer(default=600, doc="""
         Timeout in seconds for schema retrieval. If None, no timeout is applied.""")
 
     dialect = 'snowflake'

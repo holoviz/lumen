@@ -223,7 +223,7 @@ class VectorLookupTool(Tool):
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
             stream_details("\n".join(
-                f'{result["text"]} {result["metadata"]}' for result in results
+                f'```\n{result["text"]}\n\n{result["metadata"]}```' for result in results
             ), step, title=f"{len(results)} chunks", auto=False)
 
             refinement_history = []
@@ -532,12 +532,12 @@ class TableLookup(VectorLookupTool):
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
         for result in results:
-            if any_matches and result['similarity'] < self.min_similarity and not same_table:
-                continue
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             similarity_score = result['similarity']
+            if any_matches and result['similarity'] < self.min_similarity and not same_table:
+                continue
 
             if table_slug not in tables_vector_info:
                 tables_vector_info[table_slug] = {}
@@ -580,6 +580,8 @@ class TableLookup(VectorLookupTool):
 
                 table_caption += f"\n{indent(columns_description, ' ' * 2)}"
                 tables_vector_info[table_slug]["caption"] = table_caption
+            else:
+                tables_vector_info[table_slug]["caption"] = "Instruct the user to try again; metadata was not yet loaded."
 
         # If query contains an exact table name, mark it as max similarity
         for table_slug in self._tables_metadata:
@@ -663,13 +665,14 @@ class IterativeTableLookup(TableLookup):
         chain_of_thought = ""
         max_iterations = self.max_selection_iterations
         sources = {source.name: source for source in self._memory["sources"]}
+
         for iteration in range(1, max_iterations + 1):
             with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
                 available_slugs = [
                     table_slug for table_slug in all_slugs
                     if table_slug not in examined_slugs
                 ]
-                log_debug(available_slugs)
+                log_debug(available_slugs, prefix=f"Available slugs for iteration {iteration}")
                 if not available_slugs:
                     step.stream("No more tables available to examine.")
                     break
@@ -743,7 +746,7 @@ class IterativeTableLookup(TableLookup):
                     vector_info = tables_vector_info[table_slug]
                     similarity = vector_info["similarity"]
                     caption = vector_info["caption"]
-                    step.stream(f"`{table_name}` (Similarity: {similarity:.2f})")
+                    step.stream(f"`{table_name}` (Similarity: {similarity:.3f})")
                     stream_details(caption, step, title="Caption", auto=False)
                     try:
                         view_definition = truncate_string(
