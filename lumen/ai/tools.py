@@ -530,8 +530,9 @@ class TableLookup(VectorLookupTool):
 
         tables_vector_info = {}
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+        same_table = len([result["metadata"]["table_name"] for result in results])
         for result in results:
-            if any_matches and result['similarity'] < self.min_similarity and len(results) > 1:
+            if any_matches and result['similarity'] < self.min_similarity and not same_table:
                 continue
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
@@ -551,19 +552,31 @@ class TableLookup(VectorLookupTool):
                 columns_description = "Cols:" if columns else ""
                 tables_vector_info[table_slug]["columns_description"] = {}
                 already_truncated = False
+                total_columns = len(columns)
+                display_count = 15
+                if total_columns > display_count:
+                    head_count = display_count // 2
+                    tail_count = display_count - head_count
+                    tail_start = total_columns - tail_count
+                else:
+                    head_count = total_columns
+                    tail_start = total_columns  # No tail section
+
                 for i, (col_name, col_info) in enumerate(columns.items()):
                     col_desc = f": {col_info['description']}" if col_info.get("description") else ""
                     tables_vector_info[table_slug]["columns_description"][col_name] = col_desc
-                    if already_truncated:
-                        # Skip if already truncated
+
+                    # Skip the middle section if we're showing head and tail
+                    if head_count < i < tail_start:
+                        if not already_truncated:
+                            middle_count = total_columns - head_count - tail_count
+                            columns_description += f"\n  ... ({middle_count} more) ..."
+                            already_truncated = True
                         continue
-                    if i <= 15:
-                        # Save on tokens by truncating long column names and letting the LLM infer the rest
-                        col_label = truncate_string(col_name, max_length=20)
-                        columns_description += f"\n- {col_label}{col_desc}"
-                    else:
-                        columns_description += f"\n  ... (out of {len(table_metadata['columns'])} columns)"
-                        already_truncated = True
+
+                    # Save on tokens by truncating long column names and letting the LLM infer the rest
+                    col_label = truncate_string(col_name, max_length=20)
+                    columns_description += f"\n- {col_label}{col_desc}"
 
                 table_caption += f"\n{indent(columns_description, ' ' * 2)}"
                 tables_vector_info[table_slug]["caption"] = table_caption
@@ -583,6 +596,8 @@ class TableLookup(VectorLookupTool):
             context += f"\n{table_slug} (Similarity: {table_info['similarity']:.3f})"
             if caption := table_info.get("caption", "").strip():
                 context += f"\n```\n{caption}\n```\n"
+            else:
+                breakpoint()
         return context
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
