@@ -6,7 +6,7 @@ from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
-__all__ = ['YesNo', 'Sql', 'VegaLiteSpec', 'RetrySpec', 'make_plan_models', 'make_agent_model', 'make_find_tables_model', 'make_iterative_selection_model', 'make_refined_query_model']
+__all__ = ['YesNo', 'Sql', 'VegaLiteSpec', 'RetrySpec', 'make_plan_models', 'make_agent_model', 'make_find_tables_model', 'make_iterative_selection_model', 'make_refined_query_model', 'make_column_subset_model']
 
 
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
@@ -190,6 +190,22 @@ def make_iterative_selection_model(table_slugs):
         __base__=PartialBaseModel
     )
     return table_model
+
+
+def make_column_subset_model():
+    """
+    Creates a model for selecting a subset of columns from tables.
+    """
+    return create_model(
+        "ColumnSubsetResponse",
+        chain_of_thought=(str, Field(
+            description="Reasoning behind column selection"
+        )),
+        selected_columns_indices=(dict[str, list[int]], Field(
+            description="Dictionary mapping table slugs to lists of column indices to include (0-based indexing)"
+        )),
+        __base__=PartialBaseModel
+    )
 
 
 def make_refined_query_model(item_type_name: str = "items"):

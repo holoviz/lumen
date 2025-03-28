@@ -16,7 +16,10 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_iterative_selection_model, make_refined_query_model
+from .models import (
+    YesNo, make_column_subset_model, make_iterative_selection_model,
+    make_refined_query_model,
+)
 from .translate import function_to_model
 from .utils import (
     fetch_table_sql_info, format_info, log_debug, stream_details,
@@ -93,6 +96,18 @@ class VectorLookupTool(Tool):
             "refine_query": {
                 "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
                 "response_model": make_refined_query_model,
+            },
+            "column_subset": {
+                "template": PROMPTS_DIR / "TableLookup" / "column_subset.jinja2",
+                "response_model": make_column_subset_model,
+            },
+            "revalidate_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "revalidate_columns.jinja2",
+                "response_model": YesNo,
+            },
+            "revalidate_tables": {
+                "template": PROMPTS_DIR / "TableLookup" / "revalidate_tables.jinja2",
+                "response_model": YesNo,
             },
         },
         doc="Dictionary of available prompts for the tool."
@@ -373,8 +388,18 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_vector_info"], readonly=True, doc="""
+    provides = param.List(default=["tables_vector_info", "selected_columns"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
+
+    enable_column_subset = param.Boolean(default=True, doc="""
+        Whether to enable column subsetting to filter out irrelevant columns.""")
+
+    enable_table_validation = param.Boolean(default=True, doc="""
+        Whether to enable validation of tables between queries to determine
+        if the full TableLookup process needs to be rerun.""")
+
+    max_columns_per_table = param.Integer(default=15, bounds=(1, None), doc="""
+        Maximum number of columns to include per table after subsetting.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -600,12 +625,228 @@ class TableLookup(VectorLookupTool):
                 context += f"\n```\n{caption}\n```\n"
         return context
 
+    async def _should_requery_tables(self, messages: list[dict[str, str]]) -> bool:
+        """
+        Determine if we should rerun the entire TableLookup process based on the new query.
+        """
+        # If no previous table info exists, we definitely need to run the full query
+        if "previous_tables_vector_info" not in self._memory:
+            return True
+
+        # Get current query and previous query
+        current_query = messages[-1]["content"]
+        self._memory["current_query"] = current_query
+
+        # If no previous query, definitely run full query
+        if not self._memory.get("previous_table_query"):
+            return True
+
+        try:
+            # Use convenience method to render prompt and invoke LLM
+            result = await self._invoke_prompt(
+                "revalidate_tables",
+                messages
+            )
+
+            return result.yes
+
+        except Exception as e:
+            # On any error, be safe and requery tables
+            with self._add_step(title="Table Validation Error") as step:
+                step.stream(f"Error checking if tables need to be requeried: {e}")
+                step.status = "failed"
+            return True
+
+    async def _should_reselect_columns(self, messages: list[dict[str, str]]) -> bool:
+        """
+        Determine if we should rerun the column selection based on the new query.
+        """
+        # If no previous selection exists, we definitely need to run it
+        if "previous_selected_columns" not in self._memory:
+            return True
+
+        # Get current query and previous query
+        current_query = messages[-1]["content"]
+        self._memory["current_query"] = current_query
+
+        # If no previous query, definitely run selection
+        if not self._memory.get("previous_column_query"):
+            return True
+
+        try:
+            # Use convenience method to render prompt and invoke LLM
+            result = await self._invoke_prompt(
+                "revalidate_columns",
+                messages
+            )
+
+            return result.yes
+
+        except Exception as e:
+            # On any error, be safe and reselect columns
+            with self._add_step(title="Column Revalidation Error") as step:
+                step.stream(f"Error checking if column selection should be rerun: {e}")
+                step.status = "failed"
+            return True
+
+    async def _select_columns(self, messages: list[dict[str, str]]) -> dict:
+        """
+        Select relevant columns from tables based on the user query.
+        This runs after _gather_info and before _format_context.
+        """
+        if not self.enable_column_subset:
+            return {}
+
+        tables_vector_info = self._memory.get("tables_vector_info", {})
+        if not tables_vector_info:
+            return {}
+
+        # Check if we should reuse previous column selection
+        current_query = messages[-1]["content"]
+        needs_reselection = await self._should_reselect_columns(messages)
+
+        if not needs_reselection and "previous_selected_columns" in self._memory:
+            # Reuse previous selection
+            selected_columns = self._memory["previous_selected_columns"]
+            with self._add_step(title="Column Selection (Cached)") as step:
+                step.stream("Reusing previous column selection as the query intent is similar.")
+                for table_slug, columns in selected_columns.items():
+                    if table_slug in tables_vector_info:
+                        table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                        all_columns = list(tables_vector_info[table_slug].get("columns_description", {}).keys())
+                        column_names = [all_columns[idx] for idx in columns if idx < len(all_columns)]
+                        stream_details(', '.join(column_names), step, title=f"Selected columns for {table_name}")
+
+            # Apply the cached selection
+            self._apply_column_selection(tables_vector_info, selected_columns)
+            return selected_columns
+
+        try:
+            # Prepare enumerated columns for each table
+            enumerated_tables = {}
+            for table_slug, table_info in tables_vector_info.items():
+                columns = list(table_info.get("columns_description", {}).keys())
+                enumerated_tables[table_slug] = {
+                    "columns": columns,
+                    "description": table_info.get("description", "")
+                }
+
+            # Store necessary information in memory
+            self._memory["current_query"] = current_query
+            self._memory["enumerated_tables"] = enumerated_tables
+            self._memory["max_columns"] = self.max_columns_per_table
+
+            # Use convenience method to render prompt and invoke LLM
+            output = await self._invoke_prompt(
+                "column_subset",
+                messages
+            )
+
+            # Store the selection for future reference
+            selected_indices = output.selected_columns_indices
+            self._memory["selected_columns"] = selected_indices
+            self._memory["previous_selected_columns"] = selected_indices
+            self._memory["previous_column_query"] = current_query
+
+            with self._add_step(title="Column Selection") as step:
+                step.stream(output.chain_of_thought)
+                for table_slug, indices in selected_indices.items():
+                    if table_slug in tables_vector_info:
+                        table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                        all_columns = list(tables_vector_info[table_slug].get("columns_description", {}).keys())
+                        column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
+                        stream_details(', '.join(column_names), step, title=f"Selected columns for {table_name}")
+
+            # Apply the selection to tables_vector_info
+            self._apply_column_selection(tables_vector_info, selected_indices)
+
+            return selected_indices
+
+        except Exception as e:
+            with self._add_step(title="Column Selection Error") as step:
+                step.stream(f"Error selecting columns: {e}")
+                step.status = "failed"
+            return {}
+
+    def _apply_column_selection(self, tables_vector_info: dict, selected_indices: dict) -> None:
+        """
+        Apply the column selection to the tables_vector_info.
+        """
+        for table_slug, indices in selected_indices.items():
+            if table_slug in tables_vector_info:
+                if "columns_description" in tables_vector_info[table_slug]:
+                    # Get the original columns
+                    all_columns = list(tables_vector_info[table_slug]["columns_description"].keys())
+
+                    # Filter columns to only include selected indices
+                    selected_columns = {}
+                    for idx in indices:
+                        if idx < len(all_columns):
+                            col_name = all_columns[idx]
+                            desc = tables_vector_info[table_slug]["columns_description"].get(col_name, "")
+                            selected_columns[col_name] = desc
+
+                    # Update columns_description
+                    tables_vector_info[table_slug]["columns_description"] = selected_columns
+
+                    # Update the caption to reflect only selected columns
+                    self._update_table_caption(tables_vector_info, table_slug, selected_columns)
+
+    def _update_table_caption(self, tables_vector_info: dict, table_slug: str, selected_columns: dict) -> None:
+        """
+        Update the table caption to include only selected columns.
+        """
+        columns_description = "Cols:" if selected_columns else ""
+        for col_name, col_desc in selected_columns.items():
+            col_label = truncate_string(col_name, max_length=20)
+            columns_description += f"\n- {col_label}{col_desc}"
+
+        description = ""
+        if "description" in tables_vector_info[table_slug]:
+            description = f"  Description: {tables_vector_info[table_slug]['description']}\n"
+
+        table_caption = description + indent(columns_description, ' ' * 2)
+        tables_vector_info[table_slug]["caption"] = table_caption.strip()
+
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
-        Fetches the closest tables based on the user query, with query refinement
-        if enabled and initial results don't meet threshold.
+        Fetches the closest tables based on the user query, selects relevant columns,
+        and formats the context for the LLM.
         """
-        await self._gather_info(messages)
+        # Check if we need to rerun the full TableLookup
+        requery_tables = True
+        if self.enable_table_validation:
+            requery_tables = await self._should_requery_tables(messages)
+
+        if requery_tables:
+            # Run the full TableLookup process
+            await self._gather_info(messages)
+
+            # Store the results for future comparison
+            self._memory["previous_tables_vector_info"] = self._memory.get("tables_vector_info", {}).copy()
+            self._memory["previous_table_query"] = messages[-1]["content"]
+
+            # Reset column selection cache when tables change
+            if "previous_selected_columns" in self._memory:
+                del self._memory["previous_selected_columns"]
+        else:
+            # Reuse previous table info
+            tables_vector_info = self._memory.get("previous_tables_vector_info", {}).copy()
+            self._memory["tables_vector_info"] = tables_vector_info
+
+            with self._add_step(title="Table Lookup (Cached)") as step:
+                step.stream("Reusing previous table selection as the query intent is similar.")
+                for table_slug, info in tables_vector_info.items():
+                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                    similarity = info.get('similarity', 0)
+                    stream_details(f"Similarity: {similarity:.3f}", step, title=f"Table: {table_name}")
+
+        # Handle column subsetting
+        if self.enable_column_subset:
+            # Make sure tables_vector_info is in memory for the template
+            self._memory["tables_vector_info"] = self._memory.get("tables_vector_info", {})
+            await self._select_columns(messages)
+
         context = self._format_context()
         return context
 

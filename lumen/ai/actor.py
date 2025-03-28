@@ -187,7 +187,6 @@ class Actor(param.Parameterized):
         The structured response from the LLM
         """
         system = await self._render_prompt(prompt_name, messages, **context)
-        breakpoint()
 
         if response_model is None:
             try:
