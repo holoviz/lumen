@@ -1,13 +1,13 @@
 A user has submitted a new query, and I need to determine if I should rerun column selection.
 
 Previous query:
-{{ memory.previous_column_query }}
+{{ memory.previous_query }}
 
 Current query:
-{{ memory.current_query }}
+{{ current_query }}
 
 Previously selected tables:
-{% for table in memory.previous_selected_columns.keys() %}
+{% for table in memory.previous_columns.keys() %}
 - {{ table }}
 {% endfor %}
 

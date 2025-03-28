@@ -6,7 +6,7 @@ from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
-__all__ = ['YesNo', 'Sql', 'VegaLiteSpec', 'RetrySpec', 'make_plan_models', 'make_agent_model', 'make_find_tables_model', 'make_iterative_selection_model', 'make_refined_query_model', 'make_column_subset_model']
+from .config import SOURCE_TABLE_SEPARATOR
 
 
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
@@ -77,7 +77,7 @@ def make_plan_models(agents: list[str], tools: list[str]):
         chain_of_thought=(
             str,
             FieldInfo(
-                description="Describe at a high-level how the actions of each expert will solve the user query."
+                description="Describe at a high-level how the actions of each expert will solve the user query, and whether the current columns is sufficient to answer the query."
             ),
         ),
     )
@@ -94,6 +94,30 @@ def make_plan_models(agents: list[str], tools: list[str]):
         )
     )
     return reasoning, plan
+
+
+class TableColumnsIndices(PartialBaseModel):
+
+    table_slug: str = Field(
+        description=f"The table slug, e.g. Source{SOURCE_TABLE_SEPARATOR}table"
+    )
+
+    column_indices: list[int] = Field(
+        description="A list of 0-based column indices for the table specified by `table_slug`. This indicates which columns should be included in the output."
+    )
+
+
+class ColumnSubsetResponse(PartialBaseModel):
+    """
+    Model for selecting a subset of columns from tables.
+    """
+    chain_of_thought: str = Field(
+        description="Reasoning behind column selection. Keep it concise."
+    )
+
+    tables_columns_indices: list[TableColumnsIndices] = Field(
+        description="The list of tables and their respective columns to include in the final output. Each entry should specify the table slug and the indices of the columns to include."
+    )
 
 
 def make_agent_model(agent_names: list[str], primary: bool = False):
@@ -190,22 +214,6 @@ def make_iterative_selection_model(table_slugs):
         __base__=PartialBaseModel
     )
     return table_model
-
-
-def make_column_subset_model():
-    """
-    Creates a model for selecting a subset of columns from tables.
-    """
-    return create_model(
-        "ColumnSubsetResponse",
-        chain_of_thought=(str, Field(
-            description="Reasoning behind column selection"
-        )),
-        selected_columns_indices=(dict[str, list[int]], Field(
-            description="Dictionary mapping table slugs to lists of column indices to include (0-based indexing)"
-        )),
-        __base__=PartialBaseModel
-    )
 
 
 def make_refined_query_model(item_type_name: str = "items"):

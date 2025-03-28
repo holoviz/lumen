@@ -1,21 +1,8 @@
-Your task is to select the most relevant columns from database tables for the following user query:
-
-{{ memory.current_query }}
-
-I've found the following tables that might be relevant:
-
-{% for table_slug, info in memory.enumerated_tables.items() %}
-TABLE: {{ table_slug }}
-{% if info.description %}DESCRIPTION: {{ info.description }}{% endif %}
-COLUMNS (indexed from 0):
-{% for idx, col_name in enumerate(info.columns) %}
-[{{ idx }}] {{ col_name }}{% if table_slug in memory.tables_vector_info and col_name in memory.tables_vector_info[table_slug].columns_description %}: {{ memory.tables_vector_info[table_slug].columns_description[col_name] }}{% endif %}
-{% endfor %}
-
-{% endfor %}
+{%- block instructions -%}
+Your task is to select the most relevant columns from database tables for the following user query.
 
 For each table, select ONLY the column indices (numbers) that are directly relevant to answering the user's query.
-Be selective - include only columns that are clearly relevant to the query. The max number of columns you should select per table is {{ memory.max_columns }}.
+Be selective - include only columns that are clearly relevant to the query.
 
 First think step-by-step about which columns would be needed to answer the query.
 Consider which columns contain the specific data points mentioned in the query.
@@ -25,3 +12,18 @@ If you have doubts about a column's relevance, include it.
 Provide your response with:
 1. A chain of thought explanation of your selections
 2. A dictionary mapping table slugs to lists of column indices (numbers)
+{%- endblock -%}
+
+{% block context %}
+The user query is:
+{{ current_query }}
+
+{% for table_slug, info in enumerated_tables.items() %}
+TABLE: {{ table_slug }}
+{% if info.description is defined and info.description %}DESCRIPTION: {{ info.description }}{% endif %}
+COLUMNS (indexed from 0):
+{% for idx in range(info.columns|length) %}
+{{ idx }}. {{ info.columns[idx] }}{% if table_slug in memory.tables_vector_info and info.columns[idx] in memory.tables_vector_info[table_slug].columns_description %}: {{ memory.tables_vector_info[table_slug].columns_description[info.columns[idx]] }}{% endif %}
+{%- endfor %}
+{% endfor %}
+{% endblock %}

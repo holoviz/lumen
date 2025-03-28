@@ -36,10 +36,10 @@ Here is the current SQL query:
 {%- if memory.data|length == 0 %}
 The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
 and try to make educated guess what other columns or values should be used instead.
-{%- endif %}
-{%- endblock %}
-{%- block examples %}
-{%- if memory.data|length == 0 %}
+{%- endif -%}
+{%- endblock -%}
+{%- block examples -%}
+{%- if memory.data|length == 0 -%}
 Here's an example of a good reply...
 User Query:
 What are all the Category 3 hurricanes in the East Pacific since 2000?

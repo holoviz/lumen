@@ -156,7 +156,8 @@ def retry_llm_output(retries=3, sleep=1):
             async def async_wrapper(*args, **kwargs):
                 errors = []
                 for i in range(retries):
-                    log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
+                    if i > 0:
+                        log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
                     if errors:
                         kwargs["errors"] = errors
                     try:
@@ -182,7 +183,8 @@ def retry_llm_output(retries=3, sleep=1):
             def sync_wrapper(*args, **kwargs):
                 errors = []
                 for i in range(retries):
-                    log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
+                    if i > 0:
+                        log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
                     if errors:
                         kwargs["errors"] = errors
                     try:
@@ -665,17 +667,17 @@ def truncate_string(s, max_length=20, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
-def format_info(tables_vector_info: dict, tables_sql_info: dict) -> str:
+def create_tables_sql_context(tables_vector_info: dict, tables_sql_data: dict) -> str:
     context = "Below are the relevant tables:\n"
     for table_slug, table_vector_info in tables_vector_info.items():
-        if table_slug not in tables_sql_info:
+        if table_slug not in tables_sql_data:
             continue
         table_description = table_vector_info.get("description", "")
         context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
-        sql = tables_sql_info[table_slug].get("sql", "")
+        sql = tables_sql_data[table_slug].get("sql", "")
         if sql:
-            context += f"\n  SQL:\n```sql\n{sql}\n```"
-        schema = tables_sql_info.get(table_slug, {}).get("schema", {})
+            context += f"\n```sql\n{sql}\n```"
+        schema = tables_sql_data.get(table_slug, {}).get("schema", {})
         if "view_definition" in schema:
             context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
             return context

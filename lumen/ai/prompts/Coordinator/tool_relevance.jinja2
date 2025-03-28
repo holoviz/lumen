@@ -8,11 +8,13 @@ Consider whether the output from this tool would be helpful for the agent to com
 2. The tool's output content and format
 3. The original user query
 4. How directly the tool's output addresses needs of the agent
+5. What the tool provides vs. what the agent requires
 
 Answer yes if:
 1. The tool output contains information the agent would need to complete its task
 2. The tool output would significantly enhance the agent's understanding of the problem
 3. The tool output directly addresses aspects of the user query that the agent must address
+4. The tool provides specific context values (via its 'provides' list) that the agent requires (listed in its 'requires' list)
 
 Answer no if:
 1. The tool output is irrelevant to the agent's task
@@ -25,31 +27,38 @@ Your output should be a boolean indicating whether the tool output is relevant t
 {% block context %}
 USER QUERY:
 {{ user_query }}
-{% endblock %}
-{% block examples %}
-For example:
 
 TOOL:
 - Name: {{ tool_name }}
 - Description: {{ tool_description }}
+- Provides: {{ tool_provides }}
+- Requires: {{ tool_requires }}
 - Output: {{ tool_output }}
 
 AGENT:
 - Name: {{ agent_name }}
 - Purpose: {{ agent_purpose }}
 - Task: {{ agent_task }}
-
+- Provides: {{ agent_provides }}
+- Requires: {{ agent_requires }}
+{% endblock %}
+{% block examples %}
+For example:
 Case 1 - Relevant:
 Tool: DatabaseSchema
+Provides: ["table_schema"]
 Output: Table 'users' columns: id, name, email
 Agent: SQLAgent writing query to get user emails
+Requires: ["table_schema"]
 Task: "List all user emails"
--> YES (schema directly helps agent write correct query)
+-> YES (schema directly helps agent write correct query and provides what agent requires)
 
 Case 2 - Not Relevant:
 Tool: WeatherAPI
+Provides: ["weather_data"]
 Output: "72F and sunny in San Francisco"
 Agent: SQLAgent writing query for user data
+Requires: ["table_schema", "sql_context"]
 Task: "Find users who joined this month"
--> NO (weather data doesn't help with SQL query)
+-> NO (weather data doesn't help with SQL query and doesn't provide what agent requires)
 {% endblock %}

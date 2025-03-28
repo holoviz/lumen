@@ -45,10 +45,11 @@ CAST or TO_DATE
 - Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, only if needed.
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
 {% endif %}
-{% if comments is defined -%}
+{% if comments is defined and comments -%}
 Here's additional guidance:
 {{ comments }}
 {%- endif -%}
+{{ memory["tables_sql_context"] }}
 {%- endblock -%}
 
 {%- block examples %}

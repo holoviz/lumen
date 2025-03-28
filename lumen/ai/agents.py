@@ -252,7 +252,7 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=["tables_vector_info"], readonly=True)
+    requires = param.List(default=["tables_vector_context"], readonly=True)
 
     async def respond(
         self,
@@ -519,7 +519,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "tables_sql_info"], readonly=True)
+    requires = param.List(default=["source", "tables_sql_data", "tables_sql_context"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -645,7 +645,7 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_slugs = list(self._memory["tables_sql_info"])
+        selected_slugs = list(self._memory["tables_sql_data"])
 
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
@@ -703,7 +703,7 @@ class SQLAgent(LumenBaseAgent):
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["pipeline"], readonly=True)
+    requires = param.List(default=["pipeline", "tables_sql_context"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
 
