@@ -168,7 +168,7 @@ def test_sql_columns():
 
 def test_sql_distinct():
     result = SQLDistinct.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = "SELECT DISTINCT A, B FROM (SELECT * FROM TABLE)"
+    expected = 'SELECT DISTINCT "A", "B" FROM (SELECT * FROM TABLE)'
     assert result == expected
 
 

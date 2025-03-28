@@ -381,7 +381,7 @@ class SQLDistinct(SQLTransform):
             return sql_in
 
         subquery = self.parse_sql(sql_in).subquery()
-        expression = select(*self.columns).from_(subquery).distinct()
+        expression = select(*[Identifier(this=col, quoted=True) for col in self.columns]).from_(subquery).distinct()
         return self.to_sql(expression)
 
 

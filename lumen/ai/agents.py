@@ -25,7 +25,7 @@ from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..sources.duckdb import DuckDBSource
 from ..state import state
-from ..transforms.sql import SQLLimit, SQLTransform
+from ..transforms.sql import SQLLimit
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
@@ -37,7 +37,7 @@ from .memory import _Memory
 from .models import (
     PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_find_tables_model,
 )
-from .tools import DocumentLookup, ToolUser
+from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
@@ -248,12 +248,11 @@ class ChatAgent(Agent):
         default={
             "main": {
                 "template": PROMPTS_DIR / "ChatAgent" / "main.jinja2",
-                "tools": [DocumentLookup]
             },
         }
     )
 
-    requires = param.List(default=["tables_info"], readonly=True)
+    requires = param.List(default=["tables_vector_info"], readonly=True)
 
     async def respond(
         self,
@@ -520,7 +519,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "tables_info"], readonly=True)
+    requires = param.List(default=["source", "tables_sql_info"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -555,7 +554,6 @@ class SQLAgent(LumenBaseAgent):
             "main",
             messages,
             join_required=join_required,
-            tables_info=self._memory["tables_info"],
             dialect=dialect,
             comments=comments,
             has_errors=bool(errors),
@@ -604,13 +602,6 @@ class SQLAgent(LumenBaseAgent):
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
         try:
-            sql_clean = SQLTransform(sql_query, write=source.dialect, pretty=True, identify=False).to_sql()
-            if sql_query != sql_clean:
-                stream_details(f'\n\nSQL was cleaned up and prettified.\n```sql\n{sql_clean}\n```', step)
-                sql_query = sql_clean
-        except Exception:
-            pass
-        try:
             # TODO: if original sql expr matches, don't recreate a new one!
             sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
             sql_query = sql_expr_source.tables[expr_slug]
@@ -654,16 +645,19 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_slugs = list(self._memory["tables_info"])
+        selected_slugs = list(self._memory["tables_sql_info"])
+
+        if len(selected_slugs) == 0:
+            raise ValueError("No tables found in memory.")
 
         chain_of_thought = ""
-        if len(selected_slugs) > 1:
-            system = await self._render_prompt(
-                "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
-            )
-            find_tables_model = self._get_model("find_tables", tables=selected_slugs)
-            model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-            with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
+            if len(selected_slugs) > 1:
+                system = await self._render_prompt(
+                    "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
+                )
+                find_tables_model = self._get_model("find_tables", tables=selected_slugs)
+                model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
                 response = self.llm.stream(
                     messages,
                     system=system,
@@ -680,10 +674,11 @@ class SQLAgent(LumenBaseAgent):
                     stream_details('\n'.join(selected_slugs), step, title="Relevant tables", auto=False)
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
-        tables_to_source = {}
-        for table_slug in selected_slugs:
-            a_source_obj, a_table = parse_table_slug(table_slug, sources)
-            tables_to_source[a_table] = a_source_obj
+            tables_to_source = {}
+            for table_slug in selected_slugs:
+                a_source_obj, a_table = parse_table_slug(table_slug, sources)
+                tables_to_source[a_table] = a_source_obj
+                step.stream(f"Planning to use: {table_slug!r}")
 
         return tables_to_source, chain_of_thought
 
