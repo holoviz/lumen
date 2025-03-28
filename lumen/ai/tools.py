@@ -596,8 +596,6 @@ class TableLookup(VectorLookupTool):
             context += f"\n{table_slug} (Similarity: {table_info['similarity']:.3f})"
             if caption := table_info.get("caption", "").strip():
                 context += f"\n```\n{caption}\n```\n"
-            else:
-                breakpoint()
         return context
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
