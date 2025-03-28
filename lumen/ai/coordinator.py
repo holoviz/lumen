@@ -27,7 +27,7 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import make_agent_model, make_plan_models
+from .models import YesNo, make_agent_model, make_plan_models
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
@@ -88,6 +88,25 @@ class Coordinator(Viewer, ToolUser):
     computing an execution graph and then executing each
     step along the graph.
     """
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
+            },
+            "yesno_update": {
+                "template": PROMPTS_DIR / "Coordinator" / "yesno_update.jinja2",
+                "response_model": YesNo,
+            },
+            "next_instruction": {
+                "template": PROMPTS_DIR / "Coordinator" / "next_instruction.jinja2",
+            },
+            "tool_relevance": {
+                "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
+                "response_model": YesNo,
+            },
+        },
+    )
 
     within_ui = param.Boolean(default=False, constant=True, doc="""
         Whether this coordinator is being used within the UI.""")
@@ -347,7 +366,7 @@ class Coordinator(Viewer, ToolUser):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]) -> bool:
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> bool:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -407,8 +426,32 @@ class Coordinator(Viewer, ToolUser):
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             if isinstance(subagent, Tool):
                 if isinstance(result, str) and result:
-                    self._memory["tools_context"][subagent.name] = result
                     stream_details(result, step, title="Results", auto=False)
+                    # Check relevance for future agents if execution_graph is provided
+                    if execution_graph:  # Only process if execution_graph is provided
+                        for agent in self.agents:
+                            if not isinstance(agent, Tool):
+                                # Find if this agent appears in future nodes
+                                agent_task = ""
+                                for future_node in execution_graph:
+                                    if future_node.actor is agent:
+                                        agent_task = future_node.instruction
+                                        break
+
+                                if agent_task:  # Only check if agent will be used
+                                    # Check if tool output is relevant
+                                    is_relevant = await self._check_tool_relevance(
+                                        subagent.name, result, agent, agent_task, messages
+                                    )
+
+                                    if is_relevant:
+                                        # Initialize agent_tool_contexts if needed
+                                        if agent.name not in self._memory["agent_tool_contexts"]:
+                                            self._memory["agent_tool_contexts"][agent.name] = ""
+
+                                        # Store the tool output in agent's context
+                                        self._memory["agent_tool_contexts"][agent.name] += "\n" + result
+                                        log_debug(f"Added {subagent.name} output to {agent.name}'s context")
                 elif isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))
@@ -447,7 +490,7 @@ class Coordinator(Viewer, ToolUser):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        self._memory["tools_context"] = {}
+        self._memory["agent_tool_contexts"] = {}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
                 with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
@@ -469,8 +512,8 @@ class Coordinator(Viewer, ToolUser):
                 )
                 self.interface.stream(msg, user='Lumen')
                 return msg
-            for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages)
+            for i, node in enumerate(execution_graph):
+                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
                 if not succeeded:
                     break
             if "pipeline" in self._memory:
@@ -481,6 +524,29 @@ class Coordinator(Viewer, ToolUser):
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
                 break
+
+    async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
+        # Extract the user query from messages
+        user_query = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                user_query = msg["content"]
+                break
+
+        # Use _invoke_prompt to combine rendering the prompt and invoking the LLM
+        result = await self._invoke_prompt(
+            "tool_relevance",
+            messages,
+            tool_name=tool_name,
+            tool_description=getattr(self._tools.get(tool_name), "description", ""),
+            tool_output=tool_output,
+            agent_name=agent.name,
+            agent_purpose=agent.purpose,
+            agent_task=agent_task,
+            user_query=user_query
+        )
+
+        return result.yes
 
 
 class DependencyResolver(Coordinator):

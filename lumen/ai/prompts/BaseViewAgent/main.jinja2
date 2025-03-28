@@ -9,15 +9,10 @@ The current SQL
 {{ memory['sql'] }}
 ```
 
-The data to be plotted originates from a table called '{{ table }}' and follows the following YAML schema:
-```yaml
-{{ schema }}
-```
-
-{% if view %}
+{% if "view" in memory %}
 The previous view specification was:
 ```
-{{ view }}
+{{ memory["view"] }}
 ```
 {% endif %}
 {% endblock %}

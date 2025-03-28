@@ -6,9 +6,16 @@ from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
+__all__ = ['YesNo', 'Sql', 'VegaLiteSpec', 'RetrySpec', 'make_plan_models', 'make_agent_model', 'make_find_tables_model', 'make_iterative_selection_model', 'make_refined_query_model']
+
 
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
     ...
+
+
+class YesNo(BaseModel):
+
+    yes: bool = Field(description="True if yes, otherwise False.")
 
 
 class Sql(BaseModel):

@@ -741,9 +741,7 @@ class BaseViewAgent(LumenBaseAgent):
         system = await self._render_prompt(
             "main",
             messages,
-            schema=yaml.dump(schema),
             table=pipeline.table,
-            view=self._memory.get('view'),
             has_errors=bool(errors),
             doc=doc,
         )
