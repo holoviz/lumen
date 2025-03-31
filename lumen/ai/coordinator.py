@@ -98,9 +98,6 @@ class Coordinator(Viewer, ToolUser):
                 "template": PROMPTS_DIR / "Coordinator" / "yesno_update.jinja2",
                 "response_model": YesNo,
             },
-            "next_instruction": {
-                "template": PROMPTS_DIR / "Coordinator" / "next_instruction.jinja2",
-            },
             "tool_relevance": {
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": YesNo,
