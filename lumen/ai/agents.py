@@ -252,7 +252,7 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=["tables_vector_context"], readonly=True)
+    requires = param.List(default=["tables_vector_metaset"], readonly=True)
 
     async def respond(
         self,
@@ -261,6 +261,7 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
+        breakpoint()
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
 
@@ -519,7 +520,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "tables_sql_data", "tables_sql_context"], readonly=True)
+    requires = param.List(default=["source", "table_sql_metaset"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -645,7 +646,8 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_slugs = list(self._memory["tables_sql_data"])
+        breakpoint()
+        selected_slugs = list(self._memory["table_sql_metaset"].vector_metaset.sel_tables_cols)
 
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
@@ -679,7 +681,6 @@ class SQLAgent(LumenBaseAgent):
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
                 step.stream(f"Planning to use: {table_slug!r}")
-
         return tables_to_source, chain_of_thought
 
     async def respond(
@@ -703,7 +704,7 @@ class SQLAgent(LumenBaseAgent):
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["pipeline", "tables_sql_context"], readonly=True)
+    requires = param.List(default=["pipeline", "table_sql_metaset"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
 

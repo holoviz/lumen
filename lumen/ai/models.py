@@ -107,7 +107,7 @@ class TableColumnsIndices(PartialBaseModel):
     )
 
 
-class ColumnSubsetResponse(PartialBaseModel):
+class ColumnsSelection(PartialBaseModel):
     """
     Model for selecting a subset of columns from tables.
     """
@@ -116,7 +116,7 @@ class ColumnSubsetResponse(PartialBaseModel):
     )
 
     tables_columns_indices: list[TableColumnsIndices] = Field(
-        description="The list of tables and their respective columns to include in the final output. Each entry should specify the table slug and the indices of the columns to include."
+        description=f"The list of table slugs (verbatim Source{SOURCE_TABLE_SEPARATOR}table) and their respective columns to include in the final output."
     )
 
 

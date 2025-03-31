@@ -11,19 +11,9 @@ If you have doubts about a column's relevance, include it.
 
 Provide your response with:
 1. A chain of thought explanation of your selections
-2. A dictionary mapping table slugs to lists of column indices (numbers)
+2. A dictionary mapping table slugs (verbatim SOURCE{{ source_table_sep }}TABLE) to lists of column indices (numbers)
 {%- endblock -%}
 
 {% block context %}
-The user query is:
-{{ current_query }}
-
-{% for table_slug, info in enumerated_tables.items() %}
-TABLE: {{ table_slug }}
-{% if info.description is defined and info.description %}DESCRIPTION: {{ info.description }}{% endif %}
-COLUMNS (indexed from 0):
-{% for idx in range(info.columns|length) %}
-{{ idx }}. {{ info.columns[idx] }}{% if table_slug in memory.tables_vector_data and info.columns[idx] in memory.tables_vector_data[table_slug].columns_description %}: {{ memory.tables_vector_data[table_slug].columns_description[info.columns[idx]] }}{% endif %}
-{%- endfor %}
-{% endfor %}
+{{ vector_metaset }}
 {% endblock %}

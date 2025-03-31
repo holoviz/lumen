@@ -504,13 +504,6 @@ class Coordinator(Viewer, ToolUser):
                 break
 
     async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
-        # Extract the user query from messages
-        user_query = ""
-        for msg in reversed(messages):
-            if msg["role"] == "user":
-                user_query = msg["content"]
-                break
-
         # Get tool info
         tool = next((t for t in self._tools["main"] if t.name == tool_name), None)
         tool_provides = getattr(tool, "provides", [])
@@ -534,7 +527,6 @@ class Coordinator(Viewer, ToolUser):
             agent_task=agent_task,
             agent_provides=agent_provides,
             agent_requires=agent_requires,
-            user_query=user_query
         )
 
         return result.yes

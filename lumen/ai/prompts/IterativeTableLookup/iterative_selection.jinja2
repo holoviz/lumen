@@ -16,21 +16,19 @@ Be decisive and efficient with being done. Perfect is the enemy of good.
 {% endblock %}
 
 {% block context %}
-You need to select tables from a database to help answer this query:
-"""
-{{ current_query }}
-"""
+You need to select tables from a database to help answer the query.
+
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
 {% for table_slug in available_slugs %}
-{{ table_slug }} (Similarity: {{ tables_vector_data[table_slug].similarity | round(3) }})
-{% if tables_vector_data[table_slug].description is defined and tables_vector_data[table_slug].description %}
-  Description: {{ tables_vector_data[table_slug].description }}
+{{ table_slug }} (Similarity: {{ vector_metadata_map[table_slug].similarity | round(3) }})
+{% if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description %}
+  Description: {{ vector_metadata_map[table_slug].description }}
 {% endif %}
-{%- if tables_vector_data[table_slug].columns_description is defined and tables_vector_data[table_slug].columns_description|length > 0 %}
+{%- if vector_metadata_map[table_slug].table_cols is defined and vector_metadata_map[table_slug].table_cols|length > 0 %}
   Cols:
-  {%- for col_name, col_desc in tables_vector_data[table_slug].columns_description.items() %}
-  - {{ col_name }}{{ col_desc }}
+  {%- for col in vector_metadata_map[table_slug].table_cols %}
+  - {{ col.name }}{% if col.description %}: {{ col.description }}{% endif %}
   {% endfor %}
 {% endif %}
 {% endfor %}

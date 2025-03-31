@@ -1,15 +1,7 @@
 A user has submitted a new query, and I need to determine if I should rerun the entire table lookup process.
 
-Previous query:
-{{ memory.previous_table_query }}
-
-Current query:
-{{ current_query }}
-
-Previously selected tables:
-{% for table in memory.previous_tables_vector_data.keys() %}
-- {{ table }}
-{% endfor %}
+Here is the previous query, tables, and columns:
+{{ previous_state }}
 
 First, analyze both queries and determine if the current query is likely to require different tables:
 

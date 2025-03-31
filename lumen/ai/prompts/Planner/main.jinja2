@@ -27,13 +27,13 @@ Import Tools Rules:
 {% endblock -%}
 
 {% block context -%}
-{% if memory.get('tables_columns') %}
+{%- if memory.get('table_vector_metaset') and memory.get('sel_tables_cols').sel_tables_cols %}
 The current selected columns in memory is:
-{{ memory['tables_columns'] }}
+{{ memory['sel_tables_cols'].sel_tables_cols }}
 Please consider whether this is enough information to proceed with the current user query.
-{% else %}
+{%- else %}
 The current selected columns for the query have not been set yet.
-{% endif %}
+{%- endif %}
 
 {% if memory.get('document_sources') %}
 Here are the documents you have access to:

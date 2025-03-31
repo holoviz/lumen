@@ -25,9 +25,6 @@ Answer no if:
 Your output should be a boolean indicating whether the tool output is relevant to the agent.
 {% endblock %}
 {% block context %}
-USER QUERY:
-{{ user_query }}
-
 TOOL:
 - Name: {{ tool_name }}
 - Description: {{ tool_description }}

@@ -1,15 +1,7 @@
 A user has submitted a new query, and I need to determine if I should rerun column selection.
 
-Previous query:
-{{ memory.previous_query }}
-
-Current query:
-{{ current_query }}
-
-Previously selected tables:
-{% for table in memory.previous_columns.keys() %}
-- {{ table }}
-{% endfor %}
+Here is the previous query, tables, and columns:
+{{ previous_state }}
 
 First, compare the two queries. Consider whether:
 1. The new query is asking for the same type of information
