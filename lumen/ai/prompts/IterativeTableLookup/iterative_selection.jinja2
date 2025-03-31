@@ -17,19 +17,19 @@ Be decisive and efficient with being done. Perfect is the enemy of good.
 
 {% block context %}
 You need to select tables from a database to help answer this query:
-
+"""
 {{ current_query }}
-
+"""
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
 {% for table_slug in available_slugs %}
-{{ table_slug }} (Similarity: {{ tables_vector_info[table_slug].similarity | round(3) }})
-{% if tables_vector_info[table_slug].description is defined and tables_vector_info[table_slug].description %}
-  Description: {{ tables_vector_info[table_slug].description }}
+{{ table_slug }} (Similarity: {{ tables_vector_data[table_slug].similarity | round(3) }})
+{% if tables_vector_data[table_slug].description is defined and tables_vector_data[table_slug].description %}
+  Description: {{ tables_vector_data[table_slug].description }}
 {% endif %}
-{% if tables_vector_info[table_slug].columns_description is defined and tables_vector_info[table_slug].columns_description|length > 0 %}
+{%- if tables_vector_data[table_slug].columns_description is defined and tables_vector_data[table_slug].columns_description|length > 0 %}
   Cols:
-  {% for col_name, col_desc in tables_vector_info[table_slug].columns_description.items() %}
+  {%- for col_name, col_desc in tables_vector_data[table_slug].columns_description.items() %}
   - {{ col_name }}{{ col_desc }}
   {% endfor %}
 {% endif %}
@@ -52,12 +52,11 @@ You have already examined these tables and their schemas; there's no need to sel
 
 {% if failed_slugs|length > 0 %}
 You have already examined these tables but had issues retrieving their schemas; do not select these tables again:
-{% for table_slug in failed_slugs %}
+{%- for table_slug in failed_slugs %}
 {{ table_slug }}
-{% endfor %}
-{% endif %}
-
-{% if chain_of_thought %}
+{%- endfor %}
+{%- endif %}
+{%- if chain_of_thought %}
 Here are your previous thoughts:
 {{ chain_of_thought }}
 {% endif %}

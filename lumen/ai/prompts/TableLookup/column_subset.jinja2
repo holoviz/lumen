@@ -23,7 +23,7 @@ TABLE: {{ table_slug }}
 {% if info.description is defined and info.description %}DESCRIPTION: {{ info.description }}{% endif %}
 COLUMNS (indexed from 0):
 {% for idx in range(info.columns|length) %}
-{{ idx }}. {{ info.columns[idx] }}{% if table_slug in memory.tables_vector_info and info.columns[idx] in memory.tables_vector_info[table_slug].columns_description %}: {{ memory.tables_vector_info[table_slug].columns_description[info.columns[idx]] }}{% endif %}
+{{ idx }}. {{ info.columns[idx] }}{% if table_slug in memory.tables_vector_data and info.columns[idx] in memory.tables_vector_data[table_slug].columns_description %}: {{ memory.tables_vector_data[table_slug].columns_description[info.columns[idx]] }}{% endif %}
 {%- endfor %}
 {% endfor %}
 {% endblock %}

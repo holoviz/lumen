@@ -667,9 +667,9 @@ def truncate_string(s, max_length=20, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
-def create_tables_sql_context(tables_vector_info: dict, tables_sql_data: dict) -> str:
+def create_tables_sql_context(tables_vector_data: dict, tables_sql_data: dict) -> str:
     context = "Below are the relevant tables:\n"
-    for table_slug, table_vector_info in tables_vector_info.items():
+    for table_slug, table_vector_info in tables_vector_data.items():
         if table_slug not in tables_sql_data:
             continue
         table_description = table_vector_info.get("description", "")
