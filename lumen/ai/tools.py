@@ -25,7 +25,7 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    fetch_table_sql_info, log_debug, stream_details, truncate_string,
+    get_schema, log_debug, stream_details, truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -939,27 +939,34 @@ class IterativeTableLookup(TableLookup):
                     stream_details(str(vector_metaset), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
-                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""), max_length=300
+                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""),
+                            max_length=300
                         )
-                        table_sql_info = await fetch_table_sql_info(
-                            sources,
-                            table_slug,
-                            view_definition=view_definition,
-                            include_count=True
-                        )
+
+                        if SOURCE_TABLE_SEPARATOR in table_slug:
+                            source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+                            source_obj = sources.get(source_name)
+                        else:
+                            source_obj = next(iter(sources.values()))
+                            table_name = table_slug
+                            table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+
+                        if view_definition:
+                            schema = {"view_definition": view_definition}
+                        else:
+                            schema = await get_schema(source_obj, table_name)
 
                         # Create TableSQLMetadata object
                         sql_metadata = TableSQLMetadata(
                             table_slug=table_slug,
-                            schema=table_sql_info['schema'],
-                            count=table_sql_info.get('count'),
+                            schema=schema,
+                            count=schema.get('count'),
                             view_definition=view_definition,
-                            metadata=table_sql_info.get('metadata', {})
                         )
                         sql_metadata_map[table_slug] = sql_metadata
 
                         examined_slugs.add(table_slug)
-                        stream_details(f"```yaml\n{table_sql_info['schema']}\n```", step, title="Schema")
+                        stream_details(f"```yaml\n{schema}\n```", step, title="Schema")
                     except Exception as e:
                         failed_slugs.append(table_slug)
                         stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)

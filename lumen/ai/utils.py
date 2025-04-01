@@ -313,47 +313,6 @@ async def get_schema(
     return schema
 
 
-async def fetch_table_sql_info(sources: dict[str, Source], table_slug: str, view_definition: str = "", **get_schema_kwargs) -> dict:
-    """
-    Fetch the schema for a single table from a data source.
-
-    Parameters
-    ----------
-    table_slug : str
-        Table name in format "source_name{SEP}table_name"
-    view_definition : str
-        Optional view definition for the table to override the schema
-    **get_schema_kwargs
-        Additional keyword arguments to pass to the get_schema method
-
-    Returns
-    -------
-    tuple
-        (table_slug, schema_data) where table_slug is the normalized table name
-        and schema_data is a dict with the schema information
-    """
-    if SOURCE_TABLE_SEPARATOR in table_slug:
-        source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-        source_obj = sources.get(source_name)
-    else:
-        source_obj = next(iter(sources.values()))
-        table_name = table_slug
-        table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-
-    if view_definition:
-        schema = {"view_definition": view_definition}
-    else:
-        schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
-    normalized_table_name = source_obj.normalize_table(table_name)
-    result = {
-        "schema": schema,
-        "source": source_obj.name,
-        "sql_table": normalized_table_name,
-        "sql": source_obj.get_sql_expr(normalized_table_name),
-    }
-    return result
-
-
 async def get_pipeline(**kwargs):
     """
     A wrapper be able to use asyncio.to_thread and not
@@ -670,26 +629,3 @@ def truncate_string(s, max_length=20, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
-
-
-def create_tables_sql_context(tables_vector_data: dict, tables_sql_data: dict) -> str:
-    context = "Below are the relevant tables:\n"
-    for table_slug, table_vector_info in tables_vector_data.items():
-        if table_slug not in tables_sql_data:
-            continue
-        table_description = table_vector_info.get("description", "")
-        context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
-        sql = tables_sql_data[table_slug].get("sql", "")
-        if sql:
-            context += f"\n```sql\n{sql}\n```"
-        schema = tables_sql_data.get(table_slug, {}).get("schema", {})
-
-        if "view_definition" in schema:
-            context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
-            return context
-
-        for col, col_description in table_vector_info.get("columns_description", {}).items():
-            context += f"\n- {col}{col_description}"
-            if col in schema:
-                context += f": {schema[col]}"
-    return context

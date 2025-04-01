@@ -42,7 +42,7 @@ You have already examined these tables and their schemas; there's no need to sel
 {{ table_slug }}
 {% if table_slug in selected_slugs %}
 ```json
-{{ tables_sql_data[table_slug].schema }}
+{{ sql_metadata_map[table_slug].schema }}
 ```
 {% endif %}
 {% endfor %}
