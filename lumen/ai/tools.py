@@ -103,12 +103,12 @@ class VectorLookupTool(Tool):
                 "template": PROMPTS_DIR / "TableLookup" / "select_columns.jinja2",
                 "response_model": ColumnsSelection,
             },
-            "revalidate_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "revalidate_columns.jinja2",
+            "should_refresh_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
                 "response_model": YesNo,
             },
-            "revalidate_tables": {
-                "template": PROMPTS_DIR / "TableLookup" / "revalidate_tables.jinja2",
+            "should_refresh_tables": {
+                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_tables.jinja2",
                 "response_model": YesNo,
             },
             "should_select_columns": {
