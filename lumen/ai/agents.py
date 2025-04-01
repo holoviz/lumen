@@ -646,9 +646,12 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        breakpoint()
-        selected_slugs = list(self._memory["table_sql_metaset"].vector_metaset.sel_tables_cols)
-
+        vector_metaset = self._memory["table_sql_metaset"].vector_metaset
+        selected_slugs = list(
+            #  if no tables/cols are subset
+            vector_metaset.sel_tables_cols or
+            vector_metaset.vector_metadata_map
+        )
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 

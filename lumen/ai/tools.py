@@ -714,6 +714,7 @@ class TableLookup(VectorLookupTool):
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     stream_details('\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
                 vector_metaset.sel_tables_cols = sel_tables_cols
+                breakpoint()
             return sel_tables_cols
         except Exception as e:
             with self._add_step(title="Column Selection Error") as step:
@@ -796,7 +797,7 @@ class TableLookup(VectorLookupTool):
 
         self._previous_state = PreviousState(
             query=messages[-1]["content"],
-            sel_tables_cols=self._memory.get("tables_metaset", {})
+            sel_tables_cols=self._memory.get("tables_vector_metaset", {}).sel_tables_cols,
         )
         return self._format_context()
 
