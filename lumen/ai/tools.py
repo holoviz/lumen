@@ -714,7 +714,6 @@ class TableLookup(VectorLookupTool):
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     stream_details('\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
                 vector_metaset.sel_tables_cols = sel_tables_cols
-                breakpoint()
             return sel_tables_cols
         except Exception as e:
             with self._add_step(title="Column Selection Error") as step:
@@ -765,9 +764,10 @@ class TableLookup(VectorLookupTool):
             )
             vector_metadata_map[table_slug] = vector_metadata
 
-        # If query contains an exact table name, mark it as max similarity
+        # If query contains an exact table name, mark it as max similarity and fast track
         for table_slug in self._tables_metadata:
-            if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
+            table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+            if table_name.lower() in query.lower():
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
 
@@ -801,6 +801,96 @@ class TableLookup(VectorLookupTool):
         )
         return self._format_context()
 
+
+
+class QueryLookup(VectorLookupTool):
+    """
+    The QueryLookup tool creates a vector store of predefined SQL queries
+    and responds with the most relevant queries given the user question.
+    It helps users discover and utilize predefined queries in their workflow.
+    """
+
+    purpose = param.String(default="""
+        Looks up relevant predefined queries based on the user question.""")
+
+    requires = param.List(default=["defined_queries"], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
+    # Override the item type name
+    _item_type_name = "predefined queries"
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._memory.on_change('defined_queries', self._update_vector_store)
+        # Initialize immediately if defined_queries is already in memory
+        if "defined_queries" in self._memory:
+            self._memory.trigger('defined_queries')
+
+    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+        """
+        Format query search results for inclusion in the refinement prompt.
+        """
+        formatted_results = []
+        for i, result in enumerate(results):
+            metadata = result.get('metadata', {})
+            query_name = metadata.get('name', 'Unknown query')
+            text_preview = truncate_string(result.get('text', ''), max_length=150)
+
+            description = f"- {query_name} (Similarity: {result.get('similarity', 0):.3f})"
+            if text_preview:
+                description += f"\n  Preview: {text_preview}"
+
+            formatted_results.append(description)
+
+        return "\n".join(formatted_results)
+
+    async def _update_vector_store(self, _, __, defined_queries):
+        if not defined_queries:
+            return
+
+        # Clear existing items in the vector store
+        existing_items = self.vector_store.filter_by({})
+        if existing_ids := [item['id'] for item in existing_items]:
+            self.vector_store.delete(existing_ids)
+
+        # Add each defined query to the vector store
+        for query_name, query_data in defined_queries.items():
+            query_text = query_data.get('sql', '')
+            description = query_data.get('description', '')
+
+            enriched_text = f"Query: {query_name}\n"
+            if description:
+                enriched_text += f"Description: {description}\n"
+            enriched_text += f"SQL: {query_text}"
+
+            metadata = {
+                "name": query_name,
+                "type": "predefined_query"
+            }
+
+            self.vector_store.add([{"text": enriched_text, "metadata": metadata}])
+
+    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
+        query = messages[-1]["content"]
+
+        # Perform search with refinement
+        results = await self._perform_search_with_refinement(query)
+        closest_queries = [
+            f"Predefined Query: {result['metadata']['name']}\n"
+            f"SQL: {self._memory['defined_queries'][result['metadata']['name']].get('sql', '')}\n"
+            f"Description: {self._memory['defined_queries'][result['metadata']['name']].get('description', '')}\n"
+            f"(Relevance: {result['similarity']:.1f})"
+            for result in results
+            if result['similarity'] >= self.min_similarity
+            and result['metadata']['name'] in self._memory['defined_queries']
+        ]
+
+        if not closest_queries:
+            return ""
+
+        message = "Consider using these predefined queries to answer the user's question:\n"
+        message += "\n\n".join(closest_queries)
+        return message
 
 
 class IterativeTableLookup(TableLookup):

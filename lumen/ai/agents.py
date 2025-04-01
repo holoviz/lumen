@@ -510,6 +510,7 @@ class SQLAgent(LumenBaseAgent):
             "main": {
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
+                "tools": []
             },
             "find_tables": {
                 "response_model": make_find_tables_model,
@@ -521,6 +522,16 @@ class SQLAgent(LumenBaseAgent):
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
     requires = param.List(default=["source", "table_sql_metaset"], readonly=True)
+
+    # def __init__(self, **params):
+    #     super().__init__(**params)
+        # # Dynamically add QueryLookup to tools if defined_queries is populated
+        # if "defined_queries" in self._memory and self._memory["defined_queries"]:
+        #     from .tools import QueryLookup
+        #     if QueryLookup not in self.prompts['main'].get('tools', []):
+        #         if 'tools' not in self.prompts['main']:
+        #             self.prompts['main']['tools'] = []
+        #         self.prompts['main']['tools'].append(QueryLookup)
 
     _extensions = ('codeeditor', 'tabulator',)
 

@@ -121,6 +121,7 @@ class Actor(param.Parameterized):
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
+        context["actor_name"] = self.name
         context["memory"] = self._memory
         context["actor_name"] = self.name
         return context
