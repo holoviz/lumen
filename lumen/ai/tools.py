@@ -850,7 +850,6 @@ class IterativeTableLookup(TableLookup):
         vector_metaset = self._memory.get("tables_vector_metaset")
 
         sql_metadata_map = {}
-        sql_schema_objects = {}
         examined_slugs = set(sql_metadata_map.keys())
         all_slugs = list(vector_metadata_map.keys())
         failed_slugs = []
@@ -936,11 +935,8 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     stream_details(str(vector_metaset), step, title="Table details", auto=False)
                     try:
-                        source_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
-                        table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                         view_definition = truncate_string(
                             self._tables_metadata.get(table_slug, {}).get("view_definition", ""), max_length=300
                         )
@@ -950,19 +946,16 @@ class IterativeTableLookup(TableLookup):
                             view_definition=view_definition,
                             include_count=True
                         )
-                        sql_metadata_map[table_slug] = table_sql_info
 
                         # Create TableSQLMetadata object
-                        sql_schema = TableSQLMetadata(
-                            table_name=table_name,
-                            source_name=source_name,
+                        sql_metadata = TableSQLMetadata(
                             table_slug=table_slug,
                             schema=table_sql_info['schema'],
                             count=table_sql_info.get('count'),
                             view_definition=view_definition,
                             metadata=table_sql_info.get('metadata', {})
                         )
-                        sql_schema_objects[table_slug] = sql_schema
+                        sql_metadata_map[table_slug] = sql_metadata
 
                         examined_slugs.add(table_slug)
                         stream_details(f"```yaml\n{table_sql_info['schema']}\n```", step, title="Schema")

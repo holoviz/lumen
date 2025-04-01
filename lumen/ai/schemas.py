@@ -64,8 +64,6 @@ class TableVectorMetaset:
 class TableSQLMetadata:
     """Schema for SQL schema data for a single table."""
 
-    table_name: str
-    source_name: str
     table_slug: str
     schema: dict[str, Any]
     count: int | None = None
