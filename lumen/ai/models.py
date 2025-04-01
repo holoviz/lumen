@@ -116,7 +116,7 @@ class ColumnsSelection(PartialBaseModel):
     )
 
     tables_columns_indices: list[TableColumnsIndices] = Field(
-        description=f"The list of table slugs (verbatim Source{SOURCE_TABLE_SEPARATOR}table) and their respective columns to include in the final output."
+        description="The list of table slugs and their respective columns to include in the final output."
     )
 
 
