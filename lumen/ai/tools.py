@@ -686,7 +686,7 @@ class TableLookup(VectorLookupTool):
                 for table_slug, column_names in vector_metaset.sel_tables_cols.items():
                     if table_slug in vector_metaset.sel_tables_cols:
                         table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                        stream_details(', '.join(column_names), step, title=f"Selected columns for {table_name}")
+                        stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}")
             return vector_metaset.sel_tables_cols
 
         try:
@@ -712,9 +712,8 @@ class TableLookup(VectorLookupTool):
                     column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
                     sel_tables_cols[table_slug] = column_names
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                    stream_details('\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
+                    stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
                 vector_metaset.sel_tables_cols = sel_tables_cols
-                breakpoint()
             return sel_tables_cols
         except Exception as e:
             with self._add_step(title="Column Selection Error") as step:
@@ -875,7 +874,9 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    if any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values()) or len(all_slugs) == 1:
+                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values())
+                    limited_tables = len(vector_metadata_map) <= 5
+                    if any_matches or len(all_slugs) == 1 or limited_tables:
                         selected_slugs = sorted(
                             vector_metadata_map.keys(),
                             key=lambda x: vector_metadata_map[x].similarity,
