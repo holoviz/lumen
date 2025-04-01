@@ -42,14 +42,14 @@ class TableVectorMetaset:
         sel_tables_cols = self.sel_tables_cols or self.vector_metadata_map.keys()
         for table_slug in sel_tables_cols:
             vector_metadata = self.vector_metadata_map[table_slug]
-            context += f"{table_slug} Similarity: ({vector_metadata.similarity:.3f})\n"
+            context += f"\n\n{table_slug} Similarity: ({vector_metadata.similarity:.3f})\n"
             if vector_metadata.description:
                 context += f"Description: {vector_metadata.description}\n"
 
             for index, col in enumerate(vector_metadata.table_cols):
                 if table_slug not in sel_tables_cols:
                     continue
-                context += f"{index + 1}. {col.name}"
+                context += f"{index}. {col.name}"
                 if col.description:
                     context += f": {col.description}"
                 context += "\n"
@@ -99,12 +99,12 @@ class TableSQLMetaset:
             for index, col in enumerate(vector_metadata.table_cols):
                 if table_slug not in sel_tables_cols:
                     continue
-                context += f"{index + 1}. {col.name}"
+                context += f"{index}. {col.name}"
                 if col.description:
                     context += f": {col.description}"
                 if sql_data:
-                    if col.name in sql_data["schema"]:
-                        context += f" ({sql_data['schema'][col.name]})"
+                    if col.name in sql_data.schema:
+                        context += f" ({sql_data.schema[col.name]})"
                 context += "\n"
         return context
 
