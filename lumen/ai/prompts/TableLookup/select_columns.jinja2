@@ -1,7 +1,8 @@
 {%- block instructions -%}
-Your task is to select the most relevant columns from database tables for the following user query.
+Your task is to select the most relevant columns from the provided tables given the user query.
 
 For each table, select ONLY the column indices (numbers) that are directly relevant to answering the user's query.
+
 Be selective - include only columns that are clearly relevant to the query.
 
 First think step-by-step about which columns would be needed to answer the query.
@@ -9,9 +10,7 @@ Consider which columns contain the specific data points mentioned in the query.
 Consider primary/foreign keys that might be needed for joins even if not directly mentioned.
 If you have doubts about a column's relevance, include it.
 
-Provide your response with:
-1. A chain of thought explanation of your selections
-2. A dictionary mapping table slugs to lists of column indices (numbers)
+Ensure you reproduce the table slug VERBATIM.
 {%- endblock -%}
 
 {% block context %}

@@ -16,7 +16,7 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import (
-    ColumnsSelection, YesNo, make_iterative_selection_model,
+    YesNo, make_columns_selection, make_iterative_selection_model,
     make_refined_query_model,
 )
 from .schemas import (
@@ -101,7 +101,7 @@ class VectorLookupTool(Tool):
             },
             "select_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "select_columns.jinja2",
-                "response_model": ColumnsSelection,
+                "response_model": make_columns_selection,
             },
             "should_refresh_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
@@ -694,7 +694,8 @@ class TableLookup(VectorLookupTool):
                 "select_columns",
                 messages,
                 vector_metaset=vector_metaset,
-                source_table_sep=SOURCE_TABLE_SEPARATOR
+                source_table_sep=SOURCE_TABLE_SEPARATOR,
+                table_slugs=list(vector_metaset.vector_metadata_map)
             )
             tables_columns_indices = output.tables_columns_indices
             selected_indices = {
@@ -707,6 +708,8 @@ class TableLookup(VectorLookupTool):
                 step.stream(output.chain_of_thought)
                 sel_tables_cols = {}
                 for table_slug, indices in selected_indices.items():
+                    if table_slug not in vector_metadata_map:
+                        continue
                     table = vector_metadata_map[table_slug]
                     all_columns = [col.name for col in table.table_cols]
                     column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
@@ -714,7 +717,7 @@ class TableLookup(VectorLookupTool):
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
                 vector_metaset.sel_tables_cols = sel_tables_cols
-            return
+            return sel_tables_cols
         except Exception as e:
             with self._add_step(title="Column Selection Error") as step:
                 traceback.print_exc()
