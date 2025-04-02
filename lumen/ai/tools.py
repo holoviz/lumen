@@ -964,7 +964,7 @@ class IterativeTableLookup(TableLookup):
                         sql_metadata = TableSQLMetadata(
                             table_slug=table_slug,
                             schema=schema,
-                            count=schema.get('count'),
+                            base_sql=source_obj.get_sql_expr(source_obj.normalize_table(table_name)),
                             view_definition=view_definition,
                         )
                         sql_metadata_map[table_slug] = sql_metadata

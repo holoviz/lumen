@@ -66,7 +66,7 @@ class TableSQLMetadata:
 
     table_slug: str
     schema: dict[str, Any]
-    count: int | None = None
+    base_sql: str | None = None
     view_definition: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -95,7 +95,9 @@ class TableSQLMetaset:
             if vector_metadata.description:
                 context += f"Description: {vector_metadata.description}\n"
 
-            sql_data = self.sql_metadata_map.get(table_slug)
+            sql_data: TableSQLMetadata = self.sql_metadata_map.get(table_slug)
+            if sql_data:
+                context += f"Base SQL: {sql_data.base_sql}\n"
             for index, col in enumerate(vector_metadata.table_cols):
                 if table_slug not in sel_tables_cols:
                     continue
@@ -104,7 +106,7 @@ class TableSQLMetaset:
                     context += f": {col.description}"
                 if sql_data:
                     if col.name in sql_data.schema:
-                        context += f" ({sql_data.schema[col.name]})"
+                        context += f" {sql_data.schema[col.name]}"
                 context += "\n"
         return context
 
