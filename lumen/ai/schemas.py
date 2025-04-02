@@ -20,6 +20,7 @@ class TableVectorMetadata:
     table_slug: str  # Combined source_name and table_name with separator
     similarity: float
     description: str | None = None
+    base_sql: str | None = None
     table_cols: list[TableColumn] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -45,7 +46,8 @@ class TableVectorMetaset:
             context += f"\n\n{table_slug} Similarity: ({vector_metadata.similarity:.3f})\n"
             if vector_metadata.description:
                 context += f"Description: {vector_metadata.description}\n"
-
+            if vector_metadata.base_sql:
+                context += f"Base SQL: {vector_metadata.base_sql}\n"
             for index, col in enumerate(vector_metadata.table_cols):
                 if table_slug not in sel_tables_cols:
                     continue
@@ -98,6 +100,9 @@ class TableSQLMetaset:
             sql_data: TableSQLMetadata = self.sql_metadata_map.get(table_slug)
             if sql_data:
                 context += f"Base SQL: {sql_data.base_sql}\n"
+            # get the count from schema
+            if sql_data.schema.get("__len__"):
+                context += f"Row count: {len(sql_data.schema)}\n"
             for index, col in enumerate(vector_metadata.table_cols):
                 if table_slug not in sel_tables_cols:
                     continue

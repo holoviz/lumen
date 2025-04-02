@@ -232,14 +232,12 @@ class VectorLookupTool(Tool):
         current_query = query
         iteration = 0
 
-        with self._add_step(title="Vector Search with Refinement") as step:
-            step.stream("Performing initial search\n\n")
-            stream_details(query, step, title="Initial query", auto=False)
-            results = self.vector_store.query(query, top_k=self.n, **kwargs)
-            # check if all metadata is the same; if so, skip
-            if all(result.get('metadata') == results[0].get('metadata') for result in results):
-                return results
+        results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        # check if all metadata is the same; if so, skip
+        if all(result.get('metadata') == results[0].get('metadata') for result in results):
+            return results
 
+        with self._add_step(title="Vector Search with Refinement") as step:
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
@@ -461,7 +459,7 @@ class TableLookup(VectorLookupTool):
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
-    async def _fetch_and_store_metadata(self, source, table_name: str, tables_vector_metaset: dict):
+    async def _fetch_and_store_metadata(self, source, table_name: str):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
             source_metadata = self._raw_metadata[source.name]
@@ -496,18 +494,6 @@ class TableLookup(VectorLookupTool):
                 )
                 table_cols.append(column)
 
-        # Create TableVectorMetadata object
-        table_schema = TableVectorMetadata(
-            table_slug=table_slug,
-            similarity=0.0,  # Default similarity before any query
-            description=table_vector_info.get('description'),
-            table_cols=table_cols,
-            metadata=table_vector_info.copy()
-        )
-
-        # Add to the dictionary of schemas
-        tables_vector_metaset[table_slug] = table_schema
-
         vector_metadata = {"source": source.name, "table_name": table_name}
         if existing_items := self.vector_store.filter_by(vector_metadata):
             if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
@@ -539,9 +525,6 @@ class TableLookup(VectorLookupTool):
         # Create a list to track all tasks we're starting in this update
         all_tasks = []
 
-        # Dictionary to store TableVectorMetadata objects
-        tables_vector_metaset = {}
-
         for source in sources:
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 metadata_task = asyncio.create_task(
@@ -563,17 +546,17 @@ class TableLookup(VectorLookupTool):
             if self.include_metadata:
                 for table in tables:
                     task = asyncio.create_task(
-                        self._fetch_and_store_metadata(source, table, tables_vector_metaset)
+                        self._fetch_and_store_metadata(source, table)
                     )
                     self._metadata_tasks.add(task)
                     task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
                     all_tasks.append(task)
 
         if all_tasks:
-            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks, tables_vector_metaset))
+            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
             ready_task.add_done_callback(lambda t: None if t.exception() else None)
 
-    async def _mark_ready_when_done(self, tasks, tables_vector_metaset=None):
+    async def _mark_ready_when_done(self, tasks):
         """Wait for all tasks to complete and then mark the tool as ready."""
         await asyncio.gather(*tasks, return_exceptions=True)
         log_debug("All table metadata tasks completed.")
@@ -737,6 +720,10 @@ class TableLookup(VectorLookupTool):
         for result in results:
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
+            for source in self._memory.get("sources", []):
+                if source.name == source_name:
+                    sql = source.get_sql_expr(source.normalize_table(table_name))
+                    break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             similarity_score = result['similarity']
             if any_matches and result['similarity'] < self.min_similarity and not same_table:
@@ -762,6 +749,7 @@ class TableLookup(VectorLookupTool):
                 table_slug=table_slug,
                 similarity=similarity_score,
                 description=table_description,
+                base_sql=sql,
                 table_cols=table_cols,
                 metadata=self._tables_metadata.get(table_slug, {}).copy()
             )
