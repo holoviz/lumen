@@ -8,5 +8,5 @@ Use table names verbatim, and be sure to include the delimiters {{ separator }},
 {% endblock %}
 
 {% block context %}
-{{ memory["table_sql_metaset"] }}
+{{ memory["table_sql_metaset"].max_context }}
 {% endblock %}

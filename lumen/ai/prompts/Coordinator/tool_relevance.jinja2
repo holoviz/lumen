@@ -1,55 +1,35 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-You are an expert in determining whether tool outputs are relevant to specific agent tasks.
+Determine if a tool's output will help an agent complete its task by evaluating:
+- Agent's purpose and assigned task
+- Content and format of tool output
+- Alignment with the original user query
+- Direct usefulness to the agent's needs
 
-Consider whether the output from this tool would be helpful for the agent to complete its task, given:
-1. The agent's purpose and task
-2. The tool's output content and format
-3. The original user query
-4. How directly the tool's output addresses needs of the agent
-5. What the tool provides vs. what the agent requires
+## Answer YES if the output:
+- Contains necessary information for task completion
+- Significantly enhances problem understanding
+- Directly addresses required aspects of the user query
+- Provides specific context values the agent needs
 
-Answer yes if:
-1. The tool output contains information the agent would need to complete its task
-2. The tool output would significantly enhance the agent's understanding of the problem
-3. The tool output directly addresses aspects of the user query that the agent must address
-4. The tool provides specific context values (via its 'provides' list) that the agent requires (listed in its 'requires' list)
-
-Answer no if:
-1. The tool output is irrelevant to the agent's task
-2. The agent would not benefit significantly from having this information
-3. The tool output addresses a different aspect of the user query than what the agent is focused on
-4. The tool output is too general or too specific to be useful for the agent's particular task
-
-Your output should be a boolean indicating whether the tool output is relevant to the agent.
+## Answer NO if the output:
+- Is irrelevant to the agent's task
+- Offers minimal benefit to the agent
+- Addresses different aspects than the agent's focus
+- Is too general or too specific for the particular task
 {% endblock %}
 {% block context %}
-TOOL:
-- Name: {{ tool_name }}
-- Description: {{ tool_description }}
-- Provides: {{ tool_provides }}
-- Requires: {{ tool_requires }}
-- Output: {{ tool_output }}
+Task: {{ agent_task }}
+Agent - {{ agent_name }}: {{ agent_purpose }}
 
-AGENT:
-- Name: {{ agent_name }}
-- Purpose: {{ agent_purpose }}
-- Task: {{ agent_task }}
-- Provides: {{ agent_provides }}
-- Requires: {{ agent_requires }}
+Tool - {{ tool_name }}: {{ tool_description }}
+Tool Output:
+"""
+{{ tool_output }}
+"""
 {% endblock %}
 {% block examples %}
-For example:
-Case 1 - Relevant:
-Tool: DatabaseSchema
-Provides: ["table_schema"]
-Output: Table 'users' columns: id, name, email
-Agent: SQLAgent writing query to get user emails
-Requires: ["table_schema"]
-Task: "List all user emails"
--> YES (schema directly helps agent write correct query and provides what agent requires)
-
 Case 2 - Not Relevant:
 Tool: WeatherAPI
 Provides: ["weather_data"]

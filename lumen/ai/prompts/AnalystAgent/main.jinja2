@@ -32,8 +32,8 @@ Here is the current SQL query:
 ```sql
 {{ memory.sql }}
 ```
-{%- endif %}
-{%- if memory.data|length == 0 %}
+{%- endif -%}
+{%- if memory.data|length == 0 -%}
 The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
 and try to make educated guess what other columns or values should be used instead.
 {%- endif -%}
@@ -64,7 +64,7 @@ Additionally, the query treats numeric values as strings with quotes, potentiall
 fields should be treated as numbers by removing quotes: SEASON >= 2000 instead of SEASON >= '2000'. Please request to
 try
 again!
-{%- else %}
+{%- else -%}
 Here's an example of a good reply...
 User Query:
 Show me subscription trends over the past 12 months with retention rates by plan type.
@@ -101,5 +101,5 @@ I'm concerned about the Basic plan's downward trend in Q4, where retention dropp
 changes. This decline represents approximately 2,800 additional churned customers compared to expected baseline,
 warranting immediate investigation. The unusual December retention dip across all plans suggests a potential data
 collection issue or seasonal effect that requires validation before making strategic decisions.
-{%- endif %}
+{%- endif -%}
 {%- endblock %}

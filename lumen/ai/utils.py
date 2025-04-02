@@ -217,6 +217,7 @@ async def get_schema(
     include_count: bool = False,
     include_null_types: bool = False,
     include_nans: bool = False,
+    reduce_enums: bool = True,
     shuffle: bool = True,
     **get_kwargs
 ):
@@ -282,7 +283,10 @@ async def get_schema(
 
         limit = get_kwargs.get("limit")
         # scale the number of enums based on the number of columns
-        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+        if reduce_enums:
+            max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+        else:
+            max_enums = 8
         truncate_limit = min(limit or 5, max_enums)
         if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
@@ -629,3 +633,23 @@ def truncate_string(s, max_length=20, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def truncate_iterable(iterable, max_length=20) -> tuple[list, list, bool]:
+    iterable_list = list(iterable)
+    if len(iterable_list) > max_length:
+        half = max_length // 2
+        first_half_indices = list(range(half))
+        second_half_indices = list(range(len(iterable_list) - half, len(iterable_list)))
+
+        first_half_items = iterable_list[:half]
+        second_half_items = iterable_list[-half:]
+
+        cols_to_show = first_half_items + second_half_items
+        original_indices = first_half_indices + second_half_indices
+        show_ellipsis = True
+    else:
+        cols_to_show = iterable_list
+        original_indices = list(range(len(iterable_list)))
+        show_ellipsis = False
+    return cols_to_show, original_indices, show_ellipsis

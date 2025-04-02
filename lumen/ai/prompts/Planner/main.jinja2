@@ -23,18 +23,22 @@ Important Agent Rules:
 - The ChatAgent usually can be used alone, but if the query is related to the data tables, please use AnalystAgent instead.
 
 Import Tools Rules:
-- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent, and both of these are useful for refreshing the available columns in memory.
+- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent.
 {% endblock -%}
 
 {% block context -%}
-{%- if memory.get('table_vector_metaset') and memory.get('sel_tables_cols').sel_tables_cols %}
+{%- if memory.get('table_vector_metaset') and memory.get('table_vector_metaset').sel_tables_cols %}
 The current selected columns in memory is:
-{{ memory['sel_tables_cols'].sel_tables_cols }}
-Please consider whether this is enough information to proceed with the current user query.
+{{ memory['table_vector_metaset'].sel_tables_cols }}
+based on the previous query:
+"""
+{{ memory['table_vector_metaset'].query }}
+"""
+Please consider whether this is enough information to proceed with the current user query;
+if not use IterativeTableLookup to refresh the available columns in memory.
 {%- else %}
 The current selected columns for the query have not been set yet.
 {%- endif %}
-
 {% if memory.get('document_sources') %}
 Here are the documents you have access to:
 {%- for document_source in memory['document_sources'] %}

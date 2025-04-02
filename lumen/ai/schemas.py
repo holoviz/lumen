@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from lumen.ai.utils import truncate_iterable, truncate_string
+
 
 @dataclass
 class TableColumn:
@@ -33,33 +35,82 @@ class TableVectorMetaset:
     vector_metadata_map: dict[str, TableVectorMetadata]
     sel_tables_cols: dict[str, list[str]] = field(default_factory=dict)
 
-    @property
-    def context(self) -> str:
-        """Generate formatted text representation of the context."""
-        # TODO: maybe move this to Jinja2 templating
-        context = f"Below are the relevant tables for query: {self.query}\n\n"
+    def _generate_context(self, truncate: bool | None = None) -> str:
+        """
+        Generate formatted text representation of the context.
 
-        # TODO: truncate list of columns up to a certain number
-        sel_tables_cols = self.sel_tables_cols or self.vector_metadata_map.keys()
-        for table_slug in sel_tables_cols:
+        Args:
+            truncate: Controls truncation behavior.
+                    None: Show all tables (max_context)
+                    False: Filter by sel_tables_cols without truncation (sub_context)
+                    True: Filter by sel_tables_cols with truncation (min_context)
+        """
+        context = "Below are the relevant tables for query:\n\n"
+
+        # Use selected tables if specified, otherwise use all tables
+        tables_to_show = self.sel_tables_cols or self.vector_metadata_map.keys()
+
+        for table_slug in self.vector_metadata_map.keys():
+            # Skip tables not in the selected list if using sub_context or min_context
+            if truncate is not None and table_slug not in tables_to_show:
+                continue
+
             vector_metadata = self.vector_metadata_map[table_slug]
-            context += f"\n\n{table_slug} Similarity: ({vector_metadata.similarity:.3f})\n"
+            context += f"\n\n{table_slug!r} Similarity: ({vector_metadata.similarity:.3f})\n"
+
             if vector_metadata.description:
                 context += f"Description: {vector_metadata.description}\n"
+
             if vector_metadata.base_sql:
                 context += f"Base SQL: {vector_metadata.base_sql}\n"
-            for index, col in enumerate(vector_metadata.table_cols):
-                if table_slug not in sel_tables_cols:
-                    continue
-                context += f"{index}. {col.name}"
+
+            max_length = 20
+            cols_to_show = vector_metadata.table_cols
+            if truncate is not None:
+                cols_to_show = [col for col in cols_to_show if col.name in self.sel_tables_cols.get(table_slug, [])]
+
+            show_ellipsis = False
+            if truncate is not None:
+                cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
+            else:
+                cols_to_show = list(cols_to_show)
+                original_indices = list(range(len(cols_to_show)))
+                show_ellipsis = False
+
+            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
+                if show_ellipsis and i == len(cols_to_show) // 2:
+                    context += "...\n"
+
+                col_name = truncate_string(col.name) if truncate else col.name
+                context += f"{orig_idx}. {col_name}"
                 if col.description:
-                    context += f": {col.description}"
+                    col_desc = (
+                        truncate_string(col.description, max_length=100)
+                        if truncate
+                        else col.description
+                    )
+                    context += f": {col_desc}"
                 context += "\n"
         return context
 
+    @property
+    def max_context(self) -> str:
+        """Generate formatted text representation of the context."""
+        return self._generate_context(truncate=None)
+
+    @property
+    def sub_context(self) -> str:
+        """Generate formatted text representation of the context with selected tables cols"""
+        return self._generate_context(truncate=False)
+
+    @property
+    def min_context(self) -> str:
+        """Generate formatted text representation of the context with selected tables cols and truncated strings"""
+        return self._generate_context(truncate=True)
+
     def __str__(self) -> str:
         """String representation is the formatted context."""
-        return self.context
+        return self.sub_context
 
 
 @dataclass
@@ -80,40 +131,100 @@ class TableSQLMetaset:
     vector_metaset: TableVectorMetaset
     sql_metadata_map: dict[str, TableSQLMetadata]
 
-    @property
-    def context(self) -> str:
-        """Generate comprehensive formatted context with both vector and SQL data."""
-        context = f"Below are the relevant tables for query: {self.query}\n\n"
+    def _generate_context(self, truncate: bool | None = None) -> str:
+        """
+        Generate formatted context with both vector and SQL data.
 
-        table_slugs = self.sql_metadata_map.keys()
+        Args:
+            truncate: Controls truncation behavior.
+                      None: Show all tables (max_context)
+                      False: Filter by sel_tables_cols without truncation (sub_context)
+                      True: Filter by sel_tables_cols with truncation (min_context)
+
+        Returns:
+            Formatted context string
+        """
+        context = "Below are the relevant tables for query:\n\n"
+
         vector_metaset = self.vector_metaset
-        sel_tables_cols = vector_metaset.sel_tables_cols or {}
-        for table_slug in table_slugs:
-            if table_slug not in sel_tables_cols:
+        tables_to_show = vector_metaset.sel_tables_cols or vector_metaset.vector_metadata_map.keys()
+
+        for table_slug in self.sql_metadata_map.keys():
+            # Skip tables not in selected list for sub/min context
+            if truncate is not None and table_slug not in tables_to_show:
                 continue
 
-            vector_metadata = vector_metaset.vector_metadata_map[table_slug]
-            context += f"{table_slug} Similarity: ({vector_metadata.similarity:.3f})\n"
+            vector_metadata = vector_metaset.vector_metadata_map.get(table_slug)
+            if not vector_metadata:
+                continue
+
+            context += f"{table_slug!r} Similarity: ({vector_metadata.similarity:.3f})\n"
+
             if vector_metadata.description:
-                context += f"Description: {vector_metadata.description}\n"
+                desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
+                context += f"Description: {desc}\n"
 
             sql_data: TableSQLMetadata = self.sql_metadata_map.get(table_slug)
             if sql_data:
-                context += f"Base SQL: {sql_data.base_sql}\n"
-            # get the count from schema
-            if sql_data.schema.get("__len__"):
-                context += f"Row count: {len(sql_data.schema)}\n"
-            for index, col in enumerate(vector_metadata.table_cols):
-                if table_slug not in sel_tables_cols:
-                    continue
-                context += f"{index}. {col.name}"
+                base_sql = truncate_string(sql_data.base_sql, max_length=200) if truncate else sql_data.base_sql
+                context += f"Base SQL: {base_sql}\n"
+
+                # Get the count from schema
+                if sql_data.schema.get("__len__"):
+                    context += f"Row count: {len(sql_data.schema)}\n"
+
+            max_length = 20
+            cols_to_show = vector_metadata.table_cols
+            if truncate is not None and vector_metaset.sel_tables_cols:
+                cols_to_show = [col for col in cols_to_show if col.name in vector_metaset.sel_tables_cols.get(table_slug, [])]
+
+            original_indices = []
+            show_ellipsis = False
+            if truncate is not None:
+                cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
+            else:
+                cols_to_show = list(cols_to_show)
+                original_indices = list(range(len(cols_to_show)))
+                show_ellipsis = False
+
+            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
+                if show_ellipsis and i == len(cols_to_show) // 2:
+                    context += "...\n"
+
+                # Get column name with optional truncation
+                col_name = truncate_string(col.name) if truncate else col.name
+                context += f"{orig_idx}. {col_name}"
+
+                # Get column description with optional truncation
                 if col.description:
-                    context += f": {col.description}"
-                if sql_data:
-                    if col.name in sql_data.schema:
-                        context += f" {sql_data.schema[col.name]}"
+                    col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
+                    context += f": {col_desc}"
+
+                # Add schema info for the column if available
+                if sql_data and col.name in sql_data.schema:
+                    schema_data = sql_data.schema[col.name]
+                    if truncate:
+                        schema_data = truncate_string(str(schema_data), max_length=50)
+                    context += f" {schema_data}"
+
                 context += "\n"
+
         return context
+
+    @property
+    def max_context(self) -> str:
+        """Generate comprehensive formatted context with both vector and SQL data."""
+        return self._generate_context(truncate=None)
+
+    @property
+    def sub_context(self) -> str:
+        """Generate context with selected tables and columns, without truncation."""
+        return self._generate_context(truncate=False)
+
+    @property
+    def min_context(self) -> str:
+        """Generate context with selected tables and columns, with truncation."""
+        return self._generate_context(truncate=True)
 
     @property
     def query(self) -> str:
@@ -122,8 +233,7 @@ class TableSQLMetaset:
 
     def __str__(self) -> str:
         """String representation is the formatted context."""
-        return self.context
-
+        return self.sub_context
 
 @dataclass
 class PreviousState:
@@ -133,7 +243,7 @@ class PreviousState:
     sel_tables_cols: dict[str, list[str]] = field(default_factory=dict)
 
     @property
-    def context(self) -> str:
+    def max_context(self) -> str:
         """Generate formatted text representation of the previous state."""
         context = f"Previous query: {self.query}\n\n"
         if self.sel_tables_cols:
@@ -145,4 +255,4 @@ class PreviousState:
 
     def __str__(self) -> str:
         """String representation is the formatted context."""
-        return self.context
+        return self.max_context

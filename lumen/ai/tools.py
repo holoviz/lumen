@@ -385,14 +385,14 @@ class TableLookup(VectorLookupTool):
     """
 
     purpose = param.String(default="""
-        Looks up and refreshes relevant tables and columns based on the user query with a vector store.
+        Looks up and is able to query additional tables and columns based on the user query with a vector store.
         Useful for quickly gathering information about tables and their columns
         to chat about.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_vector_metaset"], readonly=True, doc="""
+    provides = param.List(default=["table_vector_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     enable_select_columns = param.Boolean(default=True, doc="""
@@ -486,7 +486,7 @@ class TableLookup(VectorLookupTool):
         table_cols = []
         if self.include_columns and (columns := table_vector_info.get('columns', {})):
             for col_name, col_info in columns.items():
-                col_desc = col_info.get("description", "")
+                col_desc = col_info.pop("description", "")
                 column = TableColumn(
                     name=col_name,
                     description=col_desc,
@@ -661,7 +661,7 @@ class TableLookup(VectorLookupTool):
         if not self.enable_select_columns:
             return
 
-        vector_metaset: TableVectorMetaset = self._memory.get("tables_vector_metaset")
+        vector_metaset: TableVectorMetaset = self._memory.get("table_vector_metaset")
         needs_reselection = await self._should_refresh_columns(messages)
         if not needs_reselection and vector_metaset.sel_tables_cols:
             with self._add_step(title="Column Selection (Cached)") as step:
@@ -677,7 +677,7 @@ class TableLookup(VectorLookupTool):
                 "select_columns",
                 messages,
                 vector_metaset=vector_metaset,
-                source_table_sep=SOURCE_TABLE_SEPARATOR,
+                separator=SOURCE_TABLE_SEPARATOR,
                 table_slugs=list(vector_metaset.vector_metadata_map)
             )
             tables_columns_indices = output.tables_columns_indices
@@ -737,7 +737,7 @@ class TableLookup(VectorLookupTool):
                 columns = table_metadata.get("columns", {})
 
                 for col_name, col_info in columns.items():
-                    col_desc = col_info.get("description", "")
+                    col_desc = col_info.pop("description", "")
                     column_schema = TableColumn(
                         name=col_name,
                         description=col_desc,
@@ -761,15 +761,15 @@ class TableLookup(VectorLookupTool):
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
 
-        self._memory["tables_vector_metaset"] = TableVectorMetaset(
+        self._memory["table_vector_metaset"] = TableVectorMetaset(
             vector_metadata_map=vector_metadata_map, query=query)
         return vector_metadata_map
 
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
-        tables_vector_metaset = self._memory.get("tables_vector_metaset")
-        return str(tables_vector_metaset)
+        table_vector_metaset = self._memory.get("table_vector_metaset")
+        return table_vector_metaset.sub_context
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -787,7 +787,7 @@ class TableLookup(VectorLookupTool):
 
         self._previous_state = PreviousState(
             query=messages[-1]["content"],
-            sel_tables_cols=self._memory.get("tables_vector_metaset", {}).sel_tables_cols,
+            sel_tables_cols=self._memory.get("table_vector_metaset", {}).sel_tables_cols,
         )
         return self._format_context()
 
@@ -800,11 +800,12 @@ class IterativeTableLookup(TableLookup):
     """
 
     purpose = param.String(default="""
-        Looks up and refreshes relevant tables and columns based on the user query with a vector store and iterative selection process.
+        Looks up and is able to query additional tables and columns based on the user query
+        with a vector store and iterative selection process.
         Uses LLM to select tables in multiple passes, examining schemas in detail.
         Useful for SQLAgent, but not for ChatAgent.""")
 
-    provides = param.List(default=["tables_vector_metaset", "table_sql_metaset"], readonly=True, doc="""
+    provides = param.List(default=["table_vector_metaset", "table_sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
@@ -838,7 +839,7 @@ class IterativeTableLookup(TableLookup):
         4. Repeats until the LLM is satisfied with the context
         """
         vector_metadata_map = await super()._gather_info(messages)
-        vector_metaset = self._memory.get("tables_vector_metaset")
+        vector_metaset = self._memory.get("table_vector_metaset")
 
         sql_metadata_map = {}
         examined_slugs = set(sql_metadata_map.keys())
@@ -946,7 +947,7 @@ class IterativeTableLookup(TableLookup):
                         if view_definition:
                             schema = {"view_definition": view_definition}
                         else:
-                            schema = await get_schema(source_obj, table_name)
+                            schema = await get_schema(source_obj, table_name, reduce_enums=False)
 
                         # Create TableSQLMetadata object
                         sql_metadata = TableSQLMetadata(
@@ -996,7 +997,7 @@ class IterativeTableLookup(TableLookup):
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         table_sql_metaset = self._memory.get("table_sql_metaset")
-        return str(table_sql_metaset)
+        return table_sql_metaset.sub_context
 
 
 class FunctionTool(Tool):

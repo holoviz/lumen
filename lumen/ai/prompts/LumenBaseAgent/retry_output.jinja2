@@ -14,10 +14,8 @@ Original output:
 ```{{ language }}
 {{ spec }}
 ```
-{% endfor %}
-{% endif %}
 {% endblock %}
 
 {% block context %}
-{{ memory["table_sql_metaset"] }}
+{{ memory["table_sql_metaset"].max_context }}
 {% endblock %}
