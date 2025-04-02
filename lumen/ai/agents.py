@@ -543,7 +543,7 @@ class SQLAgent(LumenBaseAgent):
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                 if table_name in tables_to_source:
                     columns = [col.name for col in vector_metadata.table_cols]
-                    columns_context += f"\nSQL: {vector_metadata.sql}\nColumns: {', '.join(columns)}\n\n"
+                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             last_query = self._memory["sql"]
             num_errors = len(errors)
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
