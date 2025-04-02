@@ -688,10 +688,11 @@ class SQLAgent(LumenBaseAgent):
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
             tables_to_source = {}
+            step.stream("Planning to use:")
             for table_slug in selected_slugs:
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
-                step.stream(f"Planning to use: {a_table!r}")
+                step.stream(f"\n{a_table!r}")
         return tables_to_source, chain_of_thought
 
     async def respond(
