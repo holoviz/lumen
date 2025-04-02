@@ -7,6 +7,10 @@ avoiding speculation. Do not write code or give code related suggestions.
 {%- endblock %}
 
 {% block context %}
+Here was the plan that was executed:
+"""
+{{ memory.reasoning }}
+"""
 {%- if 'data' in memory %}
 Here's a summary of the dataset the user just asked about:
 ```
@@ -15,9 +19,4 @@ Here's a summary of the dataset the user just asked about:
 {%- endif %}
 
 {{ memory['tables_vector_metaset'] }}
-
-Here was the plan that was executed:
-"""
-{{ memory.reasoning }}
-"""
 {% endblock -%}

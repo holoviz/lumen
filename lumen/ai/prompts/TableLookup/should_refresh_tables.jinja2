@@ -1,7 +1,7 @@
-A user has submitted a new query, and I need to determine if I should rerun the entire table lookup process.
+{% extends 'Actor/main.jinja2' %}
 
-Here is the previous query, tables, and columns:
-{{ previous_state }}
+{% block instructions %}
+A user has submitted a new query, and I need to determine if I should rerun the entire table lookup process.
 
 First, analyze both queries and determine if the current query is likely to require different tables:
 
@@ -9,8 +9,9 @@ First, analyze both queries and determine if the current query is likely to requ
 2. Is the current query asking about different tables that weren't mentioned in the previous query?
 3. Does the current query have a fundamentally different intent that would require different tables?
 4. Would the previously selected tables be insufficient to answer the current query?
+{% endblock %}
 
-If you answer "yes" to any of these questions, respond with "yes" to indicate a full table lookup should be performed.
-If the current query is asking about the same tables or a subset of the previous tables, respond with "no".
-
-Your response should be a simple yes/no judgment based on whether different tables are needed.
+{% block context %}
+Here is the previous query, tables, and columns:
+{{ previous_state }}
+{% endblock %}
