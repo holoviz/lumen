@@ -755,8 +755,11 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents:
-                breakpoint()
+            has_table_lookup = any(
+                isinstance(node.actor, TableLookup)
+                for node in execution_graph
+            )
+            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
                     expert_or_tool='SQLAgent',
@@ -787,7 +790,7 @@ class Planner(Coordinator):
             )
             steps.append(step)
         last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool):
+        if isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 expert = "AnalystAgent"
             else:

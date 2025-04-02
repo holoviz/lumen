@@ -611,8 +611,7 @@ class TableLookup(VectorLookupTool):
                 step.status = "failed"
             return True
 
-    @retry_llm_output()
-    async def _should_select_columns(self, messages: list[dict[str, str]], errors: list | None = None) -> bool:
+    async def _should_select_columns(self, messages: list[dict[str, str]]) -> bool:
         """
         Determine if columns should be subset based on the user query.
 
