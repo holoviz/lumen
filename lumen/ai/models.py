@@ -111,7 +111,13 @@ def make_columns_selection(table_slugs: list[str], **context):
         Model for selecting a subset of columns from tables.
         """
         chain_of_thought: str = Field(
-            description="Reasoning behind column selection. Keep it concise."
+            description="""
+            Column selection methodology. Parse the user's query into distinct elements and link each to appropriate database fields.
+            Consider full query context; for example, if the user requests stock performance during market corrections across emerging markets,
+            choose MSCI_EM_IDX rather than S&P500_VOL as the latter only reflects US market volatility.
+            Similarly, when analyzing air quality metrics in European cities, select EU_AQI_PM25 instead of EPA_AQI_PM25,
+            as these standards differ in threshold values and calculation methods. Be brief in your explanation.
+            """
         )
 
         tables_columns_indices: list[TableColumnsIndices] = Field(

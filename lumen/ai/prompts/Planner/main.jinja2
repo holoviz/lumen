@@ -76,13 +76,12 @@ The following is the current SQL.
 - However, if the user requests to see all the columns, they might be referring to the table that `{{ memory['table'] }} was derived from.
 - If you are invoking a SQL agent and reusing the table, tell it to reference that table by name rather than re-stating the query.
 {%- endif %}
-
-{%- if unmet_dependencies %}
+{% if unmet_dependencies %}
 Here were your failed previous plans:
 {%- for previous_plan in previous_plans %}
 - {{ previous_plan }}
 {%- endfor %}
-These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}`
+These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}`.
 
 Please include some of these these experts to provide for the missing requirements:
 {%- for candidate in candidates %}

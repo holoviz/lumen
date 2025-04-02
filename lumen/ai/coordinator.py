@@ -699,13 +699,24 @@ class Planner(Coordinator):
         tools = self._tools["main"]
         reasoning = None
         while reasoning is None:
+            # candidates = agents and tools that can provide
+            # the unmet dependencies
+            agent_candidates = [
+                agent for agent in agents.values()
+                if not unmet_dependencies or set(agent.provides) & unmet_dependencies
+            ]
+            tool_candidates = [
+                tool for tool in tools
+                if not unmet_dependencies or set(tool.provides) & unmet_dependencies
+            ]
             system = await self._render_prompt(
                 "main",
                 messages,
                 agents=list(agents.values()),
                 tools=list(tools),
                 unmet_dependencies=unmet_dependencies,
-                candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
+                # Gather candidates that can provide unmet dependencies
+                candidates = agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)

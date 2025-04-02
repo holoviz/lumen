@@ -25,7 +25,8 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, stream_details, truncate_string,
+    get_schema, log_debug, mutate_user_message, retry_llm_output,
+    stream_details, truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -610,7 +611,8 @@ class TableLookup(VectorLookupTool):
                 step.status = "failed"
             return True
 
-    async def _should_select_columns(self, messages: list[dict[str, str]]) -> bool:
+    @retry_llm_output()
+    async def _should_select_columns(self, messages: list[dict[str, str]], errors: list | None = None) -> bool:
         """
         Determine if columns should be subset based on the user query.
 
@@ -653,13 +655,18 @@ class TableLookup(VectorLookupTool):
             # Default to True (subset columns) in case of error
             return True
 
-    async def _select_columns(self, messages: list[dict[str, str]]) -> None:
+    @retry_llm_output()
+    async def _select_columns(self, messages: list[dict[str, str]], errors: list | None = None) -> None:
         """
         Select relevant columns from tables based on the user query.
         This runs after _gather_info and before _format_context.
         """
         if not self.enable_select_columns:
             return
+
+        if errors:
+            content = f"Please address these errors in your previous attempt:\n{errors}"
+            messages = mutate_user_message(content, messages)
 
         vector_metaset: TableVectorMetaset = self._memory.get("table_vector_metaset")
         needs_reselection = await self._should_refresh_columns(messages)
@@ -673,23 +680,25 @@ class TableLookup(VectorLookupTool):
             return vector_metaset.sel_tables_cols
 
         try:
-            output = await self._invoke_prompt(
-                "select_columns",
-                messages,
-                vector_metaset=vector_metaset,
-                separator=SOURCE_TABLE_SEPARATOR,
-                table_slugs=list(vector_metaset.vector_metadata_map)
-            )
-            tables_columns_indices = output.tables_columns_indices
-            selected_indices = {
-                obj.table_slug: obj.column_indices
-                for obj in tables_columns_indices
-            }
-            # Convert indices to column names and store by table
-            vector_metadata_map = vector_metaset.vector_metadata_map
             with self._add_step(title="Column Selection") as step:
-                step.stream(output.chain_of_thought)
                 sel_tables_cols = {}
+                vector_metadata_map = vector_metaset.vector_metadata_map
+                async for output_chunk in self._stream_prompt(
+                    "select_columns",
+                    messages,
+                    vector_metaset=vector_metaset,
+                    separator=SOURCE_TABLE_SEPARATOR,
+                    table_slugs=list(vector_metaset.vector_metadata_map)
+                ):
+                    # Convert indices to column names and store by table
+                    if output_chunk.chain_of_thought:
+                        step.stream(output_chunk.chain_of_thought)
+
+                tables_columns_indices = output_chunk.tables_columns_indices
+                selected_indices = {
+                    obj.table_slug: obj.column_indices
+                    for obj in tables_columns_indices
+                }
                 for table_slug, indices in selected_indices.items():
                     if table_slug not in vector_metadata_map:
                         continue
@@ -965,7 +974,7 @@ class IterativeTableLookup(TableLookup):
                         stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
 
                 if fast_track:
-                    step.stream("Fast-tracked selection process based on similarity threshold.")
+                    step.stream("Fast-tracked selection process.")
                     satisfied_slugs = selected_slugs
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
