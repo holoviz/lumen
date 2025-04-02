@@ -6,6 +6,8 @@ from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
+from .config import SOURCE_TABLE_SEPARATOR
+
 
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
     ...
@@ -95,10 +97,11 @@ def make_plan_models(agents: list[str], tools: list[str]):
 
 
 def make_columns_selection(table_slugs: list[str], **context):
+
     class TableColumnsIndices(PartialBaseModel):
 
         table_slug: Literal[tuple(table_slugs)] = Field(
-            description="The table slug verbatim."
+            description=f"The table slug, i.e. '<source>{SOURCE_TABLE_SEPARATOR}<table>'"
         )
 
         column_indices: list[int] = Field(
@@ -112,16 +115,15 @@ def make_columns_selection(table_slugs: list[str], **context):
         """
         chain_of_thought: str = Field(
             description="""
-            Column selection methodology. Parse the user's query into distinct elements and link each to appropriate database fields.
-            Consider full query context; for example, if the user requests stock performance during market corrections across emerging markets,
-            choose MSCI_EM_IDX rather than S&P500_VOL as the latter only reflects US market volatility.
-            Similarly, when analyzing air quality metrics in European cities, select EU_AQI_PM25 instead of EPA_AQI_PM25,
-            as these standards differ in threshold values and calculation methods. Be brief in your explanation.
+            Break down the user query into parts, and try to map out the columns to
+            the parts of the query that they are relevant to.
             """
         )
 
         tables_columns_indices: list[TableColumnsIndices] = Field(
-            description="The list of table slugs and their respective columns to include in the final output."
+            description="""
+            The list of table slugs, i.e. '<source>{SOURCE_TABLE_SEPARATOR}<table>',
+            and their respective columns based on your own chain_of_thought."""
         )
     return ColumnsSelection
 

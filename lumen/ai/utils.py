@@ -215,7 +215,7 @@ async def get_schema(
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
-    include_null_types: bool = False,
+    include_empty_fields: bool = False,
     include_nans: bool = False,
     reduce_enums: bool = True,
     shuffle: bool = True,
@@ -238,8 +238,11 @@ async def get_schema(
             if "type" in spec:
                 spec.pop("type")
 
+    empty_fields = []
     if include_min_max:
         for field, spec in schema.items():
+            min_val = 0
+            max_val = 0
             if "inclusiveMinimum" in spec:
                 min_val = spec.pop("inclusiveMinimum")
                 if isinstance(min_val, (int, float)):
@@ -252,21 +255,29 @@ async def get_schema(
                     max_val = format_float(max_val)
                 if include_nans or not pd.isna(max_val):
                     spec["max"] = max_val
+            if not include_empty_fields and pd.isna(min_val) and pd.isna(max_val):
+                empty_fields.append(field)
+                continue
     else:
         for field, spec in schema.items():
+            min_val = 0
+            max_val = 0
             if "inclusiveMinimum" in spec:
-                spec.pop("inclusiveMinimum")
+                min_val = spec.pop("inclusiveMinimum")
             if "inclusiveMaximum" in spec:
-                spec.pop("inclusiveMaximum")
+                max_val = spec.pop("inclusiveMaximum")
             if "min" in spec:
-                spec.pop("min")
+                min_val = spec.pop("min")
             if "max" in spec:
-                spec.pop("max")
+                max_val = spec.pop("max")
+            if not include_empty_fields and pd.isna(min_val) and pd.isna(max_val):
+                empty_fields.append(field)
+                continue
 
     num_cols = len(schema)
     for field, spec in schema.items():
         if "type" in spec:
-            if not include_null_types and spec["type"] is None:
+            if not include_empty_fields and spec["type"] is None:
                 spec.pop("type")
                 continue
             if spec["type"] == "string":
@@ -286,7 +297,7 @@ async def get_schema(
         if reduce_enums:
             max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
         else:
-            max_enums = 8
+            max_enums = 6
         truncate_limit = min(limit or 5, max_enums)
         if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
@@ -298,6 +309,9 @@ async def get_schema(
             spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
+            continue
+        elif not include_empty_fields and len(spec["enum"]) == 1 and (spec["enum"][0] is None or spec["enum"][0].strip() == ""):
+            empty_fields.append(field)
             continue
 
         # truncate each enum to 100 characters
@@ -311,6 +325,10 @@ async def get_schema(
         for key, value in spec.items():
             if isinstance(value, (int, float)) and key not in ['type']:
                 spec[key] = format_float(value)
+
+    # remove any fields that are empty
+    for field in empty_fields:
+        schema[field] = "<null>"
 
     if count is not None and include_count:
         schema["__len__"] = count

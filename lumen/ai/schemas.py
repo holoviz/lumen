@@ -42,16 +42,16 @@ class TableVectorMetaset:
         Args:
             truncate: Controls truncation behavior.
                     None: Show all tables (max_context)
-                    False: Filter by sel_tables_cols without truncation (sub_context)
+                    False: Filter by sel_tables_cols without truncation (sel_context)
                     True: Filter by sel_tables_cols with truncation (min_context)
         """
-        context = "Below are the relevant tables for query:\n\n"
+        context = "Below are the relevant tables and columns to use:\n\n"
 
         # Use selected tables if specified, otherwise use all tables
         tables_to_show = self.sel_tables_cols or self.vector_metadata_map.keys()
 
         for table_slug in self.vector_metadata_map.keys():
-            # Skip tables not in the selected list if using sub_context or min_context
+            # Skip tables not in the selected list if using sel_context or min_context
             if truncate is not None and table_slug not in tables_to_show:
                 continue
 
@@ -70,7 +70,7 @@ class TableVectorMetaset:
                 cols_to_show = [col for col in cols_to_show if col.name in self.sel_tables_cols.get(table_slug, [])]
 
             show_ellipsis = False
-            if truncate is not None:
+            if truncate:
                 cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
             else:
                 cols_to_show = list(cols_to_show)
@@ -82,7 +82,7 @@ class TableVectorMetaset:
                     context += "...\n"
 
                 col_name = truncate_string(col.name) if truncate else col.name
-                context += f"{orig_idx}. {col_name}"
+                context += f"{orig_idx}. {col_name!r}"
                 if col.description:
                     col_desc = (
                         truncate_string(col.description, max_length=100)
@@ -99,7 +99,7 @@ class TableVectorMetaset:
         return self._generate_context(truncate=None)
 
     @property
-    def sub_context(self) -> str:
+    def sel_context(self) -> str:
         """Generate formatted text representation of the context with selected tables cols"""
         return self._generate_context(truncate=False)
 
@@ -110,7 +110,7 @@ class TableVectorMetaset:
 
     def __str__(self) -> str:
         """String representation is the formatted context."""
-        return self.sub_context
+        return self.sel_context
 
 
 @dataclass
@@ -138,13 +138,13 @@ class TableSQLMetaset:
         Args:
             truncate: Controls truncation behavior.
                       None: Show all tables (max_context)
-                      False: Filter by sel_tables_cols without truncation (sub_context)
+                      False: Filter by sel_tables_cols without truncation (sel_context)
                       True: Filter by sel_tables_cols with truncation (min_context)
 
         Returns:
             Formatted context string
         """
-        context = "Below are the relevant tables for query:\n\n"
+        context = "Below are the relevant tables and columns to use:\n\n"
 
         vector_metaset = self.vector_metaset
         tables_to_show = vector_metaset.sel_tables_cols or vector_metaset.vector_metadata_map.keys()
@@ -180,7 +180,7 @@ class TableSQLMetaset:
 
             original_indices = []
             show_ellipsis = False
-            if truncate is not None:
+            if truncate:
                 cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
             else:
                 cols_to_show = list(cols_to_show)
@@ -191,9 +191,15 @@ class TableSQLMetaset:
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
 
+                schema_data = None
+                if sql_data and col.name in sql_data.schema:
+                    schema_data = sql_data.schema[col.name]
+                    if truncate is not None and schema_data == "<null>":
+                        continue
+
                 # Get column name with optional truncation
                 col_name = truncate_string(col.name) if truncate else col.name
-                context += f"{orig_idx}. {col_name}"
+                context += f"{orig_idx}. {col_name!r}"
 
                 # Get column description with optional truncation
                 if col.description:
@@ -201,11 +207,10 @@ class TableSQLMetaset:
                     context += f": {col_desc}"
 
                 # Add schema info for the column if available
-                if sql_data and col.name in sql_data.schema:
-                    schema_data = sql_data.schema[col.name]
+                if schema_data:
                     if truncate:
                         schema_data = truncate_string(str(schema_data), max_length=50)
-                    context += f" {schema_data}"
+                    context += f" `{schema_data}`"
 
                 context += "\n"
 
@@ -217,7 +222,7 @@ class TableSQLMetaset:
         return self._generate_context(truncate=None)
 
     @property
-    def sub_context(self) -> str:
+    def sel_context(self) -> str:
         """Generate context with selected tables and columns, without truncation."""
         return self._generate_context(truncate=False)
 
@@ -233,7 +238,7 @@ class TableSQLMetaset:
 
     def __str__(self) -> str:
         """String representation is the formatted context."""
-        return self.sub_context
+        return self.sel_context
 
 @dataclass
 class PreviousState:
@@ -250,7 +255,7 @@ class PreviousState:
             for table_slug, cols in self.sel_tables_cols.items():
                 context += f"Table: {table_slug}\n"
                 for col in cols:
-                    context += f"- {col}\n"
+                    context += f"- {col!r}\n"
         return context
 
     def __str__(self) -> str:

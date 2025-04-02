@@ -3,6 +3,10 @@
 {%- block instructions -%}
 Your task is to select the most relevant columns from the provided tables given the user query.
 
+First, give a detailed overview of each column, and if regionally applicable,
+provide geographical context and the relevant standards for that region
+(i.e. in the US, SP500 or Saffir-Simpson while in the EU, the DAX or Euronext).
+
 For each table slug, be sure to include the delimiters {{ separator }},
 like '<source>{{ separator }}<table>' and select ONLY the column indices (numbers)
 that are directly relevant to answering the user's query.
@@ -15,5 +19,9 @@ If you have doubts about a column's relevance, include it.
 {%- endblock -%}
 
 {% block context %}
-{{ memory["table_vector_metaset"].max_context }}
+{% if memory.get('table_sql_metaset') %}
+{{ memory['table_sql_metaset'].sel_context }}
+{% else %}
+{{ memory["table_vector_metaset"].sel_context }}
+{% endif %}
 {% endblock %}

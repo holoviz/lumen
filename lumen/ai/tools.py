@@ -686,13 +686,12 @@ class TableLookup(VectorLookupTool):
                 async for output_chunk in self._stream_prompt(
                     "select_columns",
                     messages,
-                    vector_metaset=vector_metaset,
                     separator=SOURCE_TABLE_SEPARATOR,
                     table_slugs=list(vector_metaset.vector_metadata_map)
                 ):
                     # Convert indices to column names and store by table
                     if output_chunk.chain_of_thought:
-                        step.stream(output_chunk.chain_of_thought)
+                        step.stream(output_chunk.chain_of_thought, replace=True)
 
                 tables_columns_indices = output_chunk.tables_columns_indices
                 selected_indices = {
@@ -778,7 +777,7 @@ class TableLookup(VectorLookupTool):
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
         table_vector_metaset = self._memory.get("table_vector_metaset")
-        return table_vector_metaset.sub_context
+        return table_vector_metaset.sel_context
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -1006,7 +1005,7 @@ class IterativeTableLookup(TableLookup):
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         table_sql_metaset = self._memory.get("table_sql_metaset")
-        return table_sql_metaset.sub_context
+        return table_sql_metaset.sel_context
 
 
 class FunctionTool(Tool):
