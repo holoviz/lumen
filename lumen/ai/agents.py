@@ -506,7 +506,7 @@ class SQLAgent(LumenBaseAgent):
         calculating results. If the current table does not contain all
         the available data the SQL agent is also capable of joining it
         with other tables. Will generate and execute a query in a single
-        step.""")
+        step. Not useful if the user is using the same data for plotting.""")
 
     prompts = param.Dict(
         default={
@@ -747,12 +747,15 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
            errors = '\n'.join(errors)
            if self._last_output:
-               json_spec = load_json(self._last_output["json_spec"])
-               messages = mutate_user_message(
-                   f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
-                   f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
-                   messages
-               )
+            try:
+                json_spec = load_json(self._last_output["json_spec"])
+            except Exception:
+                json_spec = ""
+            messages = mutate_user_message(
+                f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
+                f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
+                messages
+            )
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system = await self._render_prompt(
