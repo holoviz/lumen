@@ -10,8 +10,7 @@ import param
 
 from panel.viewable import Viewable
 
-from lumen.sources.duckdb import DuckDBSource
-
+from ..sources.duckdb import DuckDBSource
 from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
