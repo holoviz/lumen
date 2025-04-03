@@ -5,18 +5,18 @@ import re
 import traceback
 
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import param
 
 from panel import bind
-from panel.chat import ChatFeed, ChatInterface, ChatStep
-from panel.layout import (
-    Card, Column, FlexBox, Tabs,
-)
+from panel.chat import ChatFeed
+from panel.layout import Column, FlexBox
 from panel.pane import HTML
 from panel.viewable import Viewable, Viewer
-from panel.widgets import Button
+from panel_material_ui import (
+    Button, Card, ChatInterface, ChatStep, Tabs,
+)
 from pydantic import BaseModel
 
 from ..views.base import Panel, View
@@ -36,10 +36,6 @@ from .utils import (
     stream_details,
 )
 from .views import LumenOutput
-
-if TYPE_CHECKING:
-    from panel.chat.step import ChatStep
-
 
 UI_INTRO_MESSAGE = """
 👋 Click a suggestion below or upload a data source to get started!
@@ -134,7 +130,7 @@ class Coordinator(Viewer, ToolUser):
     def __init__(
         self,
         llm: Llm | None = None,
-        interface: ChatFeed | ChatInterface | None = None,
+        interface: ChatFeed | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         tools: list[Tool | type[Tool]] | None = None,
         logs_db_path: str = "",
@@ -296,7 +292,7 @@ class Coordinator(Viewer, ToolUser):
             *[
                 Button(
                     name=suggestion,
-                    button_style="outline",
+                    button_style="outlined",
                     on_click=use_suggestion,
                     margin=5,
                     disabled=self.interface.param.loading

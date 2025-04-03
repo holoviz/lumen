@@ -8,12 +8,13 @@ import yaml
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
-from panel.layout import Column, Row, Tabs
-from panel.pane import Alert, Markdown
+from panel.layout import Column, Row
+from panel.pane import Markdown
 from panel.param import ParamMethod
 from panel.viewable import Viewer
-from panel.widgets import (
-    Button, ButtonIcon, Checkbox, CodeEditor, LoadingSpinner,
+from panel.widgets import CodeEditor, LoadingSpinner
+from panel_material_ui import (
+    Alert, Button, ButtonIcon, Checkbox, Tabs,
 )
 from param.parameterized import discard_events
 
