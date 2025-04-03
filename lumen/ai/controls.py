@@ -4,14 +4,12 @@ import zipfile
 import pandas as pd
 import param
 
-from panel.layout import (
-    Column, FlexBox, Row, Tabs,
-)
+from panel.layout import Column, FlexBox, Row
 from panel.pane.markup import Markdown
 from panel.viewable import Viewer
-from panel.widgets import (
-    Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
-    ToggleIcon,
+from panel.widgets import FileDropper, Tabulator
+from panel_material_ui import (
+    Button, NestedSelect, Select, Tabs, TextInput, ToggleIcon,
 )
 
 from ..sources.duckdb import DuckDBSource
