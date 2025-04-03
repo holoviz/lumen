@@ -30,7 +30,10 @@ from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import ContextProvider
-from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RetriesExceededError
+from .config import (
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_ZOOMABLE_MAP_ITEMS,
+    RetriesExceededError,
+)
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
@@ -90,7 +93,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
                 return
 
             import traceback
-            traceback.print_exc()
+            traceback.print_exception(exception)
             self.interface.send(
                 f"Error cannot be resolved:\n\n{exception}",
                 user="System",
@@ -457,6 +460,7 @@ class LumenBaseAgent(Agent):
                 deepcopy(messages), wrap='\n"""\n', suffix=False
             )
             with self.param.update(memory=memory):
+                # TODO: only input the inner spec to retry
                 system = await self._render_prompt(
                     "retry_output", messages=modified_messages, spec=out.spec,
                     language=out.language,
@@ -767,6 +771,7 @@ class BaseViewAgent(LumenBaseAgent):
             response_model=self._get_model("main", schema=schema),
         )
 
+        e = None
         error = ""
         with self._add_step(
             title=step_title or "Generating view...",
@@ -781,6 +786,7 @@ class BaseViewAgent(LumenBaseAgent):
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
+                traceback.print_exception(e)
                 context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
                 report_error(e, step, language="json", context=context)
 
@@ -886,6 +892,10 @@ class VegaLiteAgent(BaseViewAgent):
                 "response_model": VegaLiteSpec,
                 "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
             },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"
+            },
         }
     )
 
@@ -921,7 +931,17 @@ class VegaLiteAgent(BaseViewAgent):
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
-        if not ("latitude:" in vega_spec_str or "longitude:" in vega_spec_str or "point: true" in vega_spec_str):
+        is_geographic = "latitude:" in vega_spec_str or "longitude:" in vega_spec_str
+
+        # Handle different types of interactive controls based on chart type
+        if is_geographic:
+            if "params" not in vega_spec:
+                vega_spec["params"] = []
+            vega_spec["params"].extend(VEGA_ZOOMABLE_MAP_ITEMS["params"])
+            if "projection" not in vega_spec:
+                vega_spec["projection"] = {"type": "mercator"}
+            vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
+        elif "point: true" not in vega_spec_str or "params" not in vega_spec:
             # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]

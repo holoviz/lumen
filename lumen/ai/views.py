@@ -17,6 +17,8 @@ from panel.widgets import (
 )
 from param.parameterized import discard_events
 
+from lumen.ai.config import VEGA_ZOOMABLE_MAP_ITEMS
+
 from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
@@ -257,10 +259,21 @@ class VegaLiteOutput(LumenOutput):
         )
         vega_lite_validator = Draft7Validator(vega_lite_schema)
         try:
-            vega_lite_validator.validate(spec)
+            # the zoomable params work, but aren't officially valid
+            # so we need to remove them for validation
+            # https://stackoverflow.com/a/78342773/9324652
+            spec_copy = spec.copy()
+            for key in VEGA_ZOOMABLE_MAP_ITEMS.get("projection", {}):
+                spec_copy.get("projection", {}).pop(key, None)
+            spec_copy.pop("params", None)
+            vega_lite_validator.validate(spec_copy)
         except ValidationError as e:
             raise ValidationError(cls._format_validation_error(e))
         return super()._validate_spec(spec)
+
+    def __str__(self):
+        # Only keep the spec part
+        return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
 class AnalysisOutput(LumenOutput):

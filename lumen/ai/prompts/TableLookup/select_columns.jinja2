@@ -16,6 +16,8 @@ Be selective - include only columns that are clearly relevant to the query.
 Consider which columns contain the specific data points mentioned in the query.
 Consider primary/foreign keys that might be needed for joins even if not directly mentioned.
 If you have doubts about a column's relevance, include it.
+
+If user is requesting a plot, gather more relevant columns to be used in the tooltips.
 {%- endblock -%}
 
 {% block context %}

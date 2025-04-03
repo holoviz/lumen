@@ -12,10 +12,10 @@ ESSENTIAL REQUIREMENTS:
 - `marks` key must not be on the same level as the `layer` or `concat` keys
 
 VISUALIZATION FUNDAMENTALS:
-- Choose marks based on analytical goal: bar (comparison), line (trends/tracks), point (distribution/correlation), area (composition)
+- Choose marks based on analytical goal: bar (comparison), line (trends/tracks), point (distribution/correlation), area
+(composition)
 - Use position (x/y) for primary relationships, then color (categorical), size (quantitative), shape (≤6 categories)
 - Handle overplotting in dense visualizations: opacity, aggregation, binning, or jitter
-- Focus on the domain of interest with `scale: domain: [...]`, or `projection: center: [...], scale: ...` for geographic maps, to control x and y limits
 
 DATA HANDLING:
 - Years as numbers (2010, 2011): treat as quantitative, not temporal
@@ -39,7 +39,12 @@ SCALES & FORMATTING:
 - For dual-axis: use separate scales with aligned axes
 
 SPECIFICS:
-- Geographic maps with latitude/longitude: underlay coastlines with `format: {type: topojson, feature: countries}` from https://vega.github.io/vega-datasets/data/world-110m.json with `fill: null stroke: black` under `layer`. For the actual data, use a top-level data reference, then `encoding` in `layer`.
+- When creating world maps with lat/long coordinates, under marks, add coastlines by layering
+https://vega.github.io/vega-datasets/data/world-110m.json with `format: {type: topojson, feature:
+countries}` and `fill: null, stroke: black`. For US states, additionally include
+https://vega.github.io/vega-lite/data/us-10m.json.
+- Do not set a projection inside data.
+- Be sure to place your data at the top level, then use `layer` to organize boundaries and data points in `encoding`.
 - Multi-view: use `concat`/`repeat` for small multiples, coordinated views for filtering
 {% endblock %}
 
@@ -48,18 +53,18 @@ SPECIFICS:
 GOOD (no mark at the same level as layer):
 ```yaml
 layer:
-  - data:
-      format:
-        feature: countries
-        type: topojson
-      url: https://vega.github.io/vega-datasets/data/world-110m.json
-    mark:
-      fill: null
-      stroke: black
-      type: geoshape
-  - mark:
-      tooltip: true
-      type: point
+- data:
+format:
+feature: countries
+type: topojson
+url: https://vega.github.io/vega-datasets/data/world-110m.json
+mark:
+fill: null
+stroke: black
+type: geoshape
+- mark:
+tooltip: true
+type: point
 ```
 {% endif %}
 {% endblock %}
