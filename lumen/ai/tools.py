@@ -10,6 +10,8 @@ import param
 
 from panel.viewable import Viewable
 
+from lumen.sources.duckdb import DuckDBSource
+
 from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
@@ -528,11 +530,14 @@ class TableLookup(VectorLookupTool):
 
         for source in sources:
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
-                metadata_task = asyncio.create_task(
-                    asyncio.to_thread(source.get_metadata)
-                )
-                self._raw_metadata[source.name] = metadata_task
-                all_tasks.append(metadata_task)
+                if isinstance(source, DuckDBSource):
+                    self._raw_metadata[source.name] = source.get_metadata()
+                else:
+                    metadata_task = asyncio.create_task(
+                        asyncio.to_thread(source.get_metadata)
+                    )
+                    self._raw_metadata[source.name] = metadata_task
+                    all_tasks.append(metadata_task)
 
             tables = source.get_tables()
             # since enriching the metadata might take time, first add basic metadata (table name)
