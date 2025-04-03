@@ -47,6 +47,7 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .models import YesNo
 from .utils import format_exception
 
 if TYPE_CHECKING:
@@ -191,8 +192,9 @@ class UI(Viewer):
         try:
             self._llm_status_badge.status = "running"
             await self.llm.invoke(
-                [{'role': 'user', 'content': 'Are you there? YES | NO'}],
-                model_spec="ui"
+                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                model_spec="ui",
+                response_model=YesNo
             )
             self._llm_status_badge.param.update(status="success", name='LLM Ready')
             self.interface.disabled = False
@@ -717,10 +719,6 @@ class ExplorerUI(UI):
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1
                     new_exploration = True
-                    self._split.param.update(
-                        collapsed=False,
-                        sizes=self._split.expanded_sizes,
-                    )
 
             def sync_available_sources_memory(_, __, sources):
                 """
@@ -741,6 +739,11 @@ class ExplorerUI(UI):
                 self._add_outputs(exploration, added, local_memory)
                 exploration.loading = False
                 outputs[:] = new
+                if len(self._explorations) == 1:
+                    self._split.param.update(
+                        collapsed=False,
+                        sizes=self._split.expanded_sizes,
+                    )
             local_memory.on_change('outputs', render_output)
 
             # Remove exploration on error if no outputs have been

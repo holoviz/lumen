@@ -14,14 +14,14 @@ except ImportError:
 def mock_snowflake_connection():
     """Fixture to create a mock Snowflake connection and cursor."""
     # Sample tables data
-    tables_data = pd.DataFrame({
+    tables_metadata = pd.DataFrame({
         'TABLE_NAME': ['CUSTOMERS', 'ORDERS', 'PRODUCTS', 'SALES', 'DEMOGRAPHICS', 'STATISTICS'],
         'TABLE_SCHEMA': ['PUBLIC', 'PUBLIC', 'ANALYTICS', 'ANALYTICS', 'TPCDS_SF100TCL', 'TPCDS_SF100TCL']
     })
 
     # Create mock cursor
     mock_cursor = Mock()
-    mock_cursor.execute.return_value.fetch_pandas_all.return_value = tables_data
+    mock_cursor.execute.return_value.fetch_pandas_all.return_value = tables_metadata
 
     # Create mock connection
     mock_conn = Mock()

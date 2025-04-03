@@ -122,6 +122,7 @@ class Actor(param.Parameterized):
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
         context["memory"] = self._memory
+        context["actor_name"] = self.name
         return context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
@@ -154,6 +155,120 @@ class Actor(param.Parameterized):
         prompt = prompt.strip()
         log_debug(f"{prompt_label}:\n\033[90m{prompt}\033[0m", show_length=True)
         return prompt
+
+    async def _invoke_prompt(
+        self,
+        prompt_name: str,
+        messages: list[Message],
+        response_model: type[BaseModel] | None = None,
+        model_spec: str | None = None,
+        **context
+    ) -> Any:
+        """
+        Convenience method that combines rendering a prompt and invoking the LLM.
+
+        Parameters
+        ----------
+        prompt_name : str
+            Name of the prompt template to use
+        messages : list[Message]
+            The conversation messages
+        response_model : type[BaseModel], optional
+            Pydantic model to structure the response, if None will use the model
+            defined in the prompt configuration
+        model_spec : str, optional
+            Specification for which LLM to use, if None will use the model_spec
+            defined in the prompt configuration or fall back to self.llm_spec_key
+        **context : dict
+            Additional context variables to pass to the prompt template
+
+        Returns
+        -------
+        The structured response from the LLM
+        """
+        system = await self._render_prompt(prompt_name, messages, **context)
+
+        if response_model is None:
+            try:
+                response_model = self._get_model(prompt_name, **context)
+            except (KeyError, AttributeError):
+                pass
+
+        if model_spec is None:
+            try:
+                model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
+            except KeyError:
+                model_spec = self.llm_spec_key
+
+        result = await self.llm.invoke(
+            messages=messages,
+            system=system,
+            response_model=response_model,
+            model_spec=model_spec,
+        )
+
+        return result
+
+    async def _stream_prompt(
+        self,
+        prompt_name: str,
+        messages: list[Message],
+        response_model: type[BaseModel] | None = None,
+        model_spec: str | None = None,
+        field: str | None = None,
+        **context
+    ):
+        """
+        Convenience method that combines rendering a prompt and streaming responses from the LLM.
+
+        Parameters
+        ----------
+        prompt_name : str
+            Name of the prompt template to use
+        messages : list[Message]
+            The conversation messages
+        response_model : type[BaseModel], optional
+            Pydantic model to structure the response, if None will use the model
+            defined in the prompt configuration
+        model_spec : str, optional
+            Specification for which LLM to use, if None will use the model_spec
+            defined in the prompt configuration or fall back to self.llm_spec_key
+        field : str, optional
+            Specific field to extract from the response model
+        **context : dict
+            Additional context variables to pass to the prompt template
+
+        Yields
+        ------
+        Chunks of the response from the LLM as they are generated
+        """
+        # Render the prompt
+        system = await self._render_prompt(prompt_name, messages, **context)
+
+        # Determine the response model
+        if response_model is None:
+            try:
+                response_model = self._get_model(prompt_name, **context)
+            except (KeyError, AttributeError):
+                # If no model is specified, return raw response
+                pass
+
+        # Determine the model specification
+        if model_spec is None:
+            try:
+                model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
+            except KeyError:
+                model_spec = self.llm_spec_key
+
+        # Stream from the LLM
+        async for chunk in self.llm.stream(
+            messages=messages,
+            system=system,
+            response_model=response_model,
+            model_spec=model_spec,
+            field=field
+        ):
+            yield chunk
 
     @abstractmethod
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> Any:

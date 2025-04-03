@@ -1,0 +1,41 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Determine if a tool's output will help an agent complete its task by evaluating:
+- Agent's purpose and assigned task
+- Content and format of tool output
+- Alignment with the original user query
+- Direct usefulness to the agent's needs
+
+## Answer YES if the output:
+- Contains necessary information for task completion
+- Significantly enhances problem understanding
+- Directly addresses required aspects of the user query
+- Provides specific context values the agent needs
+
+## Answer NO if the output:
+- Is irrelevant to the agent's task
+- Offers minimal benefit to the agent
+- Addresses different aspects than the agent's focus
+- Is too general or too specific for the particular task
+{% endblock %}
+{% block context %}
+Task: {{ agent_task }}
+Agent - {{ agent_name }}: {{ agent_purpose }}
+
+Tool - {{ tool_name }}: {{ tool_description }}
+Tool Output:
+"""
+{{ tool_output }}
+"""
+{% endblock %}
+{% block examples %}
+Case 2 - Not Relevant:
+Tool: WeatherAPI
+Provides: ["weather_data"]
+Output: "72F and sunny in San Francisco"
+Agent: SQLAgent writing query for user data
+Requires: ["table_schema", "sql_context"]
+Task: "Find users who joined this month"
+-> NO (weather data doesn't help with SQL query and doesn't provide what agent requires)
+{% endblock %}

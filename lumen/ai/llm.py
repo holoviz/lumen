@@ -16,7 +16,7 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from lumen.ai.utils import log_debug
+from lumen.ai.utils import log_debug, truncate_string
 
 from .interceptor import Interceptor
 
@@ -250,7 +250,7 @@ class Llm(param.Parameterized):
         result = await client(messages=messages, **kwargs)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
-        log_debug(f"LLM Response: \033[90m{str(result)[:100]}...\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
         return result
 
 

@@ -1,0 +1,17 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+A user has submitted a new query, and I need to determine if I should rerun the entire table lookup process.
+
+First, analyze both queries and determine if the current query is likely to require different tables:
+
+1. Is the current query asking about completely different entities or concepts than the previous query?
+2. Is the current query asking about different tables that weren't mentioned in the previous query?
+3. Does the current query have a fundamentally different intent that would require different tables?
+4. Would the previously selected tables be insufficient to answer the current query?
+{% endblock %}
+
+{% block context %}
+Here is the previous query, tables, and columns:
+{{ previous_state }}
+{% endblock %}

@@ -346,17 +346,17 @@ class SnowflakeSource(BaseSQLSource):
         )
         table_metadata = subset_table_slugs(table_metadata)
 
-        table_columns = self.execute(
+        table_cols = self.execute(
             """
             SELECT
             TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COMMENT AS COLUMN_DESCRIPTION, DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
             """
         )
-        table_columns = subset_table_slugs(table_columns)
+        table_cols = subset_table_slugs(table_cols)
 
         result = {}
-        table_metadata_columns = table_metadata.join(table_columns).reset_index()
+        table_metadata_columns = table_metadata.join(table_cols).reset_index()
         for table_slug, group in table_metadata_columns.groupby("TABLE_SLUG"):
             first_row = group.iloc[0]
             description = first_row["TABLE_DESCRIPTION"] or ""

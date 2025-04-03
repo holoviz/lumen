@@ -198,7 +198,7 @@ class SplitJS(JSComponent):
         Default is (100, 0) which means the left panel takes up all the space
         and the right panel is not visible.""")
 
-    expanded_sizes = param.NumericTuple(default=(35, 65), length=2, doc="""
+    expanded_sizes = param.NumericTuple(default=(40, 60), length=2, doc="""
         The sizes of the two panels when expanded (as percentages).
         Default is (35, 65) which means the left panel takes up 35% of the space
         and the right panel takes up 65% when expanded.

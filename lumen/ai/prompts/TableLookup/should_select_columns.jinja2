@@ -1,0 +1,21 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+You need to determine if the user is asking for specific columns or fields from the dataset, or if they are just asking
+about general information about available datasets/tables.
+
+When the user is asking questions like "what datasets do you have?", "show me available tables", "what columns are in X
+table?", or similar exploratory questions about the database structure, you should NOT subset columns because the user
+wants to see all columns.
+
+When the user is asking specific questions about certain fields or relationships, like "tell me about the correlation
+between X and Y", "analyze the trend of Z over time", "calculate the average of A grouped by B", etc., then you should
+subset columns to focus on the relevant ones.
+{% endblock %}
+
+{% block context %}
+{% if previous_state %}
+Here is the previous query, tables, and columns:
+{{ previous_state }}
+{% endif %}
+{% endblock %}

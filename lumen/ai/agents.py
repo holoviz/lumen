@@ -252,7 +252,7 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=["tables_vector_info"], readonly=True)
+    requires = param.List(default=["table_vector_metaset"], readonly=True)
 
     async def respond(
         self,
@@ -519,7 +519,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "tables_sql_info"], readonly=True)
+    requires = param.List(default=["source", "table_sql_metaset"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -536,6 +536,14 @@ class SQLAgent(LumenBaseAgent):
         errors=None
     ):
         if errors:
+            # get the head of the tables
+            columns_context = ""
+            vector_metadata_map = self._memory["table_sql_metaset"].vector_metaset.vector_metadata_map
+            for table_slug, vector_metadata in vector_metadata_map.items():
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                if table_name in tables_to_source:
+                    columns = [col.name for col in vector_metadata.table_cols]
+                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             last_query = self._memory["sql"]
             num_errors = len(errors)
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
@@ -544,7 +552,8 @@ class SQLAgent(LumenBaseAgent):
                 f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors}\n```\n\n"
                 f"Note a penalty of $100 will be incurred for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
                 f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
-                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present."
+                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present. "
+                f"For extra context, here are the tables and columns available:\n{columns_context}\n"
             )
             messages = mutate_user_message(content, messages)
 
@@ -645,8 +654,12 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        selected_slugs = list(self._memory["tables_sql_info"])
-
+        vector_metaset = self._memory["table_sql_metaset"].vector_metaset
+        selected_slugs = list(
+            #  if no tables/cols are subset
+            vector_metaset.sel_tables_cols or
+            vector_metaset.vector_metadata_map
+        )
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 
@@ -675,11 +688,11 @@ class SQLAgent(LumenBaseAgent):
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
             tables_to_source = {}
+            step.stream("Planning to use:")
             for table_slug in selected_slugs:
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
-                step.stream(f"Planning to use: {table_slug!r}")
-
+                step.stream(f"\n{a_table!r}")
         return tables_to_source, chain_of_thought
 
     async def respond(
@@ -703,7 +716,7 @@ class SQLAgent(LumenBaseAgent):
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["pipeline"], readonly=True)
+    requires = param.List(default=["pipeline", "table_sql_metaset"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
 
@@ -741,9 +754,7 @@ class BaseViewAgent(LumenBaseAgent):
         system = await self._render_prompt(
             "main",
             messages,
-            schema=yaml.dump(schema),
             table=pipeline.table,
-            view=self._memory.get('view'),
             has_errors=bool(errors),
             doc=doc,
         )

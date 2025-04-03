@@ -3,7 +3,7 @@
 {%- block instructions %}
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
 Try not to take the query too literally, but instead focus on the user's intent and the data transformations required.
-Use `SELECT * FROM table` if there is no specific column selection mentioned in the query; no alias required.
+Reference the base sql if there is no specific column selection mentioned in the query; no alias required.
 {%- endblock -%}
 
 {% block context -%}
@@ -45,10 +45,11 @@ CAST or TO_DATE
 - Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, only if needed.
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
 {% endif %}
-{% if comments is defined -%}
+{% if comments is defined and comments -%}
 Here's additional guidance:
 {{ comments }}
 {%- endif -%}
+{{ memory["table_sql_metaset"].sel_context }}
 {%- endblock -%}
 
 {%- block examples %}

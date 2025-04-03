@@ -6,3 +6,7 @@ Determine which tables are necessary to answer the user query, paying special at
 Use table names verbatim, and be sure to include the delimiters {{ separator }}, like '<source>{{ separator }}<table>'
 {% endif %}
 {% endblock %}
+
+{% block context %}
+{{ memory["table_sql_metaset"].max_context }}
+{% endblock %}

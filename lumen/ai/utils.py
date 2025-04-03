@@ -156,7 +156,8 @@ def retry_llm_output(retries=3, sleep=1):
             async def async_wrapper(*args, **kwargs):
                 errors = []
                 for i in range(retries):
-                    log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
+                    if i > 0:
+                        log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
                     if errors:
                         kwargs["errors"] = errors
                     try:
@@ -182,7 +183,8 @@ def retry_llm_output(retries=3, sleep=1):
             def sync_wrapper(*args, **kwargs):
                 errors = []
                 for i in range(retries):
-                    log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
+                    if i > 0:
+                        log_debug(f"Retrying LLM function {func.__name__} ({i} / {retries})...")
                     if errors:
                         kwargs["errors"] = errors
                     try:
@@ -213,8 +215,9 @@ async def get_schema(
     include_min_max: bool = True,
     include_enum: bool = True,
     include_count: bool = False,
-    include_null_types: bool = False,
+    include_empty_fields: bool = False,
     include_nans: bool = False,
+    reduce_enums: bool = True,
     shuffle: bool = True,
     **get_kwargs
 ):
@@ -235,8 +238,11 @@ async def get_schema(
             if "type" in spec:
                 spec.pop("type")
 
+    empty_fields = []
     if include_min_max:
         for field, spec in schema.items():
+            min_val = 0
+            max_val = 0
             if "inclusiveMinimum" in spec:
                 min_val = spec.pop("inclusiveMinimum")
                 if isinstance(min_val, (int, float)):
@@ -249,21 +255,29 @@ async def get_schema(
                     max_val = format_float(max_val)
                 if include_nans or not pd.isna(max_val):
                     spec["max"] = max_val
+            if not include_empty_fields and pd.isna(min_val) and pd.isna(max_val):
+                empty_fields.append(field)
+                continue
     else:
         for field, spec in schema.items():
+            min_val = 0
+            max_val = 0
             if "inclusiveMinimum" in spec:
-                spec.pop("inclusiveMinimum")
+                min_val = spec.pop("inclusiveMinimum")
             if "inclusiveMaximum" in spec:
-                spec.pop("inclusiveMaximum")
+                max_val = spec.pop("inclusiveMaximum")
             if "min" in spec:
-                spec.pop("min")
+                min_val = spec.pop("min")
             if "max" in spec:
-                spec.pop("max")
+                max_val = spec.pop("max")
+            if not include_empty_fields and pd.isna(min_val) and pd.isna(max_val):
+                empty_fields.append(field)
+                continue
 
     num_cols = len(schema)
     for field, spec in schema.items():
         if "type" in spec:
-            if not include_null_types and spec["type"] is None:
+            if not include_empty_fields and spec["type"] is None:
                 spec.pop("type")
                 continue
             if spec["type"] == "string":
@@ -280,7 +294,10 @@ async def get_schema(
 
         limit = get_kwargs.get("limit")
         # scale the number of enums based on the number of columns
-        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+        if reduce_enums:
+            max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+        else:
+            max_enums = 6
         truncate_limit = min(limit or 5, max_enums)
         if not include_enum or len(spec["enum"]) == 0:
             spec.pop("enum")
@@ -292,6 +309,9 @@ async def get_schema(
             spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
         elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
             spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
+            continue
+        elif not include_empty_fields and len(spec["enum"]) == 1 and (spec["enum"][0] is None or spec["enum"][0].strip() == ""):
+            empty_fields.append(field)
             continue
 
         # truncate each enum to 100 characters
@@ -306,50 +326,13 @@ async def get_schema(
             if isinstance(value, (int, float)) and key not in ['type']:
                 spec[key] = format_float(value)
 
+    # remove any fields that are empty
+    for field in empty_fields:
+        schema[field] = "<null>"
+
     if count is not None and include_count:
         schema["__len__"] = count
     return schema
-
-
-async def fetch_table_sql_info(sources: dict[str, Source], table_slug: str, view_definition: str = "", **get_schema_kwargs) -> dict:
-    """
-    Fetch the schema for a single table from a data source.
-
-    Parameters
-    ----------
-    table_slug : str
-        Table name in format "source_name{SEP}table_name"
-    view_definition : str
-        Optional view definition for the table to override the schema
-    **get_schema_kwargs
-        Additional keyword arguments to pass to the get_schema method
-
-    Returns
-    -------
-    tuple
-        (table_slug, schema_data) where table_slug is the normalized table name
-        and schema_data is a dict with the schema information
-    """
-    if SOURCE_TABLE_SEPARATOR in table_slug:
-        source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-        source_obj = sources.get(source_name)
-    else:
-        source_obj = next(iter(sources.values()))
-        table_name = table_slug
-        table_slug = f"{source_obj.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-
-    if view_definition:
-        schema = {"view_definition": view_definition}
-    else:
-        schema = await get_schema(source_obj, table_name, **get_schema_kwargs)
-    normalized_table_name = source_obj.normalize_table(table_name)
-    result = {
-        "schema": schema,
-        "source": source_obj.name,
-        "sql_table": normalized_table_name,
-        "sql": source_obj.get_sql_expr(normalized_table_name),
-    }
-    return result
 
 
 async def get_pipeline(**kwargs):
@@ -455,6 +438,11 @@ def clean_sql(sql_expr):
     Cleans up a SQL expression generated by an LLM by removing
     backticks, fencing and extraneous space and semi-colons.
     """
+    # TODO: find a better solution
+    while SOURCE_TABLE_SEPARATOR in sql_expr:
+        parts = sql_expr.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+        prefix = parts[0].rsplit(" ", maxsplit=1)[0]
+        sql_expr = f"{prefix} {parts[1]}"
     return sql_expr.replace("```sql", "").replace("```", "").replace('`', '"').strip().rstrip(";")
 
 
@@ -665,23 +653,21 @@ def truncate_string(s, max_length=20, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
-def format_info(tables_vector_info: dict, tables_sql_info: dict) -> str:
-    context = "Below are the relevant tables:\n"
-    for table_slug, table_vector_info in tables_vector_info.items():
-        if table_slug not in tables_sql_info:
-            continue
-        table_description = table_vector_info.get("description", "")
-        context += f"\n{table_slug} (Similarity: {table_vector_info['similarity']:.3f}) {table_description}"
-        sql = tables_sql_info[table_slug].get("sql", "")
-        if sql:
-            context += f"\n  SQL:\n```sql\n{sql}\n```"
-        schema = tables_sql_info.get(table_slug, {}).get("schema", {})
-        if "view_definition" in schema:
-            context += f"\n  View definition:\n```sql\n{schema['view_definition']}\n```"
-            return context
+def truncate_iterable(iterable, max_length=20) -> tuple[list, list, bool]:
+    iterable_list = list(iterable)
+    if len(iterable_list) > max_length:
+        half = max_length // 2
+        first_half_indices = list(range(half))
+        second_half_indices = list(range(len(iterable_list) - half, len(iterable_list)))
 
-        for col, col_description in table_vector_info.get("columns_description", {}).items():
-            context += f"\n- {col}{col_description}"
-            if col in schema:
-                context += f": {schema[col]}"
-    return context
+        first_half_items = iterable_list[:half]
+        second_half_items = iterable_list[-half:]
+
+        cols_to_show = first_half_items + second_half_items
+        original_indices = first_half_indices + second_half_indices
+        show_ellipsis = True
+    else:
+        cols_to_show = iterable_list
+        original_indices = list(range(len(iterable_list)))
+        show_ellipsis = False
+    return cols_to_show, original_indices, show_ellipsis

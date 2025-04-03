@@ -27,7 +27,7 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import make_agent_model, make_plan_models
+from .models import YesNo, make_agent_model, make_plan_models
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
@@ -88,6 +88,22 @@ class Coordinator(Viewer, ToolUser):
     computing an execution graph and then executing each
     step along the graph.
     """
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
+            },
+            "yesno_update": {
+                "template": PROMPTS_DIR / "Coordinator" / "yesno_update.jinja2",
+                "response_model": YesNo,
+            },
+            "tool_relevance": {
+                "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
+                "response_model": YesNo,
+            },
+        },
+    )
 
     within_ui = param.Boolean(default=False, constant=True, doc="""
         Whether this coordinator is being used within the UI.""")
@@ -347,7 +363,7 @@ class Coordinator(Viewer, ToolUser):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message]) -> bool:
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> bool:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -405,11 +421,13 @@ class Coordinator(Viewer, ToolUser):
                 step.failed_title = f"{agent_name}Agent did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{agent_name} failed to provide declared context.")
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
+            # Handle Tool specific behaviors
             if isinstance(subagent, Tool):
+                # Handle string results from tools
                 if isinstance(result, str) and result:
-                    self._memory["tools_context"][subagent.name] = result
-                    stream_details(result, step, title="Results", auto=False)
-                elif isinstance(result, (View, Viewable)):
+                    await self._handle_tool_result(subagent, result, step, execution_graph, messages)
+                # Handle View/Viewable results regardless of agent type
+                if isinstance(result, (View, Viewable)):
                     if isinstance(result, Viewable):
                         result = Panel(object=result, pipeline=self._memory.get('pipeline'))
                     out = LumenOutput(
@@ -447,7 +465,7 @@ class Coordinator(Viewer, ToolUser):
         return str(obj)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        self._memory["tools_context"] = {}
+        self._memory["agent_tool_contexts"] = {}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
                 with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
@@ -469,8 +487,8 @@ class Coordinator(Viewer, ToolUser):
                 )
                 self.interface.stream(msg, user='Lumen')
                 return msg
-            for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages)
+            for i, node in enumerate(execution_graph):
+                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
                 if not succeeded:
                     break
             if "pipeline" in self._memory:
@@ -481,6 +499,79 @@ class Coordinator(Viewer, ToolUser):
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
                 break
+
+    async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
+        tool = next((t for t in self._tools["main"] if t.name == tool_name), None)
+        result = await self._invoke_prompt(
+            "tool_relevance",
+            messages,
+            tool_name=tool_name,
+            tool_description=getattr(tool, "description", ""),
+            tool_output=tool_output,
+            agent_name=agent.name,
+            agent_purpose=agent.purpose,
+            agent_task=agent_task,
+        )
+
+        return result.yes
+
+    async def _handle_tool_result(self, tool: Tool, result: str, step: ChatStep, execution_graph: list[ExecutionNode] | None = None, messages: list[Message] | None = None):
+        """Handle string tool results and determine relevance for future agents."""
+        # Caller should ensure result is a non-empty string before calling this method
+
+        # Display the result
+        stream_details(result, step, title="Results", auto=False)
+
+        # Early exit if no execution graph provided
+        if not execution_graph:
+            return
+
+        # Find agents that will be used in future nodes
+        future_agents = {}
+        for agent in self.agents:
+            # Skip tools, only interested in non-tool agents
+            if isinstance(agent, Tool):
+                continue
+
+            # Find if this agent appears in future nodes
+            for future_node in execution_graph:
+                if future_node.actor is agent:
+                    future_agents[agent] = future_node.instruction
+                    break
+
+        # Early exit if no future agents found
+        if not future_agents:
+            return
+
+        # Check relevance and store context for each future agent
+        for agent, task in future_agents.items():
+            # Get tool and agent provides/requires lists
+            tool_provides = getattr(tool, "provides", [])
+            agent_requires = getattr(agent, "requires", [])
+
+            # If tool provides at least one thing the agent requires, consider it relevant
+            # without performing the more expensive relevance check
+            direct_dependency = any(provided in agent_requires for provided in tool_provides)
+
+            is_relevant = False
+            if direct_dependency:
+                log_debug(f"Direct dependency detected: {tool.name} provides at least one requirement for {agent.name}")
+                # The agent already has it formatted in its template
+                continue
+            else:
+                # Otherwise, check semantic relevance
+                is_relevant = await self._check_tool_relevance(
+                    tool.name, result, agent, task, messages
+                )
+
+            if is_relevant:
+                # Initialize agent_tool_contexts if needed
+                if agent.name not in self._memory["agent_tool_contexts"]:
+                    self._memory["agent_tool_contexts"][agent.name] = {}
+
+                # Store the tool output in agent's context
+                self._memory["agent_tool_contexts"][agent.name][tool.name] = result
+                log_debug(f"Added {tool.name} output to {agent.name}'s context")
 
 
 class DependencyResolver(Coordinator):
@@ -608,13 +699,24 @@ class Planner(Coordinator):
         tools = self._tools["main"]
         reasoning = None
         while reasoning is None:
+            # candidates = agents and tools that can provide
+            # the unmet dependencies
+            agent_candidates = [
+                agent for agent in agents.values()
+                if not unmet_dependencies or set(agent.provides) & unmet_dependencies
+            ]
+            tool_candidates = [
+                tool for tool in tools
+                if not unmet_dependencies or set(tool.provides) & unmet_dependencies
+            ]
             system = await self._render_prompt(
                 "main",
                 messages,
                 agents=list(agents.values()),
                 tools=list(tools),
                 unmet_dependencies=unmet_dependencies,
-                candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
+                # Gather candidates that can provide unmet dependencies
+                candidates = agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -653,7 +755,11 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents:
+            has_table_lookup = any(
+                isinstance(node.actor, TableLookup)
+                for node in execution_graph
+            )
+            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
                     expert_or_tool='SQLAgent',
@@ -684,7 +790,7 @@ class Planner(Coordinator):
             )
             steps.append(step)
         last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool):
+        if isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 expert = "AnalystAgent"
             else:
