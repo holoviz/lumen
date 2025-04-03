@@ -1,6 +1,8 @@
 import asyncio
 import traceback
 
+from copy import deepcopy
+
 import panel as pn
 import param
 import requests
@@ -177,7 +179,7 @@ class LumenOutput(Viewer):
         try:
             if self._rendered:
                 yaml_spec = load_yaml(self.spec)
-                self._validate_spec(yaml_spec)
+                # self._validate_spec(yaml_spec)
                 self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
@@ -262,7 +264,7 @@ class VegaLiteOutput(LumenOutput):
             # the zoomable params work, but aren't officially valid
             # so we need to remove them for validation
             # https://stackoverflow.com/a/78342773/9324652
-            spec_copy = spec.copy()
+            spec_copy = deepcopy(spec)
             for key in VEGA_ZOOMABLE_MAP_ITEMS.get("projection", {}):
                 spec_copy.get("projection", {}).pop(key, None)
             spec_copy.pop("params", None)

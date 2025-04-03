@@ -17,7 +17,9 @@ Consider which columns contain the specific data points mentioned in the query.
 Consider primary/foreign keys that might be needed for joins even if not directly mentioned.
 If you have doubts about a column's relevance, include it.
 
-If user is requesting a plot, gather more relevant columns to be used in the tooltips.
+If user is requesting a plot, gather more relevant columns to be used in the tooltips,
+and other columns that might be useful for faceting or layering. Do not just provide
+coordinates (x, y); additionally include values for color, size, and shape.
 {%- endblock -%}
 
 {% block context %}

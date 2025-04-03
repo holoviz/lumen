@@ -27,6 +27,7 @@ DATA HANDLING:
 - Part-to-whole relationships: use `stack` with normalization when percentages matter more than values
 
 ANNOTATIONS & ENHANCEMENTS:
+- Encode labels for bars
 - Use `text` marks with strategic positioning for key insights
 - Implement reference lines for benchmarks, averages, or thresholds
 - For complex relationships, consider `layer` to combine multiple mark types (e.g., points with trend lines)
@@ -39,32 +40,38 @@ SCALES & FORMATTING:
 - For dual-axis: use separate scales with aligned axes
 
 SPECIFICS:
-- When creating world maps with lat/long coordinates, under marks, add coastlines by layering
-https://vega.github.io/vega-datasets/data/world-110m.json with `format: {type: topojson, feature:
-countries}` and `fill: null, stroke: black`. For US states, additionally include
-https://vega.github.io/vega-lite/data/us-10m.json.
-- Do not set a projection inside data.
-- Be sure to place your data at the top level, then use `layer` to organize boundaries and data points in `encoding`.
+- Be sure to place your data at the top level, then use `layer`
+For global maps: Use https://vega.github.io/vega-datasets/data/world-110m.json with `mercator` projection.
+For US state-level maps: Use https://vega.github.io/vega-lite/data/us-10m.json with `albersUsa` projection.
+- Do not set a projection inside data; it is set on the top level
 - Multi-view: use `concat`/`repeat` for small multiples, coordinated views for filtering
 {% endblock %}
 
 {% block examples %}
+```yaml
+data:
+  name: put_table_name_here
+layer:
+- encoding:
+    ...
+  mark:
+    ...
+```
 {% if has_errors %}
 GOOD (no mark at the same level as layer):
 ```yaml
 layer:
-- data:
-format:
-feature: countries
-type: topojson
-url: https://vega.github.io/vega-datasets/data/world-110m.json
-mark:
-fill: null
-stroke: black
-type: geoshape
-- mark:
-tooltip: true
-type: point
+  - data:
+      format:
+        feature: ...
+        type: ...
+      url: ...
+    mark:
+      fill: ...
+      stroke: ...
+      type: ...
+  - mark:
+      type: point
 ```
 {% endif %}
 {% endblock %}

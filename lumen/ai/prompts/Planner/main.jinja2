@@ -20,6 +20,7 @@ Important Agent Rules:
 - The SQLAgent usually needs help by *TableLookup if the current columns are insufficient.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - When plotting, instruct SQLAgent to select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations.
+- If the user is asking for a plot of the data without any modifications, SQLAgent is unnecessary.
 - The ChatAgent usually can be used alone, but if the query is related to the data tables, please use AnalystAgent instead.
 
 Import Tools Rules:

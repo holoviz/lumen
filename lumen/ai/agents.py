@@ -913,6 +913,44 @@ class VegaLiteAgent(BaseViewAgent):
             return
         memory['view'] = dict(spec, type=self.view_type)
 
+    def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str):
+        # standardize the vega spec, by migrating to layer
+        if "layer" not in vega_spec:
+            vega_spec["layer"] = [{"encoding": vega_spec.pop("encoding", None), "mark": vega_spec.pop("mark", None)}]
+
+        # make it zoomable
+        if "params" not in vega_spec:
+            vega_spec["params"] = []
+        vega_spec["params"].extend(VEGA_ZOOMABLE_MAP_ITEMS["params"])
+        if "projection" not in vega_spec:
+            vega_spec["projection"] = {"type": "mercator"}
+        vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
+
+        # add outlines
+        if "world-110m.json" in vega_spec_str and vega_spec["projection"]["type"] == "albersUsa":
+            vega_spec["projection"] = "mercator"  # cannot use albersUsa with world-110m
+        elif "world-110m.json" not in vega_spec_str and vega_spec["projection"]["type"] != "albersUsa":
+            vega_spec["layer"].append(
+                {
+                    "data": {
+                        "url": "https://vega.github.io/vega-datasets/data/world-110m.json",
+                        "format": {"type": "topojson", "feature": "countries"}
+                    },
+                    "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
+                },
+            )
+        elif "us-10m.json" not in vega_spec_str and vega_spec["projection"]["type"] == "albersUsa":
+            vega_spec["layer"].append(
+                {
+                    "data": {
+                        "url": "https://vega.github.io/vega-datasets/data/us-10m.json",
+                        "format": {"type": "topojson", "feature": "states"}
+                    },
+                    "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
+                },
+            )
+        return vega_spec
+
     async def _extract_spec(self, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
@@ -931,16 +969,9 @@ class VegaLiteAgent(BaseViewAgent):
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
-        is_geographic = "latitude:" in vega_spec_str or "longitude:" in vega_spec_str
-
         # Handle different types of interactive controls based on chart type
-        if is_geographic:
-            if "params" not in vega_spec:
-                vega_spec["params"] = []
-            vega_spec["params"].extend(VEGA_ZOOMABLE_MAP_ITEMS["params"])
-            if "projection" not in vega_spec:
-                vega_spec["projection"] = {"type": "mercator"}
-            vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
+        if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
+            vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
         elif "point: true" not in vega_spec_str or "params" not in vega_spec:
             # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
             # because those result in an blank plot without error
