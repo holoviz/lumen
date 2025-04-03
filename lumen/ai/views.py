@@ -179,7 +179,7 @@ class LumenOutput(Viewer):
         try:
             if self._rendered:
                 yaml_spec = load_yaml(self.spec)
-                # self._validate_spec(yaml_spec)
+                self._validate_spec(yaml_spec)
                 self.component = type(self.component).from_spec(yaml_spec)
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)

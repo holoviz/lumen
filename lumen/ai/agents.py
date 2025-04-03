@@ -751,9 +751,18 @@ class BaseViewAgent(LumenBaseAgent):
                 json_spec = load_json(self._last_output["json_spec"])
             except Exception:
                 json_spec = ""
+
+            vector_metadata_map = self._memory["table_sql_metaset"].vector_metaset.vector_metadata_map
+            columns_context = ""
+            for table_slug, vector_metadata in vector_metadata_map.items():
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                if table_name in pipeline.table:
+                    columns = [col.name for col in vector_metadata.table_cols]
+                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             messages = mutate_user_message(
                 f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
                 f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
+                f"For extra context, here are the tables and columns available:\n{columns_context}\n",
                 messages
             )
 
@@ -954,6 +963,29 @@ class VegaLiteAgent(BaseViewAgent):
             )
         return vega_spec
 
+    async def _ensure_columns_exists(self, vega_spec: dict):
+        schema = await get_schema(self._memory["pipeline"])
+
+        for layer in vega_spec.get("layer", []):
+            encoding = layer.get("encoding", {})
+            if not encoding:
+                continue
+
+            for enc_def in encoding.values():
+                fields_to_check = []
+
+                if isinstance(enc_def, dict) and "field" in enc_def:
+                    fields_to_check.append(enc_def["field"])
+                elif isinstance(enc_def, list):
+                    fields_to_check.extend(
+                        item["field"] for item in enc_def
+                        if isinstance(item, dict) and "field" in item
+                    )
+
+                for field in fields_to_check:
+                    if field not in schema:
+                        raise ValueError(f"Field '{field}' not found in schema.")
+
     async def _extract_spec(self, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
@@ -969,6 +1001,7 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         self._output_type._validate_spec(vega_spec)
+        await self._ensure_columns_exists(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
