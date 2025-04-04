@@ -222,3 +222,5 @@ class _config(param.Parameterized):
 
 
 config = _config()
+
+SOURCE_TABLE_SEPARATOR = "__@__"
