@@ -942,7 +942,6 @@ class VegaLiteAgent(BaseViewAgent):
         # - albersUsa projection is incompatible with world map data
         # - Each map type needs appropriate boundary outlines
         has_world_map = "world-110m.json" in vega_spec_str
-        has_usa_map = "us-10m.json" in vega_spec_str
         uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
 
         # If trying to use albersUsa with world map, switch to mercator projection
@@ -951,9 +950,6 @@ class VegaLiteAgent(BaseViewAgent):
         # Add world map outlines if needed
         elif not has_world_map and not uses_albers_usa:
             vega_spec["layer"].append(VEGA_MAP_LAYER["world"])
-        # Add USA state outlines if needed
-        elif not has_usa_map and uses_albers_usa:
-            vega_spec["layer"].append(VEGA_MAP_LAYER["usa"])
         return vega_spec
 
     async def _ensure_columns_exists(self, vega_spec: dict):
