@@ -963,7 +963,6 @@ class VegaLiteAgent(BaseViewAgent):
 
     async def _ensure_columns_exists(self, vega_spec: dict):
         schema = await get_schema(self._memory["pipeline"])
-        print(schema, "SCHEMA\n\n")
 
         for layer in vega_spec.get("layer", []):
             encoding = layer.get("encoding", {})
