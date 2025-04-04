@@ -933,7 +933,16 @@ class VegaLiteAgent(BaseViewAgent):
         # make it zoomable
         if "params" not in vega_spec:
             vega_spec["params"] = []
-        vega_spec["params"].extend(VEGA_ZOOMABLE_MAP_ITEMS["params"])
+
+        # Get existing param names
+        existing_param_names = {
+            param.get('name') for param in vega_spec["params"]
+            if isinstance(param, dict) and 'name' in param
+        }
+        for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
+            if p.get('name') not in existing_param_names:
+                vega_spec["params"].append(p)
+
         if "projection" not in vega_spec:
             vega_spec["projection"] = {"type": "mercator"}
         vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
@@ -954,6 +963,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     async def _ensure_columns_exists(self, vega_spec: dict):
         schema = await get_schema(self._memory["pipeline"])
+        print(schema, "SCHEMA\n\n")
 
         for layer in vega_spec.get("layer", []):
             encoding = layer.get("encoding", {})
