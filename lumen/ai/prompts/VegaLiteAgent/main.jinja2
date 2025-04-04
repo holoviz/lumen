@@ -12,7 +12,7 @@ ESSENTIAL REQUIREMENTS:
 - `marks` key must not be on the same level as the `layer` or `concat` keys
 
 VISUALIZATION FUNDAMENTALS:
-- Choose marks based on analytical goal: bar (comparison), line (trends/tracks), point (distribution/correlation), area
+- Choose marks based on analytical goal: horizontal bar (comparison), line (trends/tracks), point (distribution/correlation), area
 (composition)
 - Use position (x/y) for primary relationships, then color (categorical), size (quantitative), shape (≤6 categories)
 - Handle overplotting in dense visualizations: opacity, aggregation, binning, or jitter
@@ -27,10 +27,10 @@ DATA HANDLING:
 - Part-to-whole relationships: use `stack` with normalization when percentages matter more than values
 
 ANNOTATIONS & ENHANCEMENTS:
-- Encode labels for bars
+- When creating visualizations, enhance your plots by strategically selecting additional columns that provide context and depth. Include meaningful categorical fields in tooltips for clarity on hover, while choosing appropriate variables for color, size, and shape encodings that reveal patterns in the data. Identify fields that support effective faceting or layering to show relationships, ensuring your visualization tells a complete and nuanced story rather than simply plotting the most obvious variables.
+- Add value labels directly on bars by creating a layered chart with text marks showing the precise values, adjusting domains to accommodate the labels, and ensuring proper text positioning relative to the bars
 - Use `text` marks with strategic positioning for key insights
 - Implement reference lines for benchmarks, averages, or thresholds
-- For complex relationships, consider `layer` to combine multiple mark types (e.g., points with trend lines)
 - When showing uncertainty, incorporate `errorBar` or `errorBand` marks
 
 SCALES & FORMATTING:
@@ -38,24 +38,35 @@ SCALES & FORMATTING:
 - Color schemes: sequential (continuous), diverging (midpoint), categorical (nominal)
 - Format axes/legends for readability
 - For dual-axis: use separate scales with aligned axes
-
-SPECIFICS:
-- Be sure to place your data at the top level, then use `layer`
-For global maps: Use https://vega.github.io/vega-datasets/data/world-110m.json with `mercator` projection.
-For US state-level maps: Use https://vega.github.io/vega-lite/data/us-10m.json with `albersUsa` projection.
-- Do not set a projection inside data; it is set on the top level
-- Multi-view: use `concat`/`repeat` for small multiples, coordinated views for filtering
-{% endblock %}
-
-{% block examples %}
+{%- endblock %}
+{%- block examples %}
+Basic example:
 ```yaml
 data:
   name: <TABLE_NAME>
 layer:
-- encoding:
+  - encoding:
     ...
-  mark:
-    ...
+    mark:
+      ...
+```
+Facet example:
+```yaml
+facet:
+  field: "..."
+  type: "ordinal"
+  columns: 2
+spec:
+  layer:
+    - mark: ...
+      encoding:
+        x: {...}
+        y: {...}
+        color: {...}
+    - mark: ...
+      encoding:
+        x: {...}
+        y: {...}
 ```
 {% if has_errors %}
 GOOD (no mark at the same level as layer):

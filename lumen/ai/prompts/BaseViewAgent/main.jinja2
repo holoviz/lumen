@@ -12,12 +12,12 @@ The current SQL
 Here is the current dataset:
 {{ memory.data }}
 
-{% if "view" in memory %}
+{%- if "view" in memory %}
 The previous view specification was:
 ```
 {{ memory["view"] }}
 ```
-{% endif %}
+{%- endif %}
 
 {{ memory["table_sql_metaset"].sel_context }}
-{% endblock %}
+{%- endblock %}

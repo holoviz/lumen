@@ -761,7 +761,7 @@ class BaseViewAgent(LumenBaseAgent):
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             messages = mutate_user_message(
                 f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
-                f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
+                f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n"
                 f"For extra context, here are the tables and columns available:\n{columns_context}\n",
                 messages
             )
