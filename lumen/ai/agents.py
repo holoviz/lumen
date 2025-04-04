@@ -31,8 +31,8 @@ from ..views import (
 )
 from .actor import ContextProvider
 from .config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_ZOOMABLE_MAP_ITEMS,
-    RetriesExceededError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
+    VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
 )
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
@@ -938,29 +938,22 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["projection"] = {"type": "mercator"}
         vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
 
-        # add outlines
-        if "world-110m.json" in vega_spec_str and vega_spec["projection"]["type"] == "albersUsa":
+        # Handle map projections and add geographic outlines
+        # - albersUsa projection is incompatible with world map data
+        # - Each map type needs appropriate boundary outlines
+        has_world_map = "world-110m.json" in vega_spec_str
+        has_usa_map = "us-10m.json" in vega_spec_str
+        uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
+
+        # If trying to use albersUsa with world map, switch to mercator projection
+        if has_world_map and uses_albers_usa:
             vega_spec["projection"] = "mercator"  # cannot use albersUsa with world-110m
-        elif "world-110m.json" not in vega_spec_str and vega_spec["projection"]["type"] != "albersUsa":
-            vega_spec["layer"].append(
-                {
-                    "data": {
-                        "url": "https://vega.github.io/vega-datasets/data/world-110m.json",
-                        "format": {"type": "topojson", "feature": "countries"}
-                    },
-                    "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
-                },
-            )
-        elif "us-10m.json" not in vega_spec_str and vega_spec["projection"]["type"] == "albersUsa":
-            vega_spec["layer"].append(
-                {
-                    "data": {
-                        "url": "https://vega.github.io/vega-datasets/data/us-10m.json",
-                        "format": {"type": "topojson", "feature": "states"}
-                    },
-                    "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
-                },
-            )
+        # Add world map outlines if needed
+        elif not has_world_map and not uses_albers_usa:
+            vega_spec["layer"].append(VEGA_MAP_LAYER["world"])
+        # Add USA state outlines if needed
+        elif not has_usa_map and uses_albers_usa:
+            vega_spec["layer"].append(VEGA_MAP_LAYER["usa"])
         return vega_spec
 
     async def _ensure_columns_exists(self, vega_spec: dict):

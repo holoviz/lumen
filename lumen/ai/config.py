@@ -78,6 +78,24 @@ VEGA_ZOOMABLE_MAP_ITEMS = {
     }
 }
 
+# Map outline layer configurations
+VEGA_MAP_LAYER = {
+    "world": {
+        "data": {
+            "url": "https://vega.github.io/vega-datasets/data/world-110m.json",
+            "format": {"type": "topojson", "feature": "countries"}
+        },
+        "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
+    },
+    "usa": {
+        "data": {
+            "url": "https://vega.github.io/vega-datasets/data/us-10m.json",
+            "format": {"type": "topojson", "feature": "states"}
+        },
+        "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
+    }
+}
+
 def str_presenter(dumper, data):
     if "\n" in data:  # Only use literal block for strings containing newlines
         return dumper.represent_scalar("tag:yaml.org,2002:str", data.strip(), style="|")
