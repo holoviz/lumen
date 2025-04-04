@@ -18,6 +18,7 @@ Here's a summary of the dataset the user just asked about:
 ```
 {%- endif %}
 {%- if 'table_vector_metaset' in memory %}
+{# officially not required #}
 {{ memory['table_vector_metaset'].min_context }}
 {%- endif %}
 {% endblock -%}

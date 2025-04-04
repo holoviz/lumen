@@ -240,9 +240,8 @@ class ChatAgent(Agent):
         It can talk about the data, if available. Or, it can also solely talk about documents.
 
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
-        Can be used concurrently with TableListAgent to describe available tables
-        and potential ideas for analysis, but if only documents are available,
-        then it can be used alone.""")
+        Can be used to describe available tables. Often used together
+        with TableLookup, DocumentLookup, or other tools.""")
 
     prompts = param.Dict(
         default={
@@ -252,7 +251,8 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=[], readonly=True)
+    # technically not required if appended manually with tool in coordinator
+    requires = param.List(default=["table_vector_metaset"], readonly=True)
 
     async def respond(
         self,
