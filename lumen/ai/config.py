@@ -9,6 +9,8 @@ import yaml
 
 from instructor.utils import disable_pydantic_error_url
 
+from ..config import SOURCE_TABLE_SEPARATOR  # NOQA: F401
+
 
 class LlmSetupError(Exception):
     """
@@ -48,7 +50,6 @@ UNRECOVERABLE_ERRORS = (
     asyncio.CancelledError,
 )
 
-SOURCE_TABLE_SEPARATOR = "__@__"
 PROVIDED_SOURCE_NAME = "ProvidedSource00000"
 
 

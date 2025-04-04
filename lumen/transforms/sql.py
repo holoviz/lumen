@@ -16,6 +16,7 @@ from sqlglot.expressions import (
 )
 from sqlglot.optimizer import optimize
 
+from ..config import SOURCE_TABLE_SEPARATOR
 from .base import Transform
 
 
@@ -682,6 +683,48 @@ class SQLSample(SQLTransform):
             )
 
         return self.to_sql(sample_expression)
+
+
+class SQLRemoveSourceSeparator(SQLTransform):
+    """Class to exclude the source and separator."""
+
+    separator = param.String(default=SOURCE_TABLE_SEPARATOR, doc="""
+        Separator used to split the source and table name in the SQL query.""")
+
+    _parsable_separator = "___AT___"
+
+    def apply(self, sql_in: str) -> str:
+        """
+        Exclude the source and separator from the SQL query.
+
+        Parameters
+        ----------
+        sql_in: string
+            The initial SQL query to be manipulated.
+
+        Returns
+        -------
+        string
+            New SQL query derived from the above query.
+        """
+        if self.separator not in sql_in:
+            return sql_in
+        sql_in = sql_in.replace(SOURCE_TABLE_SEPARATOR, self._parsable_separator)
+        return self.to_sql(self.parse_sql(sql_in).transform(self._remove_source_separator))
+
+    def _remove_source_separator(self, node):
+        if isinstance(node, Table):
+            node_str = node.this
+            while hasattr(node_str, "this"):
+                node_str = node_str.this
+            after = node_str.split(self._parsable_separator)[-1]
+            filename = node.this.sql().replace(node_str, after)
+            return filename
+        elif isinstance(node, sqlglot.exp.Literal) and isinstance(node.this, str):
+            filename = node.this.split(self._parsable_separator)[-1]
+            return filename
+        else:
+            return node
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]
