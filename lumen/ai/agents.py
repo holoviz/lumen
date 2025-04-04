@@ -252,7 +252,7 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=["table_vector_metaset"], readonly=True)
+    requires = param.List(default=[], readonly=True)
 
     async def respond(
         self,

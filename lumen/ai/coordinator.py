@@ -218,7 +218,7 @@ class Coordinator(Viewer, ToolUser):
             instantiated.append(agent)
 
         # Add user-provided tools to the list of tools of the coordinator
-        self.prompts["main"]["tools"] += [tool for tool in self.tools]
+        self.prompts["main"]["tools"] += [tool for tool in tools]
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
         welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
