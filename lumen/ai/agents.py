@@ -30,7 +30,10 @@ from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import ContextProvider
-from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RetriesExceededError
+from .config import (
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
+    VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
+)
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
@@ -90,7 +93,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
                 return
 
             import traceback
-            traceback.print_exc()
+            traceback.print_exception(exception)
             self.interface.send(
                 f"Error cannot be resolved:\n\n{exception}",
                 user="System",
@@ -457,6 +460,7 @@ class LumenBaseAgent(Agent):
                 deepcopy(messages), wrap='\n"""\n', suffix=False
             )
             with self.param.update(memory=memory):
+                # TODO: only input the inner spec to retry
                 system = await self._render_prompt(
                     "retry_output", messages=modified_messages, spec=out.spec,
                     language=out.language,
@@ -502,7 +506,7 @@ class SQLAgent(LumenBaseAgent):
         calculating results. If the current table does not contain all
         the available data the SQL agent is also capable of joining it
         with other tables. Will generate and execute a query in a single
-        step.""")
+        step. Not useful if the user is using the same data for plotting.""")
 
     prompts = param.Dict(
         default={
@@ -743,12 +747,24 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
            errors = '\n'.join(errors)
            if self._last_output:
-               json_spec = load_json(self._last_output["json_spec"])
-               messages = mutate_user_message(
-                   f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
-                   f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
-                   messages
-               )
+            try:
+                json_spec = load_json(self._last_output["json_spec"])
+            except Exception:
+                json_spec = ""
+
+            vector_metadata_map = self._memory["table_sql_metaset"].vector_metaset.vector_metadata_map
+            columns_context = ""
+            for table_slug, vector_metadata in vector_metadata_map.items():
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                if table_name in pipeline.table:
+                    columns = [col.name for col in vector_metadata.table_cols]
+                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
+            messages = mutate_user_message(
+                f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
+                f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n"
+                f"For extra context, here are the tables and columns available:\n{columns_context}\n",
+                messages
+            )
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system = await self._render_prompt(
@@ -767,6 +783,7 @@ class BaseViewAgent(LumenBaseAgent):
             response_model=self._get_model("main", schema=schema),
         )
 
+        e = None
         error = ""
         with self._add_step(
             title=step_title or "Generating view...",
@@ -781,6 +798,7 @@ class BaseViewAgent(LumenBaseAgent):
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
+                traceback.print_exception(e)
                 context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
                 report_error(e, step, language="json", context=context)
 
@@ -886,6 +904,10 @@ class VegaLiteAgent(BaseViewAgent):
                 "response_model": VegaLiteSpec,
                 "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
             },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"
+            },
         }
     )
 
@@ -903,6 +925,65 @@ class VegaLiteAgent(BaseViewAgent):
             return
         memory['view'] = dict(spec, type=self.view_type)
 
+    def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str):
+        # standardize the vega spec, by migrating to layer
+        if "layer" not in vega_spec:
+            vega_spec["layer"] = [{"encoding": vega_spec.pop("encoding", None), "mark": vega_spec.pop("mark", None)}]
+
+        # make it zoomable
+        if "params" not in vega_spec:
+            vega_spec["params"] = []
+
+        # Get existing param names
+        existing_param_names = {
+            param.get('name') for param in vega_spec["params"]
+            if isinstance(param, dict) and 'name' in param
+        }
+        for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
+            if p.get('name') not in existing_param_names:
+                vega_spec["params"].append(p)
+
+        if "projection" not in vega_spec:
+            vega_spec["projection"] = {"type": "mercator"}
+        vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
+
+        # Handle map projections and add geographic outlines
+        # - albersUsa projection is incompatible with world map data
+        # - Each map type needs appropriate boundary outlines
+        has_world_map = "world-110m.json" in vega_spec_str
+        uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
+
+        # If trying to use albersUsa with world map, switch to mercator projection
+        if has_world_map and uses_albers_usa:
+            vega_spec["projection"] = "mercator"  # cannot use albersUsa with world-110m
+        # Add world map outlines if needed
+        elif not has_world_map and not uses_albers_usa:
+            vega_spec["layer"].append(VEGA_MAP_LAYER["world"])
+        return vega_spec
+
+    async def _ensure_columns_exists(self, vega_spec: dict):
+        schema = await get_schema(self._memory["pipeline"])
+
+        for layer in vega_spec.get("layer", []):
+            encoding = layer.get("encoding", {})
+            if not encoding:
+                continue
+
+            for enc_def in encoding.values():
+                fields_to_check = []
+
+                if isinstance(enc_def, dict) and "field" in enc_def:
+                    fields_to_check.append(enc_def["field"])
+                elif isinstance(enc_def, list):
+                    fields_to_check.extend(
+                        item["field"] for item in enc_def
+                        if isinstance(item, dict) and "field" in item
+                    )
+
+                for field in fields_to_check:
+                    if field not in schema:
+                        raise ValueError(f"Field '{field}' not found in schema.")
+
     async def _extract_spec(self, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
@@ -918,10 +999,14 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         self._output_type._validate_spec(vega_spec)
+        await self._ensure_columns_exists(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
-        if not ("latitude:" in vega_spec_str or "longitude:" in vega_spec_str or "point: true" in vega_spec_str):
+        # Handle different types of interactive controls based on chart type
+        if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
+            vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
+        elif "point: true" not in vega_spec_str or "params" not in vega_spec:
             # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]

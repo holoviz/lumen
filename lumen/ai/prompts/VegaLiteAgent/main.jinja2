@@ -4,7 +4,7 @@
 As the expert of vega-lite, generate the plot the user requested as a vega-lite specification
 
 ESSENTIAL REQUIREMENTS:
-- Reference the table name, i.e. `data: name: put_table_name_here`. Do not make up or copy data values.
+- Reference the table name, i.e. `data: name: <TABLE_NAME>`. Do not make up or copy data values.
 - Use the column names verbatim
 - Include tooltips by default: `"tooltips": true`
 - Include a human-readable, descriptive title, xlabel, ylabel, and legend
@@ -12,10 +12,10 @@ ESSENTIAL REQUIREMENTS:
 - `marks` key must not be on the same level as the `layer` or `concat` keys
 
 VISUALIZATION FUNDAMENTALS:
-- Choose marks based on analytical goal: bar (comparison), line (trends/tracks), point (distribution/correlation), area (composition)
+- Choose marks based on analytical goal: horizontal bar (comparison), line (trends/tracks), point (distribution/correlation), area
+(composition)
 - Use position (x/y) for primary relationships, then color (categorical), size (quantitative), shape (≤6 categories)
 - Handle overplotting in dense visualizations: opacity, aggregation, binning, or jitter
-- Focus on the domain of interest with `scale: domain: [...]`, or `projection: center: [...], scale: ...` for geographic maps, to control x and y limits
 
 DATA HANDLING:
 - Years as numbers (2010, 2011): treat as quantitative, not temporal
@@ -27,38 +27,64 @@ DATA HANDLING:
 - Part-to-whole relationships: use `stack` with normalization when percentages matter more than values
 
 ANNOTATIONS & ENHANCEMENTS:
+- When creating visualizations, enhance your plots by strategically selecting additional columns that provide context and depth. Include meaningful categorical fields in tooltips for clarity on hover, while choosing appropriate variables for color, size, and shape encodings that reveal patterns in the data. Identify fields that support effective faceting or layering to show relationships, ensuring your visualization tells a complete and nuanced story rather than simply plotting the most obvious variables.
+- Add value labels directly on bars by creating a layered chart with text marks showing the precise values, adjusting domains to accommodate the labels, and ensuring proper text positioning relative to the bars
 - Use `text` marks with strategic positioning for key insights
 - Implement reference lines for benchmarks, averages, or thresholds
-- For complex relationships, consider `layer` to combine multiple mark types (e.g., points with trend lines)
 - When showing uncertainty, incorporate `errorBar` or `errorBand` marks
+- For global maps include https://vega.github.io/vega-datasets/data/world-110m.json with `mercator` projection.
+- For US state-level additionally include https://vega.github.io/vega-lite/data/us-10m.json
+- Ensure the `domain` values are available in the data
 
 SCALES & FORMATTING:
 - Choose scale types (`linear`, `log`, `symlog`, `sqrt`) based on data distribution
 - Color schemes: sequential (continuous), diverging (midpoint), categorical (nominal)
 - Format axes/legends for readability
 - For dual-axis: use separate scales with aligned axes
-
-SPECIFICS:
-- Geographic maps with latitude/longitude: underlay coastlines with `format: {type: topojson, feature: countries}` from https://vega.github.io/vega-datasets/data/world-110m.json with `fill: null stroke: black` under `layer`. For the actual data, use a top-level data reference, then `encoding` in `layer`.
-- Multi-view: use `concat`/`repeat` for small multiples, coordinated views for filtering
-{% endblock %}
-
-{% block examples %}
+{%- endblock %}
+{%- block examples %}
+Basic example:
+```yaml
+data:
+  name: <TABLE_NAME>
+layer:
+  - encoding:
+    ...
+    mark:
+      ...
+```
+Facet example:
+```yaml
+facet:
+  field: "..."
+  type: "ordinal"
+  columns: 2
+spec:
+  layer:
+    - mark: ...
+      encoding:
+        x: {...}
+        y: {...}
+        color: {...}
+    - mark: ...
+      encoding:
+        x: {...}
+        y: {...}
+```
 {% if has_errors %}
 GOOD (no mark at the same level as layer):
 ```yaml
 layer:
   - data:
       format:
-        feature: countries
-        type: topojson
-      url: https://vega.github.io/vega-datasets/data/world-110m.json
+        feature: ...
+        type: ...
+      url: ...
     mark:
-      fill: null
-      stroke: black
-      type: geoshape
+      fill: ...
+      stroke: ...
+      type: ...
   - mark:
-      tooltip: true
       type: point
 ```
 {% endif %}

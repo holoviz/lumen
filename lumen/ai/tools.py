@@ -690,7 +690,8 @@ class TableLookup(VectorLookupTool):
                     "select_columns",
                     messages,
                     separator=SOURCE_TABLE_SEPARATOR,
-                    table_slugs=list(vector_metaset.vector_metadata_map)
+                    table_slugs=list(vector_metaset.vector_metadata_map),
+                    previous_state=self._previous_state,
                 ):
                     # Convert indices to column names and store by table
                     if output_chunk.chain_of_thought:

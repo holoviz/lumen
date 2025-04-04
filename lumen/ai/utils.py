@@ -209,6 +209,66 @@ def retry_llm_output(retries=3, sleep=1):
     return decorator
 
 
+def process_enums(spec, num_cols, limit=None, include_enum=True, reduce_enums=True, include_empty_fields=False):
+    """
+    Process enum values in a schema field specification.
+
+    Parameters
+    ----------
+    spec : dict
+        The specification dictionary for this field
+    num_cols : int
+        The total number of columns in the schema (used for enum reduction calculation)
+    limit : int, optional
+        The limit used in schema generation
+    include_enum : bool, default True
+        Whether to include enum values
+    reduce_enums : bool, default True
+        Whether to reduce the number of enum values for readability
+    include_empty_fields : bool, default False
+        Whether to include fields that are empty
+
+    Returns
+    -------
+    tuple[dict, bool]
+        The updated spec dictionary and a boolean indicating if this field is empty
+    """
+    is_empty = False
+
+    if "enum" not in spec:
+        return spec, is_empty
+
+    # scale the number of enums based on the number of columns
+    if reduce_enums:
+        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+    else:
+        max_enums = 6
+    truncate_limit = min(limit or 5, max_enums)
+
+    if not include_enum or len(spec["enum"]) == 0:
+        spec.pop("enum")
+    elif len(spec["enum"]) > max_enums:
+        # if there are only 10 enums, fine; let's keep them all
+        # else, that assumes this column is like glasbey 100+ categories vs category10
+        # so truncate to 5 and add "..."
+        spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
+    elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
+        spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
+    elif not include_empty_fields and len(spec["enum"]) == 1 and (
+        spec["enum"][0] is None or (isinstance(spec["enum"][0], str) and spec["enum"][0].strip() == "")
+    ):
+        is_empty = True
+
+    # truncate each enum to 100 characters if they exist
+    if "enum" in spec:
+        spec["enum"] = [
+            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
+            for enum in spec["enum"]
+        ]
+
+    return spec, is_empty
+
+
 async def get_schema(
     source: Source | Pipeline,
     table: str | None = None,
@@ -290,36 +350,18 @@ async def get_schema(
             elif spec["type"] == "boolean":
                 spec["type"] = "bool"
 
-        if "enum" not in spec:
-            continue
-
-        limit = get_kwargs.get("limit")
-        # scale the number of enums based on the number of columns
-        if reduce_enums:
-            max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
-        else:
-            max_enums = 6
-        truncate_limit = min(limit or 5, max_enums)
-        if not include_enum or len(spec["enum"]) == 0:
-            spec.pop("enum")
-            continue
-        elif len(spec["enum"]) > max_enums:
-            # if there are only 10 enums, fine; let's keep them all
-            # else, that assumes this column is like glasbey 100+ categories vs category10
-            # so truncate to 5 and add "..."
-            spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
-        elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
-            spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
-            continue
-        elif not include_empty_fields and len(spec["enum"]) == 1 and (spec["enum"][0] is None or spec["enum"][0].strip() == ""):
-            empty_fields.append(field)
-            continue
-
-        # truncate each enum to 100 characters
-        spec["enum"] = [
-            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
-            for enum in spec["enum"]
-        ]
+        # Process enums using the extracted function
+        if "enum" in spec:
+            spec, is_empty = process_enums(
+                spec, num_cols,
+                limit=get_kwargs.get("limit"),
+                include_enum=include_enum,
+                reduce_enums=reduce_enums,
+                include_empty_fields=include_empty_fields
+            )
+            if is_empty:
+                empty_fields.append(field)
+                continue
 
     # Format any other numeric values in the schema
     for field, spec in schema.items():
@@ -388,6 +430,21 @@ async def describe_data(df: pd.DataFrame) -> str:
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
             try:
+                # Get unique values for enum processing
+                unique_values = df[col].dropna().unique().tolist()
+                if unique_values:
+                    # Process enums just like in get_schema
+                    temp_spec = {"enum": unique_values}
+                    updated_spec, _ = process_enums(
+                        temp_spec,
+                        num_cols=len(df.columns),
+                        limit=5000,  # Using the sample limit
+                        include_enum=True,
+                        reduce_enums=True
+                    )
+                    if "enum" in updated_spec:
+                        df_describe_dict[col]["enum"] = updated_spec["enum"]
+
                 df_describe_dict[col]["nunique"] = df[col].nunique()
             except Exception:
                 df_describe_dict[col]["nunique"] = 'unknown'
@@ -395,7 +452,7 @@ async def describe_data(df: pd.DataFrame) -> str:
                 df_describe_dict[col]["lengths"] = {
                     "max": df[col].str.len().max(),
                     "min": df[col].str.len().min(),
-                    "mean": float(df[col].str.len().mean()),
+                    "mean": format_float(float(df[col].str.len().mean())),
                 }
             except AttributeError:
                 pass
