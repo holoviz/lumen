@@ -131,7 +131,11 @@ class Actor(param.Parameterized):
         context = await self._gather_prompt_context(prompt_name, messages, **context)
 
         prompt_label = f"\033[92m{self.name}.prompts['{prompt_name}']['template']\033[0m"
-        if isinstance(prompt_template, str) and not Path(prompt_template).exists():
+        try:
+            path_exists = Path(prompt_template).exists()
+        except OSError:
+            path_exists = False
+        if isinstance(prompt_template, str) and not path_exists:
             # check if all the format_kwargs keys are contained in prompt_template
             # e.g. the key, "memory", is not used in "string template".format(memory=memory)
             format_kwargs = dict(**overrides, **context)
