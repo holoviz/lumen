@@ -90,12 +90,35 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
 
-def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
-    try:
-        template_path = template_path.relative_to(relative_to).as_posix()
-    except ValueError:
-        pass
-    fs_loader = FileSystemLoader(relative_to)
+def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
+    if isinstance(template_path, str):
+        template_path = Path(template_path)
+
+    template_name = None
+
+    # Create a list of search paths, starting with the default
+    search_paths = [relative_to]
+    # If template_path is absolute, add its parent directory to search paths
+    if template_path.is_absolute():
+        # Add the parent directory of the template to the search paths
+        search_paths.append(template_path.parent)
+        template_name = template_path.name
+    else:
+        try:
+            # Try to make it relative to the default template directory
+            template_name = template_path.relative_to(relative_to).as_posix()
+        except ValueError:
+            # If that fails, treat it as a plain file path
+            # Add parent dir to search paths and use filename as template_name
+            if template_path.exists():
+                search_paths.append(template_path.parent)
+                template_name = template_path.name
+            else:
+                # Final fallback - assume it's a relative path but not to PROMPTS_DIR
+                template_name = str(template_path)
+
+    # Create a loader that can search in multiple directories
+    fs_loader = FileSystemLoader(search_paths)
 
     if overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
@@ -106,7 +129,7 @@ def render_template(template_path: Path, overrides: dict | None = None, relative
         # Create the dynamic template content by extending the base template and adding blocks
         dynamic_template_content = dedent(
             f"""
-            {{% extends "{template_path}" %}}
+            {{% extends "{template_name}" %}}
             {block_definitions}
             """
         )
@@ -116,7 +139,6 @@ def render_template(template_path: Path, overrides: dict | None = None, relative
         template_name = "dynamic_template"
     else:
         env = Environment(loader=fs_loader, undefined=StrictUndefined)
-        template_name = str(template_path)
 
     template = env.get_template(template_name)
     return template.render(**context)
