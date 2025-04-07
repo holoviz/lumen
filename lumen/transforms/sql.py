@@ -686,7 +686,9 @@ class SQLSample(SQLTransform):
 
 
 class SQLRemoveSourceSeparator(SQLTransform):
-    """Class to exclude the source and separator."""
+    """
+    Class to exclude the source and separator.
+    """
 
     separator = param.String(default=SOURCE_TABLE_SEPARATOR, doc="""
         Separator used to split the source and table name in the SQL query.""")
