@@ -1,7 +1,7 @@
-A user has submitted a new query, and I need to determine if I should rerun column selection.
+{% extends 'Actor/main.jinja2' %}
 
-Here is the previous query, tables, and columns:
-{{ previous_state }}
+{% block instructions %}
+A user has submitted a new query, and I need to determine if I should rerun column selection.
 
 First, compare the two queries. Consider whether:
 1. The new query is asking for the same type of information
@@ -13,3 +13,9 @@ If the new query has a significantly different intent or asks for different attr
 If the new query is essentially asking for the same information, just phrased differently, respond with "no".
 
 Provide a response indicating whether to rerun column selection (yes/no).
+{% endblock %}
+
+{% block context %}
+Here is the previous query, tables, and columns:
+{{ previous_state }}
+{% endblock %}

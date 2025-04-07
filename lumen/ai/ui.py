@@ -719,10 +719,6 @@ class ExplorerUI(UI):
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1
                     new_exploration = True
-                    self._split.param.update(
-                        collapsed=False,
-                        sizes=self._split.expanded_sizes,
-                    )
 
             def sync_available_sources_memory(_, __, sources):
                 """
@@ -743,6 +739,11 @@ class ExplorerUI(UI):
                 self._add_outputs(exploration, added, local_memory)
                 exploration.loading = False
                 outputs[:] = new
+                if len(self._explorations) == 1:
+                    self._split.param.update(
+                        collapsed=False,
+                        sizes=self._split.expanded_sizes,
+                    )
             local_memory.on_change('outputs', render_output)
 
             # Remove exploration on error if no outputs have been

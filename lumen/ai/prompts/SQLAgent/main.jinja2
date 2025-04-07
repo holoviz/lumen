@@ -3,7 +3,7 @@
 {%- block instructions %}
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
 Try not to take the query too literally, but instead focus on the user's intent and the data transformations required.
-Use `SELECT * FROM table` if there is no specific column selection mentioned in the query; no alias required.
+Reference the base sql if there is no specific column selection mentioned in the query; no alias required.
 {%- endblock -%}
 
 {% block context -%}
@@ -49,7 +49,7 @@ CAST or TO_DATE
 Here's additional guidance:
 {{ comments }}
 {%- endif -%}
-{{ memory["table_sql_metaset"] }}
+{{ memory["table_sql_metaset"].sel_context }}
 {%- endblock -%}
 
 {%- block examples %}

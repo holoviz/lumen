@@ -17,25 +17,23 @@ Be decisive and efficient with being done. Perfect is the enemy of good.
 
 {% block context %}
 You need to select tables from a database to help answer the query.
-
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
-{% for table_slug in available_slugs %}
+{%- for table_slug in available_slugs -%}
 {{ table_slug }} (Similarity: {{ vector_metadata_map[table_slug].similarity | round(3) }})
-{% if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description %}
+{%- if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description -%}
   Description: {{ vector_metadata_map[table_slug].description }}
-{% endif %}
+{%- endif -%}
 {%- if vector_metadata_map[table_slug].table_cols is defined and vector_metadata_map[table_slug].table_cols|length > 0 %}
   Cols:
-  {%- for col in vector_metadata_map[table_slug].table_cols %}
+  {%- for col in vector_metadata_map[table_slug].table_cols -%}
   - {{ col.name }}{% if col.description %}: {{ col.description }}{% endif %}
-  {% endfor %}
+  {% endfor -%}
 {% endif %}
 {% endfor %}
 {% else %}
 No tables are available for selection.
 {% endif %}
-
 {% if examined_slugs|length > 0 %}
 You have already examined these tables and their schemas; there's no need to select them again:
 {% for table_slug in examined_slugs %}
@@ -44,11 +42,10 @@ You have already examined these tables and their schemas; there's no need to sel
 ```json
 {{ sql_metadata_map[table_slug].schema }}
 ```
-{% endif %}
-{% endfor %}
-{% endif %}
-
-{% if failed_slugs|length > 0 %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- if failed_slugs|length > 0 %}
 You have already examined these tables but had issues retrieving their schemas; do not select these tables again:
 {%- for table_slug in failed_slugs %}
 {{ table_slug }}
@@ -57,8 +54,7 @@ You have already examined these tables but had issues retrieving their schemas; 
 {%- if chain_of_thought %}
 Here are your previous thoughts:
 {{ chain_of_thought }}
-{% endif %}
-
+{%- endif %}
 {% if iteration == max_iterations %}
 This is your final iteration. Please provide your final selected table list from the examined tables that you think would be most relevant for answering the query.
 {% else %}

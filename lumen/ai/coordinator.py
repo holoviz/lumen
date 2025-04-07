@@ -706,29 +706,16 @@ class Coordinator(Viewer, ToolUser):
                 break
 
     async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
-        # Get tool info
         tool = next((t for t in self._tools["main"] if t.name == tool_name), None)
-        tool_provides = getattr(tool, "provides", [])
-        tool_requires = getattr(tool, "requires", [])
-
-        # Get agent info
-        agent_provides = getattr(agent, "provides", [])
-        agent_requires = getattr(agent, "requires", [])
-
-        # Use _invoke_prompt to combine rendering the prompt and invoking the LLM
         result = await self._invoke_prompt(
             "tool_relevance",
             messages,
             tool_name=tool_name,
             tool_description=getattr(tool, "description", ""),
-            tool_provides=tool_provides,
-            tool_requires=tool_requires,
             tool_output=tool_output,
             agent_name=agent.name,
             agent_purpose=agent.purpose,
             agent_task=agent_task,
-            agent_provides=agent_provides,
-            agent_requires=agent_requires,
         )
 
         return result.yes
@@ -928,13 +915,24 @@ class Planner(Coordinator):
         tools = self._tools["main"]
         reasoning = None
         while reasoning is None:
+            # candidates = agents and tools that can provide
+            # the unmet dependencies
+            agent_candidates = [
+                agent for agent in agents.values()
+                if not unmet_dependencies or set(agent.provides) & unmet_dependencies
+            ]
+            tool_candidates = [
+                tool for tool in tools
+                if not unmet_dependencies or set(tool.provides) & unmet_dependencies
+            ]
             system = await self._render_prompt(
                 "main",
                 messages,
                 agents=list(agents.values()),
                 tools=list(tools),
                 unmet_dependencies=unmet_dependencies,
-                candidates=[agent for agent in agents.values() if not unmet_dependencies or set(agent.provides) & unmet_dependencies],
+                # Gather candidates that can provide unmet dependencies
+                candidates = agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -973,7 +971,11 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents:
+            has_table_lookup = any(
+                isinstance(node.actor, TableLookup)
+                for node in execution_graph
+            )
+            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
                     expert_or_tool='SQLAgent',
@@ -1004,7 +1006,7 @@ class Planner(Coordinator):
             )
             steps.append(step)
         last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool):
+        if isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 expert = "AnalystAgent"
             else:

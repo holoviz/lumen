@@ -1,19 +1,27 @@
-{%- block instructions -%}
-Your task is to select the most relevant columns from database tables for the following user query.
+{% extends 'Actor/main.jinja2' %}
 
-For each table, select ONLY the column indices (numbers) that are directly relevant to answering the user's query.
+{%- block instructions -%}
+Your task is to select the most relevant columns from the provided tables given the user query.
+
+First, give a detailed overview of each column, and if regionally applicable,
+provide geographical context and the relevant standards for that region
+(i.e. in the US, SP500 or Saffir-Simpson while in the EU, the DAX or Euronext).
+
+For each table slug, be sure to include the delimiters {{ separator }},
+like '<source>{{ separator }}<table>' and select ONLY the column indices (numbers)
+that are directly relevant to answering the user's query.
+
 Be selective - include only columns that are clearly relevant to the query.
 
-First think step-by-step about which columns would be needed to answer the query.
 Consider which columns contain the specific data points mentioned in the query.
 Consider primary/foreign keys that might be needed for joins even if not directly mentioned.
 If you have doubts about a column's relevance, include it.
-
-Provide your response with:
-1. A chain of thought explanation of your selections
-2. A dictionary mapping table slugs (verbatim SOURCE{{ source_table_sep }}TABLE) to lists of column indices (numbers)
 {%- endblock -%}
 
 {% block context %}
-{{ vector_metaset }}
+{% if memory.get('table_sql_metaset') %}
+{{ memory['table_sql_metaset'].sel_context }}
+{% else %}
+{{ memory["table_vector_metaset"].sel_context }}
+{% endif %}
 {% endblock %}

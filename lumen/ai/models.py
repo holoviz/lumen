@@ -96,28 +96,36 @@ def make_plan_models(agents: list[str], tools: list[str]):
     return reasoning, plan
 
 
-class TableColumnsIndices(PartialBaseModel):
+def make_columns_selection(table_slugs: list[str], **context):
 
-    table_slug: str = Field(
-        description=f"The table slug, e.g. Source{SOURCE_TABLE_SEPARATOR}table"
-    )
+    class TableColumnsIndices(PartialBaseModel):
 
-    column_indices: list[int] = Field(
-        description="A list of 0-based column indices for the table specified by `table_slug`. This indicates which columns should be included in the output."
-    )
+        table_slug: Literal[tuple(table_slugs)] = Field(
+            description=f"The table slug, i.e. '<source>{SOURCE_TABLE_SEPARATOR}<table>'"
+        )
+
+        column_indices: list[int] = Field(
+            description="A list of 0-based column indices for the table specified by `table_slug`. This indicates which columns should be included in the output."
+        )
 
 
-class ColumnsSelection(PartialBaseModel):
-    """
-    Model for selecting a subset of columns from tables.
-    """
-    chain_of_thought: str = Field(
-        description="Reasoning behind column selection. Keep it concise."
-    )
+    class ColumnsSelection(PartialBaseModel):
+        """
+        Model for selecting a subset of columns from tables.
+        """
+        chain_of_thought: str = Field(
+            description="""
+            Break down the user query into parts, and try to map out the columns to
+            the parts of the query that they are relevant to.
+            """
+        )
 
-    tables_columns_indices: list[TableColumnsIndices] = Field(
-        description=f"The list of table slugs (verbatim Source{SOURCE_TABLE_SEPARATOR}table) and their respective columns to include in the final output."
-    )
+        tables_columns_indices: list[TableColumnsIndices] = Field(
+            description="""
+            The list of table slugs, i.e. '<source>{SOURCE_TABLE_SEPARATOR}<table>',
+            and their respective columns based on your own chain_of_thought."""
+        )
+    return ColumnsSelection
 
 
 def make_agent_model(agent_names: list[str], primary: bool = False):

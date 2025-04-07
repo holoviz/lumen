@@ -10,13 +10,14 @@ import param
 
 from panel.viewable import Viewable
 
+from ..sources.duckdb import DuckDBSource
 from ..views.base import View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import (
-    ColumnsSelection, YesNo, make_iterative_selection_model,
+    YesNo, make_columns_selection, make_iterative_selection_model,
     make_refined_query_model,
 )
 from .schemas import (
@@ -25,7 +26,8 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, stream_details, truncate_string,
+    get_schema, log_debug, mutate_user_message, retry_llm_output,
+    stream_details, truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -101,14 +103,14 @@ class VectorLookupTool(Tool):
             },
             "select_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "select_columns.jinja2",
-                "response_model": ColumnsSelection,
+                "response_model": make_columns_selection,
             },
-            "revalidate_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "revalidate_columns.jinja2",
+            "should_refresh_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
                 "response_model": YesNo,
             },
-            "revalidate_tables": {
-                "template": PROMPTS_DIR / "TableLookup" / "revalidate_tables.jinja2",
+            "should_refresh_tables": {
+                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_tables.jinja2",
                 "response_model": YesNo,
             },
             "should_select_columns": {
@@ -232,14 +234,12 @@ class VectorLookupTool(Tool):
         current_query = query
         iteration = 0
 
-        with self._add_step(title="Vector Search with Refinement") as step:
-            step.stream("Performing initial search\n\n")
-            stream_details(query, step, title="Initial query", auto=False)
-            results = self.vector_store.query(query, top_k=self.n, **kwargs)
-            # check if all metadata is the same; if so, skip
-            if all(result.get('metadata') == results[0].get('metadata') for result in results):
-                return results
+        results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        # check if all metadata is the same; if so, skip
+        if all(result.get('metadata') == results[0].get('metadata') for result in results):
+            return results
 
+        with self._add_step(title="Vector Search with Refinement") as step:
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
@@ -387,14 +387,14 @@ class TableLookup(VectorLookupTool):
     """
 
     purpose = param.String(default="""
-        Looks up and refreshes relevant tables and columns based on the user query with a vector store.
+        Looks up and is able to query additional tables and columns based on the user query with a vector store.
         Useful for quickly gathering information about tables and their columns
         to chat about.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_vector_metaset"], readonly=True, doc="""
+    provides = param.List(default=["table_vector_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     enable_select_columns = param.Boolean(default=True, doc="""
@@ -461,7 +461,7 @@ class TableLookup(VectorLookupTool):
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
-    async def _fetch_and_store_metadata(self, source, table_name: str, tables_vector_metaset: dict):
+    async def _fetch_and_store_metadata(self, source, table_name: str):
         """Fetch metadata for a table and store it in the vector store."""
         async with self._semaphore:
             source_metadata = self._raw_metadata[source.name]
@@ -488,25 +488,13 @@ class TableLookup(VectorLookupTool):
         table_cols = []
         if self.include_columns and (columns := table_vector_info.get('columns', {})):
             for col_name, col_info in columns.items():
-                col_desc = col_info.get("description", "")
+                col_desc = col_info.pop("description", "")
                 column = TableColumn(
                     name=col_name,
                     description=col_desc,
                     metadata=col_info.copy() if isinstance(col_info, dict) else {}
                 )
                 table_cols.append(column)
-
-        # Create TableVectorMetadata object
-        table_schema = TableVectorMetadata(
-            table_slug=table_slug,
-            similarity=0.0,  # Default similarity before any query
-            description=table_vector_info.get('description'),
-            table_cols=table_cols,
-            metadata=table_vector_info.copy()
-        )
-
-        # Add to the dictionary of schemas
-        tables_vector_metaset[table_slug] = table_schema
 
         vector_metadata = {"source": source.name, "table_name": table_name}
         if existing_items := self.vector_store.filter_by(vector_metadata):
@@ -539,16 +527,16 @@ class TableLookup(VectorLookupTool):
         # Create a list to track all tasks we're starting in this update
         all_tasks = []
 
-        # Dictionary to store TableVectorMetadata objects
-        tables_vector_metaset = {}
-
         for source in sources:
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
-                metadata_task = asyncio.create_task(
-                    asyncio.to_thread(source.get_metadata)
-                )
-                self._raw_metadata[source.name] = metadata_task
-                all_tasks.append(metadata_task)
+                if isinstance(source, DuckDBSource):
+                    self._raw_metadata[source.name] = source.get_metadata()
+                else:
+                    metadata_task = asyncio.create_task(
+                        asyncio.to_thread(source.get_metadata)
+                    )
+                    self._raw_metadata[source.name] = metadata_task
+                    all_tasks.append(metadata_task)
 
             tables = source.get_tables()
             # since enriching the metadata might take time, first add basic metadata (table name)
@@ -563,17 +551,17 @@ class TableLookup(VectorLookupTool):
             if self.include_metadata:
                 for table in tables:
                     task = asyncio.create_task(
-                        self._fetch_and_store_metadata(source, table, tables_vector_metaset)
+                        self._fetch_and_store_metadata(source, table)
                     )
                     self._metadata_tasks.add(task)
                     task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
                     all_tasks.append(task)
 
         if all_tasks:
-            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks, tables_vector_metaset))
+            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
             ready_task.add_done_callback(lambda t: None if t.exception() else None)
 
-    async def _mark_ready_when_done(self, tasks, tables_vector_metaset=None):
+    async def _mark_ready_when_done(self, tasks):
         """Wait for all tasks to complete and then mark the tool as ready."""
         await asyncio.gather(*tasks, return_exceptions=True)
         log_debug("All table metadata tasks completed.")
@@ -670,7 +658,8 @@ class TableLookup(VectorLookupTool):
             # Default to True (subset columns) in case of error
             return True
 
-    async def _select_columns(self, messages: list[dict[str, str]]) -> None:
+    @retry_llm_output()
+    async def _select_columns(self, messages: list[dict[str, str]], errors: list | None = None) -> None:
         """
         Select relevant columns from tables based on the user query.
         This runs after _gather_info and before _format_context.
@@ -678,7 +667,11 @@ class TableLookup(VectorLookupTool):
         if not self.enable_select_columns:
             return
 
-        vector_metaset: TableVectorMetaset = self._memory.get("tables_vector_metaset")
+        if errors:
+            content = f"Please address these errors in your previous attempt:\n{errors}"
+            messages = mutate_user_message(content, messages)
+
+        vector_metaset: TableVectorMetaset = self._memory.get("table_vector_metaset")
         needs_reselection = await self._should_refresh_columns(messages)
         if not needs_reselection and vector_metaset.sel_tables_cols:
             with self._add_step(title="Column Selection (Cached)") as step:
@@ -686,33 +679,37 @@ class TableLookup(VectorLookupTool):
                 for table_slug, column_names in vector_metaset.sel_tables_cols.items():
                     if table_slug in vector_metaset.sel_tables_cols:
                         table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                        stream_details(', '.join(column_names), step, title=f"Selected columns for {table_name}")
+                        stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}")
             return vector_metaset.sel_tables_cols
 
         try:
-            output = await self._invoke_prompt(
-                "select_columns",
-                messages,
-                vector_metaset=vector_metaset,
-                source_table_sep=SOURCE_TABLE_SEPARATOR
-            )
-            tables_columns_indices = output.tables_columns_indices
-            selected_indices = {
-                obj.table_slug: obj.column_indices
-                for obj in tables_columns_indices
-            }
-            # Convert indices to column names and store by table
-            vector_metadata_map = vector_metaset.vector_metadata_map
             with self._add_step(title="Column Selection") as step:
-                step.stream(output.chain_of_thought)
                 sel_tables_cols = {}
+                vector_metadata_map = vector_metaset.vector_metadata_map
+                async for output_chunk in self._stream_prompt(
+                    "select_columns",
+                    messages,
+                    separator=SOURCE_TABLE_SEPARATOR,
+                    table_slugs=list(vector_metaset.vector_metadata_map)
+                ):
+                    # Convert indices to column names and store by table
+                    if output_chunk.chain_of_thought:
+                        step.stream(output_chunk.chain_of_thought, replace=True)
+
+                tables_columns_indices = output_chunk.tables_columns_indices
+                selected_indices = {
+                    obj.table_slug: obj.column_indices
+                    for obj in tables_columns_indices
+                }
                 for table_slug, indices in selected_indices.items():
+                    if table_slug not in vector_metadata_map:
+                        continue
                     table = vector_metadata_map[table_slug]
                     all_columns = [col.name for col in table.table_cols]
                     column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
                     sel_tables_cols[table_slug] = column_names
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                    stream_details('\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
+                    stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
                 vector_metaset.sel_tables_cols = sel_tables_cols
             return sel_tables_cols
         except Exception as e:
@@ -734,6 +731,10 @@ class TableLookup(VectorLookupTool):
         for result in results:
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
+            for source in self._memory.get("sources", []):
+                if source.name == source_name:
+                    sql = source.get_sql_expr(source.normalize_table(table_name))
+                    break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             similarity_score = result['similarity']
             if any_matches and result['similarity'] < self.min_similarity and not same_table:
@@ -747,7 +748,7 @@ class TableLookup(VectorLookupTool):
                 columns = table_metadata.get("columns", {})
 
                 for col_name, col_info in columns.items():
-                    col_desc = col_info.get("description", "")
+                    col_desc = col_info.pop("description", "")
                     column_schema = TableColumn(
                         name=col_name,
                         description=col_desc,
@@ -759,6 +760,7 @@ class TableLookup(VectorLookupTool):
                 table_slug=table_slug,
                 similarity=similarity_score,
                 description=table_description,
+                base_sql=sql,
                 table_cols=table_cols,
                 metadata=self._tables_metadata.get(table_slug, {}).copy()
             )
@@ -771,15 +773,15 @@ class TableLookup(VectorLookupTool):
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
 
-        self._memory["tables_vector_metaset"] = TableVectorMetaset(
+        self._memory["table_vector_metaset"] = TableVectorMetaset(
             vector_metadata_map=vector_metadata_map, query=query)
         return vector_metadata_map
 
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
-        tables_vector_metaset = self._memory.get("tables_vector_metaset")
-        return str(tables_vector_metaset)
+        table_vector_metaset = self._memory.get("table_vector_metaset")
+        return table_vector_metaset.sel_context
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -797,7 +799,7 @@ class TableLookup(VectorLookupTool):
 
         self._previous_state = PreviousState(
             query=messages[-1]["content"],
-            sel_tables_cols=self._memory.get("tables_vector_metaset", {}).sel_tables_cols,
+            sel_tables_cols=self._memory.get("table_vector_metaset", {}).sel_tables_cols,
         )
         return self._format_context()
 
@@ -900,11 +902,12 @@ class IterativeTableLookup(TableLookup):
     """
 
     purpose = param.String(default="""
-        Looks up and refreshes relevant tables and columns based on the user query with a vector store and iterative selection process.
+        Looks up and is able to query additional tables and columns based on the user query
+        with a vector store and iterative selection process.
         Uses LLM to select tables in multiple passes, examining schemas in detail.
         Useful for SQLAgent, but not for ChatAgent.""")
 
-    provides = param.List(default=["tables_vector_metaset", "table_sql_metaset"], readonly=True, doc="""
+    provides = param.List(default=["table_vector_metaset", "table_sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
@@ -938,7 +941,7 @@ class IterativeTableLookup(TableLookup):
         4. Repeats until the LLM is satisfied with the context
         """
         vector_metadata_map = await super()._gather_info(messages)
-        vector_metaset = self._memory.get("tables_vector_metaset")
+        vector_metaset = self._memory.get("table_vector_metaset")
 
         sql_metadata_map = {}
         examined_slugs = set(sql_metadata_map.keys())
@@ -965,7 +968,9 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    if any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values()) or len(all_slugs) == 1:
+                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values())
+                    limited_tables = len(vector_metadata_map) <= 5
+                    if any_matches or len(all_slugs) == 1 or limited_tables:
                         selected_slugs = sorted(
                             vector_metadata_map.keys(),
                             key=lambda x: vector_metadata_map[x].similarity,
@@ -1044,13 +1049,13 @@ class IterativeTableLookup(TableLookup):
                         if view_definition:
                             schema = {"view_definition": view_definition}
                         else:
-                            schema = await get_schema(source_obj, table_name)
+                            schema = await get_schema(source_obj, table_name, reduce_enums=False)
 
                         # Create TableSQLMetadata object
                         sql_metadata = TableSQLMetadata(
                             table_slug=table_slug,
                             schema=schema,
-                            count=schema.get('count'),
+                            base_sql=source_obj.get_sql_expr(source_obj.normalize_table(table_name)),
                             view_definition=view_definition,
                         )
                         sql_metadata_map[table_slug] = sql_metadata
@@ -1062,7 +1067,7 @@ class IterativeTableLookup(TableLookup):
                         stream_details(f"Error fetching schema: {e}", step, title="Error", auto=False)
 
                 if fast_track:
-                    step.stream("Fast-tracked selection process based on similarity threshold.")
+                    step.stream("Fast-tracked selection process.")
                     satisfied_slugs = selected_slugs
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
@@ -1094,7 +1099,7 @@ class IterativeTableLookup(TableLookup):
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         table_sql_metaset = self._memory.get("table_sql_metaset")
-        return str(table_sql_metaset)
+        return table_sql_metaset.sel_context
 
 
 class FunctionTool(Tool):
