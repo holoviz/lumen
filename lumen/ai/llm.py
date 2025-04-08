@@ -18,7 +18,10 @@ from pydantic import BaseModel
 
 from lumen.ai.utils import log_debug, truncate_string
 
+from .components import StatusBadge
 from .interceptor import Interceptor
+from .models import YesNo
+from .utils import format_exception
 
 
 class Message(TypedDict):
@@ -67,6 +70,7 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        self._status = StatusBadge(name="LLM Pending")
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -159,6 +163,26 @@ class Llm(param.Parameterized):
         if chunk.choices:
             return chunk.choices[0].delta.content or ""
         return ""
+
+    def status(self):
+        return self._status
+
+    async def initialize(self, log_level: str):
+        try:
+            self._status.status = "running"
+            await self.invoke(
+                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                model_spec="ui",
+                response_model=YesNo
+            )
+            self._status.param.update(status="success", name='LLM Ready')
+        except Exception as e:
+            self._status.param.update(
+                status="failed",
+                name="LLM Not Connected",
+                description='❌ '+(format_exception(e, limit=3) if log_level == 'DEBUG' else "Failed to connect to LLM"),
+            )
+            raise e
 
     async def stream(
         self,
@@ -330,10 +354,10 @@ class LlamaCpp(Llm):
             hf_hub_download(repo, model_file)
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        if client_callable := pn.state.cache.get(model_spec):
-            return client_callable
         model_kwargs = self._get_model_kwargs(model_spec)
         mode = model_kwargs.pop("mode", self.mode)
+        if client_callable := pn.state.cache.get((model_spec, mode)):
+            return client_callable
         if 'repo' in model_kwargs:
             from huggingface_hub import hf_hub_download
             repo = model_kwargs.pop('repo', model_kwargs.get('repo_id'))
@@ -635,3 +659,88 @@ class AINavigator(OpenAI):
             The API endpoint; should include the full address, including the port.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
+
+
+class Choice(BaseModel):
+
+    delta: Message | None
+
+    message: Message | None
+
+    finish_reason: str | None
+
+
+class Response(BaseModel):
+
+    choices: list[Choice]
+
+
+class WebLLM(Llm):
+
+    model_kwargs = param.Dict({'default': {'model_slug': 'Qwen2.5-7B-Instruct-q4f16_1-MLC'}})
+
+    mode = param.Parameter(default=Mode.JSON_SCHEMA)
+
+    temperature = param.Number(default=0.4, bounds=(0, None))
+
+    def __init__(self, **params):
+        from panel_web_llm import WebLLM as pnWebLLM
+        self._llm = pnWebLLM()
+        super().__init__(**params)
+
+    async def _create_completion(self, messages, **kwargs):
+        if kwargs.get('stream', False):
+            async def generator():
+                async for chunk in self._llm.create_completion(messages, **kwargs):
+                    yield Response(choices=[
+                        Choice(
+                            delta=Message(
+                                content=chunk['delta']['content'],
+                                role=chunk['delta']['role'],
+                                name=None
+                            ) if chunk['delta'] else None,
+                            message=None,
+                            finish_reason=chunk['finish_reason']
+                        )
+                    ])
+        else:
+            content, reason, role = "", "", ""
+            async for chunk in self._llm.create_completion(messages, **kwargs):
+                content = chunk['message']['content']
+                role = chunk['message']['role']
+                reason = chunk['finish_reason']
+            msg = Message(content=content, name=None, role=role)
+            return Response(choices=[Choice(message=msg, delta=None, finish_reason=reason)])
+        return generator()
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        model_kwargs = self._get_model_kwargs(model_spec)
+        mode = model_kwargs.pop("mode", self.mode)
+        if not self._llm.loaded:
+            self._llm.param.update(**{k: v for k, v in model_kwargs.items() if k in self._llm.param})
+            self._llm.param.trigger('load_model')
+        client_callable = patch(create=self._create_completion, mode=mode)
+        return client_callable
+
+    def status(self):
+        return pn.Row(self._status, self._llm)
+
+    async def initialize(self, log_level: str):
+        await asyncio.sleep(2)
+        progress = self._llm.param.load_status.rx().get("progress", 0)*100
+        self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
+        try:
+            await self.invoke(
+                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                model_spec="ui",
+                response_model=YesNo
+            )
+        except Exception as e:
+            self._status.param.update(
+                status="failed",
+                name="LLM Not Connected",
+                description='❌ '+(format_exception(e, limit=3) if log_level == 'DEBUG' else "Failed to connect to LLM"),
+            )
+            raise e
+        else:
+            self._status.param.update(status="success", name='LLM Ready')
