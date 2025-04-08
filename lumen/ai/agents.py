@@ -634,7 +634,8 @@ class SQLAgent(LumenBaseAgent):
         try:
             df = await get_data(pipeline)
         except Exception as e:
-            source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
+            if isinstance(source, DuckDBSource):
+                source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
             report_error(e, step)
             raise e
 
