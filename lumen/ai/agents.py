@@ -14,7 +14,6 @@ import param
 import yaml
 
 from panel.chat import ChatInterface
-from panel.layout.base import ListLike, NamedListLike
 from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -68,9 +67,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
-
-    steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
-        The layout progress updates will be streamed to.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")

@@ -392,10 +392,8 @@ class Coordinator(Viewer, ToolUser):
                     mutated_messages, suffix=True, wrap=True
                 )
 
-            shared_ctx = {"memory": self.memory}
+            shared_ctx = {"memory": self.memory, "steps_layout": steps_layout}
             respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
-            if isinstance(subagent, Agent):
-                shared_ctx["steps_layout"] = steps_layout
             with subagent.param.update(**shared_ctx):
                 try:
                     result = await subagent.respond(

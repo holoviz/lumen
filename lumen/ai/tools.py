@@ -877,7 +877,11 @@ class IterativeTableLookup(TableLookup):
         sources = {source.name: source for source in self._memory["sources"]}
 
         for iteration in range(1, max_iterations + 1):
-            with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
+            with self._add_step(
+                title=f"Iterative table selection {iteration} / {max_iterations}",
+                success_title=f"Selection iteration {iteration} / {max_iterations} completed",
+                steps_layout=self.steps_layout
+            ) as step:
                 available_slugs = [
                     table_slug for table_slug in all_slugs
                     if table_slug not in examined_slugs

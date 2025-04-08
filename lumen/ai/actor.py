@@ -7,6 +7,7 @@ from typing import Any
 import param
 
 from panel.chat import ChatFeed
+from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
 from .llm import Llm, Message
@@ -38,6 +39,9 @@ class Actor(param.Parameterized):
         A dictionary of prompts used by the actor, indexed by prompt name.
         Each prompt should be defined as a dictionary containing a template
         'template' and optionally a 'model' and 'tools'.""")
+
+    steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
+        The layout progress updates will be streamed to.""")
 
     template_overrides = param.Dict(default={}, doc="""
         Overrides the template's 'instructions', 'context', 'tools', or 'examples' jinja2 blocks.
@@ -118,6 +122,8 @@ class Actor(param.Parameterized):
         If self.interface is None, returns a nullcontext that captures calls.
         Otherwise, returns the interface's add_step contextmanager.
         """
+        if self.steps_layout is not None and 'steps_layout' not in kwargs:
+            kwargs['steps_layout'] = self.steps_layout
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
