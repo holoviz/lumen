@@ -661,7 +661,7 @@ class AINavigator(OpenAI):
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
 
-class MessageModel(TypedDict):
+class MessageModel(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
