@@ -661,11 +661,17 @@ class AINavigator(OpenAI):
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
 
+class MessageModel(TypedDict):
+    role: Literal["system", "user", "assistant"]
+    content: str
+    name: str | None
+
+
 class Choice(BaseModel):
 
-    delta: Message | None
+    delta: MessageModel | None
 
-    message: Message | None
+    message: MessageModel | None
 
     finish_reason: str | None
 
@@ -694,7 +700,7 @@ class WebLLM(Llm):
                 async for chunk in self._llm.create_completion(messages, **kwargs):
                     yield Response(choices=[
                         Choice(
-                            delta=Message(
+                            delta=MessageModel(
                                 content=chunk['delta']['content'],
                                 role=chunk['delta']['role'],
                                 name=None
@@ -709,7 +715,7 @@ class WebLLM(Llm):
                 content = chunk['message']['content']
                 role = chunk['message']['role']
                 reason = chunk['finish_reason']
-            msg = Message(content=content, name=None, role=role)
+            msg = MessageModel(content=content, name=None, role=role)
             return Response(choices=[Choice(message=msg, delta=None, finish_reason=reason)])
         return generator()
 
