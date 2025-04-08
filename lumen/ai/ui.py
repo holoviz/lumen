@@ -47,8 +47,6 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
-from .models import YesNo
-from .utils import format_exception
 
 if TYPE_CHECKING:
     from .views import LumenOutput
@@ -190,21 +188,10 @@ class UI(Viewer):
 
     async def _verify_llm(self):
         try:
-            self._llm_status_badge.status = "running"
-            await self.llm.invoke(
-                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
-                model_spec="ui",
-                response_model=YesNo
-            )
-            self._llm_status_badge.param.update(status="success", name='LLM Ready')
+            await self.llm.initialize(log_level=self.log_level)
             self.interface.disabled = False
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
-            self._llm_status_badge.param.update(
-                status="failed",
-                name="LLM Not Connected",
-                description='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else "Failed to connect to LLM"),
-            )
 
         table_lookup = None
         for tool in self._coordinator._tools["main"]:
@@ -221,7 +208,6 @@ class UI(Viewer):
 
         self._vector_store_status_badge.param.update(
             status="success", name='Vector Store Ready')
-
 
     def _destroy(self, session_context):
         """
@@ -296,7 +282,7 @@ class UI(Viewer):
             ]
             template.header.append(
                 Row(
-                    self._llm_status_badge,
+                    self.llm.status(),
                     self._vector_store_status_badge,
                     sizing_mode="stretch_width",
                     align="center",
