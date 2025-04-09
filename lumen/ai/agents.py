@@ -523,7 +523,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "table_sql_metaset"], readonly=True)
+    requires = param.List(default=["source", "sql_metaset"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -542,7 +542,7 @@ class SQLAgent(LumenBaseAgent):
         if errors:
             # get the head of the tables
             columns_context = ""
-            vector_metadata_map = self._memory["table_sql_metaset"].vector_metaset.vector_metadata_map
+            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                 if table_name in tables_to_source:
@@ -659,10 +659,10 @@ class SQLAgent(LumenBaseAgent):
             messages = mutate_user_message(content, messages)
 
         sources = {source.name: source for source in self._memory["sources"]}
-        vector_metaset = self._memory["table_sql_metaset"].vector_metaset
+        vector_metaset = self._memory["sql_metaset"].vector_metaset
         selected_slugs = list(
             #  if no tables/cols are subset
-            vector_metaset.sel_tables_cols or
+            vector_metaset.selected_columns or
             vector_metaset.vector_metadata_map
         )
         if len(selected_slugs) == 0:
@@ -721,7 +721,7 @@ class SQLAgent(LumenBaseAgent):
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["pipeline", "table_sql_metaset"], readonly=True)
+    requires = param.List(default=["pipeline", "sql_metaset"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
 
@@ -753,7 +753,7 @@ class BaseViewAgent(LumenBaseAgent):
             except Exception:
                 json_spec = ""
 
-            vector_metadata_map = self._memory["table_sql_metaset"].vector_metaset.vector_metadata_map
+            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
             columns_context = ""
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]

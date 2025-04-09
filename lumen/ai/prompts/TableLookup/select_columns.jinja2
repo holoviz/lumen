@@ -32,9 +32,9 @@ Here is the previous query, tables, and columns:
 {{ previous_state }}
 {% endif %}
 
-{% if memory.get('table_sql_metaset') %}
-{{ memory['table_sql_metaset'].sel_context }}
+{% if memory.get('sql_metaset') %}
+{{ memory['sql_metaset'].selected_context }}
 {% else %}
-{{ memory["table_vector_metaset"].sel_context }}
+{{ memory["vector_metaset"].selected_context }}
 {% endif %}
 {% endblock %}

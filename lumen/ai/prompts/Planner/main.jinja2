@@ -28,12 +28,12 @@ Import Tools Rules:
 {% endblock -%}
 
 {% block context -%}
-{%- if memory.get('table_vector_metaset') and memory.get('table_vector_metaset').sel_tables_cols %}
+{%- if memory.get('vector_metaset') and memory.get('vector_metaset').selected_columns %}
 The current selected columns in memory is:
-{{ memory['table_vector_metaset'].sel_tables_cols }}
+{{ memory['vector_metaset'].selected_columns }}
 based on the previous query:
 """
-{{ memory['table_vector_metaset'].query }}
+{{ memory['vector_metaset'].query }}
 """
 Please consider whether this is enough information to proceed with the current user query;
 if not use IterativeTableLookup to refresh the available columns in memory.
