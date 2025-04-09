@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import traceback
 
+from functools import partial
 from types import FunctionType
 from typing import Any
 
 import param
 
+from panel.io.state import state
 from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
@@ -314,12 +316,18 @@ class DocumentLookup(VectorLookupTool):
     requires = param.List(default=["document_sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
+    sync_sources = param.Boolean(default=True, doc="""
+        Whether to automatically sync newly added document sources to the vector store.""")
+
     # Override the item type name
     _item_type_name = "documents"
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._memory.on_change('document_sources', self._update_vector_store)
+        if self.sync_sources:
+            self._memory.on_change('document_sources', self._update_vector_store)
+        if "document_sources" in self._memory:
+            state.execute(partial(self._update_vector_store, None, None, self._memory['document_sources']))
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
@@ -417,6 +425,9 @@ class TableLookup(VectorLookupTool):
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
 
+    sync_sources = param.Boolean(default=True, doc="""
+        Whether to automatically sync newly added data sources to the vector store.""")
+
     _item_type_name = "database tables"
 
     _ready = param.Boolean(default=False, doc="""
@@ -429,9 +440,10 @@ class TableLookup(VectorLookupTool):
         self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._previous_state = None  # used for tracking previous state for _should...
-        self._memory.on_change('sources', self._update_vector_store)
+        if self.sync_sources:
+            self._memory.on_change('sources', self._update_vector_store)
         if "sources" in self._memory:
-            self._memory.trigger('sources')
+            state.execute(partial(self._update_vector_store, None, None, self._memory['sources']))
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
