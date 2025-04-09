@@ -16,3 +16,7 @@
 
 {%- block examples -%}
 {%- endblock -%}
+
+{% block datetime %}
+The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
+{% endblock %}
