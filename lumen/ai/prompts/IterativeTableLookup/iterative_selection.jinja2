@@ -24,9 +24,9 @@ Here are the tables available for selection:
 {%- if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description -%}
   Description: {{ vector_metadata_map[table_slug].description }}
 {%- endif -%}
-{%- if vector_metadata_map[table_slug].table_cols is defined and vector_metadata_map[table_slug].table_cols|length > 0 %}
+{%- if vector_metadata_map[table_slug].columns is defined and vector_metadata_map[table_slug].columns|length > 0 %}
   Cols:
-  {%- for col in vector_metadata_map[table_slug].table_cols -%}
+  {%- for col in vector_metadata_map[table_slug].columns -%}
   - {{ col.name }}{% if col.description %}: {{ col.description }}{% endif %}
   {% endfor -%}
 {% endif %}
