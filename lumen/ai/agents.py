@@ -580,7 +580,7 @@ class SQLAgent(LumenBaseAgent):
                     step_message = output.chain_of_thought or ""
                     step.stream(step_message, replace=True)
                 if output.query:
-                    sql_query = clean_sql(output.query)
+                    sql_query = clean_sql(output.query, dialect)
                 if sql_query and output.expr_slug:
                     step.stream(f"\n`{output.expr_slug}`\n```sql\n{sql_query}\n```", replace=True)
                 self._memory["sql"] = sql_query
