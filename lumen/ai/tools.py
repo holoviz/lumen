@@ -758,9 +758,9 @@ class TableLookup(VectorLookupTool):
 
             if table_metadata := self._tables_metadata.get(table_slug):
                 table_description = table_metadata.get("description")
-                columns = table_metadata.get("columns", {})
+                column_metadata = table_metadata.get("columns", {})
 
-                for col_name, col_info in columns.items():
+                for col_name, col_info in column_metadata.items():
                     col_desc = col_info.pop("description", "")
                     column_schema = Column(
                         name=col_name,
