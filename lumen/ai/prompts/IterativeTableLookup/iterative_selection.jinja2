@@ -26,7 +26,7 @@ Here are the tables available for selection:
 {%- endif -%}
 {%- if vector_metadata_map[table_slug].columns is defined and vector_metadata_map[table_slug].columns|length > 0 %}
   Cols:
-  {%- for col in vector_metadata_map[table_slug].columns -%}
+  {% for col in vector_metadata_map[table_slug].columns -%}
   - {{ col.name }}{% if col.description %}: {{ col.description }}{% endif %}
   {% endfor -%}
 {% endif %}
@@ -60,7 +60,6 @@ This is your final iteration. Please provide your final selected table list from
 {% else %}
 In this iteration (#{{ iteration }}), please select up to 3 tables that would be most relevant for answering the query.
 Choose tables that would provide complementary information to what you've already examined.
-If you feel you already have all the information you need, choose the tables that can answer the query.
-If there are any promising tables, please be done.
+If you feel you already have all the information you need, choose the tables that can answer the query, and please set is_done.
 {% endif %}
 {% endblock %}
