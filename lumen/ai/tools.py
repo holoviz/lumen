@@ -497,7 +497,7 @@ class TableLookup(VectorLookupTool):
         self._tables_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
 
         # Create column schema objects
-        table_cols = []
+        columns = []
         if self.include_columns and (columns := vector_info.get('columns', {})):
             for col_name, col_info in columns.items():
                 col_desc = col_info.pop("description", "")
@@ -506,7 +506,7 @@ class TableLookup(VectorLookupTool):
                     description=col_desc,
                     metadata=col_info.copy() if isinstance(col_info, dict) else {}
                 )
-                table_cols.append(column)
+                columns.append(column)
 
         vector_metadata = {"source": source.name, "table_name": table_name}
         if existing_items := self.vector_store.filter_by(vector_metadata):
@@ -718,7 +718,7 @@ class TableLookup(VectorLookupTool):
                     if table_slug not in vector_metadata_map:
                         continue
                     table = vector_metadata_map[table_slug]
-                    all_columns = [col.name for col in table.table_cols]
+                    all_columns = [col.name for col in table.columns]
                     column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
                     selected_columns[table_slug] = column_names
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
@@ -753,7 +753,7 @@ class TableLookup(VectorLookupTool):
             if any_matches and result['similarity'] < self.min_similarity and not same_table:
                 continue
 
-            table_cols = []
+            columns = []
             table_description = None
 
             if table_metadata := self._tables_metadata.get(table_slug):
@@ -767,14 +767,14 @@ class TableLookup(VectorLookupTool):
                         description=col_desc,
                         metadata=col_info.copy() if isinstance(col_info, dict) else {}
                     )
-                    table_cols.append(column_schema)
+                    columns.append(column_schema)
 
             vector_metadata = VectorMetadata(
                 table_slug=table_slug,
                 similarity=similarity_score,
                 description=table_description,
                 base_sql=sql,
-                table_cols=table_cols,
+                columns=columns,
                 metadata=self._tables_metadata.get(table_slug, {}).copy()
             )
             vector_metadata_map[table_slug] = vector_metadata

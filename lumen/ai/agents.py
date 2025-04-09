@@ -546,7 +546,7 @@ class SQLAgent(LumenBaseAgent):
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                 if table_name in tables_to_source:
-                    columns = [col.name for col in vector_metadata.table_cols]
+                    columns = [col.name for col in vector_metadata.columns]
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             last_query = self._memory["sql"]
             num_errors = len(errors)
@@ -758,7 +758,7 @@ class BaseViewAgent(LumenBaseAgent):
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                 if table_name in pipeline.table:
-                    columns = [col.name for col in vector_metadata.table_cols]
+                    columns = [col.name for col in vector_metadata.columns]
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             messages = mutate_user_message(
                 f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
