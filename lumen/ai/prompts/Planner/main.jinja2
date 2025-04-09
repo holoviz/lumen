@@ -28,7 +28,7 @@ Import Tools Rules:
 {% endblock -%}
 
 {% block context -%}
-{%- if memory.get('vector_metaset') and memory.get('vector_metaset').selected_columns %}
+{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
 The current selected columns in memory is:
 {{ memory['vector_metaset'].selected_columns }}
 based on the previous query:
