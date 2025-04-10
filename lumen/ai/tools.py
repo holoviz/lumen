@@ -8,9 +8,11 @@ from types import FunctionType
 from typing import Any
 
 import param
+import sqlglot
 
 from panel.io.state import state
 from panel.viewable import Viewable
+from sqlglot.expressions import Column as SQLColumn, Table as SQLTable
 
 from ..sources.duckdb import DuckDBSource
 from ..views.base import View
@@ -992,7 +994,6 @@ class IterativeTableLookup(TableLookup):
                             table_slug=table_slug,
                             schema=schema,
                             base_sql=source_obj.get_sql_expr(source_obj.normalize_table(table_name)),
-                            view_definition=view_definition,
                         )
                         sql_metadata_map[table_slug] = sql_metadata
 
@@ -1036,6 +1037,42 @@ class IterativeTableLookup(TableLookup):
         """Generate formatted text representation from schema objects."""
         sql_metaset = self._memory.get("sql_metaset")
         return sql_metaset.selected_context
+
+
+class DbtSemanticLayerLookup(VectorLookupTool):
+    """
+    SemanticLayerLookup tool that creates a vector store of all available dbt semantic layers
+    and responds with relevant metrics for user queries.
+    """
+
+    purpose = param.String(default="""
+        Looks up and is able to query additional dbt semantic layers based on the user query with a vector store.
+        Useful for quickly gathering information about dbt semantic layers and their metrics""")
+
+    requires = param.List(default=["dbtsl_client"], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
+    provides = param.List(default=["sql_metaset"], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        state.execute(partial(self._update_vector_store, None, None, self._memory["dbtsl_client"]))
+
+    async def _update_vector_store(self, _, __, dbtsl_client):
+        self._metrics = await dbtsl_client.metrics()
+
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        """
+        Fetches metrics based on the user query and returns formatted context.
+        """
+        query = messages[0]
+        dbtsl_client = self._memory["dbtsl_client"]
+        async with dbtsl_client.session():
+            expression = sqlglot.parse_one(await dbtsl_client.compile_sql(metrics=...))
+        tables = [str(table).split(" AS ")[0] for table in expression.find_all(SQLTable)]
+        columns = [str(column).split(" AS ")[0] for column in expression.find_all(SQLColumn)]
+        vector_metaset = VectorMetaset(query=query)
 
 
 class FunctionTool(Tool):
