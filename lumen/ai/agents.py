@@ -255,7 +255,7 @@ class ChatAgent(Agent):
     )
 
     # technically not required if appended manually with tool in coordinator
-    requires = param.List(default=["table_vector_metaset"], readonly=True)
+    requires = param.List(default=["vector_metaset"], readonly=True)
 
     async def respond(
         self,

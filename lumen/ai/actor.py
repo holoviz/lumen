@@ -1,3 +1,5 @@
+import datetime
+
 from abc import abstractmethod
 from contextlib import nullcontext
 from pathlib import Path
@@ -123,6 +125,7 @@ class Actor(param.Parameterized):
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
         context["memory"] = self._memory
         context["actor_name"] = self.name
+        context["current_datetime"] = datetime.datetime.now()
         return context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
