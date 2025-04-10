@@ -266,9 +266,6 @@ class VectorLookupTool(Tool):
                     break
 
                 current_query = refined_query
-                step.stream("Query refined.")
-                stream_details(refined_query, step, title="Refined query", auto=False)
-
                 new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
                 new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
 
@@ -280,21 +277,24 @@ class VectorLookupTool(Tool):
                     "improvement": improvement
                 })
 
-                step.stream(f"\n\nRefined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})\n")
+                # Build combined details message
+                details_msg = f"Query refined:\n\n{refined_query}\n\nRefined search found {len(new_results)} results with best similarity: {new_best_similarity:.3f} (improvement: {improvement:.3f})\n"
 
                 if new_best_similarity > best_similarity + self.min_refinement_improvement:
-                    step.stream(f"Improved results (iteration {iteration}) with similarity {new_best_similarity:.3f}\n")
+                    details_msg += f"\nImproved results (iteration {iteration}) with similarity {new_best_similarity:.3f}"
                     best_similarity = new_best_similarity
                     best_results = new_results
                     final_query = refined_query
                     results = new_results  # Update results for next iteration's refinement
                 else:
-                    step.stream(f"Insufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations\n")
+                    details_msg += f"\nInsufficient improvement ({improvement:.3f} < {self.min_refinement_improvement:.3f}), stopping iterations"
+                    stream_details(details_msg, step, title=f"Refinement iteration {iteration}", auto=False)
                     break
 
                 # Break if we've reached an acceptable similarity
                 if best_similarity >= self.refinement_similarity_threshold:
-                    step.stream(f"Reached acceptable similarity threshold: {best_similarity:.3f}\n")
+                    details_msg += f"\nReached acceptable similarity threshold: {best_similarity:.3f}"
+                    stream_details(details_msg, step, title=f"Refinement iteration {iteration}", auto=False)
                     break
 
             if refinement_history:
@@ -698,11 +698,14 @@ class TableLookup(VectorLookupTool):
             with self._add_step(title="Column Selection") as step:
                 selected_columns = {}
                 vector_metadata_map = vector_metaset.vector_metadata_map
+                table_slugs = list(vector_metaset.vector_metadata_map)
+                if self._previous_state:
+                    table_slugs += list(self._previous_state.selected_columns)
                 async for output_chunk in self._stream_prompt(
                     "select_columns",
                     messages,
                     separator=SOURCE_TABLE_SEPARATOR,
-                    table_slugs=list(vector_metaset.vector_metadata_map),
+                    table_slugs=table_slugs,
                     previous_state=self._previous_state,
                 ):
                     # Convert indices to column names and store by table

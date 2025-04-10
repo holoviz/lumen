@@ -116,7 +116,8 @@ def make_columns_selection(table_slugs: list[str], **context):
         chain_of_thought: str = Field(
             description="""
             Break down the user query into parts, and try to map out the columns to
-            the parts of the query that they are relevant to.
+            the parts of the query that they are relevant to. Select more
+            than you need, and then you can filter them out later.
             """
         )
 
