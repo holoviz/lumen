@@ -125,8 +125,6 @@ class SQLMetadata:
     table_slug: str
     schema: dict[str, Any]
     base_sql: str | None = None
-    view_definition: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -307,7 +305,6 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
             table_slug=table_slug,
             schema=schema,
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
-            view_definition=None,
         )
         metadata = source.get_metadata(table_name)
         tables_metadata[table_name] = VectorMetadata(
