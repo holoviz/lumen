@@ -121,9 +121,6 @@ class SQLMetadata:
 
     table_slug: str
     schema: dict[str, Any]
-    base_sql: str | None = None
-    view_definition: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -166,11 +163,11 @@ class SQLMetaset:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
                 context += f"Description: {desc}\n"
 
+            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+            context += f"Base SQL: {base_sql}\n"
+
             sql_data: SQLMetadata = self.sql_metadata_map.get(table_slug)
             if sql_data:
-                base_sql = truncate_string(sql_data.base_sql, max_length=200) if truncate else sql_data.base_sql
-                context += f"Base SQL: {base_sql}\n"
-
                 # Get the count from schema
                 if sql_data.schema.get("__len__"):
                     context += f"Row count: {len(sql_data.schema)}\n"
@@ -301,7 +298,6 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
             table_slug=table_slug,
             schema=schema,
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
-            view_definition=None,
         )
         metadata = source.get_metadata(table_name)
         tables_metadata[table_name] = VectorMetadata(
