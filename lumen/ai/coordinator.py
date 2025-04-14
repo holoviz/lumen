@@ -690,6 +690,10 @@ class Planner(Coordinator):
     and then executes it.
     """
 
+    planner_tools = param.List(default=[], doc="""
+        List of tools to use to provide context for the planner prior
+        to making a plan.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -698,6 +702,99 @@ class Planner(Coordinator):
             },
         }
     )
+
+    def __init__(
+        self,
+        llm: Llm | None = None,
+        interface: ChatFeed | ChatInterface | None = None,
+        agents: list[Agent | type[Agent]] | None = None,
+        tools: list[Tool | type[Tool]] | None = None,
+        planner_tools: list[Tool | type[Tool]] | None = None,
+        logs_db_path: str = "",
+        **params,
+    ):
+        # Initialize planner_tools if provided
+        if planner_tools:
+            instantiated_planner_tools = []
+            for tool in planner_tools:
+                if not isinstance(tool, Tool):
+                    # Instantiate the tool if it's a class
+                    tool = tool()
+                instantiated_planner_tools.append(tool)
+            params["planner_tools"] = instantiated_planner_tools
+
+        # Call the parent's __init__
+        super().__init__(
+            llm=llm,
+            interface=interface,
+            agents=agents,
+            tools=tools,
+            logs_db_path=logs_db_path,
+            **params
+        )
+
+    async def _execute_planner_tools(self, messages: list[Message]) -> None:
+        """Execute planner tools to gather context before planning."""
+        if not self.planner_tools:
+            return
+
+        # Initialize planner context in memory
+        if "planner_context" not in self._memory:
+            self._memory["planner_context"] = {}
+
+        # Extract user query from the latest user message
+        user_query = next((msg["content"] for msg in reversed(messages)
+                         if msg.get("role") == "user"), "")
+
+        with self.interface.add_step(title="Gathering context for planning...", user="Assistant") as step:
+            for tool in self.planner_tools:
+                tool_name = getattr(tool, "name", type(tool).__name__)
+
+                # Skip tool if not relevant
+                is_relevant = await self._invoke_prompt(
+                    "tool_relevance",
+                    messages,
+                    tool_name=tool_name,
+                    tool_description=getattr(tool, "description", ""),
+                    tool_output="",  # No output yet since we're checking before running
+                    agent_name="PlannerAgent",
+                    agent_purpose="Planning how to solve the user query by assigning tasks to experts and tools",
+                    agent_task=f"Plan steps to answer: {user_query}",
+                )
+
+                if not is_relevant.yes:
+                    continue
+
+                step.stream(f"Using {tool_name} to gather planning context...")
+
+                # Execute the tool
+                node = ExecutionNode(
+                    actor=tool,
+                    provides=tool.provides,
+                    instruction=f"Gather context for planning: {user_query}",
+                    title=f"Gathering context with {tool_name}",
+                    render_output=False
+                )
+
+                # Skip to next tool if execution fails
+                success = await self._execute_graph_node(node, messages)
+                if not success:
+                    step.stream(f"✗ Failed to gather context from {tool_name}")
+                    continue
+
+                # Store provided outputs in planner_context
+                for provided in tool.provides:
+                    if provided in self._memory:
+                        self._memory["planner_context"][provided] = self._memory[provided]
+
+                step.stream(f"✓ Gathered context from {tool_name}")
+
+            # Summarize results
+            context_keys = list(self._memory["planner_context"].keys())
+            if context_keys:
+                step.success_title = f"Gathered planning context: {', '.join(context_keys)}"
+            else:
+                step.success_title = "No additional context needed for planning"
 
     async def _make_plan(
         self,
@@ -828,6 +925,9 @@ class Planner(Coordinator):
         return execution_graph, unmet_dependencies
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
+        # Execute planner tools to gather context before planning
+        await self._execute_planner_tools(messages)
+
         tool_names = [tool.name for tool in self._tools["main"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
 
