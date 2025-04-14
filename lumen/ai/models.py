@@ -224,6 +224,56 @@ def make_iterative_selection_model(table_slugs):
     return table_model
 
 
+def make_dbtsl_query_params(dimensions: list[str], queryable_granularities: list[str]):
+    # loop through all dimensions and granularities: "{dimension}__{granularity}"
+    literals = []
+    if dimensions and queryable_granularities:
+        literals = tuple([
+            f"{dimension}__{granularity}"
+            for dimension in dimensions
+            for granularity in queryable_granularities
+        ])
+
+    class DbtSLQueryParams(BaseModel):
+        """
+        Model for dbt Semantic Layer query parameters
+        """
+
+        chain_of_thought: str = Field(
+            description="""You are a world-class dbt Semantic Layer expert. Think step by step about
+            what metrics are needed, what dimensions to group by, what time granularity
+            to use, and any filters that should be applied. Be sure to carefully study
+            the metrics and dimensions available."""
+        )
+
+        expr_slug: str = Field(
+            description="""Give the query a concise, but descriptive, slug that includes the metrics
+            and dimensions used, e.g. monthly_revenue_by_region. The slug must be unique."""
+        )
+
+        group_by: list[literals] = Field(
+            default_factory=list,
+            description="A list of dimensions to group by."
+        )
+
+        limit: int = Field(
+            default=None,
+            description="The maximum number of rows to return."
+        )
+
+        order_by: list[str] = Field(
+            default_factory=list,
+            description="A list of columns or expressions to order the results by."
+        )
+
+        where: list[str] = Field(
+            default_factory=list,
+            description="A list of conditions to filter the results."
+        )
+
+    return DbtSLQueryParams
+
+
 def make_refined_query_model(item_type_name: str = "items"):
     """
     Creates a model for refining search queries in vector lookup tools.

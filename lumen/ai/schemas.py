@@ -316,3 +316,33 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         vector_metaset=vector_metaset,
         sql_metadata_map=tables_info,
     )
+
+
+@dataclass
+class DbtSLMetadata:
+
+    name: str
+    similarity: float
+    description: str | None = None
+    dimensions: list[str] = field(default_factory=list)
+    queryable_granularities: list[str] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        return (
+            f"Metric: {self.name} (Similarity: {self.similarity:.3f})\n"
+            f"Description: {self.description}\n"
+            f"Dimensions: {', '.join(self.dimensions)}\n"
+            f"Queryable granularities: {', '.join(self.queryable_granularities)}\n\n"
+        )
+
+@dataclass
+class DbtSLMetaset:
+
+    query: str
+    metrics: dict[str, DbtSLMetadata]
+
+    def __str__(self) -> str:
+        context = "Below are the relevant metrics to use:\n\n"
+        for metric in self.metrics.values():
+            context += str(metric)
+        return context
