@@ -29,7 +29,7 @@ from ..transforms.sql import SQLLimit
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
-from .actor import ContextProvider
+from .actor import ContextProvider, DbtSLMixin
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
@@ -38,7 +38,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_find_tables_model,
+    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_dbtsl_query_params,
+    make_find_tables_model,
 )
 from .tools import ToolUser
 from .translate import param_to_pydantic
@@ -712,6 +713,187 @@ class SQLAgent(LumenBaseAgent):
             return None
         self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
         return pipeline
+
+
+class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
+    """
+    Responsible for creating and executing queries against a dbt Semantic Layer
+    to answer user questions about business metrics.
+    """
+
+    purpose = param.String(default="""
+        Responsible for displaying tables to answer user queries about
+        business metrics using dbt Semantic Layers. This agent can compile
+        and execute metric queries against a dbt Semantic Layer to analyze
+        metrics like revenue, active users, and other business KPIs across
+        different dimensions and time periods.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "response_model": make_dbtsl_query_params,
+                "template": PROMPTS_DIR / "DbtSLAgent" / "main.jinja2",
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
+        }
+    )
+
+    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
+
+    requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
+
+    _extensions = ('codeeditor', 'tabulator',)
+
+    _output_type = SQLOutput
+
+    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        """
+        Update the SQL specification in memory.
+        """
+        memory["sql"] = event.new
+
+    @retry_llm_output()
+    async def _create_valid_query(
+        self,
+        messages: list[Message],
+        title: str | None = None,
+        errors: list | None = None
+    ):
+        """
+        Create a valid dbt Semantic Layer query based on user messages.
+        """
+        if errors:
+            metaset = self._memory["dbtsl_metaset"]
+            metrics_context = "\n".join(str(metric) for metric in metaset.metrics.values())
+            errors_text = "\n".join(f"{i+1}. {error}" for i, error in enumerate(errors))
+            content = (
+                f"\n\nYou are a world-class dbt Semantic Layer expert. Identify why this query failed:\n\n"
+                f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors_text}\n```\n\n"
+                f"For extra context, here are the metrics available:\n{metrics_context}\n"
+            )
+            messages = mutate_user_message(content, messages)
+
+        system_prompt = await self._render_prompt(
+            "main",
+            messages,
+            has_errors=bool(errors),
+        )
+
+        with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=self._get_model("main")
+            )
+
+            query_params = None
+            try:
+                async for output in response:
+                    step_message = output.chain_of_thought or ""
+                    step.stream(step_message, replace=True)
+
+                query_params = {
+                    "metrics": output.metrics,
+                    "group_by": output.group_by,
+                    "limit": output.limit,
+                    "order_by": output.order_by,
+                    "where": output.where,
+                }
+                expr_slug = output.expr_slug
+
+                # Ensure required fields are present
+                if "metrics" not in query_params or not query_params["metrics"]:
+                    raise ValueError("Query must include at least one metric")
+
+                # Ensure limit exists with a default value if not provided
+                if "limit" not in query_params or not query_params["limit"]:
+                    query_params["limit"] = 100
+
+                import json
+                formatted_params = json.dumps(query_params, indent=2)
+                step.stream(f"\n`{expr_slug}`\n```json\n{formatted_params}\n```", replace=True)
+
+                self._memory["dbtsl_query_params"] = query_params
+            except asyncio.CancelledError as e:
+                step.failed_title = "Cancelled dbt Semantic Layer query generation"
+                raise e
+
+        if step.failed_title and step.failed_title.startswith("Cancelled"):
+            raise asyncio.CancelledError()
+        elif not query_params:
+            raise ValueError("No dbt Semantic Layer query was generated.")
+
+        try:
+            # Execute the query against the dbt Semantic Layer
+            async with self._dbtsl_client.session():
+                sql_query = await self._dbtsl_client.compile(
+                    metrics=query_params.get('metrics', []),
+                    group_by=query_params.get('group_by'),
+                    limit=query_params.get('limit'),
+                    order_by=query_params.get('order_by'),
+                    where=query_params.get('where')
+                )
+
+                # Log the compiled SQL for debugging
+                step.stream(f"\nCompiled SQL:\n```sql\n{sql_query}\n```", replace=False)
+
+            # Create a SQL source from the compiled query
+            source = self._memory["source"]
+            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+            self._memory["sql"] = sql_query
+
+            # Apply transforms
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            transformed_sql_query = sql_query
+            for sql_transform in sql_transforms:
+                transformed_sql_query = sql_transform.apply(transformed_sql_query)
+                if transformed_sql_query != sql_query:
+                    stream_details(f'```sql\n{transformed_sql_query}\n```', step, title=f"{sql_transform.__class__.__name__} Applied")
+
+            # Create pipeline and get data
+            pipeline = await get_pipeline(
+                source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
+            )
+
+            df = await get_data(pipeline)
+
+            # Update memory
+            self._memory["data"] = await describe_data(df)
+            self._memory["sources"].append(sql_expr_source)
+            self._memory["source"] = sql_expr_source
+            self._memory["pipeline"] = pipeline
+            self._memory["table"] = pipeline.table
+
+            return sql_query, pipeline
+
+        except Exception as e:
+            report_error(e, step)
+            raise e
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Responds to user messages by generating and executing a dbt Semantic Layer query.
+        """
+        try:
+            sql_query, pipeline = await self._create_valid_query(messages, step_title)
+        except RetriesExceededError as e:
+            traceback.print_exception(e)
+            self._memory["__error__"] = str(e)
+            return None
+
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        return pipeline
+
 
 
 class BaseViewAgent(LumenBaseAgent):

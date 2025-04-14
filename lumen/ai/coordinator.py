@@ -856,21 +856,48 @@ class Planner(Coordinator):
         unmet_dependencies = set()
         tools = {tool.name: tool for tool in self._tools["main"]}
         steps = []
+
+        # First, add placeholders for all plan steps to see the complete dependency tree
+        planned_steps = []
         for step in plan.steps:
             key = step.expert_or_tool
             if key in agents:
                 subagent = agents[key]
             elif key in tools:
                 subagent = tools[key]
+            else:
+                unmet_dependencies.add(f"Unknown agent/tool: {key}")
+                continue
+
             requires = set(await subagent.requirements(messages))
-            provided |= set(subagent.provides)
-            unmet_dependencies = (unmet_dependencies | requires) - provided
-            has_table_lookup = any(
-                isinstance(node.actor, TableLookup)
-                for node in execution_graph
-            )
-            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
-                provided |= set(agents['SQLAgent'].provides)
+            provides = set(subagent.provides)
+
+            planned_steps.append({
+                "agent": subagent,
+                "requires": requires,
+                "provides": provides,
+                "step": step
+            })
+
+        # Then, execute steps in order ensuring dependencies are met
+        for planned_step in planned_steps:
+            subagent = planned_step["agent"]
+            step = planned_step["step"]
+            requires = planned_step["requires"]
+            provides = planned_step["provides"]
+
+            # Check for unmet dependencies for this step
+            step_unmet = requires - provided
+
+            if step_unmet:
+                unmet_dependencies.update(step_unmet)
+                continue
+
+            # Handle special case for TableLookup + SQLAgent
+            if "table" in requires and not table_provided and "SQLAgent" in agents and any(
+                isinstance(node.actor, TableLookup) for node in execution_graph
+            ):
+                provided.update(set(agents['SQLAgent'].provides))
                 sql_step = type(step)(
                     expert_or_tool='SQLAgent',
                     instruction='Load the table',
@@ -880,7 +907,7 @@ class Planner(Coordinator):
                 execution_graph.append(
                     ExecutionNode(
                         actor=agents['SQLAgent'],
-                        provides=['table'],
+                        provides=agents['SQLAgent'].provides,  # Include all provided items
                         instruction=sql_step.instruction,
                         title=sql_step.title,
                         render_output=False
@@ -888,23 +915,30 @@ class Planner(Coordinator):
                 )
                 steps.append(sql_step)
                 table_provided = True
-                unmet_dependencies -= provided
+
+            # Add the current step to the execution graph
             execution_graph.append(
                 ExecutionNode(
                     actor=subagent,
-                    provides=subagent.provides,
+                    provides=provides,  # Include all provided items
                     instruction=step.instruction,
                     title=step.title,
                     render_output=step.render_output
                 )
             )
             steps.append(step)
-        last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
+
+            # Update provided set with all items this step provides
+            provided.update(provides)
+
+        # Add summarization step if needed
+        last_node = execution_graph[-1] if execution_graph else None
+        if last_node and isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 expert = "AnalystAgent"
             else:
                 expert = "ChatAgent"
+
             summarize_step = type(step)(
                 expert_or_tool=expert,
                 instruction='Summarize the results.',
@@ -915,12 +949,13 @@ class Planner(Coordinator):
             execution_graph.append(
                 ExecutionNode(
                     actor=agents[expert],
-                    provides=[],
+                    provides=agents[expert].provides,  # Include all provided items
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                     render_output=summarize_step.render_output
                 )
             )
+
         plan.steps = steps
         return execution_graph, unmet_dependencies
 

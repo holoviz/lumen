@@ -28,6 +28,15 @@ Import Tools Rules:
 {% endblock -%}
 
 {% block context -%}
+Current memory context includes: {{ memory.keys() | list }}
+
+{%- if 'planner_context' in memory and memory['planner_context'] %}
+Here is additional context gathered to help with planning:
+{% for key, value in memory['planner_context'].items() %}
+- {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
+
 {%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
 The current selected columns in memory is:
 {{ memory['vector_metaset'].selected_columns }}
@@ -47,6 +56,7 @@ Here are the documents you have access to:
 
 {%- endfor %}
 {%- endif %}
+
 Here's the choice of experts and their uses:
 {%- for agent in agents %}
 - `{{ agent.name[:-5] }}`
@@ -86,7 +96,8 @@ These previous plans failed because it did not satisfy all requirements; the las
 
 Please include some of these these experts to provide for the missing requirements:
 {%- for candidate in candidates %}
-- `{{ candidate.name[:-5] }}`
+- `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.name }}`
+  Provides: {{ candidate.provides }}
 {%- endfor %}
 {% endif %}
 {%- endblock -%}
