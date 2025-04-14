@@ -665,6 +665,10 @@ class SQLAgent(LumenBaseAgent):
             vector_metaset.selected_columns or
             vector_metaset.vector_metadata_map
         )
+        if "previous_state" in self._memory:
+            previous_state = self._memory["previous_state"]
+            selected_slugs += list(previous_state.selected_columns)
+
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 
@@ -689,7 +693,7 @@ class SQLAgent(LumenBaseAgent):
                     step.stream(chain_of_thought, replace=True)
 
                 if selected_slugs := output.selected_tables:
-                    stream_details('\n'.join(selected_slugs), step, title="Relevant tables", auto=False)
+                    stream_details('\n'.join(slug.split(SOURCE_TABLE_SEPARATOR)[-1] for slug in selected_slugs), step, title="Relevant tables", auto=False)
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
             tables_to_source = {}
@@ -697,7 +701,7 @@ class SQLAgent(LumenBaseAgent):
             for table_slug in selected_slugs:
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
-                step.stream(f"\n{a_table!r}")
+                step.stream(f"\n\n{a_table!r}")
         return tables_to_source, chain_of_thought
 
     async def respond(

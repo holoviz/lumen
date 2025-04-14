@@ -58,13 +58,13 @@ class VectorMetaset:
                 continue
 
             vector_metadata = self.vector_metadata_map[table_slug]
-            context += f"\n\n{table_slug!r} Similarity: ({vector_metadata.similarity:.3f})\n"
+            context += f"\n\n{table_slug!r}\n\nSimilarity: ({vector_metadata.similarity:.3f})\n\n"
 
             if vector_metadata.description:
-                context += f"Description: {vector_metadata.description}\n"
+                context += f"Description: {vector_metadata.description}\n\n"
 
             if vector_metadata.base_sql:
-                context += f"Base SQL: {vector_metadata.base_sql}\n"
+                context += f"Base SQL: {vector_metadata.base_sql}\n\n"
 
             max_length = 20
             cols_to_show = vector_metadata.columns
@@ -82,6 +82,9 @@ class VectorMetaset:
             for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
+
+                if i == 0:
+                    context += "Columns:\n"
 
                 col_name = truncate_string(col.name) if truncate else col.name
                 context += f"{orig_idx}. {col_name!r}"
@@ -192,6 +195,9 @@ class SQLMetaset:
             for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
+
+                if i == 0:
+                    context += "Columns:\n"
 
                 schema_data = None
                 if sql_data and col.name in sql_data.schema:
