@@ -29,7 +29,7 @@ from ..transforms.sql import SQLLimit
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
-from .actor import ContextProvider, DbtSLMixin
+from .actor import ContextProvider, DbtslMixin
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
@@ -38,7 +38,7 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    DbtSLQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
+    DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
     make_find_tables_model,
 )
 from .tools import ToolUser
@@ -715,7 +715,7 @@ class SQLAgent(LumenBaseAgent):
         return pipeline
 
 
-class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
+class DbtslAgent(LumenBaseAgent, DbtslMixin):
     """
     Responsible for creating and executing queries against a dbt Semantic Layer
     to answer user questions about business metrics.
@@ -731,8 +731,8 @@ class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
     prompts = param.Dict(
         default={
             "main": {
-                "response_model": DbtSLQueryParams,
-                "template": PROMPTS_DIR / "DbtSLAgent" / "main.jinja2",
+                "response_model": DbtslQueryParams,
+                "template": PROMPTS_DIR / "DbtslAgent" / "main.jinja2",
             },
             "retry_output": {
                 "response_model": RetrySpec,
@@ -788,7 +788,7 @@ class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
                 messages,
                 system=system_prompt,
                 model_spec=model_spec,
-                response_model=DbtSLQueryParams,
+                response_model=DbtslQueryParams,
             )
 
             query_params = None
