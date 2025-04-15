@@ -108,7 +108,6 @@ def make_columns_selection(table_slugs: list[str], **context):
             description="A list of 0-based column indices for the table specified by `table_slug`. This indicates which columns should be included in the output."
         )
 
-
     class ColumnsSelection(PartialBaseModel):
         """
         Model for selecting a subset of columns from tables.

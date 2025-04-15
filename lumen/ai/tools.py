@@ -653,6 +653,15 @@ class TableLookup(VectorLookupTool):
         if not self.enable_select_columns:
             return False
 
+        cols_lengths = set()
+        if "vector_metaset" in self._memory:
+            vector_metaset = self._memory["vector_metaset"]
+            for vector_metadata in vector_metaset.vector_metadata_map.values():
+                cols_lengths.add(len(vector_metadata.columns))
+
+        if max(cols_lengths) <= 30 and sum(cols_lengths) <= 60:
+            return False
+
         try:
             # Use the YesNo prompt to check if we should subset columns
             result = await self._invoke_prompt(
