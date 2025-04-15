@@ -659,7 +659,7 @@ class TableLookup(VectorLookupTool):
             for vector_metadata in vector_metaset.vector_metadata_map.values():
                 cols_lengths.add(len(vector_metadata.columns))
 
-        if max(cols_lengths) <= 15:
+        if max(cols_lengths) <= 30 and sum(cols_lengths) <= 60:
             return False
 
         try:
