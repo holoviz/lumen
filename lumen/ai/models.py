@@ -104,13 +104,9 @@ def make_columns_selection(table_slugs: list[str], **context):
             description=f"The table slug, i.e. '<source>{SOURCE_TABLE_SEPARATOR}<table>'"
         )
 
-        column_indices: list[int] | None = Field(
-            description=(
-                "A list of 0-based column indices for the table specified by `table_slug`. "
-                "This indicates which columns should be included in the output. Use None if all columns are needed."
-            )
+        column_indices: list[int] = Field(
+            description="A list of 0-based column indices for the table specified by `table_slug`. This indicates which columns should be included in the output."
         )
-
 
     class ColumnsSelection(PartialBaseModel):
         """
