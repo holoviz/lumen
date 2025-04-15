@@ -26,16 +26,18 @@ class NumpyEmbeddings(Embeddings):
     >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
+    embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
+
     hash_func = param.Callable(default=hash, doc="""
         The hashing function to use to map n-grams to the vocabulary.""")
 
-    embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
+    seed = param.Integer(default=42, doc="The seed for the random number generator.")
 
     vocab_size = param.Integer(default=5000, doc="The size of the vocabulary.")
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._projection = np.random.Generator(np.random.PCG64()).normal(
+        self._projection = np.random.Generator(np.random.PCG64(seed=self.seed)).normal(
             0, 1, (self.vocab_size, self.embedding_dim)
         )
 
