@@ -377,12 +377,15 @@ class Coordinator(Viewer, ToolUser):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> bool:
+    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> tuple[bool, set[str]]:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
         render_output = node.render_output and self.render_output
         agent_name = type(subagent).name.replace('Agent', '')
+
+        # Track what this node provides
+        node_provided = set()
 
         # attach the new steps to the existing steps--used when there is intermediate Lumen output
         steps_layout = None
@@ -434,6 +437,12 @@ class Coordinator(Viewer, ToolUser):
             if (unprovided and agent_name != "Source") or (len(unprovided) > 1 and agent_name == "Source"):
                 step.failed_title = f"{agent_name}Agent did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{agent_name} failed to provide declared context.")
+
+            # Track what was successfully provided by this node
+            for provided_key in subagent.provides:
+                if provided_key in self._memory:
+                    node_provided.add(provided_key)
+
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             # Handle Tool specific behaviors
             if isinstance(subagent, Tool):
@@ -455,7 +464,7 @@ class Coordinator(Viewer, ToolUser):
                     message_kwargs = dict(value=out, user=subagent.name)
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
-        return step.status == "success"
+        return step.status == "success", node_provided
 
     def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
         if isinstance(obj, (Column, Card, Tabs)):
@@ -501,10 +510,17 @@ class Coordinator(Viewer, ToolUser):
                 )
                 self.interface.stream(msg, user='Lumen')
                 return msg
+
+            # Track what has been provided during execution
+            all_provided = set()
+
             for i, node in enumerate(execution_graph):
-                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
+                succeeded, node_provided = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
                 if not succeeded:
                     break
+                # Update the provided set with what this node provided
+                all_provided.update(node_provided)
+
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             log_debug("\033[92mCompleted: Coordinator\033[0m", show_sep="below")
@@ -733,14 +749,17 @@ class Planner(Coordinator):
             **params
         )
 
-    async def _execute_planner_tools(self, messages: list[Message]) -> None:
+    async def _execute_planner_tools(self, messages: list[Message]) -> set[str]:
         """Execute planner tools to gather context before planning."""
         if not self.planner_tools:
-            return
+            return set()
 
         # Initialize planner context in memory
         if "planner_context" not in self._memory:
             self._memory["planner_context"] = {}
+
+        # Track what has been provided by the tools
+        provided = set()
 
         # Extract user query from the latest user message
         user_query = next((msg["content"] for msg in reversed(messages)
@@ -750,20 +769,23 @@ class Planner(Coordinator):
             for tool in self.planner_tools:
                 tool_name = getattr(tool, "name", type(tool).__name__)
 
-                # Skip tool if not relevant
-                is_relevant = await self._invoke_prompt(
-                    "tool_relevance",
-                    messages,
-                    tool_name=tool_name,
-                    tool_description=getattr(tool, "description", ""),
-                    tool_output="",  # No output yet since we're checking before running
-                    agent_name="PlannerAgent",
-                    agent_purpose="Planning how to solve the user query by assigning tasks to experts and tools",
-                    agent_task=f"Plan steps to answer: {user_query}",
-                )
+                # TODO: implement this
+                # # Skip tool if not relevant
+                # is_relevant = await self._invoke_prompt(
+                #     "tool_relevance",
+                #     messages,
+                #     tool_name=tool_name,
+                #     tool_description=getattr(tool, "description", ""),
+                #     tool_output="",  # No output yet since we're checking before running
+                #     agent_name="PlannerAgent",
+                #     agent_purpose="Planning how to solve the user query by assigning tasks to experts and tools",
+                #     agent_task=f"Plan steps to answer: {user_query}",
+                # )
 
-                if not is_relevant.yes:
-                    continue
+                # print(is_relevant)
+
+                # if not is_relevant.yes:
+                #     continue
 
                 step.stream(f"Using {tool_name} to gather planning context...")
 
@@ -777,24 +799,27 @@ class Planner(Coordinator):
                 )
 
                 # Skip to next tool if execution fails
-                success = await self._execute_graph_node(node, messages)
+                success, node_provided = await self._execute_graph_node(node, messages)
                 if not success:
-                    step.stream(f"✗ Failed to gather context from {tool_name}")
+                    step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
 
-                # Store provided outputs in planner_context
-                for provided in tool.provides:
-                    if provided in self._memory:
-                        self._memory["planner_context"][provided] = self._memory[provided]
+                # Store provided outputs in planner_context and track what was provided
+                for provided_key in tool.provides:
+                    if provided_key in self._memory:
+                        self._memory["planner_context"][provided_key] = self._memory[provided_key]
+                        provided.add(provided_key)
 
                 step.stream(f"✓ Gathered context from {tool_name}")
 
             # Summarize results
             context_keys = list(self._memory["planner_context"].keys())
             if context_keys:
-                step.success_title = f"Gathered planning context: {', '.join(context_keys)}"
+                step.success_title = f"\n\nGathered planning context: {', '.join(context_keys)}"
             else:
-                step.success_title = "No additional context needed for planning"
+                step.success_title = "\n\nNo additional context needed for planning"
+
+            return provided
 
     async def _make_plan(
         self,
@@ -805,6 +830,7 @@ class Planner(Coordinator):
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
+        provided: set[str] = set(),
     ) -> BaseModel:
         tools = self._tools["main"]
         reasoning = None
@@ -828,6 +854,7 @@ class Planner(Coordinator):
                 # Gather candidates that can provide unmet dependencies
                 candidates = agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
+                provided=provided,  # Include what has been provided so far
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(
@@ -849,10 +876,14 @@ class Planner(Coordinator):
         )
         return await self._fill_model(mutated_messages, system, plan_model)
 
-    async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
+    async def _resolve_plan(self, plan, agents, messages, provided=None) -> tuple[list[ExecutionNode], set[str]]:
+        # Initialize with what has already been provided
+        provided = set(provided) if provided else set()
+        # Add everything currently in memory too
+        provided.update(set(self._memory))
+
         table_provided = False
         execution_graph = []
-        provided = set(self._memory)
         unmet_dependencies = set()
         tools = {tool.name: tool for tool in self._tools["main"]}
         steps = []
@@ -961,7 +992,7 @@ class Planner(Coordinator):
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
         # Execute planner tools to gather context before planning
-        await self._execute_planner_tools(messages)
+        provided = await self._execute_planner_tools(messages)
 
         tool_names = [tool.name for tool in self._tools["main"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
@@ -984,7 +1015,8 @@ class Planner(Coordinator):
                 plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, unmet_dependencies, previous_plans, reason_model, plan_model, istep
+                        messages, agents, unmet_dependencies, previous_plans,
+                        reason_model, plan_model, istep, provided
                     )
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
@@ -994,7 +1026,7 @@ class Planner(Coordinator):
                     istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                     traceback.print_exception(e)
                     raise e
-                execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
+                execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages, provided)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                     attempts += 1

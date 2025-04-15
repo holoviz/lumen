@@ -251,6 +251,11 @@ class DbtSLQueryParams(BaseModel):
         description="The maximum number of rows to return."
     )
 
+    metrics: list[str] = Field(
+        default_factory=list,
+        description="A list of metrics to include in the query, e.g. ['revenue']"
+    )
+
     order_by: list[str] = Field(
         default_factory=list,
         description="A list of columns or expressions to order the results by."

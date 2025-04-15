@@ -706,7 +706,7 @@ class ExplorerUI(UI):
             async def render_plan(_, old, new):
                 nonlocal index, new_exploration
                 plan = local_memory["plan"]
-                if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
+                if any(step.expert_or_tool in ('SQLAgent', 'DbtSLAgent') for step in plan.steps):
                     # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1
