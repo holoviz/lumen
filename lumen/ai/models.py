@@ -224,7 +224,7 @@ def make_iterative_selection_model(table_slugs):
     return table_model
 
 
-class DbtSLQueryParams(BaseModel):
+class DbtslQueryParams(BaseModel):
     """
     Model for dbt Semantic Layer query parameters
     """

@@ -350,7 +350,7 @@ class ContextProvider(param.Parameterized):
         return self.requires
 
 
-class DbtSLMixin(param.Parameterized):
+class DbtslMixin(param.Parameterized):
 
     auth_token = param.String(default=None, doc="""
         The auth token for the dbt semantic layer client;

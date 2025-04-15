@@ -14,7 +14,7 @@ from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
 from ..views.base import View
-from .actor import Actor, ContextProvider, DbtSLMixin
+from .actor import Actor, ContextProvider, DbtslMixin
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
@@ -23,7 +23,7 @@ from .models import (
     make_refined_query_model,
 )
 from .schemas import (
-    Column, DbtSLMetadata, DbtSLMetaset, PreviousState, SQLMetadata,
+    Column, DbtslMetadata, DbtslMetaset, PreviousState, SQLMetadata,
     SQLMetaset, VectorMetadata, VectorMetaset,
 )
 from .translate import function_to_model
@@ -1049,7 +1049,7 @@ class IterativeTableLookup(TableLookup):
         return sql_metaset.selected_context
 
 
-class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
+class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
     """
     SemanticLayerLookup tool that creates a vector store of all available dbt semantic layers
     and responds with relevant metrics for user queries.
@@ -1108,11 +1108,11 @@ class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
-        Fetches metrics based on the user query, populates the DbtSLMetaset,
+        Fetches metrics based on the user query, populates the DbtslMetaset,
         and returns formatted context.
 
         This method searches the vector store for metrics relevant to the user query,
-        creates a DbtSLMetaset from the results, and returns them as context for the LLM.
+        creates a DbtslMetaset from the results, and returns them as context for the LLM.
         """
         query = messages[-1]["content"]
 
@@ -1131,7 +1131,7 @@ class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
             if metric_name not in self._metric_objs:
                 continue
             metric_obj = self._metric_objs[metric_name]
-            metric = DbtSLMetadata(
+            metric = DbtslMetadata(
                 name=metric_name,
                 similarity=result['similarity'],
                 description=metric_obj.description,
@@ -1141,7 +1141,7 @@ class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
                 ]
             )
             metrics[metric_name] = metric
-        metric_set = DbtSLMetaset(query=query, metrics=metrics)
+        metric_set = DbtslMetaset(query=query, metrics=metrics)
         self._memory["dbtsl_metaset"] = metric_set
         breakpoint()
         return str(metric_set)

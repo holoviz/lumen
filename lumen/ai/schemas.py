@@ -319,7 +319,7 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
 
 
 @dataclass
-class DbtSLMetadata:
+class DbtslMetadata:
 
     name: str
     similarity: float
@@ -336,10 +336,10 @@ class DbtSLMetadata:
         )
 
 @dataclass
-class DbtSLMetaset:
+class DbtslMetaset:
 
     query: str
-    metrics: dict[str, DbtSLMetadata]
+    metrics: dict[str, DbtslMetadata]
 
     def __str__(self) -> str:
         context = "Below are the relevant metrics to use:\n\n"
