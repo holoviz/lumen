@@ -46,19 +46,30 @@ class ToolUser(Actor):
         super().__init__(**params)
         self._tools = {}
 
+
+
         for prompt_name in self.prompts:
+            prompt_tools = self._lookup_prompt_key(prompt_name, "tools")
+            vector_store = next(
+                (tool.vector_store for tool in prompt_tools if isinstance(tool, VectorLookupTool)), None
+            )
             self._tools[prompt_name] = []
-            for tool in self._lookup_prompt_key(prompt_name, "tools"):
+            for tool in prompt_tools:
                 if isinstance(tool, Actor):
                     if tool.llm is None:
                         tool.llm = self.llm
                     if tool.interface is None:
                         tool.interface = self.interface
+                    if hasattr(tool, "vector_store") and vector_store:
+                        tool.vector_store = vector_store
                     self._tools[prompt_name].append(tool)
                 elif isinstance(tool, FunctionType):
                     self._tools[prompt_name].append(FunctionTool(tool, llm=self.llm, interface=self.interface))
                 else:
-                    self._tools[prompt_name].append(tool(llm=self.llm, interface=self.interface))
+                    tool_kwargs = dict(llm=self.llm, interface=self.interface)
+                    if hasattr(tool, "vector_store") and vector_store:
+                        tool_kwargs["vector_store"] = vector_store
+                    self._tools[prompt_name].append(tool(**tool_kwargs))
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""

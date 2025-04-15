@@ -217,7 +217,27 @@ class Coordinator(Viewer, ToolUser):
             agent.interface = interface
             instantiated.append(agent)
 
+
+        # If none of the tools provide vector_metaset, add tablelookup
+        provides_vector_metaset = any(
+            "vector_metaset" in tool.provides
+            for tool in tools or []
+        )
+        provides_sql_metaset = any(
+            "sql_metaset" in tool.provides
+            for tool in tools or []
+        )
+        if not provides_vector_metaset and not provides_sql_metaset:
+            tools += [TableLookup, IterativeTableLookup]
+        elif not provides_vector_metaset:
+            # get vector_store from one of the tools
+            tools += [TableLookup]
+        elif not provides_sql_metaset:
+            tools += [IterativeTableLookup]
+
         # Add user-provided tools to the list of tools of the coordinator
+        if "tools" not in self.prompts["main"]:
+            self.prompts["main"]["tools"] = []
         self.prompts["main"]["tools"] += [tool for tool in tools]
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
@@ -681,7 +701,6 @@ class Planner(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
-                "tools": [TableLookup, IterativeTableLookup]
             },
         }
     )
