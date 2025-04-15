@@ -230,7 +230,6 @@ class Coordinator(Viewer, ToolUser):
         if not provides_vector_metaset and not provides_sql_metaset:
             tools += [TableLookup, IterativeTableLookup]
         elif not provides_vector_metaset:
-            # get vector_store from one of the tools
             tools += [TableLookup]
         elif not provides_sql_metaset:
             tools += [IterativeTableLookup]
