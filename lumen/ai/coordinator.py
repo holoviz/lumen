@@ -377,7 +377,13 @@ class Coordinator(Viewer, ToolUser):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> tuple[bool, set[str]]:
+    async def _execute_graph_node(
+        self,
+        node: ExecutionNode,
+        messages: list[Message],
+        execution_graph: list[ExecutionNode] | None = None,
+        allow_missing: bool = False,
+    ) -> tuple[bool, set[str]]:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -435,8 +441,14 @@ class Coordinator(Viewer, ToolUser):
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
             if (unprovided and agent_name != "Source") or (len(unprovided) > 1 and agent_name == "Source"):
-                step.failed_title = f"{agent_name}Agent did not provide {', '.join(unprovided)}. Aborting the plan."
-                raise RuntimeError(f"{agent_name} failed to provide declared context.")
+                if not allow_missing:
+                    step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
+                    raise RuntimeError(f"{agent_name} failed to provide declared context.")
+                else:
+                    step.stream(
+                        f"\n\n✗ {agent_name} agent did not provide the following context: {', '.join(unprovided)}. "
+                        "Continuing with the plan."
+                    )
 
             # Track what was successfully provided by this node
             for provided_key in subagent.provides:
@@ -530,17 +542,16 @@ class Coordinator(Viewer, ToolUser):
                 message_obj.object.collapsed = True
                 break
 
-    async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
-        tool = next((t for t in self._tools["main"] if t.name == tool_name), None)
+    async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message]) -> bool:
         result = await self._invoke_prompt(
             "tool_relevance",
             messages,
-            tool_name=tool_name,
-            tool_description=getattr(tool, "description", ""),
+            tool_name=tool.name,
+            tool_purpose=getattr(tool, "purpose", ""),
             tool_output=tool_output,
-            agent_name=agent.name,
-            agent_purpose=agent.purpose,
-            agent_task=agent_task,
+            actor_name=actor.name,
+            actor_purpose=getattr(actor, "purpose", actor.__doc__),
+            actor_task=actor_task,
         )
 
         return result.yes
@@ -591,7 +602,7 @@ class Coordinator(Viewer, ToolUser):
             else:
                 # Otherwise, check semantic relevance
                 is_relevant = await self._check_tool_relevance(
-                    tool.name, result, agent, task, messages
+                    tool, result, agent, task, messages
                 )
 
             if is_relevant:
@@ -754,42 +765,26 @@ class Planner(Coordinator):
         if not self.planner_tools:
             return set()
 
-        # Initialize planner context in memory
         if "planner_context" not in self._memory:
             self._memory["planner_context"] = {}
 
-        # Track what has been provided by the tools
         provided = set()
-
-        # Extract user query from the latest user message
-        user_query = next((msg["content"] for msg in reversed(messages)
-                         if msg.get("role") == "user"), "")
-
+        user_query = next((
+            msg["content"] for msg in reversed(messages)
+            if msg.get("role") == "user"), ""
+        )
         with self.interface.add_step(title="Gathering context for planning...", user="Assistant") as step:
             for tool in self.planner_tools:
+                is_relevant = await self._check_tool_relevance(
+                    tool, "", self, f"Gather context for planning to answer {user_query}", messages
+                )
+
+                if not is_relevant:
+                    continue
+
                 tool_name = getattr(tool, "name", type(tool).__name__)
-
-                # TODO: implement this
-                # # Skip tool if not relevant
-                # is_relevant = await self._invoke_prompt(
-                #     "tool_relevance",
-                #     messages,
-                #     tool_name=tool_name,
-                #     tool_description=getattr(tool, "description", ""),
-                #     tool_output="",  # No output yet since we're checking before running
-                #     agent_name="PlannerAgent",
-                #     agent_purpose="Planning how to solve the user query by assigning tasks to experts and tools",
-                #     agent_task=f"Plan steps to answer: {user_query}",
-                # )
-
-                # print(is_relevant)
-
-                # if not is_relevant.yes:
-                #     continue
-
                 step.stream(f"Using {tool_name} to gather planning context...")
 
-                # Execute the tool
                 node = ExecutionNode(
                     actor=tool,
                     provides=tool.provides,
@@ -798,21 +793,18 @@ class Planner(Coordinator):
                     render_output=False
                 )
 
-                # Skip to next tool if execution fails
-                success, node_provided = await self._execute_graph_node(node, messages)
+                success, node_provided = await self._execute_graph_node(node, messages, allow_missing=True)
                 if not success:
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
 
-                # Store provided outputs in planner_context and track what was provided
-                for provided_key in tool.provides:
+                for provided_key in node_provided:
                     if provided_key in self._memory:
                         self._memory["planner_context"][provided_key] = self._memory[provided_key]
                         provided.add(provided_key)
 
-                step.stream(f"✓ Gathered context from {tool_name}")
+                breakpoint()
 
-            # Summarize results
             context_keys = list(self._memory["planner_context"].keys())
             if context_keys:
                 step.success_title = f"\n\nGathered planning context: {', '.join(context_keys)}"

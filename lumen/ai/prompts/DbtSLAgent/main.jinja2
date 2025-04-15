@@ -38,8 +38,7 @@ If there are issues with the query, here are some common fixes:
 {%- endblock -%}
 
 {%- block examples %}
-Example Query:
-
+Good example:
 ```python
 # Monthly metrics for the current year
 query_params = {
@@ -50,4 +49,12 @@ query_params = {
     "limit": 100
 }
 ```
+
+Failing example (mismatch variable name in group_by and where):
+query_params = {
+    "metrics": ["current_mrr_dollars"],
+    "group_by": ["metric_time__month"],
+    "where": ["date_trunc('year', metric_time) = date_trunc('year', current_date)"],
+    "limit": 100
+}
 {% endblock -%}

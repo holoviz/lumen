@@ -1055,15 +1055,15 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
     and responds with relevant metrics for user queries.
     """
 
-    min_similarity = param.Number(default=0.2, doc="""
+    min_similarity = param.Number(default=0.1, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=3, bounds=(1, None), doc="""
+    n = param.Integer(default=5, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     purpose = param.String(default="""
-        Looks up and is able to query additional dbt semantic layers based on the user query with a vector store.
-        Useful for quickly gathering information about dbt semantic layers and their metrics.
+        Looks up additional context by querying dbt semantic layers based on the user query with a vector store.
+        Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
         For every distinct query, you will need this.""")
 
     requires = param.List(default=["source"], readonly=True, doc="""
@@ -1105,6 +1105,7 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
             }
 
             self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
+        print("DONE...")
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -1124,7 +1125,8 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
         ]
 
         if not closest_metrics:
-            return "No relevant metrics found for your query."
+            return
+
         metrics = {}
         for result in closest_metrics:
             metric_name = result['metadata']['name']
@@ -1141,10 +1143,9 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
                 ]
             )
             metrics[metric_name] = metric
-        metric_set = DbtslMetaset(query=query, metrics=metrics)
-        self._memory["dbtsl_metaset"] = metric_set
-        breakpoint()
-        return str(metric_set)
+        metaset = DbtslMetaset(query=query, metrics=metrics)
+        self._memory["dbtsl_metaset"] = metaset
+        return str(metaset)
 
 
 class FunctionTool(Tool):
