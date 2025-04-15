@@ -498,8 +498,8 @@ class TableLookup(VectorLookupTool):
 
         # Create column schema objects
         columns = []
-        if self.include_columns and (columns := vector_info.get('columns', {})):
-            for col_name, col_info in columns.items():
+        if self.include_columns and (vector_columns := vector_info.get('columns', {})):
+            for col_name, col_info in vector_columns.items():
                 col_desc = col_info.pop("description", "")
                 column = Column(
                     name=col_name,
@@ -519,9 +519,9 @@ class TableLookup(VectorLookupTool):
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
-        if self.include_columns and (columns := vector_info.pop('columns', {})):
+        if self.include_columns and (vector_columns := vector_info.pop('columns', {})):
             enriched_text += "\nCols:"
-            for col_name, col_info in columns.items():
+            for col_name, col_info in vector_columns.items():
                 col_text = f"\n- {col_name}"
                 if col_info.get("description"):
                     col_text += f": {col_info['description']}"
