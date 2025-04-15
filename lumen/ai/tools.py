@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import traceback
 
 from functools import partial
@@ -12,7 +13,7 @@ import sqlglot
 
 from panel.io.state import state
 from panel.viewable import Viewable
-from sqlglot.expressions import Column as SQLColumn, Table as SQLTable
+from sqlglot.expressions import Table as SQLTable
 
 from ..sources.duckdb import DuckDBSource
 from ..views.base import View
@@ -258,7 +259,7 @@ class VectorLookupTool(Tool):
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
             stream_details("\n".join(
-                f'```\n{result["text"]}\n\n{result["metadata"]}```' for result in results
+                f'```\n{result["text"]}\n\n{result["metadata"]}\n```' for result in results
             ), step, title=f"{len(results)} chunks", auto=False)
 
             refinement_history = []
@@ -523,6 +524,9 @@ class TableLookup(VectorLookupTool):
 
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         vector_metadata["enriched"] = True
+
+        # TODO: Investigate whether these enriched text should actually be in metadata??
+        # is it duplicate??
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop('description', ''):
             enriched_text += f"\nDescription: {description}"
@@ -989,11 +993,9 @@ class IterativeTableLookup(TableLookup):
                         else:
                             schema = await get_schema(source_obj, table_name, reduce_enums=False)
 
-                        # Create TableSQLMetadata object
                         sql_metadata = SQLMetadata(
                             table_slug=table_slug,
                             schema=schema,
-                            base_sql=source_obj.get_sql_expr(source_obj.normalize_table(table_name)),
                         )
                         sql_metadata_map[table_slug] = sql_metadata
 
@@ -1045,34 +1047,140 @@ class DbtSemanticLayerLookup(VectorLookupTool):
     and responds with relevant metrics for user queries.
     """
 
+    auth_token = param.String(default=None, doc="""
+        The auth token for the dbt semantic layer client;
+        if not provided will fetched from DBT_AUTH_TOKEN env var.""")
+
+    environment_id = param.Integer(default=None, doc="""
+        The environment ID for the dbt semantic layer client.""")
+
+    host = param.String(default="semantic-layer.cloud.getdbt.com", doc="""
+        The host for the dbt semantic layer client.""")
+
+    min_similarity = param.Number(default=0.2, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=3, bounds=(1, None), doc="""
+        The number of document results to return.""")
+
     purpose = param.String(default="""
         Looks up and is able to query additional dbt semantic layers based on the user query with a vector store.
-        Useful for quickly gathering information about dbt semantic layers and their metrics""")
+        Useful for quickly gathering information about dbt semantic layers and their metrics.
+        For every distinct query, you will need this.""")
 
-    requires = param.List(default=["dbtsl_client"], readonly=True, doc="""
+    requires = param.List(default=["source"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["sql_metaset"], readonly=True, doc="""
+    provides = param.List(default=["vector_metaset", "sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
-    def __init__(self, **params):
+    def __init__(self, environment_id: int, **params):
+        params["environment_id"] = environment_id
         super().__init__(**params)
-        state.execute(partial(self._update_vector_store, None, None, self._memory["dbtsl_client"]))
+        self._metric_objs = {}
+        state.execute(partial(self._update_vector_store, None, None))
 
-    async def _update_vector_store(self, _, __, dbtsl_client):
-        self._metrics = await dbtsl_client.metrics()
+    def _get_client(self):
+        from dbtsl.asyncio import AsyncSemanticLayerClient
+
+        return AsyncSemanticLayerClient(
+            environment_id=self.environment_id,
+            auth_token=self.auth_token or os.environ.get("DBT_AUTH_TOKEN"),
+            host=self.host,
+        )
+
+    async def _update_vector_store(self, _, __):
+        """
+        Updates the vector store with metrics from the dbt semantic layer client.
+
+        This method fetches all metrics from the dbt semantic layer client and
+        adds them to the vector store for semantic search.
+        """
+        dbt_sl_client = self._get_client()
+        async with dbt_sl_client.session():
+            self._metric_objs = {metric.name: metric for metric in await dbt_sl_client.metrics()}
+
+        existing_metrics = self.vector_store.filter_by({"type": "metric"})
+        if existing_metrics:
+            self.vector_store.delete([item['id'] for item in existing_metrics])
+
+        for metric_name, metric in self._metric_objs.items():
+            enriched_text = f"Metric: {metric_name}"
+            if metric.description:
+                enriched_text += f"\nDescription: {metric.description}"
+
+            vector_metadata = {
+                "type": "metric",
+                "name": metric_name,
+                "metric_type": str(metric.type.value) if metric.type else "UNKNOWN",
+            }
+
+            self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
         Fetches metrics based on the user query and returns formatted context.
+
+        This method searches the vector store for metrics relevant to the user query,
+        formats them, and returns them as context for the LLM.
         """
-        query = messages[0]
-        dbtsl_client = self._memory["dbtsl_client"]
-        async with dbtsl_client.session():
-            expression = sqlglot.parse_one(await dbtsl_client.compile_sql(metrics=...))
-        tables = [str(table).split(" AS ")[0] for table in expression.find_all(SQLTable)]
-        columns = [str(column).split(" AS ")[0] for column in expression.find_all(SQLColumn)]
-        vector_metaset = VectorMetaset(query=query)
+        query = messages[-1]["content"]
+
+        # Perform search with refinement
+        results = await self._perform_search_with_refinement(query)
+        closest_metrics = [
+            result for result in results
+            if result['similarity'] >= self.min_similarity
+        ]
+
+        if not closest_metrics:
+            return "No relevant metrics found for your query."
+
+        # Build up vector_metaset with relevant metrics
+        vector_metadata_map = {}
+        sql_metadata_map = {}
+        dbt_sl_client = self._get_client()
+        async with dbt_sl_client.session():
+            for result in closest_metrics:
+                similarity = result['similarity']
+                metric_obj = self._metric_objs[result['metadata']["name"]]
+                metric_name = result['metadata']["name"]
+                metric_slug = f"metric:{metric_name}"
+                metric_sql = await dbt_sl_client.compile_sql(metrics=[metric_name])
+                vector_metadata = VectorMetadata(
+                    table_slug=metric_slug,
+                    similarity=similarity,
+                    description=metric_obj.description or "",
+                    base_sql=metric_sql,
+                    metadata={
+                        "name": metric_obj.name,
+                        "type": str(metric_obj.type.value) if metric_obj.type else "UNKNOWN",
+                        "queryable_granularities": [str(g) for g in (metric_obj.queryable_granularities or [])]
+                    }
+                )
+                vector_metadata_map[metric_slug] = vector_metadata
+
+                # TODO: QUESTIONABLE... is there a better way to resolve??
+
+                schema = {}
+                source = self._memory["source"]
+                for table_obj in sqlglot.parse_one(metric_sql).find_all(SQLTable):
+                    table_name = str(table_obj).split(" AS ")[0]
+                    schema.update(source.get_schema(table_name))
+
+                sql_metadata_map[metric_slug] = SQLMetadata(
+                    table_slug=metric_slug,
+                    schema=schema,
+                )
+
+        vector_metaset = VectorMetaset(vector_metadata_map=vector_metadata_map, query=query)
+        self._memory["vector_metaset"] = vector_metaset
+
+        sql_metaset = SQLMetaset(
+            vector_metaset=vector_metaset, sql_metadata_map=sql_metadata_map
+        )
+        self._memory["sql_metaset"] = sql_metaset
+        return sql_metaset.selected_context
 
 
 class FunctionTool(Tool):
