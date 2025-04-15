@@ -5,6 +5,8 @@ You are team lead and have to make a plan to solve how to address the user query
 
 Ground Rules:
 - Each of these experts requires certain information and has the ability to provide certain information.
+- Make sure your plan respects the dependency chain: only assign tasks to experts when their requirements are satisfied.
+- Take advantage of information already provided in memory rather than regenerating it unnecessarily.
 - Do not perform tasks the user didn't ask for, e.g. do not plot the data unless requested or compute things if the user asked you to summarize the results in words.
 - Ensure that you provide each expert the context they need to ensure they do not repeat previous steps.
 - Do not go in details to try to solve the problem (i.e. you should not mention any specific values), just make a plan and let the experts do the work.
@@ -29,6 +31,12 @@ Import Tools Rules:
 
 {% block context -%}
 Current memory context includes: {{ memory.keys() | list }}
+
+{% if provided %}
+The following has already been provided in memory and is available for use:
+{% for key in provided %}- {{ key }}
+{% endfor %}
+{% endif %}
 
 {%- if 'planner_context' in memory and memory['planner_context'] %}
 Here is additional context gathered to help with planning:

@@ -248,7 +248,7 @@ class VectorLookupTool(Tool):
 
         results = self.vector_store.query(query, top_k=self.n, **kwargs)
         # check if all metadata is the same; if so, skip
-        if all(result.get('metadata') == results[0].get('metadata') for result in results):
+        if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
 
         with self._add_step(title="Vector Search with Refinement") as step:
@@ -1143,6 +1143,7 @@ class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
             metrics[metric_name] = metric
         metric_set = DbtSLMetaset(query=query, metrics=metrics)
         self._memory["dbtsl_metaset"] = metric_set
+        breakpoint()
         return str(metric_set)
 
 
