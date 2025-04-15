@@ -358,7 +358,6 @@ class ExplorerUI(UI):
         **params
     ):
         super().__init__(data=data, **params)
-        self.interface.show_button_name = False
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
