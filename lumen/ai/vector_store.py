@@ -467,41 +467,6 @@ class NumpyVectorStore(VectorStore):
         self.metadata = [meta for i, meta in enumerate(self.metadata) if keep_mask[i]]
         self.ids = [id_ for i, id_ in enumerate(self.ids) if keep_mask[i]]
 
-    def _similarity_search_with_embedding(self, embedding, top_k=5, threshold=0.0):
-        """
-        Perform similarity search using a pre-computed embedding.
-        This avoids re-computing embeddings when we already have them.
-        """
-        if self.vectors is None or len(self.vectors) == 0:
-            return []
-
-        similarities = self._cosine_similarity(embedding, self.vectors)
-
-        # Early exit if we have no similarities above threshold
-        if max(similarities) < threshold:
-            return []
-
-        # Get top matches efficiently
-        sorted_indices = np.argsort(similarities)[::-1]
-        results = []
-
-        for idx in sorted_indices:
-            similarity = similarities[idx]
-            if similarity < threshold:
-                break  # Early exit - remaining similarities are below threshold
-
-            results.append({
-                "id": self.ids[idx],
-                "text": self.texts[idx],
-                "metadata": self.metadata[idx],
-                "similarity": float(similarity),
-            })
-
-            if len(results) >= top_k:
-                break
-
-        return results
-
     def upsert(self, items: list[dict]) -> list[int]:
         """
         Add items to the vector store if similar items don't exist, update them if they do.
