@@ -74,17 +74,9 @@ spec:
 {% endblock %}
 
 {% block errors %}
-{% if errors is defined %}
-Note, your last specification did not work as intended:
-```json
-{{ last_output }}
-```
+{{ super() }}
 
-Your task is to expertly address these errors so they do not occur again:
-```
-{{ errors }}
-```
-
+{% if errors is defined and errors %}
 For extra context, here are the tables and columns available:
 {{ columns_context }}
 

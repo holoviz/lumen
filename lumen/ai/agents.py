@@ -649,13 +649,6 @@ class SQLAgent(LumenBaseAgent):
 
     @retry_llm_output()
     async def _find_tables(self, messages: list[Message], errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
-        if errors:
-            content = (
-                "Your goal is to try to address the question while avoiding these issues:\n"
-                f"```\n{errors}\n```\n\n"
-            )
-            messages = mutate_user_message(content, messages)
-
         sources = {source.name: source for source in self._memory["sources"]}
         vector_metaset = self._memory["sql_metaset"].vector_metaset
         selected_slugs = list(
@@ -674,7 +667,7 @@ class SQLAgent(LumenBaseAgent):
         with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             if len(selected_slugs) > 1:
                 system = await self._render_prompt(
-                    "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
+                    "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, errors=errors,
                 )
                 find_tables_model = self._get_model("find_tables", tables=selected_slugs)
                 model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)

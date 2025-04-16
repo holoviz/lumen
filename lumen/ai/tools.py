@@ -28,8 +28,7 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, mutate_user_message, retry_llm_output,
-    stream_details, truncate_string,
+    get_schema, log_debug, retry_llm_output, stream_details, truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -699,10 +698,6 @@ class TableLookup(VectorLookupTool):
         if not self.enable_select_columns:
             return
 
-        if errors:
-            content = f"Please address these errors in your previous attempt:\n{errors}"
-            messages = mutate_user_message(content, messages)
-
         vector_metaset: VectorMetaset = self._memory.get("vector_metaset")
         needs_reselection = await self._should_refresh_columns(messages)
         if not needs_reselection and vector_metaset.selected_columns:
@@ -727,6 +722,7 @@ class TableLookup(VectorLookupTool):
                     separator=SOURCE_TABLE_SEPARATOR,
                     table_slugs=table_slugs,
                     previous_state=self._previous_state,
+                    errors=errors,
                 ):
                     # Convert indices to column names and store by table
                     if output_chunk.chain_of_thought:

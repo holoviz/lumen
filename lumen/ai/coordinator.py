@@ -366,19 +366,13 @@ class Coordinator(Viewer, ToolUser):
 
     @retry_llm_output()
     async def _fill_model(self, messages, system, agent_model, errors=None):
-        if errors:
-            errors = '\n'.join(errors)
-            messages = mutate_user_message(
-                f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}",
-                messages
-            )
-
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         out = await self.llm.invoke(
             messages=messages,
             system=system,
             model_spec=model_spec,
-            response_model=agent_model
+            response_model=agent_model,
+            errors=errors,
         )
         return out
 
