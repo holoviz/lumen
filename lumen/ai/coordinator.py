@@ -32,8 +32,7 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, mutate_user_message, retry_llm_output,
-    stream_details,
+    fuse_messages, log_debug, mutate_user_message, stream_details,
 )
 from .views import LumenOutput
 
@@ -364,21 +363,13 @@ class Coordinator(Viewer, ToolUser):
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
         await self.respond(contents)
 
-    @retry_llm_output()
-    async def _fill_model(self, messages, system, agent_model, errors=None):
-        if errors:
-            errors = '\n'.join(errors)
-            messages = mutate_user_message(
-                f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}",
-                messages
-            )
-
+    async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         out = await self.llm.invoke(
             messages=messages,
             system=system,
             model_spec=model_spec,
-            response_model=agent_model
+            response_model=agent_model,
         )
         return out
 
