@@ -193,19 +193,25 @@ class UI(Viewer):
         except Exception:
             traceback.print_exc()
 
-        table_lookup = None
+        table_lookups = {}
         for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
-                table_lookup = tool
-                break
+                table_lookups[tool] = False
+        if not table_lookups:
+            self._vector_store_status_badge.param.update(
+                status="success", name='Vector Store Ready')
+            return
 
         self._vector_store_status_badge.status = "running"
-        if table_lookup is not None:
-            while True:
+        for table_lookup in table_lookups:
+            while any(not v for v in table_lookups.values()):
                 await asyncio.sleep(1)
                 if table_lookup._ready:
-                    break
-
+                    table_lookups[table_lookup] = True
+                elif table_lookup._ready is None:
+                    self._vector_store_status_badge.param.update(
+                        status="danger", name='Vector Store Error')
+                    return
         self._vector_store_status_badge.param.update(
             status="success", name='Vector Store Ready')
 
