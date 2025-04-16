@@ -436,7 +436,7 @@ class TableLookup(VectorLookupTool):
 
     _item_type_name = "database tables"
 
-    _ready = param.Boolean(default=False, doc="""
+    _ready = param.Boolean(default=False, allow_None=True, doc="""
         Whether the vector store is ready.""")
 
     def __init__(self, **params):
@@ -579,13 +579,24 @@ class TableLookup(VectorLookupTool):
 
         if all_tasks:
             ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
-            ready_task.add_done_callback(lambda t: None if t.exception() else None)
+            ready_task.add_done_callback(lambda t: t.exception if t.exception() else None)
 
     async def _mark_ready_when_done(self, tasks):
         """Wait for all tasks to complete and then mark the tool as ready."""
-        await asyncio.gather(*tasks, return_exceptions=True)
-        log_debug("All table metadata tasks completed.")
-        self._ready = True
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        exceptions = [r for r in results if isinstance(r, Exception)]
+        if exceptions:
+            log_debug(f"Encountered {len(exceptions)} errors during metadata tasks")
+            for exception in exceptions:
+                exc_type, exc_value, exc_tb = type(exception), exception, None
+                log_debug(f"Error: {exc_type.__name__}: {exc_value}")
+                tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+                log_debug("Traceback details:\n" + "".join(tb_lines))
+            self._ready = None
+        else:
+            log_debug("All table metadata tasks completed successfully.")
+            self._ready = True
 
     async def _should_refresh_tables(self, messages: list[dict[str, str]]) -> bool:
         """
