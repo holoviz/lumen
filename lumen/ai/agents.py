@@ -549,12 +549,12 @@ class SQLAgent(LumenBaseAgent):
                 if table_name in tables_to_source:
                     columns = [col.name for col in vector_metadata.columns]
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
-            last_query = self._memory["sql"]
+            last_output = self._memory["sql"]
             num_errors = len(errors)
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
             errors_context = {
                 "errors": errors,
-                "last_query": last_query,
+                "last_output": last_output,
                 "num_errors": num_errors,
                 "columns_context": columns_context,
             }
@@ -751,9 +751,9 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
             try:
-                json_spec = load_json(self._last_output["json_spec"])
+                last_output = load_json(self._last_output["json_spec"])
             except Exception:
-                json_spec = ""
+                last_output = ""
 
             vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
             columns_context = ""
@@ -764,7 +764,7 @@ class BaseViewAgent(LumenBaseAgent):
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             errors_context = {
                 "errors": errors,
-                "json_spec": json_spec,
+                "last_output": last_output,
                 "num_errors": len(errors),
                 "columns_context": columns_context,
             }
