@@ -294,7 +294,7 @@ class NumpyVectorStore(VectorStore):
 
         return similarities
 
-    def add(self, items: list[dict], force_ids: list[int] = None) -> list[int]:
+    def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
         """
         Add items to the vector store.
 
@@ -333,7 +333,7 @@ class NumpyVectorStore(VectorStore):
                 raise ValueError(f"force_ids length ({len(force_ids)}) must match number of chunks ({len(all_texts)})")
             new_ids = force_ids
             # Update _current_id if necessary
-            self._current_id = max(self._current_id, max(force_ids)) if force_ids else self._current_id
+            self._current_id = max(self._current_id, *force_ids) if force_ids else self._current_id
         else:
             # Generate new IDs
             new_ids = [self._get_next_id() for _ in all_texts]
@@ -467,67 +467,6 @@ class NumpyVectorStore(VectorStore):
         self.metadata = [meta for i, meta in enumerate(self.metadata) if keep_mask[i]]
         self.ids = [id_ for i, id_ in enumerate(self.ids) if keep_mask[i]]
 
-    def _find_match(self, text: str, metadata: dict) -> tuple[int, float]:
-        """Find a matching document based on text and metadata.
-
-        Parameters
-        ----------
-        text: str
-            Text content to match.
-        metadata: dict
-            Metadata to match.
-
-        Returns
-        -------
-        Tuple of (item_id, similarity_score).
-        Returns (-1, 0.0) if no match is found.
-        """
-        # Check for exact metadata match
-        if metadata:
-            filtered_results = self.filter_by(metadata, limit=1)
-            if filtered_results and filtered_results[0]["text"] == text:
-                return filtered_results[0]["id"], 1.0
-
-        # Check for exact text match with compatible metadata
-        all_docs = self.filter_by({})
-        for doc in all_docs:
-            if doc["text"] != text:
-                continue
-
-            # Check if metadata is compatible
-            existing_metadata = doc["metadata"]
-            compatible = True
-
-            for key in existing_metadata:
-                if key in metadata and existing_metadata[key] != metadata[key]:
-                    compatible = False
-                    break
-
-            if compatible:
-                return doc["id"], 1.0
-
-        # Fallback to similarity search
-        text_with_metadata = self._join_text_and_metadata(text, metadata)
-        similar_items = self.query(text_with_metadata, top_k=1, threshold=0.95)
-
-        if not similar_items:
-            return -1, 0.0
-
-        # Check if metadata is compatible
-        existing_item = similar_items[0]
-        existing_metadata = existing_item["metadata"]
-        similarity = existing_item["similarity"]
-
-        if similarity < 0.98:
-            return -1, 0.0
-
-        # Check if existing metadata is compatible with new metadata
-        for key in existing_metadata:
-            if key in metadata and existing_metadata[key] != metadata[key]:
-                return -1, 0.0
-
-        return existing_item["id"], similarity
-
     def _similarity_search_with_embedding(self, embedding, top_k=5, threshold=0.0):
         """
         Perform similarity search using a pre-computed embedding.
@@ -567,11 +506,6 @@ class NumpyVectorStore(VectorStore):
         """
         Add items to the vector store if similar items don't exist, update them if they do.
 
-        This optimized implementation reduces complexity and improves efficiency by:
-        1. Computing embeddings only once
-        2. Using a simplified match strategy with early exits
-        3. Avoiding unnecessary delete and re-add operations
-
         Parameters
         ----------
         items: list[dict]
@@ -584,86 +518,64 @@ class NumpyVectorStore(VectorStore):
         if not items:
             return []
 
-        # Prepare data for batch processing
-        texts = []
-        metadata_list = []
-        text_and_metadata_list = []
+        if self.vectors is None or len(self.vectors) == 0:
+            return self.add(items)
+
+        assigned_ids = []
+        items_to_add = []
+
+        # Create text-to-indices mapping for fast lookups
+        text_to_indices = {}
+        for idx, text in enumerate(self.texts):
+            if text not in text_to_indices:
+                text_to_indices[text] = []
+            text_to_indices[text].append(idx)
 
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
-            texts.append(text)
-            metadata_list.append(metadata)
-            text_and_metadata_list.append(self._join_text_and_metadata(text, metadata))
 
-        # Pre-compute embeddings for all items at once
-        item_embeddings = self.embeddings.embed(text_and_metadata_list)
+            # Check for exact text match
+            if text in text_to_indices:
+                match_found = False
 
-        assigned_ids = []
-        new_items = []
-        new_item_indices = []
+                for idx in text_to_indices[text]:
+                    existing_id = self.ids[idx]
+                    existing_meta = self.metadata[idx]
 
-        # First pass: check for exact text matches (fast path)
-        existing_items = self.filter_by({})
-        text_to_id_map = {item["text"]: item["id"] for item in existing_items}
-        id_to_metadata_map = {item["id"]: item["metadata"] for item in existing_items}
+                    # Check for metadata value conflicts (same keys, different values)
+                    has_value_conflict = False
+                    common_keys = set(metadata.keys()) & set(existing_meta.keys())
+                    for key in common_keys:
+                        if metadata[key] != existing_meta[key]:
+                            has_value_conflict = True
+                            break
 
-        # Process each item
-        for i, (text, metadata, embedding) in enumerate(zip(texts, metadata_list, item_embeddings)):
-            # Fast path: check exact text match
-            if text not in text_to_id_map:
-                new_items.append({"text": text, "metadata": metadata})
-                new_item_indices.append(i)
-                continue
+                    if has_value_conflict:
+                        # If values conflict, this is not a match
+                        continue
 
-            # We have a text match, check metadata compatibility
-            item_id = text_to_id_map[text]
-            existing_metadata = id_to_metadata_map[item_id]
+                    # If metadata keys are different but no value conflicts, update existing
+                    if set(metadata.keys()) != set(existing_meta.keys()):
+                        self.delete([existing_id])
+                        new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[existing_id])
+                        assigned_ids.extend(new_ids)
+                    else:
+                        # Exact metadata match - reuse existing
+                        assigned_ids.append(existing_id)
 
-            # Check if metadata keys are different (added or removed keys)
-            if set(metadata.keys()) != set(existing_metadata.keys()):
-                # Delete existing and re-add with new metadata
-                self.delete([item_id])
-                new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[item_id])
-                assigned_ids.extend(new_ids)
-                continue
+                    match_found = True
+                    break
 
-            # Check if any metadata value conflicts for existing keys
-            if any(key in existing_metadata and existing_metadata[key] != value
-                   for key, value in metadata.items()):
-                new_items.append({"text": text, "metadata": metadata})
-                new_item_indices.append(i)
-                continue
+                if match_found:
+                    continue
 
-            # Use existing item
-            assigned_ids.append(item_id)
+            # If no exact match, add as new item
+            items_to_add.append(item)
 
-        # Process remaining items that need similarity search
-        for i, item in zip(new_item_indices, new_items):
-            query_embedding = item_embeddings[i]
-            similar_items = self._similarity_search_with_embedding(
-                query_embedding, top_k=1, threshold=0.95
-            )
-
-            # No similar items found - add as new
-            if not similar_items or similar_items[0]["similarity"] < 0.98:
-                new_ids = self.add([item])
-                assigned_ids.extend(new_ids)
-                continue
-
-            # Check metadata compatibility
-            existing_item = similar_items[0]
-            existing_metadata = existing_item["metadata"]
-
-            # If any metadata conflicts, add as new
-            if any(key in existing_metadata and existing_metadata[key] != value
-                   for key, value in item["metadata"].items()):
-                new_ids = self.add([item])
-                assigned_ids.extend(new_ids)
-                continue
-
-            # Reuse existing item
-            assigned_ids.append(existing_item["id"])
+        if items_to_add:
+            new_ids = self.add(items_to_add)
+            assigned_ids.extend(new_ids)
 
         return assigned_ids
 
@@ -756,7 +668,7 @@ class DuckDBVectorStore(VectorStore):
         )
         self._initialized = True
 
-    def add(self, items: list[dict], force_ids: list[int] = None) -> list[int]:
+    def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
         """
         Add items to the vector store.
 
@@ -985,79 +897,9 @@ class DuckDBVectorStore(VectorStore):
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
         self._initialized = False
 
-    def _find_match(self, text: str, metadata: dict) -> tuple[int, float]:
-        """Find a matching document based on text and metadata.
-
-        Parameters
-        ----------
-        text: str
-            Text content to match.
-        metadata: dict
-            Metadata to match.
-
-        Returns
-        -------
-        Tuple of (item_id, similarity_score).
-        Returns (-1, 0.0) if no match is found.
-        """
-        if not self._initialized:
-            return -1, 0.0
-
-        # Check for exact metadata match
-        if metadata:
-            filtered_results = self.filter_by(metadata, limit=1)
-            if filtered_results and filtered_results[0]["text"] == text:
-                return filtered_results[0]["id"], 1.0
-
-        # Check for exact text match with compatible metadata
-        # Build a SQL query to find exact text matches
-        query = """
-            SELECT id, metadata
-            FROM documents
-            WHERE text = ?
-        """
-        result = self.connection.execute(query, [text]).fetchall()
-
-        for row in result:
-            item_id = row[0]
-            existing_metadata = json.loads(row[1])
-
-            # Check if metadata is compatible
-            compatible = True
-            for key in existing_metadata:
-                if key in metadata and existing_metadata[key] != metadata[key]:
-                    compatible = False
-                    break
-
-            if compatible:
-                return item_id, 1.0
-
-        # Fallback to similarity search
-        text_with_metadata = self._join_text_and_metadata(text, metadata)
-        similar_items = self.query(text_with_metadata, top_k=1, threshold=0.95)
-
-        if not similar_items:
-            return -1, 0.0
-
-        # Check if metadata is compatible
-        existing_item = similar_items[0]
-        existing_metadata = existing_item["metadata"]
-        similarity = existing_item["similarity"]
-
-        if similarity < 0.98:
-            return -1, 0.0
-
-        # Check if existing metadata is compatible with new metadata
-        for key in existing_metadata:
-            if key in metadata and existing_metadata[key] != metadata[key]:
-                return -1, 0.0
-
-        return existing_item["id"], similarity
-
     def upsert(self, items: list[dict]) -> list[int]:
         """
         Add items to the vector store if similar items don't exist, update them if they do.
-        Optimized for DuckDB with early exits and reduced query count.
 
         Parameters
         ----------
@@ -1072,132 +914,59 @@ class DuckDBVectorStore(VectorStore):
             return []
 
         if not self._initialized:
-            # Early exit - just add everything as new if DB not initialized
             return self.add(items)
 
-        # Prepare data for batch processing
-        texts = []
-        metadata_list = []
-        text_and_metadata_list = []
+        assigned_ids = []
+        items_to_add = []
 
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
-            texts.append(text)
-            metadata_list.append(metadata)
-            text_and_metadata_list.append(self._join_text_and_metadata(text, metadata))
 
-        # Pre-compute embeddings once for all items
-        item_embeddings = self.embeddings.embed(text_and_metadata_list)
-
-        assigned_ids = []
-        new_items = []
-        new_item_indices = []
-
-        # Build a single query to get exact text matches (reduces round trips)
-        if texts:
-            placeholders = ', '.join(['?'] * len(texts))
-            query = f"""
-                SELECT id, text, metadata
+            # Check for exact text match
+            query = """
+                SELECT id, metadata
                 FROM documents
-                WHERE text IN ({placeholders})
+                WHERE text = ?
             """
+            result = self.connection.execute(query, [text]).fetchall()
 
-            result = self.connection.execute(query, texts).fetchall()
-
-            # Create efficient lookup maps
-            text_matches = {}
+            match_found = False
             for row in result:
                 item_id = row[0]
-                item_text = row[1]
-                item_metadata = json.loads(row[2])
+                existing_metadata = json.loads(row[1])
 
-                if item_text in text_matches:
-                    text_matches[item_text].append((item_id, item_metadata))
-                else:
-                    text_matches[item_text] = [(item_id, item_metadata)]
-        else:
-            text_matches = {}
+                # Check for metadata value conflicts
+                has_value_conflict = False
+                common_keys = set(metadata.keys()) & set(existing_metadata.keys())
+                for key in common_keys:
+                    if metadata[key] != existing_metadata[key]:
+                        has_value_conflict = True
+                        break
 
-        # Process each item
-        for i, (text, metadata, embedding) in enumerate(zip(texts, metadata_list, item_embeddings)):
-            # Fast path: check if we have exact text matches
-            if text not in text_matches:
-                new_items.append({"text": text, "metadata": metadata})
-                new_item_indices.append(i)
-                continue
+                if has_value_conflict:
+                    # If values conflict, try next match
+                    continue
 
-            # Check metadata compatibility with all matching texts
-            found_compatible = False
-            for item_id, existing_metadata in text_matches[text]:
-                # Check if metadata keys are different
+                # If metadata keys are different but no value conflicts, update existing
                 if set(metadata.keys()) != set(existing_metadata.keys()):
-                    # Need to update metadata
                     self.delete([item_id])
                     new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[item_id])
                     assigned_ids.extend(new_ids)
-                    found_compatible = True
-                    break
+                else:
+                    # Exact metadata match - reuse existing
+                    assigned_ids.append(item_id)
 
-                # Check if metadata values are compatible
-                if any(key in existing_metadata and existing_metadata[key] != value
-                       for key, value in metadata.items()):
-                    continue
-
-                # Found compatible match
-                assigned_ids.append(item_id)
-                found_compatible = True
+                match_found = True
                 break
 
-            if not found_compatible:
-                new_items.append({"text": text, "metadata": metadata})
-                new_item_indices.append(i)
+            if not match_found:
+                # No exact text match, add as new
+                items_to_add.append(item)
 
-        # For remaining items, use similarity search
-        for i, item in zip(new_item_indices, new_items):
-            vector = np.array(item_embeddings[i], dtype=np.float32).tolist()
-            vector_dim = len(vector)
-
-            # Single query for similarity search
-            query = f"""
-                SELECT id, text, metadata,
-                    array_cosine_similarity(embedding, ?::REAL[{vector_dim}]) AS similarity
-                FROM documents
-                WHERE array_cosine_similarity(embedding, ?::REAL[{vector_dim}]) >= 0.95
-                ORDER BY similarity DESC
-                LIMIT 1;
-            """
-
-            result = self.connection.execute(query, [vector, vector]).fetchall()
-
-            # No similar items found - add as new
-            if not result or result[0][3] < 0.98:
-                new_ids = self.add([item])
-                assigned_ids.extend(new_ids)
-                continue
-
-            # Check metadata compatibility with similar item
-            row = result[0]
-            item_id = row[0]
-            existing_metadata = json.loads(row[2])
-
-            # Check if metadata keys are different
-            if set(item["metadata"].keys()) != set(existing_metadata.keys()):
-                # Delete existing and add with new metadata
-                self.delete([item_id])
-                new_ids = self.add([item], force_ids=[item_id])
-                assigned_ids.extend(new_ids)
-                continue
-
-            # If any metadata values conflict, add as new
-            if any(key in existing_metadata and existing_metadata[key] != value
-                   for key, value in item["metadata"].items()):
-                new_ids = self.add([item])
-                assigned_ids.extend(new_ids)
-                continue
-
-            # Use existing item
-            assigned_ids.append(item_id)
+        if items_to_add:
+            new_ids = self.add(items_to_add)
+            assigned_ids.extend(new_ids)
 
         return assigned_ids
 
