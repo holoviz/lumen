@@ -369,11 +369,15 @@ class DocumentLookup(VectorLookupTool):
         return "\n".join(formatted_results)
 
     async def _update_vector_store(self, _, __, sources):
-        for source in sources:
-            # Use upsert to add or update documents
-            # This will add new documents or update existing ones with the same text
-            # but different metadata, avoiding duplicates
-            self.vector_store.upsert([{"text": source["text"], "metadata": source.get("metadata", {})}])
+        # Build a list of document items for a single upsert operation
+        items_to_upsert = [
+            {"text": source["text"], "metadata": source.get("metadata", {})}
+            for source in sources
+        ]
+
+        # Make a single upsert call with all documents
+        if items_to_upsert:
+            self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
@@ -563,10 +567,14 @@ class TableLookup(VectorLookupTool):
 
             tables = source.get_tables()
             # since enriching the metadata might take time, first add basic metadata (table name)
-            for table_name in tables:
-                metadata = {"source": source.name, "table_name": table_name}
-                # Use upsert to add basic table metadata or update if needed
-                self.vector_store.upsert([{"text": table_name, "metadata": metadata}])
+            # Build a list for a single upsert operation
+            basic_table_items = [
+                {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
+                for table_name in tables
+            ]
+            # Make a single upsert call with all basic table metadata
+            if basic_table_items:
+                self.vector_store.upsert(basic_table_items)
 
             # if metadata is included, upsert the existing
             if self.include_metadata:
@@ -1090,10 +1098,8 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         async with client.session():
             self._metric_objs = {metric.name: metric for metric in await client.metrics()}
 
-        existing_metrics = self.vector_store.filter_by({"type": "metric"})
-        if existing_metrics:
-            self.vector_store.delete([item['id'] for item in existing_metrics])
-
+        # Build a list of all metrics for a single upsert operation
+        items_to_upsert = []
         for metric_name, metric in self._metric_objs.items():
             enriched_text = f"Metric: {metric_name}"
             if metric.description:
@@ -1105,7 +1111,11 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 "metric_type": str(metric.type.value) if metric.type else "UNKNOWN",
             }
 
-            self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
+            items_to_upsert.append({"text": enriched_text, "metadata": vector_metadata})
+
+        # Make a single upsert call with all metrics
+        if items_to_upsert:
+            self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
