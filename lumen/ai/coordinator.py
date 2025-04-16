@@ -32,8 +32,7 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, mutate_user_message, retry_llm_output,
-    stream_details,
+    fuse_messages, log_debug, mutate_user_message, stream_details,
 )
 from .views import LumenOutput
 
@@ -217,7 +216,26 @@ class Coordinator(Viewer, ToolUser):
             agent.interface = interface
             instantiated.append(agent)
 
+
+        # If none of the tools provide vector_metaset, add tablelookup
+        provides_vector_metaset = any(
+            "vector_metaset" in tool.provides
+            for tool in tools or []
+        )
+        provides_sql_metaset = any(
+            "sql_metaset" in tool.provides
+            for tool in tools or []
+        )
+        if not provides_vector_metaset and not provides_sql_metaset:
+            tools += [TableLookup, IterativeTableLookup]
+        elif not provides_vector_metaset:
+            tools += [TableLookup]
+        elif not provides_sql_metaset:
+            tools += [IterativeTableLookup]
+
         # Add user-provided tools to the list of tools of the coordinator
+        if "tools" not in self.prompts["main"]:
+            self.prompts["main"]["tools"] = []
         self.prompts["main"]["tools"] += [tool for tool in tools]
         super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
 
@@ -345,21 +363,13 @@ class Coordinator(Viewer, ToolUser):
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
         await self.respond(contents)
 
-    @retry_llm_output()
-    async def _fill_model(self, messages, system, agent_model, errors=None):
-        if errors:
-            errors = '\n'.join(errors)
-            messages = mutate_user_message(
-                f"\n\nThe following are errors that previously came up; be sure to keep them in mind:\n{errors}",
-                messages
-            )
-
+    async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         out = await self.llm.invoke(
             messages=messages,
             system=system,
             model_spec=model_spec,
-            response_model=agent_model
+            response_model=agent_model,
         )
         return out
 
@@ -681,7 +691,6 @@ class Planner(Coordinator):
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
-                "tools": [TableLookup, IterativeTableLookup]
             },
         }
     )
