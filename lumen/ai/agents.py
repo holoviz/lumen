@@ -767,7 +767,6 @@ class BaseViewAgent(LumenBaseAgent):
             "main",
             messages,
             table=pipeline.table,
-            has_errors=bool(errors),
             doc=doc,
             **errors_context,
         )
