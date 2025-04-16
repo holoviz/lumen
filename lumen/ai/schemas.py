@@ -339,7 +339,7 @@ class DbtslMetadata:
         return (
             f"Metric: {self.name} (Similarity: {self.similarity:.3f})\n"
             f"Description: {self.description}\n"
-            f"Dimensions:\n{dimensions_str}"
+            f"Dimensions:\n{dimensions_str}\n"
             f"Queryable granularities: {', '.join(self.queryable_granularities)}\n\n"
         )
 
