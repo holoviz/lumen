@@ -251,8 +251,35 @@ class TestNumpyVectorStore(VectorStoreTestKit):
 class TestDuckDBVectorStore(VectorStoreTestKit):
 
     @pytest.fixture
-    def store(self, tmp_path):
+    def store(self, tmp_path) -> DuckDBVectorStore:
         db_path = str(tmp_path / "test_duckdb.db")
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
         store.clear()
         return store
+
+    def test_persistence(self, tmp_path):
+        db_path = str(tmp_path / "test_duckdb.db")
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        store.add([{"text": "First doc"}])
+        results = store.query("First doc")
+        assert len(results) == 1
+        assert results[0]["text"] == "First doc"
+        store.close()
+
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        results = store.query("First doc")
+        assert len(results) == 1
+        assert results[0]["text"] == "First doc"
+        store.close()
+
+    def test_not_initalized(self, tmp_path):
+        db_path = str(tmp_path / "test_duckdb.db")
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        store.close()
+
+        # file exists, but we haven't added anything
+        # so the indices haven't been created
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        results = store.query("First doc")
+        assert len(results) == 0
+        store.close()

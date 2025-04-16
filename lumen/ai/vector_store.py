@@ -1,6 +1,7 @@
 import json
 
 from abc import abstractmethod
+from pathlib import Path
 
 import duckdb
 import numpy as np
@@ -462,14 +463,28 @@ class DuckDBVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.connection = duckdb.connect(database=self.uri)
-        self._initialized = False
+        connection = duckdb.connect(':memory:')
+        # following the instructions from
+        # https://duckdb.org/docs/stable/extensions/vss.html#persistence
+        connection.execute("INSTALL 'vss';")
+        connection.execute("LOAD 'vss';")
+        connection.execute("SET hnsw_enable_experimental_persistence = true;")
 
-    def _setup_database(self, embedding_dim) -> None:
+        if self.uri == ':memory:':
+            self.connection = connection
+            self._initialized = False
+            return
+        uri_exists = Path(self.uri).exists()
+        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        connection.execute("USE embedded;")
+        self.connection = connection
+        has_documents = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
+        ).fetchone()[0] > 0
+        self._initialized = uri_exists and has_documents
+
+    def _setup_database(self, embedding_dim: int) -> None:
         """Set up the DuckDB database with necessary tables and indexes."""
-        self.connection.execute("INSTALL 'vss';")
-        self.connection.execute("LOAD 'vss';")
-        self.connection.execute("SET hnsw_enable_experimental_persistence = true;")
         self.connection.execute("CREATE SEQUENCE IF NOT EXISTS documents_id_seq;")
 
         self.connection.execute(
@@ -480,14 +495,14 @@ class DuckDBVectorStore(VectorStore):
                 metadata JSON,
                 embedding FLOAT[{embedding_dim}]
             );
-        """
+            """
         )
 
         self.connection.execute(
             """
             CREATE INDEX IF NOT EXISTS embedding_index
             ON documents USING HNSW (embedding) WITH (metric = 'cosine');
-        """
+            """
         )
         self._initialized = True
 
@@ -693,3 +708,9 @@ class DuckDBVectorStore(VectorStore):
             return 0
         result = self.connection.execute("SELECT COUNT(*) FROM documents;").fetchone()
         return result[0]
+
+    def close(self) -> None:
+        """Close the DuckDB connection."""
+        if self.connection:
+            self.connection.close()
+            self.connection = None
