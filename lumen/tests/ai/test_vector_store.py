@@ -238,6 +238,195 @@ class VectorStoreTestKit:
         found_doc1 = any("large_document_1" in r["metadata"].get("title", "") for r in results)
         assert found_doc1, "Expected to find at least one chunk belonging to doc1"
 
+    def test_upsert_new_item(self, empty_store):
+        """
+        Verifies that upsert adds a new item when it doesn't exist.
+        """
+        item = {"text": "A new document", "metadata": {"source": "test"}}
+        ids = empty_store.upsert([item])
+        assert len(ids) == 1, "Should add one item"
+
+        results = empty_store.query("A new document")
+        assert len(results) == 1, "Should be able to query the added item"
+        assert results[0]["metadata"]["source"] == "test", "Metadata should match"
+
+    def test_upsert_skip_duplicate(self, empty_store):
+        """
+        Verifies that upsert skips items with high similarity and matching metadata.
+        """
+        # Add initial item
+        item1 = {"text": "Hello world!", "metadata": {"source": "greeting"}}
+        ids1 = empty_store.upsert([item1])
+        assert len(ids1) == 1, "Should add one item"
+
+        # Try to add same item again - should be skipped
+        item2 = {"text": "Hello world!", "metadata": {"source": "greeting"}}
+        ids2 = empty_store.upsert([item2])
+        assert len(ids2) == 1, "Should return one ID"
+        assert ids2[0] == ids1[0], "Should return the same ID as before"
+
+        # Check store size
+        all_docs = empty_store.filter_by({})
+        assert len(all_docs) == 1, "Should still have only one item"
+
+    def test_upsert_add_with_different_metadata(self, empty_store):
+        """
+        Verifies that upsert adds items with similar text but different metadata.
+        """
+        # Add initial item
+        item1 = {"text": "Hello universe!", "metadata": {"source": "greeting1"}}
+        ids1 = empty_store.upsert([item1])
+        assert len(ids1) == 1, "Should add one item"
+
+        # Add similar item but with different metadata
+        item2 = {"text": "Hello universe!", "metadata": {"source": "greeting2"}}
+        ids2 = empty_store.upsert([item2])
+        assert len(ids2) == 1, "Should add one item"
+        assert ids2[0] != ids1[0], "Should have a different ID"
+
+        # Check store size
+        all_docs = empty_store.filter_by({})
+        assert len(all_docs) == 2, "Should have two items"
+
+    def test_upsert_multiple_items(self, empty_store):
+        """
+        Verifies that upsert handles multiple items correctly.
+        """
+        # Add initial items
+        items1 = [
+            {"text": "Item one", "metadata": {"id": 1}},
+            {"text": "Item two", "metadata": {"id": 2}},
+        ]
+        ids1 = empty_store.upsert(items1)
+        assert len(ids1) == 2, "Should add two items"
+
+        # Try to add a mix of duplicate and new items
+        items2 = [
+            {"text": "Item one", "metadata": {"id": 1}},  # Duplicate
+            {"text": "Item three", "metadata": {"id": 3}},  # New
+        ]
+        ids2 = empty_store.upsert(items2)
+        assert len(ids2) == 2, "Should return two IDs"
+        assert ids2[0] == ids1[0], "First ID should be the same as before"
+        assert ids2[1] != ids1[1], "Second ID should be different"
+
+        # Check store size
+        all_docs = empty_store.filter_by({})
+        assert len(all_docs) == 3, "Should have three items total"
+
+    def test_upsert_with_additional_metadata(self, empty_store):
+        """
+        Verifies that upsert correctly handles adding items with identical text
+        but with additional metadata fields.
+        """
+        # Add initial item with minimal metadata
+        item1 = {"text": "Hello Python world!", "metadata": {"language": "python"}}
+        ids1 = empty_store.upsert([item1])
+        assert len(ids1) == 1, "Should add one item"
+
+        # Query to verify initial content
+        results1 = empty_store.query("Hello Python world!")
+        assert len(results1) == 1, "Should find the item"
+        assert results1[0]["text"] == "Hello Python world!"
+
+        # Now upsert the same text with additional metadata fields
+        item2 = {
+            "text": "Hello Python world!",
+            "metadata": {
+                "language": "python",  # Same as before
+                "version": "3.9",      # Additional field
+                "purpose": "test"      # Additional field
+            }
+        }
+        ids2 = empty_store.upsert([item2])
+        assert len(ids2) == 1, "Should return one ID"
+
+        # Should be treated as an update, not a new item
+        all_docs = empty_store.filter_by({})
+        assert len(all_docs) == 1, "Should still have only one item"
+
+        # Check that metadata was updated
+        updated_item = empty_store.filter_by({"language": "python"})[0]
+        assert "version" in updated_item["metadata"], "Should have updated with new metadata fields"
+        assert updated_item["metadata"]["version"] == "3.9", "New metadata value should be present"
+
+    def test_upsert_with_exact_same_content(self, empty_store):
+        """
+        Verifies that upsert doesn't create duplicates when adding the exact same
+        text and metadata multiple times.
+        """
+        # Add initial item
+        item = {"text": "print('Hello!')", "metadata": {"language": "py"}}
+
+        # Upsert multiple times with identical content
+        ids1 = empty_store.upsert([item])
+        ids2 = empty_store.upsert([item])
+        ids3 = empty_store.upsert([item])
+
+        assert len(ids1) == 1, "Should add one item on first upsert"
+        assert len(ids2) == 1, "Should return one ID on second upsert"
+        assert len(ids3) == 1, "Should return one ID on third upsert"
+
+        # All returned IDs should be identical
+        assert ids1[0] == ids2[0], "First and second upsert should return the same ID"
+        assert ids2[0] == ids3[0], "Second and third upsert should return the same ID"
+
+        # Should only have one item in the store
+        all_docs = empty_store.filter_by({})
+        assert len(all_docs) == 1, "Should have only one item after multiple upserts of same content"
+
+    def test_upsert_with_removed_metadata(self, empty_store):
+        """
+        Verifies that upsert correctly handles removing metadata keys.
+        """
+        # Add initial item with multiple metadata fields
+        item1 = {
+            "text": "Metadata testing example",
+            "metadata": {
+                "key1": "value1",
+                "key2": "value2",
+                "key3": "value3"
+            }
+        }
+        ids1 = empty_store.upsert([item1])
+        assert len(ids1) == 1, "Should add one item"
+
+        # Verify initial state
+        results = empty_store.filter_by({"key1": "value1"})
+        assert len(results) == 1, "Should find the item"
+        assert len(results[0]["metadata"]) == 3, "Should have three metadata keys"
+        assert "key3" in results[0]["metadata"], "key3 should be present"
+
+        # Now upsert with fewer metadata keys
+        item2 = {
+            "text": "Metadata testing example",
+            "metadata": {
+                "key1": "value1",
+                "key2": "value2"
+                # key3 is removed
+            }
+        }
+        ids2 = empty_store.upsert([item2])
+        assert len(ids2) == 1, "Should return one ID"
+        assert ids2[0] == ids1[0], "Should return the same ID as before"
+
+        # Verify metadata was updated (key3 was removed)
+        results = empty_store.filter_by({"key1": "value1"})
+        assert len(results) == 1, "Should still have only one item"
+        assert len(results[0]["metadata"]) == 2, "Should now have only two metadata keys"
+        assert "key3" not in results[0]["metadata"], "key3 should be removed"
+
+    def test_upsert_empty_list(self, empty_store):
+        """
+        Verifies that upsert handles empty input gracefully.
+        """
+        ids = empty_store.upsert([])
+        assert ids == [], "Should return empty list of IDs"
+
+        # Store should remain empty
+        all_docs = empty_store.filter_by({})
+        assert len(all_docs) == 0, "Store should still be empty"
+
 
 class TestNumpyVectorStore(VectorStoreTestKit):
 
