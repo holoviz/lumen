@@ -38,7 +38,7 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_dbtsl_query_params,
+    DbtSLQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
     make_find_tables_model,
 )
 from .tools import ToolUser
@@ -731,7 +731,7 @@ class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
     prompts = param.Dict(
         default={
             "main": {
-                "response_model": make_dbtsl_query_params,
+                "response_model": DbtSLQueryParams,
                 "template": PROMPTS_DIR / "DbtSLAgent" / "main.jinja2",
             },
             "retry_output": {
@@ -788,7 +788,7 @@ class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
                 messages,
                 system=system_prompt,
                 model_spec=model_spec,
-                response_model=self._get_model("main")
+                response_model=DbtSLQueryParams,
             )
 
             query_params = None
@@ -830,8 +830,9 @@ class DbtSLAgent(LumenBaseAgent, DbtSLMixin):
 
         try:
             # Execute the query against the dbt Semantic Layer
-            async with self._dbtsl_client.session():
-                sql_query = await self._dbtsl_client.compile(
+            client = self._get_dbtsl_client()
+            async with client.session():
+                sql_query = await client.compile(
                     metrics=query_params.get('metrics', []),
                     group_by=query_params.get('group_by'),
                     limit=query_params.get('limit'),

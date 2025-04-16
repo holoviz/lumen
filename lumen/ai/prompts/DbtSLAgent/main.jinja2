@@ -31,10 +31,9 @@ If there are issues with the query, here are some common fixes:
 
 {{ tool_context | default('') }}
 
-{% if dbtsl_metaset %}
+{% if memory["dbtsl_metaset"] %}
 # Available Metrics and Dimensions
-
-{{ dbtsl_metaset }}
+{{ memory["dbtsl_metaset"] }}
 {% endif %}
 {%- endblock -%}
 

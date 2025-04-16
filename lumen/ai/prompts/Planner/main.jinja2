@@ -96,8 +96,7 @@ These previous plans failed because it did not satisfy all requirements; the las
 
 Please include some of these these experts to provide for the missing requirements:
 {%- for candidate in candidates %}
-- `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.name }}`
-  Provides: {{ candidate.provides }}
+- `{{ candidate.name[:-5] }}`
 {%- endfor %}
 {% endif %}
 {%- endblock -%}
