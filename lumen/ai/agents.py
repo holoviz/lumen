@@ -746,6 +746,9 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
 
+    source = param.ClassSelector(class_=BaseSQLSource, doc="""
+        The source associated with the dbt Semantic Layer.""")
+
     _extensions = ('codeeditor', 'tabulator',)
 
     _output_type = SQLOutput
@@ -766,18 +769,10 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         """
         Create a valid dbt Semantic Layer query based on user messages.
         """
-        if errors:
-            errors_text = "\n".join(f"{i+1}. {error}" for i, error in enumerate(errors[-1:]))
-            content = (
-                f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors_text}\n```\n\n"
-                f"`invalid identifier` might indicate you left out the time granularity or forgot to include it in group_by, i.e. metric_time -> metric_time__month"
-            )
-            messages = mutate_user_message(content, messages)
-
         system_prompt = await self._render_prompt(
             "main",
             messages,
-            has_errors=bool(errors),
+            errors=errors,
         )
 
         with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
@@ -840,13 +835,11 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 # Log the compiled SQL for debugging
                 step.stream(f"\nCompiled SQL:\n```sql\n{sql_query}\n```", replace=False)
 
-            # Create a SQL source from the compiled query
-            source = self._memory["source"]
-            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+            sql_expr_source = self.source.create_sql_expr_source({expr_slug: sql_query})
             self._memory["sql"] = sql_query
 
             # Apply transforms
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            sql_transforms = [SQLLimit(limit=1_000_000, write=self.source.dialect, pretty=True, identify=False)]
             transformed_sql_query = sql_query
             for sql_transform in sql_transforms:
                 transformed_sql_query = sql_transform.apply(transformed_sql_query)

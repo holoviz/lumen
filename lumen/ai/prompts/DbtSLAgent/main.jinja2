@@ -28,9 +28,9 @@ Good examples:
 {
     "metrics": ["active_mrr_dollars"],
     "group_by": ["metric_time__month"],
-    "where": ["date_trunc('year', metric_time__month) = date_trunc('year', current_date)"],
+    "where": [],
     "order_by": ["metric_time__month"],
-    "limit": 100
+    "limit": 10000
 }
 ```
 ```
@@ -45,4 +45,10 @@ Good examples:
   "where": ["kind = 'existing'"]  # if 'kind' is used here, must also be in group_by
 }
 ```
+{% endblock -%}
+
+{%- block errors %}
+{% if errors is defined and errors %}
+`invalid identifier` might indicate you left out the time granularity or forgot to include it in group_by, i.e. metric_time -> metric_time__month"
+{% endif %}
 {% endblock -%}

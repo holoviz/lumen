@@ -1050,9 +1050,9 @@ class IterativeTableLookup(TableLookup):
         return sql_metaset.selected_context
 
 
-class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
+class DbtslLookup(VectorLookupTool, DbtslMixin):
     """
-    SemanticLayerLookup tool that creates a vector store of all available dbt semantic layers
+    DbtslLookup tool that creates a vector store of all available dbt semantic layers
     and responds with relevant metrics for user queries.
     """
 
@@ -1065,7 +1065,7 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
     purpose = param.String(default="""
         Looks up additional context by querying dbt semantic layers based on the user query with a vector store.
         Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
-        For every distinct query, you will need this.""")
+        Not useful for looking up what datasets are available.""")
 
     requires = param.List(default=["source"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -1160,7 +1160,6 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
                 )
                 metrics[metric_name] = metric
         metaset = DbtslMetaset(query=query, metrics=metrics)
-        print(metaset)
         self._memory["dbtsl_metaset"] = metaset
         return str(metaset)
 
