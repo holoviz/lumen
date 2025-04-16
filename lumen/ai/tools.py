@@ -369,14 +369,10 @@ class DocumentLookup(VectorLookupTool):
 
     async def _update_vector_store(self, _, __, sources):
         for source in sources:
-            metadata = source.get("metadata", {})
-            filename = metadata.get("filename")
-            if filename:
-                # overwrite existing items with the same filename
-                existing_items = self.vector_store.filter_by({'filename': filename})
-                if existing_ids := [item['id'] for item in existing_items]:
-                    self.vector_store.delete(existing_ids)
-            self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
+            # Use upsert to add or update documents
+            # This will add new documents or update existing ones with the same text
+            # but different metadata, avoiding duplicates
+            self.vector_store.upsert([{"text": source["text"], "metadata": source.get("metadata", {})}])
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
@@ -522,7 +518,6 @@ class TableLookup(VectorLookupTool):
         if existing_items := self.vector_store.filter_by(vector_metadata):
             if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
                 return
-            self.vector_store.delete([item['id'] for item in existing_items])
 
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         vector_metadata["enriched"] = True
@@ -543,7 +538,9 @@ class TableLookup(VectorLookupTool):
                 if key == "enriched":
                     continue
                 enriched_text += f"\n- {key}: {value}"
-        self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
+        # Use upsert to add or update the table metadata
+        # This will add new entries or update existing ones as needed
+        self.vector_store.upsert([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def _update_vector_store(self, _, __, sources):
         # Create a list to track all tasks we're starting in this update
@@ -564,10 +561,8 @@ class TableLookup(VectorLookupTool):
             # since enriching the metadata might take time, first add basic metadata (table name)
             for table_name in tables:
                 metadata = {"source": source.name, "table_name": table_name}
-                if self.vector_store.filter_by(metadata):
-                    # TODO: Add ability to update existing source table?
-                    continue
-                self.vector_store.add([{"text": table_name, "metadata": metadata}])
+                # Use upsert to add basic table metadata or update if needed
+                self.vector_store.upsert([{"text": table_name, "metadata": metadata}])
 
             # if metadata is included, upsert the existing
             if self.include_metadata:
