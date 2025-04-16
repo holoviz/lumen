@@ -539,6 +539,7 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source: dict[str, BaseSQLSource],
         errors=None
     ):
+        errors_context = {}
         if errors:
             # get the head of the tables
             columns_context = ""
@@ -551,15 +552,12 @@ class SQLAgent(LumenBaseAgent):
             last_query = self._memory["sql"]
             num_errors = len(errors)
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
-            content = (
-                f"\n\nYou are a world-class SQL user. Identify why this query failed:\n```sql\n{last_query}\n```\n\n"
-                f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors}\n```\n\n"
-                f"Note a penalty of $100 will be incurred for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
-                f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
-                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present. "
-                f"For extra context, here are the tables and columns available:\n{columns_context}\n"
-            )
-            messages = mutate_user_message(content, messages)
+            errors_context = {
+                "errors": errors,
+                "last_query": last_query,
+                "num_errors": num_errors,
+                "columns_context": columns_context,
+            }
 
         join_required = len(tables_to_source) > 1
         comments = comments if join_required else ""  # comments are about joins
@@ -569,7 +567,7 @@ class SQLAgent(LumenBaseAgent):
             join_required=join_required,
             dialect=dialect,
             comments=comments,
-            has_errors=bool(errors),
+            **errors_context
         )
         with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -749,9 +747,9 @@ class BaseViewAgent(LumenBaseAgent):
         step_title: str | None = None,
         errors: list[str] | None = None,
     ) -> dict[str, Any]:
+        errors_context = {}
         if errors:
-           errors = '\n'.join(errors)
-           if self._last_output:
+            errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
             try:
                 json_spec = load_json(self._last_output["json_spec"])
             except Exception:
@@ -764,12 +762,12 @@ class BaseViewAgent(LumenBaseAgent):
                 if table_name in pipeline.table:
                     columns = [col.name for col in vector_metadata.columns]
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
-            messages = mutate_user_message(
-                f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
-                f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n"
-                f"For extra context, here are the tables and columns available:\n{columns_context}\n",
-                messages
-            )
+            errors_context = {
+                "errors": errors,
+                "json_spec": json_spec,
+                "num_errors": len(errors),
+                "columns_context": columns_context,
+            }
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system = await self._render_prompt(
@@ -778,6 +776,7 @@ class BaseViewAgent(LumenBaseAgent):
             table=pipeline.table,
             has_errors=bool(errors),
             doc=doc,
+            **errors_context,
         )
 
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)

@@ -71,8 +71,24 @@ spec:
         x: {...}
         y: {...}
 ```
-{% if has_errors %}
-GOOD (no mark at the same level as layer):
+{% endblock %}
+
+{% block errors %}
+{% if errors is defined %}
+Note, your last specification did not work as intended:
+```json
+{{ json_spec }}
+```
+
+Your task is to expertly address these errors so they do not occur again:
+```
+{{ errors }}
+```
+
+For extra context, here are the tables and columns available:
+{{ columns_context }}
+
+Here is an example for GOOD output (no mark at the same level as layer):
 ```yaml
 layer:
   - data:
