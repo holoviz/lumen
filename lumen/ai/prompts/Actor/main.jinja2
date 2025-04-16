@@ -21,8 +21,8 @@
 The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {% endblock %}
 
-{% block errors -%}
-{% if last_output is defined %}
+{%- block errors -%}
+{%- if last_output is defined %}
 Note, your last output did not work as intended:
 ```
 {{ last_output }}
