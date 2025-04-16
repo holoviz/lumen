@@ -13,12 +13,6 @@ Checklist:
 - Always include a limit (default to 10000 if not specified) to avoid excessive data return.
 - For time filtering, use SQL date functions like `date_trunc('year', metric_time__month)`.
 
-{%- if has_errors %}
-If there are issues with the query, here are some common fixes:
-- Check that all metric names exactly match those defined in the semantic layer.
-- Ensure dimensions are properly formatted with both dimension name and granularity.
-{% endif %}
-
 {{ tool_context | default('') }}
 
 {% if memory["dbtsl_metaset"] %}

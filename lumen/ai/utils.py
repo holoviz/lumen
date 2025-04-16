@@ -163,7 +163,7 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
         )
 
 
-def retry_llm_output(retries=5, sleep=1):
+def retry_llm_output(retries=3, sleep=1):
     """
     Retry a function that returns a response from the LLM API.
     If the function raises an exception, retry it up to `retries` times.
