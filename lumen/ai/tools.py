@@ -1073,7 +1073,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     purpose = param.String(default="""
         Looks up additional context by querying dbt semantic layers based on the user query with a vector store.
         Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
-        Not useful for looking up what datasets are available.""")
+        Not useful for looking up what datasets are available. Likely useful for all queries.""")
 
     requires = param.List(default=["source"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")

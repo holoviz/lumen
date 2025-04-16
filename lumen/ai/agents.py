@@ -727,7 +727,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         business metrics using dbt Semantic Layers. This agent can compile
         and execute metric queries against a dbt Semantic Layer.
         Only useful if the looked up dbt metrics contain all the metrics
-        to answer the user query.""")
+        to answer the user query and does not require IterativeTableLookup.""")
 
     prompts = param.Dict(
         default={
@@ -888,7 +888,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["pipeline", "sql_metaset"], readonly=True)
+    requires = param.List(default=["pipeline"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
 
@@ -920,18 +920,9 @@ class BaseViewAgent(LumenBaseAgent):
             except Exception:
                 last_output = ""
 
-            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
-            columns_context = ""
-            for table_slug, vector_metadata in vector_metadata_map.items():
-                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                if table_name in pipeline.table:
-                    columns = [col.name for col in vector_metadata.columns]
-                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             errors_context = {
                 "errors": errors,
                 "last_output": last_output,
-                "num_errors": len(errors),
-                "columns_context": columns_context,
             }
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
@@ -1149,7 +1140,7 @@ class VegaLiteAgent(BaseViewAgent):
                     )
 
                 for field in fields_to_check:
-                    if field not in schema:
+                    if field not in schema and field.lower() not in schema and field.upper() not in schema:
                         raise ValueError(f"Field '{field}' not found in schema.")
 
     async def _extract_spec(self, spec: dict[str, Any]):
