@@ -85,7 +85,7 @@ class OpenAIEmbeddings(Embeddings):
         self.client = OpenAI(api_key=self.api_key)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        texts = [text.replace("\n", " ") for text in texts]
+        texts = [text.replace("\n", " ").strip() for text in texts]
         response = self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
 

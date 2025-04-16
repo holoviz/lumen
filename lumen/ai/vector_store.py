@@ -1,6 +1,7 @@
 import json
 
 from abc import abstractmethod
+from pathlib import Path
 
 import duckdb
 import numpy as np
@@ -462,14 +463,23 @@ class DuckDBVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.connection = duckdb.connect(database=self.uri)
         self._initialized = False
+
+        temp_conn = duckdb.connect(':memory:')
+        temp_conn.execute("INSTALL 'vss';")
+        temp_conn.execute("LOAD 'vss';")
+        temp_conn.execute("SET hnsw_enable_experimental_persistence = true;")
+
+        self._index_exists = Path(self.uri).exists()
+        if self.uri == ':memory:':
+            self.connection = temp_conn
+            return
+        temp_conn.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        self.connection = temp_conn
+        self.connection.execute("USE embedded;")
 
     def _setup_database(self, embedding_dim) -> None:
         """Set up the DuckDB database with necessary tables and indexes."""
-        self.connection.execute("INSTALL 'vss';")
-        self.connection.execute("LOAD 'vss';")
-        self.connection.execute("SET hnsw_enable_experimental_persistence = true;")
         self.connection.execute("CREATE SEQUENCE IF NOT EXISTS documents_id_seq;")
 
         self.connection.execute(
@@ -480,15 +490,16 @@ class DuckDBVectorStore(VectorStore):
                 metadata JSON,
                 embedding FLOAT[{embedding_dim}]
             );
-        """
+            """
         )
 
-        self.connection.execute(
-            """
-            CREATE INDEX IF NOT EXISTS embedding_index
-            ON documents USING HNSW (embedding) WITH (metric = 'cosine');
-        """
-        )
+        if not self._index_exists:
+            self.connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS embedding_index
+                ON documents USING HNSW (embedding) WITH (metric = 'cosine');
+                """
+            )
         self._initialized = True
 
     def add(self, items: list[dict]) -> list[int]:
