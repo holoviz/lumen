@@ -803,8 +803,6 @@ class Planner(Coordinator):
                         self._memory["planner_context"][provided_key] = self._memory[provided_key]
                         provided.add(provided_key)
 
-                breakpoint()
-
             context_keys = list(self._memory["planner_context"].keys())
             if context_keys:
                 step.success_title = f"\n\nGathered planning context: {', '.join(context_keys)}"

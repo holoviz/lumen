@@ -324,14 +324,22 @@ class DbtslMetadata:
     name: str
     similarity: float
     description: str | None = None
-    dimensions: list[str] = field(default_factory=list)
+    dimensions: dict[str, list] = field(default_factory=dict)
     queryable_granularities: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
+        dimensions_str = ""
+        for dimension, dimension_spec in self.dimensions.items():
+            dtype = dimension_spec["type"]
+            enums = dimension_spec.get("enum", [])
+            if enums:
+                dimensions_str += f"- {dimension} ({dtype}): {enums}\n"
+            else:
+                dimensions_str += f"- {dimension} ({dtype})\n"
         return (
             f"Metric: {self.name} (Similarity: {self.similarity:.3f})\n"
             f"Description: {self.description}\n"
-            f"Dimensions: {', '.join(self.dimensions)}\n"
+            f"Dimensions:\n{dimensions_str}"
             f"Queryable granularities: {', '.join(self.queryable_granularities)}\n\n"
         )
 
@@ -342,7 +350,7 @@ class DbtslMetaset:
     metrics: dict[str, DbtslMetadata]
 
     def __str__(self) -> str:
-        context = "Below are the relevant metrics to use:\n\n"
+        context = "Below are the relevant metrics to use with DbtslAgent:\n\n"
         for metric in self.metrics.values():
             context += str(metric)
         return context

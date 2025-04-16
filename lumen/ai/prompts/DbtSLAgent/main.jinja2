@@ -8,25 +8,15 @@ Try not to take the query too literally, but instead focus on the user's intent 
 {% block context -%}
 Checklist:
 - Only use metrics and dimensions explicitly available in the dbt Semantic Layer.
+- If referencing a dimension in the WHERE clause, be sure the dimension is also included in the GROUP BY clause.
 - When using time dimensions, always specify both the dimension name and granularity: `dimension_name__granularity`.
-- Available time granularities may include: day, week, month, quarter, year.
-- Always include a limit (default to 100 if not specified) to avoid excessive data return.
-- Structure filters in the where clause appropriately for the dbt Semantic Layer.
+- Always include a limit (default to 10000 if not specified) to avoid excessive data return.
 - For time filtering, use SQL date functions like `date_trunc('year', metric_time__month)`.
-
-Additionally, if applicable:
-- When comparing time periods (e.g., year-over-year analysis), use appropriate date functions.
-- Consider adding order_by parameters to sort the data meaningfully.
-- For filtering by specific time periods, use the current date as a reference point if needed.
-- Ensure metric names are exact matches to what is available in the semantic layer.
-- If grouping by multiple dimensions, consider their relationship and cardinality.
 
 {%- if has_errors %}
 If there are issues with the query, here are some common fixes:
 - Check that all metric names exactly match those defined in the semantic layer.
 - Ensure dimensions are properly formatted with both dimension name and granularity.
-- Verify that time dimension syntax follows the correct pattern (e.g., metric_time__month).
-- For filters, make sure the syntax is compatible with the underlying database dialect.
 {% endif %}
 
 {{ tool_context | default('') }}
@@ -38,10 +28,10 @@ If there are issues with the query, here are some common fixes:
 {%- endblock -%}
 
 {%- block examples %}
-Good example:
-```python
+Good examples:
+```
 # Monthly metrics for the current year
-query_params = {
+{
     "metrics": ["active_mrr_dollars"],
     "group_by": ["metric_time__month"],
     "where": ["date_trunc('year', metric_time__month) = date_trunc('year', current_date)"],
@@ -49,12 +39,16 @@ query_params = {
     "limit": 100
 }
 ```
-
-Failing example (mismatch variable name in group_by and where):
-query_params = {
-    "metrics": ["current_mrr_dollars"],
-    "group_by": ["metric_time__month"],
-    "where": ["date_trunc('year', metric_time) = date_trunc('year', current_date)"],
-    "limit": 100
+```
+{
+  "metrics": ["users"],
+  "group_by": [
+    "date",
+    "kind",  # important to include in group_by if referencing in where
+  ],
+  "limit": 10000,
+  "order_by": ["date"],
+  "where": ["kind = 'existing'"]  # if 'kind' is used here, must also be in group_by
 }
+```
 {% endblock -%}

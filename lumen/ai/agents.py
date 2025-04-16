@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import traceback
 
@@ -724,9 +725,9 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     purpose = param.String(default="""
         Responsible for displaying tables to answer user queries about
         business metrics using dbt Semantic Layers. This agent can compile
-        and execute metric queries against a dbt Semantic Layer to analyze
-        metrics like revenue, active users, and other business KPIs across
-        different dimensions and time periods.""")
+        and execute metric queries against a dbt Semantic Layer.
+        Only useful if the looked up dbt metrics contain all the metrics
+        to answer the user query.""")
 
     prompts = param.Dict(
         default={
@@ -766,13 +767,10 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         Create a valid dbt Semantic Layer query based on user messages.
         """
         if errors:
-            metaset = self._memory["dbtsl_metaset"]
-            metrics_context = "\n".join(str(metric) for metric in metaset.metrics.values())
-            errors_text = "\n".join(f"{i+1}. {error}" for i, error in enumerate(errors))
+            errors_text = "\n".join(f"{i+1}. {error}" for i, error in enumerate(errors[-1:]))
             content = (
-                f"\n\nYou are a world-class dbt Semantic Layer expert. Identify why this query failed:\n\n"
                 f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors_text}\n```\n\n"
-                f"For extra context, here are the metrics available:\n{metrics_context}\n"
+                f"`invalid identifier` might indicate you left out the time granularity or forgot to include it in group_by, i.e. metric_time -> metric_time__month"
             )
             messages = mutate_user_message(content, messages)
 
@@ -814,9 +812,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 if "limit" not in query_params or not query_params["limit"]:
                     query_params["limit"] = 100
 
-                import json
                 formatted_params = json.dumps(query_params, indent=2)
-                step.stream(f"\n`{expr_slug}`\n```json\n{formatted_params}\n```", replace=True)
+                step.stream(f"\n\n`{expr_slug}`\n```json\n{formatted_params}\n```")
 
                 self._memory["dbtsl_query_params"] = query_params
             except asyncio.CancelledError as e:
@@ -871,7 +868,6 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["table"] = pipeline.table
 
             return sql_query, pipeline
-
         except Exception as e:
             report_error(e, step)
             raise e
