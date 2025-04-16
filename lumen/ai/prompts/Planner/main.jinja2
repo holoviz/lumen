@@ -20,6 +20,7 @@ Important Agent Rules:
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
 - The SQLAgent usually needs help by *TableLookup if the current columns are insufficient.
+- Use SQLAgent if `dbtsl_metaset` is not available, but if it is, use DbtslAgent preferably.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - If the user is asking for a plot of the data without any modifications, SQLAgent is unnecessary.
 - When plotting, instruct SQLAgent to select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations.
@@ -30,10 +31,11 @@ Import Tools Rules:
 {% endblock -%}
 
 {% block context -%}
-Current memory context includes: {{ memory.keys() | list }}
+
+You already have the following: {{ memory.keys() | list }}
 
 {% if provided %}
-The following has already been provided in memory and is available for use:
+These have been provided:
 {% for key in provided %}- {{ key }}
 {% endfor %}
 {% endif %}

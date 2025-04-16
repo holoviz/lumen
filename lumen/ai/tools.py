@@ -28,7 +28,8 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, retry_llm_output, stream_details, truncate_string,
+    get_schema, log_debug, process_enums, retry_llm_output, stream_details,
+    truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -981,7 +982,7 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    stream_details(str(vector_metaset), step, title="Table details", auto=False)
+                    stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
                             self._tables_metadata.get(table_slug, {}).get("view_definition", ""),
@@ -1105,7 +1106,6 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
             }
 
             self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
-        print("DONE...")
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -1128,24 +1128,53 @@ class DbtslMetricLookup(VectorLookupTool, DbtslMixin):
             return
 
         metrics = {}
-        for result in closest_metrics:
-            metric_name = result['metadata']['name']
-            if metric_name not in self._metric_objs:
-                continue
-            metric_obj = self._metric_objs[metric_name]
-            metric = DbtslMetadata(
-                name=metric_name,
-                similarity=result['similarity'],
-                description=metric_obj.description,
-                dimensions=[dim.name for dim in metric_obj.dimensions],
-                queryable_granularities=[
-                    granularity.name for granularity in metric_obj.queryable_granularities
+        client = self._get_dbtsl_client()
+        async with client.session():
+            num_cols = len(closest_metrics)
+            for result in closest_metrics:
+                metric_name = result['metadata']['name']
+                if metric_name not in self._metric_objs:
+                    continue
+
+                metric_obj = self._metric_objs[metric_name]
+                dimensions = {}
+                dimension_tasks = [
+                    self._fetch_dimension_values(
+                        client,
+                        metric_name,
+                        dim,
+                        num_cols=num_cols
+                    ) for dim in metric_obj.dimensions
                 ]
-            )
-            metrics[metric_name] = metric
+                dimension_results = await asyncio.gather(*dimension_tasks)
+                for dim_name, dim_info in dimension_results:
+                    dimensions[dim_name] = dim_info
+                metric = DbtslMetadata(
+                    name=metric_name,
+                    similarity=result['similarity'],
+                    description=metric_obj.description,
+                    dimensions=dimensions,
+                    queryable_granularities=[
+                        granularity.name for granularity in metric_obj.queryable_granularities
+                    ]
+                )
+                metrics[metric_name] = metric
         metaset = DbtslMetaset(query=query, metrics=metrics)
+        print(metaset)
         self._memory["dbtsl_metaset"] = metaset
         return str(metaset)
+
+    async def _fetch_dimension_values(self, client, metric_name, dim, num_cols):
+        dim_name = dim.name.upper()
+        dim_info = {"type": dim.type.value}
+
+        if dim.type.value == "CATEGORICAL":
+            enums = await client.dimension_values(
+                metrics=[metric_name], group_by=dim_name
+            )
+            spec, _ = process_enums({"enum": enums.to_pydict()[dim_name]}, num_cols)
+            dim_info["enum"] = spec["enum"]
+        return dim_name, dim_info
 
 
 class FunctionTool(Tool):
