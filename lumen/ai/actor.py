@@ -363,11 +363,14 @@ class DbtSLMixin(param.Parameterized):
         The host for the dbt semantic layer client.""")
 
     def __init__(self, environment_id: int, **params):
-        from dbtsl.asyncio import AsyncSemanticLayerClient
 
         super().__init__(environment_id=environment_id, **params)
-        self._dbtsl_client = AsyncSemanticLayerClient(
+
+    def _get_dbtsl_client(self):
+        from dbtsl.asyncio import AsyncSemanticLayerClient
+        dbtsl_client = AsyncSemanticLayerClient(
             environment_id=self.environment_id,
             auth_token=self.auth_token or os.environ.get("DBT_AUTH_TOKEN"),
             host=self.host,
         )
+        return dbtsl_client

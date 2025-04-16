@@ -1085,8 +1085,9 @@ class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
         This method fetches all metrics from the dbt semantic layer client and
         adds them to the vector store for semantic search.
         """
-        async with self._dbtsl_client.session():
-            self._metric_objs = {metric.name: metric for metric in await self._dbtsl_client.metrics()}
+        client = self._get_dbtsl_client()
+        async with client.session():
+            self._metric_objs = {metric.name: metric for metric in await client.metrics()}
 
         existing_metrics = self.vector_store.filter_by({"type": "metric"})
         if existing_metrics:
@@ -1135,7 +1136,9 @@ class DbtSLMetricLookup(VectorLookupTool, DbtSLMixin):
                 similarity=result['similarity'],
                 description=metric_obj.description,
                 dimensions=[dim.name for dim in metric_obj.dimensions],
-                queryable_granularities=metric_obj.queryable_granularities
+                queryable_granularities=[
+                    granularity.name for granularity in metric_obj.queryable_granularities
+                ]
             )
             metrics[metric_name] = metric
         metric_set = DbtSLMetaset(query=query, metrics=metrics)
