@@ -468,7 +468,6 @@ class Pipeline(Viewer, Component):
                 resolved_table = state.resolve_reference(table) if is_ref(table) else table
                 resolved_source._get_source(resolved_table)
             else:
-                print(resolved_source, type(resolved_source))
                 raise ValidationError(
                     f"The Pipeline specification references a table {table} that is not "
                     "available on the specified source.", spec
