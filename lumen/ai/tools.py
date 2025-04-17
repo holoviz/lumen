@@ -299,7 +299,7 @@ class VectorLookupTool(Tool):
                     break
 
             if refinement_history:
-                step.stream(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n")
+                stream_details(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n", auto=False)
 
         return best_results
 
@@ -1057,7 +1057,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     min_similarity = param.Number(default=0.1, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=8, bounds=(1, None), doc="""
+    n = param.Integer(default=5, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     purpose = param.String(default="""
@@ -1119,53 +1119,110 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         """
         query = messages[-1]["content"]
 
-        # Perform search with refinement
-        results = await self._perform_search_with_refinement(query)
-        closest_metrics = [
-            result for result in results
-            if result['similarity'] >= self.min_similarity
-        ]
+        with self._add_step(title="dbt Semantic Layer Search") as search_step:
+            search_step.stream(f"Searching for metrics relevant to: '{query}'")
+            # Perform search with refinement
+            results = await self._perform_search_with_refinement(query)
+            closest_metrics = [
+                result for result in results
+                if result['similarity'] >= self.min_similarity
+            ]
 
-        if not closest_metrics:
-            return ""
+            if not closest_metrics:
+                search_step.stream("⚠️ No metrics found with sufficient relevance to the query.")
+                search_step.status = "warning"
+                return ""
 
-        metrics = {}
-        client = self._get_dbtsl_client()
-        async with client.session():
-            num_cols = len(closest_metrics)
-            for result in closest_metrics:
-                metric_name = result['metadata']['name']
-                if metric_name not in self._metric_objs:
-                    continue
+            # Display found metrics with similarity scores
+            metrics_info = [f"- {result['metadata']['name']} (similarity: {result['similarity']:.3f})" for result in closest_metrics]
+            stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant metrics", auto=False)
 
-                metric_obj = self._metric_objs[metric_name]
-                dimensions = {}
-                dimension_tasks = [
-                    self._fetch_dimension_values(
-                        client,
-                        metric_name,
-                        dim,
-                        num_cols=num_cols
-                    ) for dim in metric_obj.dimensions
-                ]
-                dimension_results = await asyncio.gather(*dimension_tasks)
-                for dim_name, dim_info in dimension_results:
-                    dimensions[dim_name] = dim_info
-                metric = DbtslMetadata(
-                    name=metric_name,
-                    similarity=result['similarity'],
-                    description=metric_obj.description,
-                    dimensions=dimensions,
-                    queryable_granularities=[
-                        granularity.name for granularity in metric_obj.queryable_granularities
+        with self._add_step(title="Processing dbt Semantic Layer metrics") as step:
+            step.stream(f"Processing {len(closest_metrics)} metrics and their dimensions")
+            metrics = {}
+            client = self._get_dbtsl_client()
+            async with client.session():
+                num_cols = len(closest_metrics)
+                completed = 0
+                total = len(closest_metrics)
+
+                # Collect processing logs for all metrics to show in stream_details
+                all_processing_logs = []
+
+                for result in closest_metrics:
+                    metric_name = result['metadata']['name']
+                    processing_log = [f"Processing metric: {metric_name} ({completed+1}/{total})"]
+
+                    if metric_name not in self._metric_objs:
+                        processing_log.append(f"⚠️ Metric '{metric_name}' not found in semantic layer objects")
+                        completed += 1
+                        all_processing_logs.append("\n".join(processing_log))
+                        continue
+
+                    metric_obj = self._metric_objs[metric_name]
+                    dimensions = {}
+
+                    # Add dimension fetching info to log
+                    dim_count = len(metric_obj.dimensions)
+                    if dim_count > 0:
+                        processing_log.append(f"Fetching {dim_count} dimensions for metric '{metric_name}'...")
+                    else:
+                        processing_log.append(f"Metric '{metric_name}' has no dimensions")
+
+                    dimension_tasks = [
+                        self._fetch_dimension_values(
+                            client,
+                            metric_name,
+                            dim,
+                            num_cols=num_cols
+                        ) for dim in metric_obj.dimensions
                     ]
-                )
-                metrics[metric_name] = metric
-        metaset = DbtslMetaset(query=query, metrics=metrics)
 
-        can_answer_query = False
-        if metrics:
-            with self._add_step(title="Evaluating Metrics and Dimensions") as step:
+                    if dimension_tasks:
+                        dimension_results = await asyncio.gather(*dimension_tasks)
+                        for dim_name, dim_info in dimension_results:
+                            dimensions[dim_name] = dim_info
+
+                        # Add dimensions to log
+                        processing_log.append("\nDimensions fetched:")
+                        for dim_name, dim_info in dimensions.items():
+                            processing_log.append(f"- {dim_name} ({dim_info.get('type', 'unknown type')})")
+                            if 'enum_count' in dim_info:
+                                processing_log.append(f"  Values count: {dim_info['enum_count']}")
+                            if 'error' in dim_info:
+                                processing_log.append(f"  Error: {dim_info['error']}")
+
+                    metric = DbtslMetadata(
+                        name=metric_name,
+                        similarity=result['similarity'],
+                        description=metric_obj.description,
+                        dimensions=dimensions,
+                        queryable_granularities=[
+                            granularity.name for granularity in metric_obj.queryable_granularities
+                        ]
+                    )
+                    metrics[metric_name] = metric
+                    processing_log.append(f"Completed processing metric: {metric_name}")
+                    all_processing_logs.append("\n".join(processing_log))
+                    completed += 1
+
+                # Show all processing details in a collapsible stream_details section
+                stream_details("\n\n".join(all_processing_logs), step,
+                             title="Detailed metrics processing log", auto=False)
+
+            # Create the metaset with all processed metrics
+            metaset = DbtslMetaset(query=query, metrics=metrics)
+            step.stream(f"Created DbtslMetaset with {len(metrics)} metrics")
+
+            # Show metrics summary
+            if metrics:
+                metrics_summary = [f"- {name}: {m.description or 'No description'}" for name, m in metrics.items()]
+                stream_details("\n".join(metrics_summary), step, title="Metrics summary", auto=False)
+
+            # Evaluate if the metrics can answer the query
+            can_answer_query = False
+            if metrics:
+                step.stream("Evaluating if found metrics can answer the query...")
                 try:
                     result = await self._invoke_prompt(
                         "main",
@@ -1173,10 +1230,16 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                         dbtsl_metaset=metaset
                     )
                     can_answer_query = result.yes
+                    # Update status based on whether metrics can answer query
                     if can_answer_query:
-                        step.stream("✅ Found relevant metrics with all required dimensions to answer the query.")
+                        step.stream("Found metrics that can answer the query")
                     else:
-                        step.stream("⚠️ No relevant metrics found with all dimensions required to fully answer the query.")
+                        step.stream("No metrics found that can fully answer the query")
+                        step.status = "warning"
+
+                    # Add detailed evaluation result to stream_details
+                    result_message = "✅ Found relevant metrics with all required dimensions to answer the query." if can_answer_query else "⚠️ No relevant metrics found with all dimensions required to fully answer the query."
+                    stream_details(result_message, step, title="Evaluation result", auto=False)
                 except Exception as e:
                     step.stream(f"Error evaluating metrics and dimensions: {e}")
                     step.status = "failed"
@@ -1192,11 +1255,20 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         dim_info = {"type": dim.type.value}
 
         if dim.type.value == "CATEGORICAL":
-            enums = await client.dimension_values(
-                metrics=[metric_name], group_by=dim_name
-            )
-            spec, _ = process_enums({"enum": enums.to_pydict()[dim_name]}, num_cols)
-            dim_info["enum"] = spec["enum"]
+            try:
+                enums = await client.dimension_values(
+                    metrics=[metric_name], group_by=dim_name
+                )
+                if dim_name in enums.to_pydict():
+                    spec, _ = process_enums({"enum": enums.to_pydict()[dim_name]}, num_cols)
+                    dim_info["enum"] = spec["enum"]
+                    dim_info["enum_count"] = len(spec["enum"])
+                else:
+                    dim_info["enum"] = []
+                    dim_info["enum_count"] = 0
+                    dim_info["error"] = f"No values found for dimension {dim_name}"
+            except Exception as e:
+                dim_info["error"] = f"Error fetching dimension values: {e!s}"
         return dim_name, dim_info
 
 
