@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from pathlib import Path
+from pathlib import Path, PosixPath
 
 import panel as pn
 import yaml
@@ -106,9 +106,14 @@ def tuple_presenter(dumper, data):
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data)
 
 
+def path_representer(dumper, data):
+    return dumper.represent_scalar('tag:yaml.org,2002:str', str(data.resolve()))
+
 pn.chat.ChatStep.min_width = 375
 pn.chat.ChatStep.collapsed_on_success = False
 
 disable_pydantic_error_url()
 yaml.add_representer(str, str_presenter)
 yaml.add_representer(tuple, tuple_presenter)
+yaml.add_representer(PosixPath, path_representer)
+yaml.add_representer(Path, path_representer)
