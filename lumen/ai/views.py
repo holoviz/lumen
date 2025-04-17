@@ -58,7 +58,8 @@ class LumenOutput(Viewer):
             language=self.language,
             theme="tomorrow_night" if config.theme == "dark" else "tomorrow",
             sizing_mode="stretch_both",
-            on_keyup=False
+            on_keyup=False,
+            indent=2,
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = ButtonIcon(
