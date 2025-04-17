@@ -15,6 +15,9 @@ class PartialBaseModel(BaseModel, PartialLiteralMixin):
 
 class YesNo(BaseModel):
 
+    chain_of_thought: str = Field(
+        description="Explain concisely how you arrived at your answer.")
+
     yes: bool = Field(description="True if yes, otherwise False.")
 
 

@@ -130,6 +130,10 @@ class VectorLookupTool(Tool):
                 "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
                 "response_model": YesNo,
             },
+            "main": {
+                "template": PROMPTS_DIR / "DbtslLookup" / "main.jinja2",
+                "response_model": YesNo,
+            },
         },
         doc="Dictionary of available prompts for the tool."
     )
@@ -1067,7 +1071,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     min_similarity = param.Number(default=0.1, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=5, bounds=(1, None), doc="""
+    n = param.Integer(default=8, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     purpose = param.String(default="""
@@ -1123,7 +1127,9 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         and returns formatted context.
 
         This method searches the vector store for metrics relevant to the user query,
-        creates a DbtslMetaset from the results, and returns them as context for the LLM.
+        creates a DbtslMetaset from the results, and checks if any metrics have the
+        necessary dimensions to answer the query. If no metrics have all required
+        dimensions, it returns an empty string.
         """
         query = messages[-1]["content"]
 
@@ -1135,7 +1141,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         ]
 
         if not closest_metrics:
-            return
+            return ""
 
         metrics = {}
         client = self._get_dbtsl_client()
@@ -1170,6 +1176,28 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 )
                 metrics[metric_name] = metric
         metaset = DbtslMetaset(query=query, metrics=metrics)
+
+        can_answer_query = False
+        if metrics:
+            with self._add_step(title="Evaluating Metrics and Dimensions") as step:
+                try:
+                    result = await self._invoke_prompt(
+                        "main",
+                        messages,
+                        dbtsl_metaset=metaset
+                    )
+                    can_answer_query = result.yes
+                    if can_answer_query:
+                        step.stream("✅ Found relevant metrics with all required dimensions to answer the query.")
+                    else:
+                        step.stream("⚠️ No relevant metrics found with all dimensions required to fully answer the query.")
+                except Exception as e:
+                    step.stream(f"Error evaluating metrics and dimensions: {e}")
+                    step.status = "failed"
+
+        if not can_answer_query:
+            return ""
+
         self._memory["dbtsl_metaset"] = metaset
         return str(metaset)
 
