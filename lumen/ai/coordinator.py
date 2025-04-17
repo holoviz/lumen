@@ -32,7 +32,8 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, mutate_user_message, stream_details,
+    fuse_messages, instantiate_tools, log_debug, mutate_user_message,
+    stream_details,
 )
 from .views import LumenOutput
 
@@ -742,13 +743,9 @@ class Planner(Coordinator):
     ):
         # Initialize planner_tools if provided
         if planner_tools:
-            instantiated_planner_tools = []
-            for tool in planner_tools:
-                if not isinstance(tool, Tool):
-                    # Instantiate the tool if it's a class
-                    tool = tool()
-                instantiated_planner_tools.append(tool)
-            params["planner_tools"] = instantiated_planner_tools
+            params["planner_tools"] = instantiate_tools(
+                planner_tools, llm=llm, interface=interface
+            )
 
         # Call the parent's __init__
         super().__init__(
