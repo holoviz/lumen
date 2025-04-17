@@ -4,7 +4,6 @@ import asyncio
 import traceback
 
 from functools import partial
-from types import FunctionType
 from typing import Any
 
 import param
@@ -28,8 +27,8 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, process_enums, retry_llm_output, stream_details,
-    truncate_string,
+    get_schema, instantiate_tools, log_debug, process_enums, retry_llm_output,
+    stream_details, truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -46,30 +45,17 @@ class ToolUser(Actor):
         super().__init__(**params)
         self._tools = {}
 
-
-
         for prompt_name in self.prompts:
             prompt_tools = self._lookup_prompt_key(prompt_name, "tools")
             vector_store = next(
                 (tool.vector_store for tool in prompt_tools if isinstance(tool, VectorLookupTool)), None
             )
-            self._tools[prompt_name] = []
-            for tool in prompt_tools:
-                if isinstance(tool, Actor):
-                    if tool.llm is None:
-                        tool.llm = self.llm
-                    if tool.interface is None:
-                        tool.interface = self.interface
-                    if hasattr(tool, "vector_store") and vector_store:
-                        tool.vector_store = vector_store
-                    self._tools[prompt_name].append(tool)
-                elif isinstance(tool, FunctionType):
-                    self._tools[prompt_name].append(FunctionTool(tool, llm=self.llm, interface=self.interface))
-                else:
-                    tool_kwargs = dict(llm=self.llm, interface=self.interface)
-                    if hasattr(tool, "vector_store") and vector_store:
-                        tool_kwargs["vector_store"] = vector_store
-                    self._tools[prompt_name].append(tool(**tool_kwargs))
+            self._tools[prompt_name] = instantiate_tools(
+                prompt_tools,
+                llm=self.llm,
+                interface=self.interface,
+                vector_store=vector_store
+            )
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
