@@ -47,7 +47,7 @@ class VectorMetaset:
                     False: Filter by selected_columns without truncation (selected_context)
                     True: Filter by selected_columns with truncation (min_context)
         """
-        context = "Below are the relevant tables and columns to use:\n\n"
+        context = "Below are the relevant tables and columns available:\n\n"
 
         # Use selected tables if specified, otherwise use all tables
         tables_to_show = self.selected_columns or self.vector_metadata_map.keys()
@@ -84,7 +84,7 @@ class VectorMetaset:
                     context += "...\n"
 
                 if i == 0:
-                    context += "Columns:\n"
+                    context += "Cols:\n"
 
                 col_name = truncate_string(col.name) if truncate else col.name
                 context += f"{orig_idx}. {col_name!r}"
@@ -149,7 +149,7 @@ class SQLMetaset:
         Returns:
             Formatted context string
         """
-        context = "Below are the relevant tables and columns to use:\n\n"
+        context = "Below are the relevant tables and columns available:\n\n"
 
         vector_metaset = self.vector_metaset
         tables_to_show = vector_metaset.selected_columns or vector_metaset.vector_metadata_map.keys()

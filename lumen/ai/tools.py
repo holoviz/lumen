@@ -958,7 +958,7 @@ class IterativeTableLookup(TableLookup):
                         if output.is_done or not available_slugs:
                             step.stream("Selection process complete - model is satisfied with selected tables")
                             satisfied_slugs = selected_slugs
-                            break
+                            fast_track = True
                         if iteration != max_iterations:
                             step.stream("Unsatisfied with selected tables - continuing selection process...")
                         else:
@@ -1014,12 +1014,7 @@ class IterativeTableLookup(TableLookup):
                     break
 
         # Filter sql_metadata_map and sql_schema_objects to match satisfied_slugs
-        sql_metadata_map = {
-            table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()
-            # Only include tables that were selected in the final iteration or were fast-tracked
-            if len(satisfied_slugs) == 0 or table_slug in satisfied_slugs
-        }
-
+        sql_metadata_map = {table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()}
         # Only keep table schemas that were selected in the final iteration or were fast-tracked
         if satisfied_slugs:
             # Update selected_columns in vector_metaset
@@ -1028,6 +1023,11 @@ class IterativeTableLookup(TableLookup):
                 for table_slug in satisfied_slugs
                 if table_slug in vector_metaset.selected_columns
             }
+            for table_slug in satisfied_slugs:
+                if table_slug in vector_metadata_map and table_slug not in vector_metaset.selected_columns:
+                    table = vector_metadata_map[table_slug]
+                    all_columns = [col.name for col in table.columns]
+                    vector_metaset.selected_columns[table_slug] = all_columns
 
         # Create SQLMetaset object using the vector schema and SQL data
         sql_metaset = SQLMetaset(
