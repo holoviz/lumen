@@ -1,0 +1,32 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+You are an assistant that helps determine if metrics from a dbt semantic layer are suitable for answering user queries.
+
+I need you to determine if any of these metrics are both relevant to the query AND have ALL the dimensions required to properly answer the user's query.
+
+For example, if the user is asking about "total downloads for a specific company from 2022", we would need:
+1. A metric related to downloads
+2. A time dimension (to filter for 2022)
+3. A company dimension (to filter for the specific company)
+
+If the user asks for "average user engagement by region this month", we would need:
+1. A metric related to user engagement
+2. A time dimension (to filter for this month)
+3. A geographic dimension (to group by region)
+
+In your analysis, consider:
+- Does the metric match what the user is asking about?
+- What entities or dimensions need filtering?
+- What time periods are mentioned?
+- What groupings are requested?
+- Are comparisons being made?
+
+Only answer YES if at least one metric is relevant AND contains ALL necessary dimensions.
+Answer NO otherwise.
+{% endblock %}
+
+{% block context %}
+Available metrics and their dimensions:
+{{ dbtsl_metaset }}
+{% endblock %}

@@ -4,7 +4,6 @@ import asyncio
 import traceback
 
 from functools import partial
-from types import FunctionType
 from typing import Any
 
 import param
@@ -14,7 +13,7 @@ from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
 from ..views.base import View
-from .actor import Actor, ContextProvider
+from .actor import Actor, ContextProvider, DbtslMixin
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
@@ -23,12 +22,13 @@ from .models import (
     make_refined_query_model,
 )
 from .schemas import (
-    Column, PreviousState, SQLMetadata, SQLMetaset, VectorMetadata,
-    VectorMetaset,
+    Column, DbtslMetadata, DbtslMetaset, PreviousState, SQLMetadata,
+    SQLMetaset, VectorMetadata, VectorMetaset,
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, retry_llm_output, stream_details, truncate_string,
+    get_schema, instantiate_tools, log_debug, process_enums, retry_llm_output,
+    stream_details, truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -45,30 +45,17 @@ class ToolUser(Actor):
         super().__init__(**params)
         self._tools = {}
 
-
-
         for prompt_name in self.prompts:
             prompt_tools = self._lookup_prompt_key(prompt_name, "tools")
             vector_store = next(
                 (tool.vector_store for tool in prompt_tools if isinstance(tool, VectorLookupTool)), None
             )
-            self._tools[prompt_name] = []
-            for tool in prompt_tools:
-                if isinstance(tool, Actor):
-                    if tool.llm is None:
-                        tool.llm = self.llm
-                    if tool.interface is None:
-                        tool.interface = self.interface
-                    if hasattr(tool, "vector_store") and vector_store:
-                        tool.vector_store = vector_store
-                    self._tools[prompt_name].append(tool)
-                elif isinstance(tool, FunctionType):
-                    self._tools[prompt_name].append(FunctionTool(tool, llm=self.llm, interface=self.interface))
-                else:
-                    tool_kwargs = dict(llm=self.llm, interface=self.interface)
-                    if hasattr(tool, "vector_store") and vector_store:
-                        tool_kwargs["vector_store"] = vector_store
-                    self._tools[prompt_name].append(tool(**tool_kwargs))
+            self._tools[prompt_name] = instantiate_tools(
+                prompt_tools,
+                llm=self.llm,
+                interface=self.interface,
+                vector_store=vector_store
+            )
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
@@ -127,6 +114,10 @@ class VectorLookupTool(Tool):
             },
             "should_select_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
+                "response_model": YesNo,
+            },
+            "main": {
+                "template": PROMPTS_DIR / "DbtslLookup" / "main.jinja2",
                 "response_model": YesNo,
             },
         },
@@ -248,7 +239,7 @@ class VectorLookupTool(Tool):
 
         results = self.vector_store.query(query, top_k=self.n, **kwargs)
         # check if all metadata is the same; if so, skip
-        if all(result.get('metadata') == results[0].get('metadata') for result in results):
+        if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
 
         with self._add_step(title="Vector Search with Refinement") as step:
@@ -256,7 +247,7 @@ class VectorLookupTool(Tool):
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
             stream_details("\n".join(
-                f'```\n{result["text"]}\n\n{result["metadata"]}```' for result in results
+                f'```\n{result["text"]}\n\n{result["metadata"]}\n```' for result in results
             ), step, title=f"{len(results)} chunks", auto=False)
 
             refinement_history = []
@@ -308,7 +299,7 @@ class VectorLookupTool(Tool):
                     break
 
             if refinement_history:
-                step.stream(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n")
+                stream_details(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n", step, auto=False)
 
         return best_results
 
@@ -368,15 +359,15 @@ class DocumentLookup(VectorLookupTool):
         return "\n".join(formatted_results)
 
     async def _update_vector_store(self, _, __, sources):
-        for source in sources:
-            metadata = source.get("metadata", {})
-            filename = metadata.get("filename")
-            if filename:
-                # overwrite existing items with the same filename
-                existing_items = self.vector_store.filter_by({'filename': filename})
-                if existing_ids := [item['id'] for item in existing_items]:
-                    self.vector_store.delete(existing_ids)
-            self.vector_store.add([{"text": source["text"], "metadata": source.get("metadata", {})}])
+        # Build a list of document items for a single upsert operation
+        items_to_upsert = [
+            {"text": source["text"], "metadata": source.get("metadata", {})}
+            for source in sources
+        ]
+
+        # Make a single upsert call with all documents
+        if items_to_upsert:
+            self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
@@ -440,7 +431,7 @@ class TableLookup(VectorLookupTool):
 
     _item_type_name = "database tables"
 
-    _ready = param.Boolean(default=False, doc="""
+    _ready = param.Boolean(default=False, allow_None=True, doc="""
         Whether the vector store is ready.""")
 
     def __init__(self, **params):
@@ -479,7 +470,7 @@ class TableLookup(VectorLookupTool):
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
             if tables_vector_data := self._tables_metadata.get(table_slug):
                 if table_description := tables_vector_data.get("description"):
-                    description += f"\n  Description: {table_description}"
+                    description += f"\n  Info: {table_description}"
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
@@ -522,13 +513,15 @@ class TableLookup(VectorLookupTool):
         if existing_items := self.vector_store.filter_by(vector_metadata):
             if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
                 return
-            self.vector_store.delete([item['id'] for item in existing_items])
 
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         vector_metadata["enriched"] = True
+
+        # TODO: Investigate whether these enriched text should actually be in metadata??
+        # is it duplicate??
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop('description', ''):
-            enriched_text += f"\nDescription: {description}"
+            enriched_text += f"\nInfo: {description}"
         if self.include_columns and (vector_columns := vector_info.pop('columns', {})):
             enriched_text += "\nCols:"
             for col_name, col_info in vector_columns.items():
@@ -543,7 +536,9 @@ class TableLookup(VectorLookupTool):
                 if key == "enriched":
                     continue
                 enriched_text += f"\n- {key}: {value}"
-        self.vector_store.add([{"text": enriched_text, "metadata": vector_metadata}])
+        # Use upsert to add or update the table metadata
+        # This will add new entries or update existing ones as needed
+        self.vector_store.upsert([{"text": enriched_text, "metadata": vector_metadata}])
 
     async def _update_vector_store(self, _, __, sources):
         # Create a list to track all tasks we're starting in this update
@@ -562,12 +557,14 @@ class TableLookup(VectorLookupTool):
 
             tables = source.get_tables()
             # since enriching the metadata might take time, first add basic metadata (table name)
-            for table_name in tables:
-                metadata = {"source": source.name, "table_name": table_name}
-                if self.vector_store.filter_by(metadata):
-                    # TODO: Add ability to update existing source table?
-                    continue
-                self.vector_store.add([{"text": table_name, "metadata": metadata}])
+            # Build a list for a single upsert operation
+            basic_table_items = [
+                {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
+                for table_name in tables
+            ]
+            # Make a single upsert call with all basic table metadata
+            if basic_table_items:
+                self.vector_store.upsert(basic_table_items)
 
             # if metadata is included, upsert the existing
             if self.include_metadata:
@@ -581,13 +578,24 @@ class TableLookup(VectorLookupTool):
 
         if all_tasks:
             ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
-            ready_task.add_done_callback(lambda t: None if t.exception() else None)
+            ready_task.add_done_callback(lambda t: t.exception if t.exception() else None)
 
     async def _mark_ready_when_done(self, tasks):
         """Wait for all tasks to complete and then mark the tool as ready."""
-        await asyncio.gather(*tasks, return_exceptions=True)
-        log_debug("All table metadata tasks completed.")
-        self._ready = True
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        exceptions = [r for r in results if isinstance(r, Exception)]
+        if exceptions:
+            log_debug(f"Encountered {len(exceptions)} errors during metadata tasks")
+            for exception in exceptions:
+                exc_type, exc_value, exc_tb = type(exception), exception, None
+                log_debug(f"Error: {exc_type.__name__}: {exc_value}")
+                tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+                log_debug("Traceback details:\n" + "".join(tb_lines))
+            self._ready = None
+        else:
+            log_debug("All table metadata tasks completed successfully.")
+            self._ready = True
 
     async def _should_refresh_tables(self, messages: list[dict[str, str]]) -> bool:
         """
@@ -972,7 +980,7 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    stream_details(str(vector_metaset), step, title="Table details", auto=False)
+                    stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
                             self._tables_metadata.get(table_slug, {}).get("view_definition", ""),
@@ -992,12 +1000,9 @@ class IterativeTableLookup(TableLookup):
                         else:
                             schema = await get_schema(source_obj, table_name, reduce_enums=False)
 
-                        # Create TableSQLMetadata object
                         sql_metadata = SQLMetadata(
                             table_slug=table_slug,
                             schema=schema,
-                            base_sql=source_obj.get_sql_expr(source_obj.normalize_table(table_name)),
-                            view_definition=view_definition,
                         )
                         sql_metadata_map[table_slug] = sql_metadata
 
@@ -1041,6 +1046,187 @@ class IterativeTableLookup(TableLookup):
         """Generate formatted text representation from schema objects."""
         sql_metaset = self._memory.get("sql_metaset")
         return sql_metaset.selected_context
+
+
+class DbtslLookup(VectorLookupTool, DbtslMixin):
+    """
+    DbtslLookup tool that creates a vector store of all available dbt semantic layers
+    and responds with relevant metrics for user queries.
+    """
+
+    min_similarity = param.Number(default=0.1, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=5, bounds=(1, None), doc="""
+        The number of document results to return.""")
+
+    purpose = param.String(default="""
+        Looks up additional context by querying dbt semantic layers based on the user query with a vector store.
+        Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
+        Not useful for looking up what datasets are available. Likely useful for all queries.""")
+
+    requires = param.List(default=["source"], readonly=True, doc="""
+        List of context that this Tool requires to be run.""")
+
+    provides = param.List(default=["dbtsl_metaset"], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
+
+    def __init__(self, environment_id: int, **params):
+        params["environment_id"] = environment_id
+        super().__init__(**params)
+        self._metric_objs = {}
+        state.execute(partial(self._update_vector_store, None, None))
+
+    async def _update_vector_store(self, _, __):
+        """
+        Updates the vector store with metrics from the dbt semantic layer client.
+
+        This method fetches all metrics from the dbt semantic layer client and
+        adds them to the vector store for semantic search.
+        """
+        client = self._get_dbtsl_client()
+        async with client.session():
+            self._metric_objs = {metric.name: metric for metric in await client.metrics()}
+
+        # Build a list of all metrics for a single upsert operation
+        items_to_upsert = []
+        for metric_name, metric in self._metric_objs.items():
+            enriched_text = f"Metric: {metric_name}"
+            if metric.description:
+                enriched_text += f"\nInfo: {metric.description}"
+
+            vector_metadata = {
+                "type": "metric",
+                "name": metric_name,
+                "metric_type": str(metric.type.value) if metric.type else "UNKNOWN",
+            }
+
+            items_to_upsert.append({"text": enriched_text, "metadata": vector_metadata})
+
+        # Make a single upsert call with all metrics
+        if items_to_upsert:
+            self.vector_store.upsert(items_to_upsert)
+
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+        """
+        Fetches metrics based on the user query, populates the DbtslMetaset,
+        and returns formatted context.
+
+        This method searches the vector store for metrics relevant to the user query,
+        creates a DbtslMetaset from the results, and checks if any metrics have the
+        necessary dimensions to answer the query. If no metrics have all required
+        dimensions, it returns an empty string.
+        """
+        query = messages[-1]["content"]
+
+        with self._add_step(title="dbt Semantic Layer Search") as search_step:
+            search_step.stream(f"Searching for metrics relevant to: '{query}'")
+            # Perform search with refinement
+            results = await self._perform_search_with_refinement(query)
+            closest_metrics = [
+                result for result in results
+                if result['similarity'] >= self.min_similarity
+            ]
+
+            if not closest_metrics:
+                search_step.stream("\n⚠️ No metrics found with sufficient relevance to the query.")
+                search_step.status = "warning"
+                return ""
+
+            # Display found metrics with similarity scores
+            metrics_info = [f"- {result['metadata']['name']} (similarity: {result['similarity']:.3f})" for result in closest_metrics]
+            stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
+
+        with self._add_step(title="Processing dbt Semantic Layer metrics") as step:
+            step.stream("Processing metrics and their dimensions")
+            metrics = {}
+            client = self._get_dbtsl_client()
+            async with client.session():
+                num_cols = len(closest_metrics)
+                processed_metrics = set()
+                for result in closest_metrics:
+                    metric_name = result['metadata']['name']
+                    if metric_name in processed_metrics:
+                        continue
+                    metric_obj = self._metric_objs[metric_name]
+                    processed_metrics.add(metric_name)
+                    step.stream(f"\n\n`{metric_name}`: {metric_obj.description}")
+
+                    dimensions = {}
+                    dimension_tasks = [
+                        self._fetch_dimension_values(
+                            client,
+                            metric_name,
+                            dim,
+                            num_cols=num_cols
+                        ) for dim in metric_obj.dimensions
+                    ]
+
+                    if dimension_tasks:
+                        dimension_results = await asyncio.gather(*dimension_tasks)
+                        for dim_name, dim_info in dimension_results:
+                            dimensions[dim_name] = dim_info
+
+                    metric = DbtslMetadata(
+                        name=metric_name,
+                        similarity=result['similarity'],
+                        description=metric_obj.description,
+                        dimensions=dimensions,
+                        queryable_granularities=[
+                            granularity.name for granularity in metric_obj.queryable_granularities
+                        ]
+                    )
+                    metrics[metric_name] = metric
+
+            # Create the metaset with all processed metrics
+            metaset = DbtslMetaset(query=query, metrics=metrics)
+
+            # Evaluate if the metrics can answer the query
+            can_answer_query = False
+            if metrics:
+                step.stream("\n\nEvaluating if found metrics can answer the query...")
+                try:
+                    result = await self._invoke_prompt(
+                        "main",
+                        messages,
+                        dbtsl_metaset=metaset
+                    )
+                    can_answer_query = result.yes
+                    # Update status based on whether metrics can answer query
+                    if can_answer_query:
+                        step.stream("\n\nFound metrics that can answer the query")
+                    else:
+                        step.stream("\nNo metrics found that can fully answer the query")
+                except Exception as e:
+                    step.stream(f"\n\nError evaluating metrics and dimensions: {e}")
+                    step.status = "failed"
+
+        if not can_answer_query:
+            return ""
+
+        self._memory["dbtsl_metaset"] = metaset
+        return str(metaset)
+
+    async def _fetch_dimension_values(self, client, metric_name, dim, num_cols):
+        dim_name = dim.name.upper()
+        dim_info = {"type": dim.type.value}
+
+        if dim.type.value == "CATEGORICAL":
+            try:
+                enums = await client.dimension_values(
+                    metrics=[metric_name], group_by=dim_name
+                )
+                if dim_name in enums.to_pydict():
+                    spec, _ = process_enums({"enum": enums.to_pydict()[dim_name]}, num_cols)
+                    dim_info["enum"] = spec["enum"]
+                    dim_info["enum_count"] = len(spec["enum"])
+                else:
+                    dim_info["enum"] = []
+                    dim_info["enum_count"] = 0
+                    dim_info["error"] = f"No values found for dimension {dim_name}"
+            except Exception as e:
+                dim_info["error"] = f"Error fetching dimension values: {e!s}"
+        return dim_name, dim_info
 
 
 class FunctionTool(Tool):

@@ -193,21 +193,25 @@ class UI(Viewer):
         except Exception:
             traceback.print_exc()
 
-        table_lookup = None
         for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
                 table_lookup = tool
                 break
 
-        self._vector_store_status_badge.status = "running"
-        if table_lookup is not None:
-            while True:
-                await asyncio.sleep(1)
-                if table_lookup._ready:
-                    break
+        if not table_lookup:
+            self._vector_store_status_badge.param.update(
+                status="success", name='Vector Store Ready')
+            return
 
-        self._vector_store_status_badge.param.update(
-            status="success", name='Vector Store Ready')
+        self._vector_store_status_badge.status = "running"
+        while table_lookup._ready is False:
+            await asyncio.sleep(0.5)
+            if table_lookup._ready:
+                self._vector_store_status_badge.param.update(
+                    status="success", name='Vector Store Ready')
+            elif table_lookup._ready is None:
+                self._vector_store_status_badge.param.update(
+                    status="danger", name='Vector Store Error')
 
     def _destroy(self, session_context):
         """
@@ -700,7 +704,7 @@ class ExplorerUI(UI):
             async def render_plan(_, old, new):
                 nonlocal index, new_exploration
                 plan = local_memory["plan"]
-                if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
+                if any(step.expert_or_tool in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
                     # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     index = len(self._explorations)-1

@@ -1,9 +1,13 @@
 import re
 
 from abc import abstractmethod
+from pathlib import Path
 
 import numpy as np
 import param
+
+STOP_WORDS = (Path(__file__).parent / "embeddings_stop_words.txt").read_text().splitlines()
+STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORECASE)
 
 
 class Embeddings(param.Parameterized):
@@ -48,6 +52,7 @@ class NumpyEmbeddings(Embeddings):
     def embed(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
         for text in texts:
+            text = STOP_WORDS_RE.sub("", text)
             ngrams = self.get_char_ngrams(text)
             vector = np.zeros(self.vocab_size)
 

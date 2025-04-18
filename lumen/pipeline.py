@@ -469,7 +469,7 @@ class Pipeline(Viewer, Component):
                 resolved_source._get_source(resolved_table)
             else:
                 raise ValidationError(
-                    "The Pipeline specification references a table that is not "
+                    f"The Pipeline specification references a table {table} that is not "
                     "available on the specified source.", spec
                 )
 

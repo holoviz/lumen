@@ -32,7 +32,8 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, ToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, mutate_user_message, stream_details,
+    fuse_messages, instantiate_tools, log_debug, mutate_user_message,
+    stream_details,
 )
 from .views import LumenOutput
 
@@ -216,7 +217,6 @@ class Coordinator(Viewer, ToolUser):
             agent.interface = interface
             instantiated.append(agent)
 
-
         # If none of the tools provide vector_metaset, add tablelookup
         provides_vector_metaset = any(
             "vector_metaset" in tool.provides
@@ -373,12 +373,21 @@ class Coordinator(Viewer, ToolUser):
         )
         return out
 
-    async def _execute_graph_node(self, node: ExecutionNode, messages: list[Message], execution_graph: list[ExecutionNode] | None = None) -> bool:
+    async def _execute_graph_node(
+        self,
+        node: ExecutionNode,
+        messages: list[Message],
+        execution_graph: list[ExecutionNode] | None = None,
+        allow_missing: bool = False,
+    ) -> tuple[bool, set[str]]:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
         render_output = node.render_output and self.render_output
         agent_name = type(subagent).name.replace('Agent', '')
+
+        # Track what this node provides
+        node_provided = set()
 
         # attach the new steps to the existing steps--used when there is intermediate Lumen output
         steps_layout = None
@@ -428,8 +437,20 @@ class Coordinator(Viewer, ToolUser):
 
             unprovided = [p for p in subagent.provides if p not in self._memory]
             if (unprovided and agent_name != "Source") or (len(unprovided) > 1 and agent_name == "Source"):
-                step.failed_title = f"{agent_name}Agent did not provide {', '.join(unprovided)}. Aborting the plan."
-                raise RuntimeError(f"{agent_name} failed to provide declared context.")
+                if not allow_missing:
+                    step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
+                    raise RuntimeError(f"{agent_name} failed to provide declared context.")
+                else:
+                    step.stream(
+                        f"\n\n✗ {agent_name} agent did not provide the following context: {', '.join(unprovided)}. "
+                        "Continuing with the plan."
+                    )
+
+            # Track what was successfully provided by this node
+            for provided_key in subagent.provides:
+                if provided_key in self._memory:
+                    node_provided.add(provided_key)
+
             step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
             # Handle Tool specific behaviors
             if isinstance(subagent, Tool):
@@ -451,7 +472,7 @@ class Coordinator(Viewer, ToolUser):
                     message_kwargs = dict(value=out, user=subagent.name)
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
-        return step.status == "success"
+        return step.status == "success", node_provided
 
     def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
         if isinstance(obj, (Column, Card, Tabs)):
@@ -488,8 +509,20 @@ class Coordinator(Viewer, ToolUser):
                 max_user_messages=self.history
             )
 
+            # Check if this is a follow-up question that can be answered with existing context
+            is_follow_up = await self._check_follow_up_question(messages)
+
             agents = {agent.name[:-5]: agent for agent in self.agents}
-            execution_graph = await self._compute_execution_graph(messages, agents)
+
+            # If it's a follow-up and we already have the data, we can skip some tools execution
+            if is_follow_up:
+                log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
+                with self.interface.add_step(title="Using existing data context...", user="Assistant") as step:
+                    step.stream("Detected that this is a follow-up question related to the previous dataset.")
+                    step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
+                    step.success_title = "Using existing data for follow-up question"
+
+            execution_graph = await self._compute_execution_graph(messages, agents, is_follow_up=is_follow_up)
             if execution_graph is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
@@ -497,10 +530,17 @@ class Coordinator(Viewer, ToolUser):
                 )
                 self.interface.stream(msg, user='Lumen')
                 return msg
+
+            # Track what has been provided during execution
+            all_provided = set()
+
             for i, node in enumerate(execution_graph):
-                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
+                succeeded, node_provided = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
                 if not succeeded:
                     break
+                # Update the provided set with what this node provided
+                all_provided.update(node_provided)
+
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
             log_debug("\033[92mCompleted: Coordinator\033[0m", show_sep="below")
@@ -510,17 +550,16 @@ class Coordinator(Viewer, ToolUser):
                 message_obj.object.collapsed = True
                 break
 
-    async def _check_tool_relevance(self, tool_name: str, tool_output: str, agent: Agent, agent_task: str, messages: list[Message]) -> bool:
-        tool = next((t for t in self._tools["main"] if t.name == tool_name), None)
+    async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message]) -> bool:
         result = await self._invoke_prompt(
             "tool_relevance",
             messages,
-            tool_name=tool_name,
-            tool_description=getattr(tool, "description", ""),
+            tool_name=tool.name,
+            tool_purpose=getattr(tool, "purpose", ""),
             tool_output=tool_output,
-            agent_name=agent.name,
-            agent_purpose=agent.purpose,
-            agent_task=agent_task,
+            actor_name=actor.name,
+            actor_purpose=getattr(actor, "purpose", actor.__doc__),
+            actor_task=actor_task,
         )
 
         return result.yes
@@ -571,7 +610,7 @@ class Coordinator(Viewer, ToolUser):
             else:
                 # Otherwise, check semantic relevance
                 is_relevant = await self._check_tool_relevance(
-                    tool.name, result, agent, task, messages
+                    tool, result, agent, task, messages
                 )
 
             if is_relevant:
@@ -686,14 +725,114 @@ class Planner(Coordinator):
     and then executes it.
     """
 
+    planner_tools = param.List(default=[], doc="""
+        List of tools to use to provide context for the planner prior
+        to making a plan.""")
+
     prompts = param.Dict(
         default={
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
             },
+            "follow_up": {
+                "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
+                "response_model": YesNo,
+            },
         }
     )
+
+    def __init__(
+        self,
+        llm: Llm | None = None,
+        interface: ChatFeed | ChatInterface | None = None,
+        agents: list[Agent | type[Agent]] | None = None,
+        tools: list[Tool | type[Tool]] | None = None,
+        planner_tools: list[Tool | type[Tool]] | None = None,
+        logs_db_path: str = "",
+        **params,
+    ):
+        # Initialize planner_tools if provided
+        if planner_tools:
+            params["planner_tools"] = instantiate_tools(
+                planner_tools, llm=llm, interface=interface
+            )
+
+        # Call the parent's __init__
+        super().__init__(
+            llm=llm,
+            interface=interface,
+            agents=agents,
+            tools=tools,
+            logs_db_path=logs_db_path,
+            **params
+        )
+
+    async def _check_follow_up_question(self, messages: list[Message]) -> bool:
+        """Check if the user's query is a follow-up question about the previous dataset."""
+        # Only check if vector_metaset is in memory
+        if "data" not in self._memory:
+            return False
+
+        # Use the follow_up prompt to check
+        result = await self._invoke_prompt(
+            "follow_up",
+            messages,
+        )
+
+        log_debug(f"Follow-up check: {result.yes}. Reason: {result.chain_of_thought}")
+        return result.yes
+
+    async def _execute_planner_tools(self, messages: list[Message]) -> set[str]:
+        """Execute planner tools to gather context before planning."""
+        if not self.planner_tools:
+            return set()
+
+        if "planner_context" not in self._memory:
+            self._memory["planner_context"] = {}
+
+        provided = set()
+        user_query = next((
+            msg["content"] for msg in reversed(messages)
+            if msg.get("role") == "user"), ""
+        )
+        with self.interface.add_step(title="Gathering context for planning...", user="Assistant") as step:
+            for tool in self.planner_tools:
+                is_relevant = await self._check_tool_relevance(
+                    tool, "", self, f"Gather context for planning to answer {user_query}", messages
+                )
+
+                if not is_relevant:
+                    continue
+
+                tool_name = getattr(tool, "name", type(tool).__name__)
+                step.stream(f"Using {tool_name} to gather planning context...")
+
+                node = ExecutionNode(
+                    actor=tool,
+                    provides=tool.provides,
+                    instruction=user_query,
+                    title=f"Gathering context with {tool_name}",
+                    render_output=False
+                )
+
+                success, node_provided = await self._execute_graph_node(node, messages, allow_missing=True)
+                if not success:
+                    step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
+                    continue
+
+                for provided_key in node_provided:
+                    if provided_key in self._memory:
+                        self._memory["planner_context"][provided_key] = self._memory[provided_key]
+                        provided.add(provided_key)
+
+            context_keys = list(self._memory["planner_context"].keys())
+            if context_keys:
+                step.success_title = f"\n\nGathered planning context: {', '.join(context_keys)}"
+            else:
+                step.success_title = "\n\nNo additional context needed for planning"
+
+            return provided
 
     async def _make_plan(
         self,
@@ -704,6 +843,7 @@ class Planner(Coordinator):
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
+        provided: set[str] = set(),
     ) -> BaseModel:
         tools = self._tools["main"]
         reasoning = None
@@ -727,6 +867,8 @@ class Planner(Coordinator):
                 # Gather candidates that can provide unmet dependencies
                 candidates = agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
+                provided=provided,  # Include what has been provided so far
+                is_follow_up="vector_metaset" in self._memory and "vector_metaset" in provided
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(
@@ -748,28 +890,59 @@ class Planner(Coordinator):
         )
         return await self._fill_model(mutated_messages, system, plan_model)
 
-    async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
+    async def _resolve_plan(self, plan, agents, messages, provided=None) -> tuple[list[ExecutionNode], set[str]]:
+        # Initialize with what has already been provided
+        provided = set(provided) if provided else set()
+        # Add everything currently in memory too
+        provided.update(set(self._memory))
+
         table_provided = False
         execution_graph = []
-        provided = set(self._memory)
         unmet_dependencies = set()
         tools = {tool.name: tool for tool in self._tools["main"]}
         steps = []
+
+        # First, add placeholders for all plan steps to see the complete dependency tree
+        planned_steps = []
         for step in plan.steps:
             key = step.expert_or_tool
             if key in agents:
                 subagent = agents[key]
             elif key in tools:
                 subagent = tools[key]
+            else:
+                unmet_dependencies.add(f"Unknown agent/tool: {key}")
+                continue
+
             requires = set(await subagent.requirements(messages))
-            provided |= set(subagent.provides)
-            unmet_dependencies = (unmet_dependencies | requires) - provided
-            has_table_lookup = any(
-                isinstance(node.actor, TableLookup)
-                for node in execution_graph
-            )
-            if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
-                provided |= set(agents['SQLAgent'].provides)
+            provides = set(subagent.provides)
+
+            planned_steps.append({
+                "agent": subagent,
+                "requires": requires,
+                "provides": provides,
+                "step": step
+            })
+
+        # Then, execute steps in order ensuring dependencies are met
+        for planned_step in planned_steps:
+            subagent = planned_step["agent"]
+            step = planned_step["step"]
+            requires = planned_step["requires"]
+            provides = planned_step["provides"]
+
+            # Check for unmet dependencies for this step
+            step_unmet = requires - provided
+
+            if step_unmet:
+                unmet_dependencies.update(step_unmet)
+                continue
+
+            # Handle special case for TableLookup + SQLAgent
+            if "table" in requires and not table_provided and "SQLAgent" in agents and any(
+                isinstance(node.actor, TableLookup) for node in execution_graph
+            ):
+                provided.update(set(agents['SQLAgent'].provides))
                 sql_step = type(step)(
                     expert_or_tool='SQLAgent',
                     instruction='Load the table',
@@ -779,7 +952,7 @@ class Planner(Coordinator):
                 execution_graph.append(
                     ExecutionNode(
                         actor=agents['SQLAgent'],
-                        provides=['table'],
+                        provides=agents['SQLAgent'].provides,  # Include all provided items
                         instruction=sql_step.instruction,
                         title=sql_step.title,
                         render_output=False
@@ -787,23 +960,30 @@ class Planner(Coordinator):
                 )
                 steps.append(sql_step)
                 table_provided = True
-                unmet_dependencies -= provided
+
+            # Add the current step to the execution graph
             execution_graph.append(
                 ExecutionNode(
                     actor=subagent,
-                    provides=subagent.provides,
+                    provides=provides,  # Include all provided items
                     instruction=step.instruction,
                     title=step.title,
                     render_output=step.render_output
                 )
             )
             steps.append(step)
-        last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
+
+            # Update provided set with all items this step provides
+            provided.update(provides)
+
+        # Add summarization step if needed
+        last_node = execution_graph[-1] if execution_graph else None
+        if last_node and isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 expert = "AnalystAgent"
             else:
                 expert = "ChatAgent"
+
             summarize_step = type(step)(
                 expert_or_tool=expert,
                 instruction='Summarize the results.',
@@ -814,16 +994,22 @@ class Planner(Coordinator):
             execution_graph.append(
                 ExecutionNode(
                     actor=agents[expert],
-                    provides=[],
+                    provides=agents[expert].provides,  # Include all provided items
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                     render_output=summarize_step.render_output
                 )
             )
+
         plan.steps = steps
         return execution_graph, unmet_dependencies
 
-    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
+    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], is_follow_up: bool = False) -> list[ExecutionNode]:
+        # Execute planner tools to gather context before planning (skip if follow-up)
+        provided = set()
+        if not is_follow_up:
+            provided = await self._execute_planner_tools(messages)
+
         tool_names = [tool.name for tool in self._tools["main"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
 
@@ -845,8 +1031,11 @@ class Planner(Coordinator):
                 plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, unmet_dependencies, previous_plans, reason_model, plan_model, istep
+                        messages, agents, unmet_dependencies, previous_plans,
+                        reason_model, plan_model, istep, provided
                     )
+                    # Store whether this was a follow-up question in memory
+                    self._memory["is_follow_up_question"] = is_follow_up
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
                     traceback.print_exception(e)
@@ -855,7 +1044,7 @@ class Planner(Coordinator):
                     istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                     traceback.print_exception(e)
                     raise e
-                execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
+                execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages, provided)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                     attempts += 1
