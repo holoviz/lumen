@@ -157,6 +157,7 @@ def make_find_tables_model(tables):
         chain_of_thought=(str, FieldInfo(
             description="""
             Concisely consider which tables are necessary to answer the user query.
+            If there are tables that provide the same info, do not include them all; instead, pick the most relevant one.
             """
         )),
         selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
