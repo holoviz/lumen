@@ -658,10 +658,6 @@ class SQLAgent(LumenBaseAgent):
             vector_metaset.selected_columns or
             vector_metaset.vector_metadata_map
         )
-        if "previous_state" in self._memory:
-            previous_state = self._memory["previous_state"]
-            selected_slugs += list(previous_state.selected_columns)
-
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 

@@ -61,7 +61,7 @@ class VectorMetaset:
             context += f"\n\n{table_slug!r}\n\nSimilarity: ({vector_metadata.similarity:.3f})\n\n"
 
             if vector_metadata.description:
-                context += f"Description: {vector_metadata.description}\n\n"
+                context += f"Info: {vector_metadata.description}\n\n"
 
             if vector_metadata.base_sql:
                 context += f"Base SQL: {vector_metadata.base_sql}\n\n"
@@ -164,7 +164,7 @@ class SQLMetaset:
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
-                context += f"Description: {desc}\n"
+                context += f"Info: {desc}\n"
 
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
             context += f"Base SQL: {base_sql}\n"
@@ -338,9 +338,9 @@ class DbtslMetadata:
                 dimensions_str += f"- {dimension} ({dtype})\n"
         return (
             f"Metric: {self.name} (Similarity: {self.similarity:.3f})\n"
-            f"Description: {self.description}\n"
-            f"Dimensions:\n{dimensions_str}\n"
-            f"Queryable granularities: {', '.join(self.queryable_granularities)}\n\n"
+            f"Info: {self.description}\n"
+            f"Dims:\n{dimensions_str}\n"
+            f"Granularities: {', '.join(self.queryable_granularities)}\n\n"
         )
 
 @dataclass

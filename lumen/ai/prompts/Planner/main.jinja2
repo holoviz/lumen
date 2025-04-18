@@ -29,6 +29,7 @@ Important Agent Rules:
 
 Import Tools Rules:
 - The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent.
+- If you already have sufficient context in memory, do not call IterativeTableLookup or TableLookup again.
 {% endblock -%}
 
 {% block context -%}
@@ -55,8 +56,12 @@ based on the previous query:
 """
 {{ memory['vector_metaset'].query }}
 """
+{%- if is_follow_up %}
+This query has been detected as a follow-up question to the previous query. The current context should be sufficient to answer this question without retrieving new data. Prioritize using existing data in memory and avoid using IterativeTableLookup unless absolutely necessary.
+{%- else %}
 Please consider whether this is enough information to proceed with the current user query;
 if not use IterativeTableLookup to refresh the available columns in memory.
+{%- endif %}
 {%- else %}
 The current selected columns for the query have not been set yet.
 {%- endif %}
@@ -73,7 +78,7 @@ Here's the choice of experts and their uses:
 - `{{ agent.name[:-5] }}`
   Requires: {{ agent.requires }}
   Provides: {{ agent.provides }}
-  Description: {{ agent.purpose.strip().split() | join(' ') }}
+  Info: {{ agent.purpose.strip().split() | join(' ') }}
 {%- endfor -%}
 
 {% if tools %}
@@ -82,7 +87,7 @@ Here's a list of tools:
 - `{{ tool.name }}`
   Requires: {{ tool.requires }}
   Provides: {{ tool.provides }}
-  Description: {{ tool.purpose.strip().split() | join(' ') }}
+  Info: {{ tool.purpose.strip().split() | join(' ') }}
 {%- endfor -%}
 {%- endif %}
 
@@ -91,6 +96,11 @@ The following is the current SQL.
 ```sql
 {{ memory['sql'] }}
 ```
+{%- endif %}
+
+{%- if 'data' in memory %}
+The current data loaded in memory is:
+{{ memory['data'] }}
 {%- endif %}
 
 {%- if 'table' in memory %}

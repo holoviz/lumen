@@ -299,7 +299,7 @@ class VectorLookupTool(Tool):
                     break
 
             if refinement_history:
-                stream_details(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n", auto=False)
+                stream_details(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n", step, auto=False)
 
         return best_results
 
@@ -470,7 +470,7 @@ class TableLookup(VectorLookupTool):
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
             if tables_vector_data := self._tables_metadata.get(table_slug):
                 if table_description := tables_vector_data.get("description"):
-                    description += f"\n  Description: {table_description}"
+                    description += f"\n  Info: {table_description}"
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
@@ -521,7 +521,7 @@ class TableLookup(VectorLookupTool):
         # is it duplicate??
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop('description', ''):
-            enriched_text += f"\nDescription: {description}"
+            enriched_text += f"\nInfo: {description}"
         if self.include_columns and (vector_columns := vector_info.pop('columns', {})):
             enriched_text += "\nCols:"
             for col_name, col_info in vector_columns.items():
@@ -1093,7 +1093,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         for metric_name, metric in self._metric_objs.items():
             enriched_text = f"Metric: {metric_name}"
             if metric.description:
-                enriched_text += f"\nDescription: {metric.description}"
+                enriched_text += f"\nInfo: {metric.description}"
 
             vector_metadata = {
                 "type": "metric",
@@ -1129,46 +1129,30 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
             ]
 
             if not closest_metrics:
-                search_step.stream("⚠️ No metrics found with sufficient relevance to the query.")
+                search_step.stream("\n⚠️ No metrics found with sufficient relevance to the query.")
                 search_step.status = "warning"
                 return ""
 
             # Display found metrics with similarity scores
             metrics_info = [f"- {result['metadata']['name']} (similarity: {result['similarity']:.3f})" for result in closest_metrics]
-            stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant metrics", auto=False)
+            stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
 
         with self._add_step(title="Processing dbt Semantic Layer metrics") as step:
-            step.stream(f"Processing {len(closest_metrics)} metrics and their dimensions")
+            step.stream("Processing metrics and their dimensions")
             metrics = {}
             client = self._get_dbtsl_client()
             async with client.session():
                 num_cols = len(closest_metrics)
-                completed = 0
-                total = len(closest_metrics)
-
-                # Collect processing logs for all metrics to show in stream_details
-                all_processing_logs = []
-
+                processed_metrics = set()
                 for result in closest_metrics:
                     metric_name = result['metadata']['name']
-                    processing_log = [f"Processing metric: {metric_name} ({completed+1}/{total})"]
-
-                    if metric_name not in self._metric_objs:
-                        processing_log.append(f"⚠️ Metric '{metric_name}' not found in semantic layer objects")
-                        completed += 1
-                        all_processing_logs.append("\n".join(processing_log))
+                    if metric_name in processed_metrics:
                         continue
-
                     metric_obj = self._metric_objs[metric_name]
+                    processed_metrics.add(metric_name)
+                    step.stream(f"\n\n`{metric_name}`: {metric_obj.description}")
+
                     dimensions = {}
-
-                    # Add dimension fetching info to log
-                    dim_count = len(metric_obj.dimensions)
-                    if dim_count > 0:
-                        processing_log.append(f"Fetching {dim_count} dimensions for metric '{metric_name}'...")
-                    else:
-                        processing_log.append(f"Metric '{metric_name}' has no dimensions")
-
                     dimension_tasks = [
                         self._fetch_dimension_values(
                             client,
@@ -1183,15 +1167,6 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                         for dim_name, dim_info in dimension_results:
                             dimensions[dim_name] = dim_info
 
-                        # Add dimensions to log
-                        processing_log.append("\nDimensions fetched:")
-                        for dim_name, dim_info in dimensions.items():
-                            processing_log.append(f"- {dim_name} ({dim_info.get('type', 'unknown type')})")
-                            if 'enum_count' in dim_info:
-                                processing_log.append(f"  Values count: {dim_info['enum_count']}")
-                            if 'error' in dim_info:
-                                processing_log.append(f"  Error: {dim_info['error']}")
-
                     metric = DbtslMetadata(
                         name=metric_name,
                         similarity=result['similarity'],
@@ -1202,27 +1177,14 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                         ]
                     )
                     metrics[metric_name] = metric
-                    processing_log.append(f"Completed processing metric: {metric_name}")
-                    all_processing_logs.append("\n".join(processing_log))
-                    completed += 1
-
-                # Show all processing details in a collapsible stream_details section
-                stream_details("\n\n".join(all_processing_logs), step,
-                             title="Detailed metrics processing log", auto=False)
 
             # Create the metaset with all processed metrics
             metaset = DbtslMetaset(query=query, metrics=metrics)
-            step.stream(f"Created DbtslMetaset with {len(metrics)} metrics")
-
-            # Show metrics summary
-            if metrics:
-                metrics_summary = [f"- {name}: {m.description or 'No description'}" for name, m in metrics.items()]
-                stream_details("\n".join(metrics_summary), step, title="Metrics summary", auto=False)
 
             # Evaluate if the metrics can answer the query
             can_answer_query = False
             if metrics:
-                step.stream("Evaluating if found metrics can answer the query...")
+                step.stream("\n\nEvaluating if found metrics can answer the query...")
                 try:
                     result = await self._invoke_prompt(
                         "main",
@@ -1232,16 +1194,11 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                     can_answer_query = result.yes
                     # Update status based on whether metrics can answer query
                     if can_answer_query:
-                        step.stream("Found metrics that can answer the query")
+                        step.stream("\n\nFound metrics that can answer the query")
                     else:
-                        step.stream("No metrics found that can fully answer the query")
-                        step.status = "warning"
-
-                    # Add detailed evaluation result to stream_details
-                    result_message = "✅ Found relevant metrics with all required dimensions to answer the query." if can_answer_query else "⚠️ No relevant metrics found with all dimensions required to fully answer the query."
-                    stream_details(result_message, step, title="Evaluation result", auto=False)
+                        step.stream("\nNo metrics found that can fully answer the query")
                 except Exception as e:
-                    step.stream(f"Error evaluating metrics and dimensions: {e}")
+                    step.stream(f"\n\nError evaluating metrics and dimensions: {e}")
                     step.status = "failed"
 
         if not can_answer_query:

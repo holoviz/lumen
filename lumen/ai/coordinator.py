@@ -514,8 +514,20 @@ class Coordinator(Viewer, ToolUser):
                 max_user_messages=self.history
             )
 
+            # Check if this is a follow-up question that can be answered with existing context
+            is_follow_up = await self._check_follow_up_question(messages)
+
             agents = {agent.name[:-5]: agent for agent in self.agents}
-            execution_graph = await self._compute_execution_graph(messages, agents)
+
+            # If it's a follow-up and we already have the data, we can skip some tools execution
+            if is_follow_up:
+                log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
+                with self.interface.add_step(title="Using existing data context...", user="Assistant") as step:
+                    step.stream("Detected that this is a follow-up question related to the previous dataset.")
+                    step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
+                    step.success_title = "Using existing data for follow-up question"
+
+            execution_graph = await self._compute_execution_graph(messages, agents, is_follow_up=is_follow_up)
             if execution_graph is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
@@ -728,6 +740,10 @@ class Planner(Coordinator):
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_models,
             },
+            "follow_up": {
+                "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
+                "response_model": YesNo,
+            },
         }
     )
 
@@ -757,6 +773,21 @@ class Planner(Coordinator):
             **params
         )
 
+    async def _check_follow_up_question(self, messages: list[Message]) -> bool:
+        """Check if the user's query is a follow-up question about the previous dataset."""
+        # Only check if vector_metaset is in memory
+        if "data" not in self._memory:
+            return False
+
+        # Use the follow_up prompt to check
+        result = await self._invoke_prompt(
+            "follow_up",
+            messages,
+        )
+
+        log_debug(f"Follow-up check: {result.yes}. Reason: {result.chain_of_thought}")
+        return result.yes
+
     async def _execute_planner_tools(self, messages: list[Message]) -> set[str]:
         """Execute planner tools to gather context before planning."""
         if not self.planner_tools:
@@ -785,7 +816,7 @@ class Planner(Coordinator):
                 node = ExecutionNode(
                     actor=tool,
                     provides=tool.provides,
-                    instruction=f"Gather context for planning: {user_query}",
+                    instruction=user_query,
                     title=f"Gathering context with {tool_name}",
                     render_output=False
                 )
@@ -842,6 +873,7 @@ class Planner(Coordinator):
                 candidates = agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
                 provided=provided,  # Include what has been provided so far
+                is_follow_up="vector_metaset" in self._memory and "vector_metaset" in provided
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(
@@ -977,9 +1009,11 @@ class Planner(Coordinator):
         plan.steps = steps
         return execution_graph, unmet_dependencies
 
-    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
-        # Execute planner tools to gather context before planning
-        provided = await self._execute_planner_tools(messages)
+    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], is_follow_up: bool = False) -> list[ExecutionNode]:
+        # Execute planner tools to gather context before planning (skip if follow-up)
+        provided = set()
+        if not is_follow_up:
+            provided = await self._execute_planner_tools(messages)
 
         tool_names = [tool.name for tool in self._tools["main"]]
         agent_names = [sagent.name[:-5] for sagent in agents.values()]
@@ -1005,6 +1039,8 @@ class Planner(Coordinator):
                         messages, agents, unmet_dependencies, previous_plans,
                         reason_model, plan_model, istep, provided
                     )
+                    # Store whether this was a follow-up question in memory
+                    self._memory["is_follow_up_question"] = is_follow_up
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
                     traceback.print_exception(e)
