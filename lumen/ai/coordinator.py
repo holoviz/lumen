@@ -53,12 +53,20 @@ On the chat interface...
 📝 Get summaries and key insights from your data
 🧩 Apply custom analyses with a click of a button
 
+If unsatisfied with the results...
+
+🔄 Use the Rerun button to re-run the last query
+⏪ Use the Undo button to remove the last query
+🗑️ Use the Clear button to start a new session
+
 Click the toggle, or drag the edge, to expand the sidebar and...
 
 📚 Upload sources (tables and documents) by dragging or selecting files
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
 💾 Access all generated tables and visualizations under tabs
 📤 Export your session as a reproducible notebook
+
+Note, if the vector store (above) is pending, results may be degraded until it is ready.
 
 📖 Learn more about [Lumen AI](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html)
 """
@@ -178,6 +186,10 @@ class Coordinator(Viewer, ToolUser):
             for message in messages:
                 self._logs.update_status(message_id=id(message), removed=True)
 
+        def on_clear(instance, _):
+            self._memory.cleanup()
+
+
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke, load_buffer=5,
@@ -247,6 +259,7 @@ class Coordinator(Viewer, ToolUser):
         interface.button_properties={
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
+            "clear": {"callback": on_clear},
         }
         self._add_suggestions_to_footer(self.suggestions)
 
