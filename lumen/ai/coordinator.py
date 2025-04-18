@@ -234,6 +234,11 @@ class Coordinator(Viewer, ToolUser):
             tools += [IterativeTableLookup]
 
         # Add user-provided tools to the list of tools of the coordinator
+        if "prompts" not in params:
+            params["prompts"] = {}
+        if "main" not in params["prompts"]:
+            params["prompts"]["main"] = {}
+
         if "tools" not in params["prompts"]["main"]:
             params["prompts"]["main"]["tools"] = []
         params["prompts"]["main"]["tools"] += [tool for tool in tools]
