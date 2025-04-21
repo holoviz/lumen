@@ -645,16 +645,13 @@ class TableLookup(VectorLookupTool):
                     )
                     self._raw_metadata[source.name] = metadata_task
                     tasks.append(metadata_task)
+
             tables = source.get_tables()
-            table_items = [
-                {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
-                for table_name in tables
-            ]
-            self.vector_store.upsert(table_items)
             if self.include_metadata:
                 for table in tables:
                     task = asyncio.create_task(self._enrich_metadata(source, table))
                     tasks.append(task)
+
         if tasks:
             ready_task = asyncio.create_task(self._mark_ready_when_done(tasks))
             ready_task.add_done_callback(self._handle_ready_task_done)

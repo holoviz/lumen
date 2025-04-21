@@ -427,6 +427,35 @@ class VectorStoreTestKit:
         all_docs = empty_store.filter_by({})
         assert len(all_docs) == 0, "Store should still be empty"
 
+    def test_upsert_long_content_no_duplication(self, empty_store):
+        """
+        Verifies that upsert doesn't create duplicates when adding the same long text
+        that gets chunked.
+        """
+        # Set a small chunk size to force chunking
+        empty_store.chunk_size = 100
+
+        # Create a long text that will be split into multiple chunks
+        long_text = "Test document that is long enough to be split into multiple chunks. " * 10
+        metadata = {"source": "test", "type": "long_document"}
+
+        # First upsert
+        item = {"text": long_text, "metadata": metadata}
+        ids1 = empty_store.upsert([item])
+
+        # Verify chunking occurred
+        assert len(ids1) > 1, "Text should be split into multiple chunks"
+
+        # Record count after first upsert
+        count_after_first = len(empty_store)
+
+        # Perform second upsert with the same content
+        empty_store.upsert([item])
+        count_after_second = len(empty_store)
+
+        # Verify no new entries were created
+        assert count_after_first == count_after_second, "No new items should be added on second upsert"
+
 
 class TestNumpyVectorStore(VectorStoreTestKit):
 
