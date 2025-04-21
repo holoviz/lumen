@@ -634,6 +634,7 @@ class TableLookup(VectorLookupTool):
         return {"text": enriched_text, "metadata": vector_metadata}
 
     async def _update_vector_store(self, _, __, sources):
+        await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
         for source in sources:
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
@@ -651,6 +652,11 @@ class TableLookup(VectorLookupTool):
                 for table in tables:
                     task = asyncio.create_task(self._enrich_metadata(source, table))
                     tasks.append(task)
+            else:
+                self.vector_store.upsert([
+                    {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
+                    for table_name in tables
+                ])
 
         if tasks:
             ready_task = asyncio.create_task(self._mark_ready_when_done(tasks))
