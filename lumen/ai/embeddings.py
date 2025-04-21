@@ -77,7 +77,7 @@ class OpenAIEmbeddings(Embeddings):
     >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
-    api_key = param.String(doc="The OpenAI API key.")
+    api_key = param.String(default=None, doc="The OpenAI API key.")
 
     model = param.String(
         default="text-embedding-3-small", doc="The OpenAI model to use."

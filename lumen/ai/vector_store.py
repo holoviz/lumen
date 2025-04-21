@@ -8,6 +8,7 @@ import numpy as np
 import param
 
 from .embeddings import Embeddings, NumpyEmbeddings
+from .utils import log_debug
 
 
 class VectorStore(param.Parameterized):
@@ -879,6 +880,7 @@ class DuckDBVectorStore(VectorStore):
             return []
 
         if not self._initialized:
+            log_debug("Database not initialized. Adding items directly.")
             return self.add(items)
 
         assigned_ids = []
@@ -932,7 +934,9 @@ class DuckDBVectorStore(VectorStore):
         if items_to_add:
             new_ids = self.add(items_to_add)
             assigned_ids.extend(new_ids)
+            log_debug(f"Added {len(items_to_add)} new items to the vector store.")
 
+        log_debug(len(self))
         return assigned_ids
 
     def __len__(self) -> int:
