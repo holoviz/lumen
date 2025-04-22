@@ -17,6 +17,10 @@ Be decisive and efficient with being done. Perfect is the enemy of good.
 
 {% block context %}
 You need to select tables from a database to help answer the query.
+{%- if chain_of_thought %}
+Here are your previous thoughts:
+{{ chain_of_thought }}
+{%- endif %}
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
 {%- for table_slug in available_slugs -%}
@@ -35,7 +39,7 @@ Here are the tables available for selection:
 No tables are available for selection.
 {% endif %}
 {% if examined_slugs|length > 0 %}
-You have already examined these tables and their schemas; there's no need to select them again:
+You have already examined these tables and their schemas; there's no need to select them again unless you want to use them as the final selection:
 {% for table_slug in examined_slugs %}
 {{ table_slug }}
 {% if table_slug in selected_slugs %}
@@ -51,15 +55,11 @@ You have already examined these tables but had issues retrieving their schemas; 
 {{ table_slug }}
 {%- endfor %}
 {%- endif %}
-{%- if chain_of_thought %}
-Here are your previous thoughts:
-{{ chain_of_thought }}
-{%- endif %}
 {% if iteration == max_iterations %}
 This is your final iteration. Please provide your final selected table list from the examined tables that you think would be most relevant for answering the query.
 {% else %}
 In this iteration (#{{ iteration }}), please select up to 3 tables that would be most relevant for answering the query.
 Choose tables that would provide complementary information to what you've already examined.
-If you feel you already have all the information you need, choose the tables that can answer the query, and please set is_done.
+If you feel you already have all the information you need, choose the tables that can answer the query as your final answer, and please set is_done.
 {% endif %}
 {% endblock %}

@@ -964,18 +964,18 @@ class IterativeTableLookup(TableLookup):
 
                         # Check if we're done with table selection
                         if output.is_done or not available_slugs:
-                            step.stream("Selection process complete - model is satisfied with selected tables")
+                            step.stream("\n\nSelection process complete - model is satisfied with selected tables")
                             satisfied_slugs = selected_slugs
                             fast_track = True
                         if iteration != max_iterations:
-                            step.stream("Unsatisfied with selected tables - continuing selection process...")
+                            step.stream("\n\nUnsatisfied with selected tables - continuing selection process...")
                         else:
-                            step.stream("Maximum iterations reached - stopping selection process")
+                            step.stream("\n\nMaximum iterations reached - stopping selection process")
                             satisfied_slugs = selected_slugs or list(examined_slugs)
                             break
                     except Exception as e:
                         traceback.print_exc()
-                        stream_details(f"Error selecting tables: {e}", step, title="Error", auto=False)
+                        stream_details(f"\n\nError selecting tables: {e}", step, title="Error", auto=False)
                         continue
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
