@@ -4,6 +4,7 @@ import asyncio
 import traceback
 
 from functools import partial
+from types import FunctionType
 from typing import Any
 
 import param
@@ -27,8 +28,8 @@ from .schemas import (
 )
 from .translate import function_to_model
 from .utils import (
-    get_schema, instantiate_tools, log_debug, process_enums, retry_llm_output,
-    stream_details, truncate_string,
+    get_schema, log_debug, process_enums, retry_llm_output, stream_details,
+    truncate_string,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
