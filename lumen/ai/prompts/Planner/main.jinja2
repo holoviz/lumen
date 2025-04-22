@@ -60,12 +60,6 @@ Here are the documents you have access to:
 
 You already have the following loaded into memory: {{ memory.keys() | list }}
 
-{% if provided %}
-These have been provided:
-{% for key in provided %}- {{ key }}
-{% endfor %}
-{% endif %}
-
 Here's the choice of experts, what they can provide and what they require:
 {%- for agent in agents %}
 - `{{ agent.name[:-5] }}`
