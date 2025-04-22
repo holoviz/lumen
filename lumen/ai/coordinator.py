@@ -29,7 +29,7 @@ from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import YesNo, make_agent_model, make_plan_models
 from .tools import (
-    IterativeTableLookup, TableLookup, Tool, ToolUser,
+    IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, stream_details,
@@ -88,7 +88,7 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Coordinator(Viewer, ToolUser):
+class Coordinator(Viewer, VectorLookupToolUser):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -133,9 +133,6 @@ class Coordinator(Viewer, ToolUser):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[], doc="""
-        List of tools to use to provide context.""")
-
     __abstract = True
 
     def __init__(
@@ -144,6 +141,7 @@ class Coordinator(Viewer, ToolUser):
         interface: ChatFeed | ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         tools: list[Tool | type[Tool]] | None = None,
+        vector_store: Tool | None = None,
         logs_db_path: str = "",
         **params,
     ):
@@ -254,7 +252,7 @@ class Coordinator(Viewer, ToolUser):
         if "tools" not in params["prompts"]["main"]:
             params["prompts"]["main"]["tools"] = []
         params["prompts"]["main"]["tools"] += [tool for tool in tools]
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, vector_store=vector_store, **params)
 
         welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
         interface.send(

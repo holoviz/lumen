@@ -29,6 +29,7 @@ from panel.widgets import Button, FileDownload, MultiChoice
 
 from lumen.ai.config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from lumen.ai.tools import TableLookup
+from lumen.ai.vector_store import VectorStore
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -117,6 +118,12 @@ class UI(Viewer):
     tools = param.List(doc="""
        List of Tools that can be invoked by the coordinator.""")
 
+    vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for the tools. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
+
     __abstract = True
 
     def __init__(
@@ -155,6 +162,7 @@ class UI(Viewer):
             tools=self.tools,
             logs_db_path=self.logs_db_path,
             within_ui=True,
+            vector_store=self.vector_store,
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
