@@ -256,7 +256,7 @@ class VectorLookupTool(Tool):
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
             stream_details("\n".join(
-                f'```\n{result["text"]}\n\n{result["metadata"]}```' for result in results
+                f'```\n{result["text"]}\n\n{result["metadata"]}\n```' for result in results
             ), step, title=f"{len(results)} chunks", auto=False)
 
             refinement_history = []
@@ -967,7 +967,7 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    stream_details(str(vector_metaset), step, title="Table details", auto=False)
+                    stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
                             self._tables_metadata.get(table_slug, {}).get("view_definition", ""),
