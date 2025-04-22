@@ -756,12 +756,11 @@ class Planner(Coordinator):
         log_debug(f"Follow-up check: {result.yes}. Reason: {result.chain_of_thought}")
         return result.yes
 
-    async def _execute_planner_tools(self, messages: list[Message]) -> set[str]:
+    async def _execute_planner_tools(self, messages: list[Message]):
         """Execute planner tools to gather context before planning."""
         if not self.planner_tools:
-            return set()
+            return
 
-        provided = set()
         user_query = next((
             msg["content"] for msg in reversed(messages)
             if msg.get("role") == "user"), ""
@@ -790,8 +789,6 @@ class Planner(Coordinator):
                 if not success:
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
-
-            return provided
 
     async def _make_plan(
         self,
