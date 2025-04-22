@@ -5,7 +5,9 @@ from typing import Any
 
 from ..sources import Source
 from .config import SOURCE_TABLE_SEPARATOR
-from .utils import get_schema, truncate_iterable, truncate_string
+from .utils import (
+    get_schema, log_debug, truncate_iterable, truncate_string,
+)
 
 
 @dataclass
@@ -303,13 +305,20 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         tables_info[table_name] = SQLMetadata(
             table_slug=table_slug,
             schema=schema,
-            base_sql=source.get_sql_expr(source.normalize_table(table_name)),
         )
-        metadata = source.get_metadata(table_name)
+        try:
+            metadata = source.get_metadata(table_name)
+        except Exception as e:
+            log_debug(
+                f"Failed to get metadata for table {table_name} in source {source_name}: {e}"
+            )
+            metadata = {}
         tables_metadata[table_name] = VectorMetadata(
             table_slug=table_slug,
             similarity=1,
-            description=metadata['description']
+            base_sql=source.get_sql_expr(source.normalize_table(table_name)),
+            description=metadata.get("description"),
+            columns=metadata.get("columns")
         )
     vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
     return SQLMetaset(

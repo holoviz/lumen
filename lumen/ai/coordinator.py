@@ -32,8 +32,7 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
-    fuse_messages, instantiate_tools, log_debug, mutate_user_message,
-    stream_details,
+    fuse_messages, log_debug, mutate_user_message, stream_details,
 )
 from .views import LumenOutput
 
@@ -101,10 +100,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         default={
             "main": {
                 "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
-            },
-            "yesno_update": {
-                "template": PROMPTS_DIR / "Coordinator" / "yesno_update.jinja2",
-                "response_model": YesNo,
             },
             "tool_relevance": {
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
@@ -547,15 +542,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            # Track what has been provided during execution
-            all_provided = set()
-
-            for i, node in enumerate(execution_graph):
-                succeeded, node_provided = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
+            for node in execution_graph:
+                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
                 if not succeeded:
                     break
-                # Update the provided set with what this node provided
-                all_provided.update(node_provided)
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
@@ -758,31 +748,10 @@ class Planner(Coordinator):
         }
     )
 
-    def __init__(
-        self,
-        llm: Llm | None = None,
-        interface: ChatFeed | ChatInterface | None = None,
-        agents: list[Agent | type[Agent]] | None = None,
-        tools: list[Tool | type[Tool]] | None = None,
-        planner_tools: list[Tool | type[Tool]] | None = None,
-        logs_db_path: str = "",
-        **params,
-    ):
-        # Initialize planner_tools if provided
-        if planner_tools:
-            params["planner_tools"] = instantiate_tools(
-                planner_tools, llm=llm, interface=interface
-            )
-
-        # Call the parent's __init__
-        super().__init__(
-            llm=llm,
-            interface=interface,
-            agents=agents,
-            tools=tools,
-            logs_db_path=logs_db_path,
-            **params
-        )
+    def __init__(self, **params):
+        if 'planner_tools' in params:
+            params["planner_tools"] = self._initialize_tools_for_prompt(params["planner_tools"], **params)
+        super().__init__(**params)
 
     async def _check_follow_up_question(self, messages: list[Message]) -> bool:
         """Check if the user's query is a follow-up question about the previous dataset."""
@@ -803,9 +772,6 @@ class Planner(Coordinator):
         """Execute planner tools to gather context before planning."""
         if not self.planner_tools:
             return set()
-
-        if "planner_context" not in self._memory:
-            self._memory["planner_context"] = {}
 
         provided = set()
         user_query = next((
@@ -832,21 +798,10 @@ class Planner(Coordinator):
                     render_output=False
                 )
 
-                success, node_provided = await self._execute_graph_node(node, messages, allow_missing=True)
+                success = await self._execute_graph_node(node, messages, allow_missing=True)
                 if not success:
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
-
-                for provided_key in node_provided:
-                    if provided_key in self._memory:
-                        self._memory["planner_context"][provided_key] = self._memory[provided_key]
-                        provided.add(provided_key)
-
-            context_keys = list(self._memory["planner_context"].keys())
-            if context_keys:
-                step.success_title = f"\n\nGathered planning context: {', '.join(context_keys)}"
-            else:
-                step.success_title = "\n\nNo additional context needed for planning"
 
             return provided
 
@@ -1050,8 +1005,6 @@ class Planner(Coordinator):
                         messages, agents, unmet_dependencies, previous_plans,
                         reason_model, plan_model, istep, provided
                     )
-                    # Store whether this was a follow-up question in memory
-                    self._memory["is_follow_up_question"] = is_follow_up
                 except asyncio.CancelledError as e:
                     istep.failed_title = 'Planning was cancelled, please try again.'
                     traceback.print_exception(e)

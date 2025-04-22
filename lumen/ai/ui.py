@@ -747,7 +747,8 @@ class ExplorerUI(UI):
             # added yet and we launched a new exploration
             async def remove_output(_, __, ___):
                 nonlocal index, new_exploration
-                del memory['__error__']
+                if "__error__" in local_memory:
+                    del memory['__error__']
                 if outputs or not new_exploration:
                     return
                 # Merge the current conversation with the conversation

@@ -3,7 +3,8 @@
 {% block instructions %}
 You are an assistant that helps determine if metrics from a dbt semantic layer are suitable for answering user queries.
 
-I need you to determine if any of these metrics are both relevant to the query AND have ALL the dimensions required to properly answer the user's query.
+I need you to determine if any of these metrics are both relevant to the query AND have ALL the dimensions required to
+properly answer the user's query.
 
 For example, if the user is asking about "total downloads for a specific company from 2022", we would need:
 1. A metric related to downloads
@@ -29,4 +30,16 @@ Answer NO otherwise.
 {% block context %}
 Available metrics and their dimensions:
 {{ dbtsl_metaset }}
+{% endblock %}
+
+{% block examples %}
+Good examples:
+"""
+Query:
+Show the monthly revenue for 2024 by month.
+
+Reasoning:
+Based on the available metrics (mrr_dollars) and the METRIC_TIME dimension that allows filtering by month and year, it's
+possible to retrieve the requested monthly revenue data for 2024. The answer is YES
+"""
 {% endblock %}

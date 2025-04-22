@@ -13,7 +13,6 @@ from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
 from textwrap import dedent
-from types import FunctionType
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
@@ -751,64 +750,3 @@ def truncate_iterable(iterable, max_length=20) -> tuple[list, list, bool]:
         original_indices = list(range(len(iterable_list)))
         show_ellipsis = False
     return cols_to_show, original_indices, show_ellipsis
-
-
-def instantiate_tools(
-    tools: list,
-    llm=None,
-    interface=None,
-    vector_store=None
-) -> list:
-    """
-    Instantiate a list of tools consistently.
-
-    This function takes a list of tool classes or instances and returns a list
-    of instantiated tool objects with proper configuration. It handles Actor instances,
-    function-based tools, and tool classes that need to be instantiated.
-
-    Parameters
-    ----------
-    tools : list
-        List of tools, which can be Actor instances, functions, or tool classes
-    llm : Llm, optional
-        The LLM to use for the tools
-    interface : ChatInterface, optional
-        The interface to use for the tools
-    vector_store : VectorStore, optional
-        The vector store to use for tools that require it
-
-    Returns
-    -------
-    list
-        List of instantiated tool objects
-    """
-    from .actor import Actor  # prevent circular import
-    from .tools import FunctionTool
-
-    instantiated_tools = []
-
-    for tool in tools:
-        if isinstance(tool, Actor):
-            # Tool is already an Actor instance, just set attributes if needed
-            if tool.llm is None and llm is not None:
-                tool.llm = llm
-            if tool.interface is None and interface is not None:
-                tool.interface = interface
-            if hasattr(tool, "vector_store") and vector_store is not None:
-                tool.vector_store = vector_store
-            instantiated_tools.append(tool)
-        elif isinstance(tool, FunctionType):
-            # Tool is a function, wrap it in a FunctionTool
-            instantiated_tools.append(FunctionTool(tool, llm=llm, interface=interface))
-        else:
-            # Tool is a class, instantiate it with the provided parameters
-            tool_kwargs = {}
-            if llm is not None:
-                tool_kwargs["llm"] = llm
-            if interface is not None:
-                tool_kwargs["interface"] = interface
-            if hasattr(tool, "vector_store") and vector_store is not None:
-                tool_kwargs["vector_store"] = vector_store
-            instantiated_tools.append(tool(**tool_kwargs))
-
-    return instantiated_tools

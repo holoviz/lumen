@@ -21,7 +21,7 @@ Important Agent Rules:
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
 - The SQLAgent usually needs help by *TableLookup if the current columns are insufficient.
 - Use SQLAgent if `dbtsl_metaset` is not available, but if it is, use DbtslAgent preferably.
-- The DbtslAgent should not be used with IterativeTableLookup or SQLAgent.
+- The DbtslAgent should not be used with IterativeTableLookup or SQLAgent, and should be prioritized if dbtsl_metaset is available.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - If the user is asking for a plot of the data without any modifications, SQLAgent is unnecessary.
 - When plotting, instruct SQLAgent or DbtslAgent to select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations.
@@ -33,21 +33,6 @@ Import Tools Rules:
 {% endblock -%}
 
 {% block context -%}
-
-You already have the following: {{ memory.keys() | list }}
-
-{% if provided %}
-These have been provided:
-{% for key in provided %}- {{ key }}
-{% endfor %}
-{% endif %}
-
-{%- if 'planner_context' in memory and memory['planner_context'] %}
-Here is additional context gathered to help with planning:
-{% for key, value in memory['planner_context'].items() %}
-- {{ key }}: {{ value }}
-{% endfor %}
-{% endif %}
 
 {%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
 The current selected columns in memory is:
@@ -73,7 +58,15 @@ Here are the documents you have access to:
 {%- endfor %}
 {%- endif %}
 
-Here's the choice of experts and their uses:
+You already have the following loaded into memory: {{ memory.keys() | list }}
+
+{% if provided %}
+These have been provided:
+{% for key in provided %}- {{ key }}
+{% endfor %}
+{% endif %}
+
+Here's the choice of experts, what they can provide and what they require:
 {%- for agent in agents %}
 - `{{ agent.name[:-5] }}`
   Requires: {{ agent.requires }}

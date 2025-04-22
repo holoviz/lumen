@@ -14,7 +14,7 @@ from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
 from ..views.base import View
-from .actor import Actor, ContextProvider, DbtslMixin
+from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
@@ -26,6 +26,7 @@ from .schemas import (
     Column, DbtslMetadata, DbtslMetaset, PreviousState, SQLMetadata,
     SQLMetaset, VectorMetadata, VectorMetaset,
 )
+from .services import DbtslMixin
 from .translate import function_to_model
 from .utils import (
     get_schema, log_debug, process_enums, retry_llm_output, stream_details,
@@ -45,11 +46,10 @@ class ToolUser(Actor):
     def __init__(self, **params):
         super().__init__(**params)
         self._tools = {}
-
         for prompt_name in self.prompts:
-            self._initialize_tools_for_prompt(prompt_name)
+            self._tools[prompt_name] = self._initialize_tools_for_prompt(prompt_name, **params)
 
-    def _get_tool_kwargs(self, tool, prompt_tools):
+    def _get_tool_kwargs(self, tool, prompt_tools, **params):
         """
         Get kwargs for initializing a tool.
         Subclasses can override to provide additional kwargs.
@@ -66,44 +66,56 @@ class ToolUser(Actor):
         dict
             Keyword arguments for tool initialization
         """
-        return {"llm": self.llm, "interface": self.interface}
+        return {"llm": self.llm or params.get("llm"), "interface": self.interface or params.get("interface")}
 
-    def _initialize_tools_for_prompt(self, prompt_name):
+    def _initialize_tools_for_prompt(self, tools_or_key: str | list, **params) -> list:
         """
         Initialize tools for a specific prompt.
 
         Parameters
         ----------
-        prompt_name : str
-            The name of the prompt to initialize tools for.
+        tools : str | list
+            The list of tools to initialize. If None, tools are looked up from the prompt.
+        **params : dict
+            Additional parameters for tool initialization
+
+        Returns
+        -------
+        list
+            List of instantiated tools
         """
-        prompt_tools = self._lookup_prompt_key(prompt_name, "tools")
-        self._tools[prompt_name] = []
+        if isinstance(tools_or_key, str):
+            prompt_tools = self._lookup_prompt_key(tools_or_key, "tools")
+        else:
+            prompt_tools = tools_or_key
+        instantiated_tools = []
 
         # Initialize each tool
         for tool in prompt_tools:
             if isinstance(tool, Actor):
                 # For already instantiated Actors, set properties directly
                 if tool.llm is None:
-                    tool.llm = self.llm
+                    tool.llm = self.llm or params.get("llm")
                 if tool.interface is None:
-                    tool.interface = self.interface
+                    tool.interface = self.interface or params.get("interface")
 
                 # Apply any additional configuration from subclasses
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools)
+                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
                 for key, value in tool_kwargs.items():
                     if key not in ('llm', 'interface') and hasattr(tool, key):
                         setattr(tool, key, value)
 
-                self._tools[prompt_name].append(tool)
+                instantiated_tools.append(tool)
             elif isinstance(tool, FunctionType):
                 # Function tools only get basic kwargs
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools)
-                self._tools[prompt_name].append(FunctionTool(tool, **tool_kwargs))
+                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                instantiated_tools.append(FunctionTool(tool, **tool_kwargs))
             else:
                 # For classes that need to be instantiated
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools)
-                self._tools[prompt_name].append(tool(**tool_kwargs))
+                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                instantiated_tools.append(tool(**tool_kwargs))
+
+        return instantiated_tools
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
@@ -127,7 +139,7 @@ class VectorLookupToolUser(ToolUser):
         or inferred from the tools provided."""
     )
 
-    def _get_tool_kwargs(self, tool, prompt_tools):
+    def _get_tool_kwargs(self, tool, prompt_tools, **params):
         """
         Override to provide vector_store to applicable tools.
 
@@ -137,6 +149,8 @@ class VectorLookupToolUser(ToolUser):
             The tool (class or instance) being initialized
         prompt_tools : list
             List of all tools for this prompt
+        **params : dict
+            Additional parameters for tool initialization
 
         Returns
         -------
@@ -144,14 +158,14 @@ class VectorLookupToolUser(ToolUser):
             Keyword arguments for tool initialization including vector_store if applicable
         """
         # Get base kwargs from parent
-        kwargs = super()._get_tool_kwargs(tool, prompt_tools)
+        kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
         # Find vector store from tools if any
         vector_store = next(
             (t.vector_store for t in prompt_tools
              if isinstance(t, VectorLookupTool)),
             None
-        ) or self.vector_store
+        ) or self.vector_store or params.get("vector_store")
 
         if hasattr(tool, "vector_store") and vector_store is not None:
             kwargs["vector_store"] = vector_store
@@ -328,7 +342,10 @@ class VectorLookupTool(Tool):
         current_query = query
         iteration = 0
 
-        results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        filters = kwargs.pop("filters", {})
+        if "type" not in filters:
+            filters["type"] = self._item_type_name
+        results = self.vector_store.query(query, top_k=self.n, filters=filters, **kwargs)
         # check if all metadata is the same; if so, skip
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
@@ -338,7 +355,8 @@ class VectorLookupTool(Tool):
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
             stream_details("\n".join(
-                f'```\n{result["text"]}\n\n{result["metadata"]}\n```' for result in results
+                f'```\n{result["text"]} (Similarity: {result.get("similarity", 0):.3f})\n\n{result["metadata"]}\n```'
+                for result in results
             ), step, title=f"{len(results)} chunks", auto=False)
 
             refinement_history = []
@@ -461,10 +479,11 @@ class DocumentLookup(VectorLookupTool):
 
     async def _update_vector_store(self, _, __, sources):
         # Build a list of document items for a single upsert operation
-        items_to_upsert = [
-            {"text": source["text"], "metadata": source.get("metadata", {})}
-            for source in sources
-        ]
+        items_to_upsert = []
+        for source in sources:
+            metadata = source.get("metadata", {})
+            metadata["type"] = self._item_type_name
+            items_to_upsert.append({"text": source["text"], "metadata": metadata})
 
         # Make a single upsert call with all documents
         if items_to_upsert:
@@ -530,7 +549,7 @@ class TableLookup(VectorLookupTool):
     sync_sources = param.Boolean(default=True, doc="""
         Whether to automatically sync newly added data sources to the vector store.""")
 
-    _item_type_name = "database tables"
+    _item_type_name = "tables"
 
     _ready = param.Boolean(default=False, allow_None=True, doc="""
         Whether the vector store is ready.""")
@@ -619,7 +638,7 @@ class TableLookup(VectorLookupTool):
                 )
                 columns.append(column)
 
-        vector_metadata = {"source": source.name, "table_name": table_name}
+        vector_metadata = {"source": source.name, "table_name": table_name, "type": self._item_type_name}
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop('description', ''):
@@ -664,7 +683,7 @@ class TableLookup(VectorLookupTool):
                     tasks.append(task)
             else:
                 self.vector_store.upsert([
-                    {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
+                    {"text": table_name, "metadata": {"source": source.name, "table_name": table_name, "type": "table"}}
                     for table_name in tables
                 ])
 
@@ -1144,7 +1163,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     min_similarity = param.Number(default=0.1, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=5, bounds=(1, None), doc="""
+    n = param.Integer(default=4, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     purpose = param.String(default="""
@@ -1157,6 +1176,8 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
     provides = param.List(default=["dbtsl_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
+
+    _item_type_name = "metrics"
 
     def __init__(self, environment_id: int, **params):
         params["environment_id"] = environment_id
@@ -1183,7 +1204,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 enriched_text += f"\nInfo: {metric.description}"
 
             vector_metadata = {
-                "type": "metric",
+                "type": self._item_type_name,
                 "name": metric_name,
                 "metric_type": str(metric.type.value) if metric.type else "UNKNOWN",
             }
@@ -1198,103 +1219,109 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         """
         Fetches metrics based on the user query, populates the DbtslMetaset,
         and returns formatted context.
-
-        This method searches the vector store for metrics relevant to the user query,
-        creates a DbtslMetaset from the results, and checks if any metrics have the
-        necessary dimensions to answer the query. If no metrics have all required
-        dimensions, it returns an empty string.
         """
         query = messages[-1]["content"]
 
+        # Search for relevant metrics
         with self._add_step(title="dbt Semantic Layer Search") as search_step:
             search_step.stream(f"Searching for metrics relevant to: '{query}'")
-            # Perform search with refinement
             results = await self._perform_search_with_refinement(query)
-            closest_metrics = [
-                result for result in results
-                if result['similarity'] >= self.min_similarity
-            ]
+            closest_metrics = [r for r in results if r['similarity'] >= self.min_similarity]
 
             if not closest_metrics:
                 search_step.stream("\n⚠️ No metrics found with sufficient relevance to the query.")
-                search_step.status = "warning"
+                search_step.status = "failed"
+                self._memory.pop("dbtsl_metaset", None)
                 return ""
 
-            # Display found metrics with similarity scores
-            metrics_info = [f"- {result['metadata']['name']} (similarity: {result['similarity']:.3f})" for result in closest_metrics]
+            metrics_info = [f"- {r['metadata']['name']} (similarity: {r['similarity']:.3f})" for r in closest_metrics]
             stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
 
-        with self._add_step(title="Processing dbt Semantic Layer metrics") as step:
+        # Process metrics and fetch dimensions
+        with self._add_step(title="Processing metrics") as step:
             step.stream("Processing metrics and their dimensions")
-            metrics = {}
+
+            # Collect unique metrics and prepare dimension fetch tasks
+            metric_names = {r['metadata']['name'] for r in closest_metrics}
+            metric_objects = {name: self._metric_objs[name] for name in metric_names}
+
+            # Create flat list of all dimension fetch tasks
             client = self._get_dbtsl_client()
             async with client.session():
                 num_cols = len(closest_metrics)
-                processed_metrics = set()
-                for result in closest_metrics:
-                    metric_name = result['metadata']['name']
-                    if metric_name in processed_metrics:
-                        continue
-                    metric_obj = self._metric_objs[metric_name]
-                    processed_metrics.add(metric_name)
+
+                # Build a flat list of all (metric_name, dimension) pairs
+                all_dimensions = [
+                    (metric_name, dim)
+                    for metric_name, metric_obj in metric_objects.items()
+                    for dim in metric_obj.dimensions
+                ]
+
+                # Log metric descriptions
+                for metric_name, metric_obj in metric_objects.items():
                     step.stream(f"\n\n`{metric_name}`: {metric_obj.description}")
 
-                    dimensions = {}
+                # Fetch all dimensions in parallel
+                if all_dimensions:
                     dimension_tasks = [
-                        self._fetch_dimension_values(
-                            client,
-                            metric_name,
-                            dim,
-                            num_cols=num_cols
-                        ) for dim in metric_obj.dimensions
+                        self._fetch_dimension_values(client, metric_name, dim, num_cols)
+                        for metric_name, dim in all_dimensions
                     ]
 
-                    if dimension_tasks:
-                        dimension_results = await asyncio.gather(*dimension_tasks)
-                        for dim_name, dim_info in dimension_results:
-                            dimensions[dim_name] = dim_info
+                    # Single gather call for all dimensions across all metrics
+                    all_results = await asyncio.gather(*dimension_tasks)
 
-                    metric = DbtslMetadata(
+                    # Organize results by metric
+                    dimension_results = {}
+                    for i, (metric_name, _) in enumerate(all_dimensions):
+                        if metric_name not in dimension_results:
+                            dimension_results[metric_name] = {}
+
+                        dim_name, dim_info = all_results[i]
+                        dimension_results[metric_name][dim_name] = dim_info
+                else:
+                    dimension_results = {}
+
+                # Build metrics dictionary with dimension data
+                metrics = {}
+                for result in closest_metrics:
+                    metric_name = result['metadata']['name']
+                    if metric_name in metrics:
+                        continue
+
+                    metric_obj = metric_objects[metric_name]
+                    metrics[metric_name] = DbtslMetadata(
                         name=metric_name,
                         similarity=result['similarity'],
                         description=metric_obj.description,
-                        dimensions=dimensions,
-                        queryable_granularities=[
-                            granularity.name for granularity in metric_obj.queryable_granularities
-                        ]
+                        dimensions=dimension_results.get(metric_name, {}),
+                        queryable_granularities=[g.name for g in metric_obj.queryable_granularities]
                     )
-                    metrics[metric_name] = metric
 
-            # Create the metaset with all processed metrics
-            metaset = DbtslMetaset(query=query, metrics=metrics)
+                # Create metaset and evaluate if metrics can answer query
+                metaset = DbtslMetaset(query=query, metrics=metrics)
 
-            # Evaluate if the metrics can answer the query
-            can_answer_query = False
-            if metrics:
-                step.stream("\n\nEvaluating if found metrics can answer the query...")
-                try:
-                    result = await self._invoke_prompt(
-                        "main",
-                        messages,
-                        dbtsl_metaset=metaset
-                    )
-                    can_answer_query = result.yes
-                    # Update status based on whether metrics can answer query
-                    if can_answer_query:
-                        step.stream("\n\nFound metrics that can answer the query")
-                    else:
-                        step.stream("\nNo metrics found that can fully answer the query")
-                except Exception as e:
-                    step.stream(f"\n\nError evaluating metrics and dimensions: {e}")
-                    step.status = "failed"
+                can_answer_query = False
+                if metrics:
+                    step.stream("\n\nEvaluating if found metrics can answer the query...")
+                    try:
+                        result = await self._invoke_prompt("main", messages, dbtsl_metaset=metaset)
+                        can_answer_query = result.yes
+                        step.stream("\n\n" + ("Found metrics that can answer the query" if can_answer_query
+                                            else "No metrics found that can fully answer the query"))
+                    except Exception as e:
+                        step.stream(f"\n\nError evaluating metrics and dimensions: {e}")
+                        step.status = "failed"
 
         if not can_answer_query:
+            self._memory.pop("dbtsl_metaset", None)
             return ""
 
         self._memory["dbtsl_metaset"] = metaset
         return str(metaset)
 
     async def _fetch_dimension_values(self, client, metric_name, dim, num_cols):
+        print(metric_name, dim)
         dim_name = dim.name.upper()
         dim_info = {"type": dim.type.value}
 

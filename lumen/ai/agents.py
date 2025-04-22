@@ -20,17 +20,19 @@ from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.ai.schemas import get_metaset
+
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
-from ..sources.base import BaseSQLSource
+from ..sources.base import BaseSQLSource, Source
 from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
-from .actor import ContextProvider, DbtslMixin
+from .actor import ContextProvider
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
@@ -42,6 +44,7 @@ from .models import (
     DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
     make_find_tables_model,
 )
+from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
@@ -738,7 +741,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "vector_metaset", "sql_metaset"], readonly=True)
 
     requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
 
@@ -748,6 +751,9 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     _extensions = ('codeeditor', 'tabulator',)
 
     _output_type = SQLOutput
+
+    def __init__(self, source: Source, **params):
+        super().__init__(source=source, **params)
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         """
@@ -801,7 +807,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
                 # Ensure limit exists with a default value if not provided
                 if "limit" not in query_params or not query_params["limit"]:
-                    query_params["limit"] = 100
+                    query_params["limit"] = 10000
 
                 formatted_params = json.dumps(query_params, indent=2)
                 step.stream(f"\n\n`{expr_slug}`\n```json\n{formatted_params}\n```")
@@ -848,6 +854,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             )
 
             df = await get_data(pipeline)
+            sql_metaset = await get_metaset({sql_expr_source.name: sql_expr_source}, [expr_slug])
+            vector_metaset = sql_metaset.vector_metaset
 
             # Update memory
             self._memory["data"] = await describe_data(df)
@@ -855,7 +863,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["source"] = sql_expr_source
             self._memory["pipeline"] = pipeline
             self._memory["table"] = pipeline.table
-
+            self._memory["vector_metaset"] = vector_metaset
+            self._memory["sql_metaset"] = sql_metaset
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)
@@ -916,9 +925,18 @@ class BaseViewAgent(LumenBaseAgent):
             except Exception:
                 last_output = ""
 
+            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
+            columns_context = ""
+            for table_slug, vector_metadata in vector_metadata_map.items():
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                if table_name in pipeline.table:
+                    columns = [col.name for col in vector_metadata.columns]
+                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             errors_context = {
                 "errors": errors,
                 "last_output": last_output,
+                "num_errors": len(errors),
+                "columns_context": columns_context,
             }
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
