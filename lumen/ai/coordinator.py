@@ -384,6 +384,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
         return out
 
+    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], is_follow_up: bool = False) -> list[ExecutionNode]:
+        """
+        Compute the execution graph for the given messages and agents.
+        The graph is a list of ExecutionNode objects that represent
+        the actions to be taken by the agents.
+        """
+
     async def _execute_graph_node(
         self,
         node: ExecutionNode,
@@ -668,7 +675,7 @@ class DependencyResolver(Coordinator):
         )
         return await self._fill_model(messages, system, agent_model)
 
-    async def _compute_execution_graph(self, messages, agents: dict[str, Agent]) -> list[ExecutionNode]:
+    async def _compute_execution_graph(self, messages, agents: dict[str, Agent], is_follow_up: bool = False) -> list[ExecutionNode]:
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
