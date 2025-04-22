@@ -1321,7 +1321,6 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         return str(metaset)
 
     async def _fetch_dimension_values(self, client, metric_name, dim, num_cols):
-        print(metric_name, dim)
         dim_name = dim.name.upper()
         dim_info = {"type": dim.type.value}
 
