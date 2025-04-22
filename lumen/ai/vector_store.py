@@ -8,6 +8,7 @@ import numpy as np
 import param
 
 from .embeddings import Embeddings, NumpyEmbeddings
+from .utils import log_debug
 
 
 class VectorStore(param.Parameterized):
@@ -501,10 +502,18 @@ class NumpyVectorStore(VectorStore):
             metadata = item.get("metadata", {}) or {}
 
             # Check for exact text match
-            if text in text_to_indices:
+            match_indices = text_to_indices.get(text, [])
+
+            # If no exact match found, check for chunked text match
+            if not match_indices:
+                for chunk in self._chunk_text(text):
+                    if chunk in text_to_indices:
+                        match_indices.extend(text_to_indices[chunk])
+
+            if match_indices:
                 match_found = False
 
-                for idx in text_to_indices[text]:
+                for idx in match_indices:
                     existing_id = self.ids[idx]
                     existing_meta = self.metadata[idx]
 
@@ -879,6 +888,7 @@ class DuckDBVectorStore(VectorStore):
             return []
 
         if not self._initialized:
+            log_debug("Database not initialized. Adding items directly.")
             return self.add(items)
 
         assigned_ids = []
@@ -895,6 +905,10 @@ class DuckDBVectorStore(VectorStore):
                 WHERE text = ?
             """
             result = self.connection.execute(query, [text]).fetchall()
+            # Check for chunked text match
+            if not result:
+                for chunk in self._chunk_text(text):
+                    result.extend(self.connection.execute(query, [chunk]).fetchall())
 
             match_found = False
             for row in result:
@@ -932,7 +946,9 @@ class DuckDBVectorStore(VectorStore):
         if items_to_add:
             new_ids = self.add(items_to_add)
             assigned_ids.extend(new_ids)
+            log_debug(f"Added {len(items_to_add)} new items to the vector store.")
 
+        log_debug(len(self))
         return assigned_ids
 
     def __len__(self) -> int:

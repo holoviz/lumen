@@ -29,7 +29,7 @@ from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import YesNo, make_agent_model, make_plan_models
 from .tools import (
-    IterativeTableLookup, TableLookup, Tool, ToolUser,
+    IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
     fuse_messages, instantiate_tools, log_debug, mutate_user_message,
@@ -54,12 +54,20 @@ On the chat interface...
 📝 Get summaries and key insights from your data
 🧩 Apply custom analyses with a click of a button
 
+If unsatisfied with the results...
+
+🔄 Use the Rerun button to re-run the last query
+⏪ Use the Undo button to remove the last query
+🗑️ Use the Clear button to start a new session
+
 Click the toggle, or drag the edge, to expand the sidebar and...
 
 📚 Upload sources (tables and documents) by dragging or selecting files
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
 💾 Access all generated tables and visualizations under tabs
 📤 Export your session as a reproducible notebook
+
+Note, if the vector store (above) is pending, results may be degraded until it is ready.
 
 📖 Learn more about [Lumen AI](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html)
 """
@@ -81,7 +89,7 @@ class ExecutionNode(param.Parameterized):
     render_output = param.Boolean(default=False)
 
 
-class Coordinator(Viewer, ToolUser):
+class Coordinator(Viewer, VectorLookupToolUser):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -126,9 +134,6 @@ class Coordinator(Viewer, ToolUser):
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    tools = param.List(default=[], doc="""
-        List of tools to use to provide context.""")
-
     __abstract = True
 
     def __init__(
@@ -137,6 +142,7 @@ class Coordinator(Viewer, ToolUser):
         interface: ChatFeed | ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         tools: list[Tool | type[Tool]] | None = None,
+        vector_store: Tool | None = None,
         logs_db_path: str = "",
         **params,
     ):
@@ -178,6 +184,10 @@ class Coordinator(Viewer, ToolUser):
             messages = instance[-count:]
             for message in messages:
                 self._logs.update_status(message_id=id(message), removed=True)
+
+        def on_clear(instance, _):
+            self._memory.cleanup()
+
 
         if interface is None:
             interface = ChatInterface(
@@ -242,7 +252,7 @@ class Coordinator(Viewer, ToolUser):
         if "tools" not in params["prompts"]["main"]:
             params["prompts"]["main"]["tools"] = []
         params["prompts"]["main"]["tools"] += [tool for tool in tools]
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, **params)
+        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, vector_store=vector_store, **params)
 
         welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
         interface.send(
@@ -252,6 +262,7 @@ class Coordinator(Viewer, ToolUser):
         interface.button_properties={
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
+            "clear": {"callback": on_clear},
         }
         self._add_suggestions_to_footer(self.suggestions)
 

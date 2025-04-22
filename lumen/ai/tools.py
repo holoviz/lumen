@@ -46,16 +46,63 @@ class ToolUser(Actor):
         self._tools = {}
 
         for prompt_name in self.prompts:
-            prompt_tools = self._lookup_prompt_key(prompt_name, "tools")
-            vector_store = next(
-                (tool.vector_store for tool in prompt_tools if isinstance(tool, VectorLookupTool)), None
-            )
-            self._tools[prompt_name] = instantiate_tools(
-                prompt_tools,
-                llm=self.llm,
-                interface=self.interface,
-                vector_store=vector_store
-            )
+            self._initialize_tools_for_prompt(prompt_name)
+
+    def _get_tool_kwargs(self, tool, prompt_tools):
+        """
+        Get kwargs for initializing a tool.
+        Subclasses can override to provide additional kwargs.
+
+        Parameters
+        ----------
+        tool : object
+            The tool (class or instance) being initialized
+        prompt_tools : list
+            List of all tools for this prompt
+
+        Returns
+        -------
+        dict
+            Keyword arguments for tool initialization
+        """
+        return {"llm": self.llm, "interface": self.interface}
+
+    def _initialize_tools_for_prompt(self, prompt_name):
+        """
+        Initialize tools for a specific prompt.
+
+        Parameters
+        ----------
+        prompt_name : str
+            The name of the prompt to initialize tools for.
+        """
+        prompt_tools = self._lookup_prompt_key(prompt_name, "tools")
+        self._tools[prompt_name] = []
+
+        # Initialize each tool
+        for tool in prompt_tools:
+            if isinstance(tool, Actor):
+                # For already instantiated Actors, set properties directly
+                if tool.llm is None:
+                    tool.llm = self.llm
+                if tool.interface is None:
+                    tool.interface = self.interface
+
+                # Apply any additional configuration from subclasses
+                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools)
+                for key, value in tool_kwargs.items():
+                    if key not in ('llm', 'interface') and hasattr(tool, key):
+                        setattr(tool, key, value)
+
+                self._tools[prompt_name].append(tool)
+            elif isinstance(tool, FunctionType):
+                # Function tools only get basic kwargs
+                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools)
+                self._tools[prompt_name].append(FunctionTool(tool, **tool_kwargs))
+            else:
+                # For classes that need to be instantiated
+                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools)
+                self._tools[prompt_name].append(tool(**tool_kwargs))
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
@@ -66,6 +113,49 @@ class ToolUser(Actor):
                     if tool_context:
                         tools_context += f"\n{tool_context}"
         return tools_context
+
+
+class VectorLookupToolUser(ToolUser):
+    """
+    VectorLookupToolUser is a mixin class for actors that use vector lookup tools.
+    """
+
+    vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for the tools. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
+
+    def _get_tool_kwargs(self, tool, prompt_tools):
+        """
+        Override to provide vector_store to applicable tools.
+
+        Parameters
+        ----------
+        tool : object
+            The tool (class or instance) being initialized
+        prompt_tools : list
+            List of all tools for this prompt
+
+        Returns
+        -------
+        dict
+            Keyword arguments for tool initialization including vector_store if applicable
+        """
+        # Get base kwargs from parent
+        kwargs = super()._get_tool_kwargs(tool, prompt_tools)
+
+        # Find vector store from tools if any
+        vector_store = next(
+            (t.vector_store for t in prompt_tools
+             if isinstance(t, VectorLookupTool)),
+            None
+        ) or self.vector_store
+
+        if hasattr(tool, "vector_store") and vector_store is not None:
+            kwargs["vector_store"] = vector_store
+
+        return kwargs
 
 
 class Tool(Actor, ContextProvider):
@@ -358,6 +448,16 @@ class DocumentLookup(VectorLookupTool):
 
         return "\n".join(formatted_results)
 
+    def _handle_ready_task_done(self, task):
+        """Properly handle exceptions from the ready task."""
+        try:
+            # This will re-raise the exception if one occurred
+            if task.exception():
+                raise task.exception()
+        except Exception as e:
+            log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
+            traceback.print_exc()
+
     async def _update_vector_store(self, _, __, sources):
         # Build a list of document items for a single upsert operation
         items_to_upsert = [
@@ -438,7 +538,6 @@ class TableLookup(VectorLookupTool):
         super().__init__(**params)
         self._tables_metadata = {}  # used for storing table metadata for LLM
         self._raw_metadata = {}
-        self._metadata_tasks = set()  # Track ongoing metadata fetch tasks
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._previous_state = None  # used for tracking previous state for _should...
         if self.sync_sources:
@@ -474,8 +573,18 @@ class TableLookup(VectorLookupTool):
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
-    async def _fetch_and_store_metadata(self, source, table_name: str):
-        """Fetch metadata for a table and store it in the vector store."""
+    def _handle_ready_task_done(self, task):
+        """Properly handle exceptions from the ready task."""
+        try:
+            # This will re-raise the exception if one occurred
+            if task.exception():
+                raise task.exception()
+        except Exception as e:
+            log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
+            traceback.print_exc()
+
+    async def _enrich_metadata(self, source, table_name: str):
+        """Fetch metadata for a table and return enriched entry for batch processing."""
         async with self._semaphore:
             source_metadata = self._raw_metadata[source.name]
             if isinstance(source_metadata, asyncio.Task):
@@ -487,7 +596,7 @@ class TableLookup(VectorLookupTool):
             if key in source_metadata), None
         )
         if not table_name_key:
-            return
+            return None
         table_name = table_name_key
         vector_info = dict(source_metadata[table_name])
 
@@ -510,15 +619,7 @@ class TableLookup(VectorLookupTool):
                 columns.append(column)
 
         vector_metadata = {"source": source.name, "table_name": table_name}
-        if existing_items := self.vector_store.filter_by(vector_metadata):
-            if existing_items and existing_items[0].get("metadata", {}).get("enriched"):
-                return
-
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
-        vector_metadata["enriched"] = True
-
-        # TODO: Investigate whether these enriched text should actually be in metadata??
-        # is it duplicate??
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop('description', ''):
             enriched_text += f"\nInfo: {description}"
@@ -536,14 +637,13 @@ class TableLookup(VectorLookupTool):
                 if key == "enriched":
                     continue
                 enriched_text += f"\n- {key}: {value}"
-        # Use upsert to add or update the table metadata
-        # This will add new entries or update existing ones as needed
-        self.vector_store.upsert([{"text": enriched_text, "metadata": vector_metadata}])
+
+        # Return the entry instead of upserting directly
+        return {"text": enriched_text, "metadata": vector_metadata}
 
     async def _update_vector_store(self, _, __, sources):
-        # Create a list to track all tasks we're starting in this update
-        all_tasks = []
-
+        await asyncio.sleep(0.5)  # allow main thread time to load UI first
+        tasks = []
         for source in sources:
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 if isinstance(source, DuckDBSource):
@@ -553,49 +653,35 @@ class TableLookup(VectorLookupTool):
                         asyncio.to_thread(source.get_metadata)
                     )
                     self._raw_metadata[source.name] = metadata_task
-                    all_tasks.append(metadata_task)
+                    tasks.append(metadata_task)
 
             tables = source.get_tables()
-            # since enriching the metadata might take time, first add basic metadata (table name)
-            # Build a list for a single upsert operation
-            basic_table_items = [
-                {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
-                for table_name in tables
-            ]
-            # Make a single upsert call with all basic table metadata
-            if basic_table_items:
-                self.vector_store.upsert(basic_table_items)
 
-            # if metadata is included, upsert the existing
             if self.include_metadata:
                 for table in tables:
-                    task = asyncio.create_task(
-                        self._fetch_and_store_metadata(source, table)
-                    )
-                    self._metadata_tasks.add(task)
-                    task.add_done_callback(lambda t: self._metadata_tasks.discard(t))
-                    all_tasks.append(task)
+                    task = asyncio.create_task(self._enrich_metadata(source, table))
+                    tasks.append(task)
+            else:
+                self.vector_store.upsert([
+                    {"text": table_name, "metadata": {"source": source.name, "table_name": table_name}}
+                    for table_name in tables
+                ])
 
-        if all_tasks:
-            ready_task = asyncio.create_task(self._mark_ready_when_done(all_tasks))
-            ready_task.add_done_callback(lambda t: t.exception if t.exception() else None)
+        if tasks:
+            ready_task = asyncio.create_task(self._mark_ready_when_done(tasks))
+            ready_task.add_done_callback(self._handle_ready_task_done)
 
     async def _mark_ready_when_done(self, tasks):
-        """Wait for all tasks to complete and then mark the tool as ready."""
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        exceptions = [r for r in results if isinstance(r, Exception)]
-        if exceptions:
-            log_debug(f"Encountered {len(exceptions)} errors during metadata tasks")
-            for exception in exceptions:
-                exc_type, exc_value, exc_tb = type(exception), exception, None
-                log_debug(f"Error: {exc_type.__name__}: {exc_value}")
-                tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
-                log_debug("Traceback details:\n" + "".join(tb_lines))
-            self._ready = None
-        else:
-            log_debug("All table metadata tasks completed successfully.")
-            self._ready = True
+        """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
+        enriched_entries = [
+            result for result in await asyncio.gather(*tasks, return_exceptions=True)
+            if isinstance(result, dict) and "text" in result
+        ]
+        if enriched_entries:
+            log_debug(f"Enriching {len(enriched_entries)} table metadata entries.")
+            self.vector_store.upsert(enriched_entries)
+        log_debug("All table metadata tasks completed.")
+        self._ready = True
 
     async def _should_refresh_tables(self, messages: list[dict[str, str]]) -> bool:
         """
