@@ -743,7 +743,7 @@ class Planner(Coordinator):
 
     async def _check_follow_up_question(self, messages: list[Message]) -> bool:
         """Check if the user's query is a follow-up question about the previous dataset."""
-        # Only check if vector_metaset is in memory
+        # Only check if data is in memory
         if "data" not in self._memory:
             return False
 
