@@ -4,32 +4,57 @@
 
 Every `Actor` (`Coordinator`, `Agent`, `Tool`) operates based on a system prompt structured with modular components:
 
-1. `instructions`
-2. `context`
-3. `tools`
-4. `examples`
+0. `global`
+1. `datetime`
+2. `instructions`
+3. `context`
+4. `tools`
+5. `examples`
+6. `errors`
 
 The base system prompt template follows this format:
 
 ```jinja2
-{% block instructions %}
+{% block global %}
 {% endblock %}
 
-{% block context %}
+{% block datetime %}
+The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {% endblock %}
 
-{% block tools %}
-{%- if 'tool_context' in memory -%}
-{#- Context from Coordinator.tools -#}
-{{ memory["tool_context"] }}
-{%- endif -%}
-{%- if tool_context is defined -%}
-{{ tool_context }}
+{%- block instructions -%}
+{%- endblock -%}
+
+{%- block context -%}
+{%- endblock %}
+
+{% block tools -%}
+{%- if 'agent_tool_contexts' in memory and actor_name in memory["agent_tool_contexts"] %}
+{#- Agent-specific tool contexts -#}
+{% for key, value in memory["agent_tool_contexts"][actor_name].items() %}
+`{{ key }}`: {{ value }}
+{% endfor %}
+{% else %}
 {% endif -%}
-{% endblock %}
+{%- endblock -%}
 
-{% block examples %}
-{% endblock %}
+{%- block examples -%}
+{%- endblock -%}
+
+{%- block errors -%}
+{%- if last_output is defined %}
+Note, your last output did not work as intended:
+```
+{{ last_output }}
+```
+{%- endif %}
+{%- if errors is defined and errors %}
+Your task is to expertly address these errors so they do not occur again:
+```
+{{ errors }}
+```
+{%- endif %}
+{%- endblock -%}
 ```
 
 ## Override Blocks
