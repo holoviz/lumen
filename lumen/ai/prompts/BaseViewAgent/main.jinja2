@@ -4,12 +4,9 @@
 Available visualization types:
 {{ doc }}
 
-The current SQL
-```sql
-{{ memory['sql'] }}
-```
+The current SQL table name: {{ memory['table'] }}.
 
-Here is the current dataset:
+Here is the current dataset to use:
 {{ memory.data }}
 
 {%- if "view" in memory %}
@@ -19,5 +16,7 @@ The previous view specification was:
 ```
 {%- endif %}
 
-{{ memory["sql_metaset"].selected_context }}
+{% if memory.source.dialect == "snowflake" %}
+Please use all upper case for field names.
+{% endif %}
 {%- endblock %}

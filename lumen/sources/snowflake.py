@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import contextlib
+import datetime
+import decimal
 import re
 
 from pathlib import Path
@@ -226,8 +228,36 @@ class SnowflakeSource(BaseSQLSource):
         params['conn'] = self._conn
         return SnowflakeSource(**params)
 
+    def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
+        """
+        Convert decimal.Decimal to float in a pandas DataFrame, as
+        Bokeh ColumnDataSource does not support decimal.Decimal.
+        Samples only a subset of the DataFrame to check for decimal.Decimal
+        Arguments
+        ---------
+        df (pd.DataFrame):
+        the DataFrame to convert
+        sample (int):
+        number of rows to sample to check for decimal.Decimal
+        """
+        df = df.copy()
+        for col in df.select_dtypes(include=["object"]).columns:
+            df_col_sample = df[col].sample(min(sample, len(df)))
+            try:
+                if df_col_sample.apply(lambda x: isinstance(x, decimal.Decimal)).any():
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                if df_col_sample.apply(
+                    lambda x: isinstance(x, (datetime.datetime, datetime.date))
+                ).any():
+                    df[col] = pd.to_datetime(df[col], errors="coerce")
+            except Exception:
+                df[col] = df[col].astype(str)
+        return df
+
     def execute(self, sql_query: str, *args, **kwargs):
-        return self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        # TODO: remove cast in future, but keep until bokeh has a solution
+        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        return self._cast_to_supported_dtypes(df)
 
     def get_tables(self) -> list[str]:
         # limited set of tables was provided
@@ -330,9 +360,9 @@ class SnowflakeSource(BaseSQLSource):
             if len(parts) == 3:
                 parsed_tables.append(parts)  # database.schema.table_name
             elif len(parts) == 2:
-                parsed_tables.append([self.database, parts[0], parts[1]])  # schema.table_name
+                parsed_tables.append([self.database or "", parts[0], parts[1]])  # schema.table_name
             elif len(parts) == 1:
-                parsed_tables.append([self.database, self.schema, parts[0]])  # table_name
+                parsed_tables.append([self.database or "", self.schema or "", parts[0]])  # table_name
             else:
                 raise ValueError(f"Invalid table format: {t}")
 

@@ -1,0 +1,30 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions %}
+You need to determine if the user's current query is a follow-up question related to the previous dataset in memory and whether the existing context is sufficient to answer it.
+
+Examine:
+1. The current user query
+2. The previous query stored in vector_metaset
+3. The currently selected columns in memory
+
+Rules:
+- Answer YES if the current query is clearly a follow-up that can be answered using the data already in memory (vector_metaset)
+- Answer NO if:
+  - The query appears to be about a different topic entirely
+  - The query requires different data or columns not present in the current memory
+  - The user is explicitly asking for new data or refreshed information
+  - The query contains explicit instructions to run a new search or query
+
+Ground your reasoning in specific elements of both the current query and previously selected columns.
+{%- endblock -%}
+
+{% block context -%}
+{% if "data" in memory %}
+Current Query:
+"""
+{{ memory['data'] }}
+"""
+{% endif %}
+
+{%- endblock -%}

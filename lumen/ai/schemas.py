@@ -5,7 +5,9 @@ from typing import Any
 
 from ..sources import Source
 from .config import SOURCE_TABLE_SEPARATOR
-from .utils import get_schema, truncate_iterable, truncate_string
+from .utils import (
+    get_schema, log_debug, truncate_iterable, truncate_string,
+)
 
 
 @dataclass
@@ -61,7 +63,7 @@ class VectorMetaset:
             context += f"\n\n{table_slug!r}\n\nSimilarity: ({vector_metadata.similarity:.3f})\n\n"
 
             if vector_metadata.description:
-                context += f"Description: {vector_metadata.description}\n\n"
+                context += f"Info: {vector_metadata.description}\n\n"
 
             if vector_metadata.base_sql:
                 context += f"Base SQL: {vector_metadata.base_sql}\n\n"
@@ -124,9 +126,6 @@ class SQLMetadata:
 
     table_slug: str
     schema: dict[str, Any]
-    base_sql: str | None = None
-    view_definition: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -167,13 +166,13 @@ class SQLMetaset:
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
-                context += f"Description: {desc}\n"
+                context += f"Info: {desc}\n"
+
+            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+            context += f"Base SQL: {base_sql}\n"
 
             sql_data: SQLMetadata = self.sql_metadata_map.get(table_slug)
             if sql_data:
-                base_sql = truncate_string(sql_data.base_sql, max_length=200) if truncate else sql_data.base_sql
-                context += f"Base SQL: {base_sql}\n"
-
                 # Get the count from schema
                 if sql_data.schema.get("__len__"):
                     context += f"Row count: {len(sql_data.schema)}\n"
@@ -306,17 +305,61 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         tables_info[table_name] = SQLMetadata(
             table_slug=table_slug,
             schema=schema,
-            base_sql=source.get_sql_expr(source.normalize_table(table_name)),
-            view_definition=None,
         )
-        metadata = source.get_metadata(table_name)
+        try:
+            metadata = source.get_metadata(table_name)
+        except Exception as e:
+            log_debug(
+                f"Failed to get metadata for table {table_name} in source {source_name}: {e}"
+            )
+            metadata = {}
         tables_metadata[table_name] = VectorMetadata(
             table_slug=table_slug,
             similarity=1,
-            description=metadata['description']
+            base_sql=source.get_sql_expr(source.normalize_table(table_name)),
+            description=metadata.get("description"),
+            columns=metadata.get("columns")
         )
     vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
     return SQLMetaset(
         vector_metaset=vector_metaset,
         sql_metadata_map=tables_info,
     )
+
+
+@dataclass
+class DbtslMetadata:
+
+    name: str
+    similarity: float
+    description: str | None = None
+    dimensions: dict[str, list] = field(default_factory=dict)
+    queryable_granularities: list[str] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        dimensions_str = ""
+        for dimension, dimension_spec in self.dimensions.items():
+            dtype = dimension_spec["type"]
+            enums = dimension_spec.get("enum", [])
+            if enums:
+                dimensions_str += f"- {dimension} ({dtype}): {enums}\n"
+            else:
+                dimensions_str += f"- {dimension} ({dtype})\n"
+        return (
+            f"Metric: {self.name} (Similarity: {self.similarity:.3f})\n"
+            f"Info: {self.description}\n"
+            f"Dims:\n{dimensions_str}\n"
+            f"Granularities: {', '.join(self.queryable_granularities)}\n\n"
+        )
+
+@dataclass
+class DbtslMetaset:
+
+    query: str
+    metrics: dict[str, DbtslMetadata]
+
+    def __str__(self) -> str:
+        context = "Below are the relevant metrics to use with DbtslAgent:\n\n"
+        for metric in self.metrics.values():
+            context += str(metric)
+        return context
