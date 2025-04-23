@@ -201,7 +201,7 @@ class SourceAgent(Agent):
 
     requires = param.List(default=[], readonly=True)
 
-    provides = param.List(default=["source", "document_sources"], readonly=True)
+    provides = param.List(default=["sources", "source", "document_sources"], readonly=True)
 
     on_init = param.Boolean(default=True)
 

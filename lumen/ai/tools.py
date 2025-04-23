@@ -9,6 +9,7 @@ from typing import Any
 
 import param
 
+from panel.io import cache as pn_cache
 from panel.io.state import state
 from panel.viewable import Viewable
 
@@ -345,7 +346,8 @@ class VectorLookupTool(Tool):
         filters = kwargs.pop("filters", {})
         if "type" not in filters:
             filters["type"] = self._item_type_name
-        results = self.vector_store.query(query, top_k=self.n, filters=filters, **kwargs)
+        kwargs["filters"] = filters
+        results = self.vector_store.query(query, top_k=self.n, **kwargs)
         # check if all metadata is the same; if so, skip
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
@@ -1264,7 +1266,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 # Fetch all dimensions in parallel
                 if all_dimensions:
                     dimension_tasks = [
-                        self._fetch_dimension_values(client, metric_name, dim, num_cols)
+                        self._fetch_dimension_values(client, metric_name, dim, num_cols, step)
                         for metric_name, dim in all_dimensions
                     ]
 
@@ -1307,8 +1309,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                     try:
                         result = await self._invoke_prompt("main", messages, dbtsl_metaset=metaset)
                         can_answer_query = result.yes
-                        step.stream("\n\n" + ("Found metrics that can answer the query" if can_answer_query
-                                            else "No metrics found that can fully answer the query"))
+                        step.stream(f"\n\n{result.chain_of_thought}")
                     except Exception as e:
                         step.stream(f"\n\nError evaluating metrics and dimensions: {e}")
                         step.status = "failed"
@@ -1320,7 +1321,8 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         self._memory["dbtsl_metaset"] = metaset
         return str(metaset)
 
-    async def _fetch_dimension_values(self, client, metric_name, dim, num_cols):
+    @pn_cache
+    async def _fetch_dimension_values(self, client, metric_name, dim, num_cols, step):
         dim_name = dim.name.upper()
         dim_info = {"type": dim.type.value}
 
@@ -1330,9 +1332,11 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                     metrics=[metric_name], group_by=dim_name
                 )
                 if dim_name in enums.to_pydict():
-                    spec, _ = process_enums({"enum": enums.to_pydict()[dim_name]}, num_cols)
+                    enum_values = enums.to_pydict()[dim_name]
+                    spec, _ = process_enums({"enum": enum_values}, num_cols)
                     dim_info["enum"] = spec["enum"]
-                    dim_info["enum_count"] = len(spec["enum"])
+                    dim_info["enum_count"] = len(enum_values)
+                    stream_details(spec["enum"], step, auto=False, title=f"{metric_name}.{dim_name} {dim_info["enum_count"]} values")
                 else:
                     dim_info["enum"] = []
                     dim_info["enum_count"] = 0

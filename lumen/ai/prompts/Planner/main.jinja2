@@ -19,8 +19,9 @@ Important Agent Rules:
 - The SourceAgent is only useful for uploading new table or document sources; not for showing what's already available, which is the job for TableListAgent.
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
-- The SQLAgent usually needs help by *TableLookup if the current columns are insufficient.
-- Use SQLAgent if `dbtsl_metaset` is not available, but if it is, use DbtslAgent preferably.
+- The SQLAgent usually needs help by *IterativeTableLookup if the current columns are insufficient.
+- The SQLAgent is likely the best choice to show a dataset table.
+- Use SQLAgent only if `dbtsl_metaset` is not available, but if it is, use DbtslAgent.
 - The DbtslAgent should not be used with IterativeTableLookup or SQLAgent, and should be prioritized if dbtsl_metaset is available.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - If the user is asking for a plot of the data without any modifications, SQLAgent is unnecessary.
@@ -28,7 +29,7 @@ Important Agent Rules:
 - The ChatAgent must be used with TableLookup or other tools, but if the query is related to the data tables, please use AnalystAgent instead.
 
 Import Tools Rules:
-- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent.
+- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent, but it should not be used alone.
 - If you already have sufficient context in memory, do not call IterativeTableLookup or TableLookup again.
 {% endblock -%}
 
@@ -57,8 +58,6 @@ Here are the documents you have access to:
 
 {%- endfor %}
 {%- endif %}
-
-You already have the following loaded into memory: {{ memory.keys() | list }}
 
 Here's the choice of experts, what they can provide and what they require:
 {%- for agent in agents %}
@@ -102,9 +101,11 @@ Here were your failed previous plans:
 {%- endfor %}
 These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}`.
 
-Please include some of these these experts to provide for the missing requirements:
+Please include some of these these experts to provide for the missing requirements if they can be satisfied:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] }}`
 {%- endfor %}
+
+Remember you only have these loaded into memory: {{ memory.keys() | list }}
 {% endif %}
 {%- endblock -%}

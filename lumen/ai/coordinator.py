@@ -801,13 +801,25 @@ class Planner(Coordinator):
         step: ChatStep,
         is_follow_up: bool = False,
     ) -> BaseModel:
-        tools = self._tools["main"]
+        agents = list(agents.values())
+        tools = list(self._tools["main"])
+        all_provides = set()
+        for provider in agents + tools:
+            all_provides |= set(provider.provides)
+        all_provides |= set(self._memory.keys())
+
+        # ensure these candidates are satisfiable
+        # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
+        # but did not provide dbtsl_metaset
+        agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0]
+        tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]
+
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
             # the unmet dependencies
             agent_candidates = [
-                agent for agent in agents.values()
+                agent for agent in agents
                 if not unmet_dependencies or set(agent.provides) & unmet_dependencies
             ]
             tool_candidates = [
@@ -817,11 +829,10 @@ class Planner(Coordinator):
             system = await self._render_prompt(
                 "main",
                 messages,
-                agents=list(agents.values()),
-                tools=list(tools),
+                agents=agents,
+                tools=tools,
                 unmet_dependencies=unmet_dependencies,
-                # Gather candidates that can provide unmet dependencies
-                candidates = agent_candidates + tool_candidates,
+                candidates=agent_candidates + tool_candidates,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up
             )
