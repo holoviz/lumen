@@ -31,7 +31,7 @@ from .services import DbtslMixin
 from .translate import function_to_model
 from .utils import (
     get_schema, log_debug, process_enums, retry_llm_output, stream_details,
-    truncate_string,
+    truncate_string, with_timeout,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -782,10 +782,16 @@ class TableLookup(VectorLookupTool):
         cols_lengths = set()
         if "vector_metaset" in self._memory:
             vector_metaset = self._memory["vector_metaset"]
+            if vector_metaset.selected_columns:
+                table_slugs = list(vector_metaset.selected_columns)
+            else:
+                table_slugs = None
             for vector_metadata in vector_metaset.vector_metadata_map.values():
+                if table_slugs and vector_metadata.table_slug not in table_slugs:
+                    continue
                 cols_lengths.add(len(vector_metadata.columns))
 
-        if max(cols_lengths) <= 30 and sum(cols_lengths) <= 60:
+        if max(cols_lengths) <= 30 and sum(cols_lengths) <= 70:
             return False
 
         try:
@@ -865,7 +871,7 @@ class TableLookup(VectorLookupTool):
                 traceback.print_exc()
                 step.stream(f"Error selecting columns: {e}")
                 step.status = "failed"
-            return
+            raise e
 
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
@@ -939,7 +945,10 @@ class TableLookup(VectorLookupTool):
 
         should_select = await self._should_select_columns(messages)
         if should_select:
-            await self._select_columns(messages)
+            try:
+                await self._select_columns(messages)
+            except Exception:
+                log_debug("Failed to select columns, skipping column selection.")
         else:
             with self._add_step(title="Column Selection Skipped") as step:
                 step.stream("Column subsetting skipped")
@@ -1070,12 +1079,12 @@ class IterativeTableLookup(TableLookup):
                         step.stream(chain_of_thought)
                         stream_details('\n'.join(selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
 
-                        # Check if we're done with table selection
-                        if output.is_done or not available_slugs:
+                        # Check if we're done with table selection (do not allow on 1st iteration)
+                        if (output.is_done and iteration != 1) or not available_slugs:
                             step.stream("\n\nSelection process complete - model is satisfied with selected tables")
                             satisfied_slugs = selected_slugs
                             fast_track = True
-                        if iteration != max_iterations:
+                        elif iteration != max_iterations:
                             step.stream("\n\nUnsatisfied with selected tables - continuing selection process...")
                         else:
                             step.stream("\n\nMaximum iterations reached - stopping selection process")
@@ -1161,6 +1170,12 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     DbtslLookup tool that creates a vector store of all available dbt semantic layers
     and responds with relevant metrics for user queries.
     """
+
+    dimension_fetch_timeout = param.Number(default=15, doc="""
+        Maximum time in seconds to wait for a dimension values fetch operation.""")
+
+    max_concurrent = param.Integer(default=5, doc="""
+        Maximum number of concurrent metadata fetch operations.""")
 
     min_similarity = param.Number(default=0.1, doc="""
         The minimum similarity to include a document.""")
@@ -1264,14 +1279,21 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                     step.stream(f"\n\n`{metric_name}`: {metric_obj.description}")
 
                 # Fetch all dimensions in parallel
+                step.stream("\n")
                 if all_dimensions:
-                    dimension_tasks = [
-                        self._fetch_dimension_values(client, metric_name, dim, num_cols, step)
-                        for metric_name, dim in all_dimensions
-                    ]
-
                     # Single gather call for all dimensions across all metrics
-                    all_results = await asyncio.gather(*dimension_tasks)
+                    async with asyncio.Semaphore(self.max_concurrent):
+                        dimension_tasks = [
+                            with_timeout(
+                                self._fetch_dimension_values(client, metric_name, dim, num_cols, step),
+                                timeout_seconds=self.dimension_fetch_timeout,
+                                default_value=(
+                                    dim.name.upper(), {"type": dim.type.value}),
+                                error_message=f"Dimension fetch timed out for {metric_name}.{dim.name}"
+                            )
+                            for metric_name, dim in all_dimensions
+                        ]
+                        all_results = await asyncio.gather(*dimension_tasks)
 
                     # Organize results by metric
                     dimension_results = {}
@@ -1336,7 +1358,9 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                     spec, _ = process_enums({"enum": enum_values}, num_cols)
                     dim_info["enum"] = spec["enum"]
                     dim_info["enum_count"] = len(enum_values)
-                    stream_details(spec["enum"], step, auto=False, title=f"{metric_name}.{dim_name} {dim_info["enum_count"]} values")
+                    # just to show its progressing...
+                    step.stream(".")
+                    # stream_details(spec["enum"], step, auto=False, title=f"{metric_name}.{dim_name} {dim_info["enum_count"]} values")
                 else:
                     dim_info["enum"] = []
                     dim_info["enum_count"] = 0

@@ -20,8 +20,8 @@ Important Agent Rules:
 - The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
 - The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
 - The SQLAgent usually needs help by *IterativeTableLookup if the current columns are insufficient.
-- The SQLAgent is likely the best choice to show a dataset table.
-- Use SQLAgent only if `dbtsl_metaset` is not available, but if it is, use DbtslAgent.
+- The SQLAgent is likely the best choice to show a dataset table unless dbtsl_metaset is available.
+- Use DbtslAgent if dbtsl_metaset is available, otherwise use SQLAgent for all purposes.
 - The DbtslAgent should not be used with IterativeTableLookup or SQLAgent, and should be prioritized if dbtsl_metaset is available.
 - Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
 - If the user is asking for a plot of the data without any modifications, SQLAgent is unnecessary.
@@ -29,7 +29,8 @@ Important Agent Rules:
 - The ChatAgent must be used with TableLookup or other tools, but if the query is related to the data tables, please use AnalystAgent instead.
 
 Import Tools Rules:
-- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent, but it should not be used alone.
+- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent
+- Do not use tools alone without a supporting agent.
 - If you already have sufficient context in memory, do not call IterativeTableLookup or TableLookup again.
 {% endblock -%}
 
@@ -91,6 +92,7 @@ The current data loaded in memory is:
 
 {%- if 'table' in memory %}
 - The result of the previous step was the `{{ memory['table'] }}` table. If the user is referencing a previous result this is probably what they're referring to. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.
+- If the table is completely irrelevant to the user query, you can ignore it.
 - However, if the user requests to see all the columns, they might be referring to the table that `{{ memory['table'] }} was derived from.
 - If you are invoking a SQL agent and reusing the table, tell it to reference that table by name rather than re-stating the query.
 {%- endif %}
@@ -99,9 +101,9 @@ Here were your failed previous plans:
 {%- for previous_plan in previous_plans %}
 - {{ previous_plan }}
 {%- endfor %}
-These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}`.
+These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}` when you selected {{ previous_actors | list }}.
 
-Please include some of these these experts to provide for the missing requirements if they can be satisfied:
+Please include some of these these experts to provide for the missing requirements:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] }}`
 {%- endfor %}

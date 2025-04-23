@@ -795,6 +795,7 @@ class Planner(Coordinator):
         messages: list[Message],
         agents: dict[str, Agent],
         unmet_dependencies: set[str],
+        previous_actors: list[str],
         previous_plans: list[str],
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
@@ -833,6 +834,7 @@ class Planner(Coordinator):
                 tools=tools,
                 unmet_dependencies=unmet_dependencies,
                 candidates=agent_candidates + tool_candidates,
+                previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up
             )
@@ -856,15 +858,17 @@ class Planner(Coordinator):
         )
         return await self._fill_model(mutated_messages, system, plan_model)
 
-    async def _resolve_plan(self, plan, agents, messages) -> tuple[list[ExecutionNode], set[str]]:
+    async def _resolve_plan(self, plan, agents, messages, previous_actors) -> tuple[list[ExecutionNode], set[str], list[str]]:
         table_provided = False
         execution_graph = []
         provided = set(self._memory)
         unmet_dependencies = set()
         tools = {tool.name: tool for tool in self._tools["main"]}
         steps = []
+        actors = []
         for step in plan.steps:
             key = step.expert_or_tool
+            actors.append(key)
             if key in agents:
                 subagent = agents[key]
             elif key in tools:
@@ -929,7 +933,8 @@ class Planner(Coordinator):
                 )
             )
         plan.steps = steps
-        return execution_graph, unmet_dependencies
+        previous_actors = actors
+        return execution_graph, unmet_dependencies, previous_actors
 
     async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
         is_follow_up = await self._check_follow_up_question(messages)
@@ -954,6 +959,7 @@ class Planner(Coordinator):
         planned = False
         unmet_dependencies = set()
         execution_graph = []
+        previous_actors = []
         previous_plans = []
         attempts = 0
 
@@ -964,7 +970,7 @@ class Planner(Coordinator):
                 plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, unmet_dependencies, previous_plans,
+                        messages, agents, unmet_dependencies, previous_actors, previous_plans,
                         reason_model, plan_model, istep, is_follow_up=is_follow_up
                     )
                 except asyncio.CancelledError as e:
@@ -975,7 +981,7 @@ class Planner(Coordinator):
                     istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                     traceback.print_exception(e)
                     raise e
-                execution_graph, unmet_dependencies = await self._resolve_plan(plan, agents, messages)
+                execution_graph, unmet_dependencies, previous_actors = await self._resolve_plan(plan, agents, messages, previous_actors)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                     attempts += 1
