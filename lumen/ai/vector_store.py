@@ -611,7 +611,15 @@ class DuckDBVectorStore(VectorStore):
             self._initialized = False
             return
         uri_exists = Path(self.uri).exists()
-        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        try:
+            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        except duckdb.CatalogException:
+            # handle "Failure while replaying WAL file"
+            # remove .wal uri on corruption
+            wal_path = Path(str(self.uri) + ".wal")
+            if wal_path.exists():
+                wal_path.unlink()
+            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
         connection.execute("USE embedded;")
         self.connection = connection
         has_documents = connection.execute(

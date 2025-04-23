@@ -201,7 +201,7 @@ class SourceAgent(Agent):
 
     requires = param.List(default=[], readonly=True)
 
-    provides = param.List(default=["source", "document_sources"], readonly=True)
+    provides = param.List(default=["sources", "source", "document_sources"], readonly=True)
 
     on_init = param.Boolean(default=True)
 
@@ -552,7 +552,7 @@ class SQLAgent(LumenBaseAgent):
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                 if table_name in tables_to_source:
-                    columns = [col.name for col in vector_metadata.columns]
+                    columns = [col.name for col in vector_metadata.columns or []]
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
             last_output = self._memory["sql"]
             num_errors = len(errors)
@@ -585,7 +585,7 @@ class SQLAgent(LumenBaseAgent):
                 if output.query:
                     sql_query = clean_sql(output.query, dialect)
                 if sql_query and output.expr_slug:
-                    step.stream(f"\n`{output.expr_slug}`\n```sql\n{sql_query}\n```", replace=True)
+                    step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
                 self._memory["sql"] = sql_query
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled SQL query generation"
@@ -741,7 +741,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data", "vector_metaset", "sql_metaset"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "dbtsl_vector_metaset", "dbtsl_sql_metaset"], readonly=True)
 
     requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
 
@@ -863,8 +863,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["source"] = sql_expr_source
             self._memory["pipeline"] = pipeline
             self._memory["table"] = pipeline.table
-            self._memory["vector_metaset"] = vector_metaset
-            self._memory["sql_metaset"] = sql_metaset
+            self._memory["dbtsl_vector_metaset"] = vector_metaset
+            self._memory["dbtsl_sql_metaset"] = sql_metaset
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)
@@ -925,7 +925,10 @@ class BaseViewAgent(LumenBaseAgent):
             except Exception:
                 last_output = ""
 
-            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
+            if "sql_metaset" in self._memory:
+                vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
+            elif "dbtsl_sql_metaset" in self._memory:
+                vector_metadata_map = self._memory["dbtsl_sql_metaset"].vector_metaset.vector_metadata_map
             columns_context = ""
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
