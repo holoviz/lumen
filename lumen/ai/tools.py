@@ -1238,12 +1238,13 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
             stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
 
         # Process metrics and fetch dimensions
+        can_answer_query = False
         with self._add_step(title="Processing metrics") as step:
             step.stream("Processing metrics and their dimensions")
 
             # Collect unique metrics and prepare dimension fetch tasks
-            metric_names = {r['metadata']['name'] for r in closest_metrics}
-            metric_objects = {name: self._metric_objs[name] for name in metric_names}
+            metric_names = {r['metadata'].get('name', "") for r in closest_metrics}
+            metric_objects = {name: self._metric_objs[name] for name in metric_names if name in self._metric_objs}
 
             # Create flat list of all dimension fetch tasks
             client = self._get_dbtsl_client()
@@ -1301,7 +1302,6 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 # Create metaset and evaluate if metrics can answer query
                 metaset = DbtslMetaset(query=query, metrics=metrics)
 
-                can_answer_query = False
                 if metrics:
                     step.stream("\n\nEvaluating if found metrics can answer the query...")
                     try:
