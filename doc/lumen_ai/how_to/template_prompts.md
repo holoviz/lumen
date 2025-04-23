@@ -4,10 +4,13 @@
 
 Every `Actor` (`Coordinator`, `Agent`, `Tool`) operates based on a system prompt structured with modular components:
 
-1. `instructions`
-2. `context`
-3. `tools`
-4. `examples`
+0. `global`
+1. `datetime`
+2. `instructions`
+3. `context`
+4. `tools`
+5. `examples`
+6. `errors`
 
 The base system prompt template follows this format:
 
