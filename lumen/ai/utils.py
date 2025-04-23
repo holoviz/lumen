@@ -25,6 +25,7 @@ from markupsafe import escape
 
 from lumen.pipeline import Pipeline
 
+from ..transforms import SQLRemoveSourceSeparator
 from ..util import log
 from .components import Details
 from .config import (
@@ -89,12 +90,35 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
 
-def render_template(template_path: Path, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
-    try:
-        template_path = template_path.relative_to(relative_to).as_posix()
-    except ValueError:
-        pass
-    fs_loader = FileSystemLoader(relative_to)
+def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
+    if isinstance(template_path, str):
+        template_path = Path(template_path)
+
+    template_name = None
+
+    # Create a list of search paths, starting with the default
+    search_paths = [relative_to]
+    # If template_path is absolute, add its parent directory to search paths
+    if template_path.is_absolute():
+        # Add the parent directory of the template to the search paths
+        search_paths.append(template_path.parent)
+        template_name = template_path.name
+    else:
+        try:
+            # Try to make it relative to the default template directory
+            template_name = template_path.relative_to(relative_to).as_posix()
+        except ValueError:
+            # If that fails, treat it as a plain file path
+            # Add parent dir to search paths and use filename as template_name
+            if template_path.exists():
+                search_paths.append(template_path.parent)
+                template_name = template_path.name
+            else:
+                # Final fallback - assume it's a relative path but not to PROMPTS_DIR
+                template_name = str(template_path)
+
+    # Create a loader that can search in multiple directories
+    fs_loader = FileSystemLoader(search_paths)
 
     if overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
@@ -105,7 +129,7 @@ def render_template(template_path: Path, overrides: dict | None = None, relative
         # Create the dynamic template content by extending the base template and adding blocks
         dynamic_template_content = dedent(
             f"""
-            {{% extends "{template_path}" %}}
+            {{% extends "{template_name}" %}}
             {block_definitions}
             """
         )
@@ -115,7 +139,6 @@ def render_template(template_path: Path, overrides: dict | None = None, relative
         template_name = "dynamic_template"
     else:
         env = Environment(loader=fs_loader, undefined=StrictUndefined)
-        template_name = str(template_path)
 
     template = env.get_template(template_name)
     return template.render(**context)
@@ -208,6 +231,66 @@ def retry_llm_output(retries=3, sleep=1):
     return decorator
 
 
+def process_enums(spec, num_cols, limit=None, include_enum=True, reduce_enums=True, include_empty_fields=False):
+    """
+    Process enum values in a schema field specification.
+
+    Parameters
+    ----------
+    spec : dict
+        The specification dictionary for this field
+    num_cols : int
+        The total number of columns in the schema (used for enum reduction calculation)
+    limit : int, optional
+        The limit used in schema generation
+    include_enum : bool, default True
+        Whether to include enum values
+    reduce_enums : bool, default True
+        Whether to reduce the number of enum values for readability
+    include_empty_fields : bool, default False
+        Whether to include fields that are empty
+
+    Returns
+    -------
+    tuple[dict, bool]
+        The updated spec dictionary and a boolean indicating if this field is empty
+    """
+    is_empty = False
+
+    if "enum" not in spec:
+        return spec, is_empty
+
+    # scale the number of enums based on the number of columns
+    if reduce_enums:
+        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+    else:
+        max_enums = 6
+    truncate_limit = min(limit or 5, max_enums)
+
+    if not include_enum or len(spec["enum"]) == 0:
+        spec.pop("enum")
+    elif len(spec["enum"]) > max_enums:
+        # if there are only 10 enums, fine; let's keep them all
+        # else, that assumes this column is like glasbey 100+ categories vs category10
+        # so truncate to 5 and add "..."
+        spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
+    elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
+        spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
+    elif not include_empty_fields and len(spec["enum"]) == 1 and (
+        spec["enum"][0] is None or (isinstance(spec["enum"][0], str) and spec["enum"][0].strip() == "")
+    ):
+        is_empty = True
+
+    # truncate each enum to 100 characters if they exist
+    if "enum" in spec:
+        spec["enum"] = [
+            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
+            for enum in spec["enum"]
+        ]
+
+    return spec, is_empty
+
+
 async def get_schema(
     source: Source | Pipeline,
     table: str | None = None,
@@ -289,36 +372,18 @@ async def get_schema(
             elif spec["type"] == "boolean":
                 spec["type"] = "bool"
 
-        if "enum" not in spec:
-            continue
-
-        limit = get_kwargs.get("limit")
-        # scale the number of enums based on the number of columns
-        if reduce_enums:
-            max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
-        else:
-            max_enums = 6
-        truncate_limit = min(limit or 5, max_enums)
-        if not include_enum or len(spec["enum"]) == 0:
-            spec.pop("enum")
-            continue
-        elif len(spec["enum"]) > max_enums:
-            # if there are only 10 enums, fine; let's keep them all
-            # else, that assumes this column is like glasbey 100+ categories vs category10
-            # so truncate to 5 and add "..."
-            spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
-        elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
-            spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
-            continue
-        elif not include_empty_fields and len(spec["enum"]) == 1 and (spec["enum"][0] is None or spec["enum"][0].strip() == ""):
-            empty_fields.append(field)
-            continue
-
-        # truncate each enum to 100 characters
-        spec["enum"] = [
-            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
-            for enum in spec["enum"]
-        ]
+        # Process enums using the extracted function
+        if "enum" in spec:
+            spec, is_empty = process_enums(
+                spec, num_cols,
+                limit=get_kwargs.get("limit"),
+                include_enum=include_enum,
+                reduce_enums=reduce_enums,
+                include_empty_fields=include_empty_fields
+            )
+            if is_empty:
+                empty_fields.append(field)
+                continue
 
     # Format any other numeric values in the schema
     for field, spec in schema.items():
@@ -387,6 +452,21 @@ async def describe_data(df: pd.DataFrame) -> str:
             if col not in df_describe_dict:
                 df_describe_dict[col] = {}
             try:
+                # Get unique values for enum processing
+                unique_values = df[col].dropna().unique().tolist()
+                if unique_values:
+                    # Process enums just like in get_schema
+                    temp_spec = {"enum": unique_values}
+                    updated_spec, _ = process_enums(
+                        temp_spec,
+                        num_cols=len(df.columns),
+                        limit=5000,  # Using the sample limit
+                        include_enum=True,
+                        reduce_enums=True
+                    )
+                    if "enum" in updated_spec:
+                        df_describe_dict[col]["enum"] = updated_spec["enum"]
+
                 df_describe_dict[col]["nunique"] = df[col].nunique()
             except Exception:
                 df_describe_dict[col]["nunique"] = 'unknown'
@@ -394,7 +474,7 @@ async def describe_data(df: pd.DataFrame) -> str:
                 df_describe_dict[col]["lengths"] = {
                     "max": df[col].str.len().max(),
                     "min": df[col].str.len().min(),
-                    "mean": float(df[col].str.len().mean()),
+                    "mean": format_float(float(df[col].str.len().mean())),
                 }
             except AttributeError:
                 pass
@@ -433,17 +513,16 @@ async def describe_data(df: pd.DataFrame) -> str:
     return await asyncio.to_thread(describe_data_sync, df)
 
 
-def clean_sql(sql_expr):
+def clean_sql(sql_expr: str, dialect: str | None = None) -> str:
     """
     Cleans up a SQL expression generated by an LLM by removing
     backticks, fencing and extraneous space and semi-colons.
     """
-    # TODO: find a better solution
-    while SOURCE_TABLE_SEPARATOR in sql_expr:
-        parts = sql_expr.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-        prefix = parts[0].rsplit(" ", maxsplit=1)[0]
-        sql_expr = f"{prefix} {parts[1]}"
-    return sql_expr.replace("```sql", "").replace("```", "").replace('`', '"').strip().rstrip(";")
+    sql_expr = SQLRemoveSourceSeparator.apply_to(sql_expr)
+    cleaned_sql = sql_expr.replace("```sql", "").replace("```", "")
+    if dialect != 'bigquery':
+        cleaned_sql = cleaned_sql.replace('`', '"')
+    return cleaned_sql.strip().rstrip(";")
 
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = ""):

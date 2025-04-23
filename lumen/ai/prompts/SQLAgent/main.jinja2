@@ -9,6 +9,7 @@ Reference the base sql if there is no specific column selection mentioned in the
 {% block context -%}
 Checklist:
 - Use only `{{ dialect }}` SQL syntax.
+- Never quote column names in a WHERE clause
 - Do NOT include inlined comments in the SQL code, e.g. `-- comment`
 - Quote column names to ensure they do not clash with valid identifiers.
 - Pretty print the SQL output with newlines and indentation.
@@ -36,24 +37,32 @@ Additionally, only if applicable:
 - Use Common Table Expressions (CTEs) and subqueries to break down into manageable parts, only if the query requires more than one transformation.
 - Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (at least 100,000 if unspecified), especially if the data is large
 - If the date columns are separated, e.g. year, month, day, then join them into a single date column.
+- If plotting, be sure to select all the columns that are required for the plot, including the x and y columns and any tooltips.
 
-{%- if has_errors %}
-If there are issues with the query, here are some common fixes:
+{% if comments is defined and comments -%}
+Here's additional guidance:
+{{ comments }}
+{%- endif -%}
+{{ memory["sql_metaset"].selected_context }}
+{%- endblock -%}
+
+{%- block errors %}
+{{ super() }}
+{% if errors is defined and errors %}
+Note a penalty of $100 will be incurred for every time the issue occurs, and thus far you have been penalized ${{ num_errors * 100 }}!
+Use your best judgement to address them. If the error is `syntax error at or near ")"`, double check you used
+table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present.
+For extra context, here are the tables and columns available:
+{{ columns_context }}
+
+Here are some common fixes for errors:
+
 - Handle NULL values using functions like COALESCE or IS NULL.
 - If it's a date column (excluding individual year/month/day integers) date, cast to date using appropriate syntax, e.g.
 CAST or TO_DATE
 - Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, only if needed.
 - Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
-{% endif %}
-{% if comments is defined and comments -%}
-Here's additional guidance:
-{{ comments }}
-{%- endif -%}
-{{ memory["table_sql_metaset"].sel_context }}
-{%- endblock -%}
 
-{%- block examples %}
-{%- if has_errors -%}
 Casting Examples:
 
 If the query is "Which five regions have the highest total sales from 2022-02-22?"...

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import traceback
 
@@ -18,10 +19,12 @@ from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.ai.schemas import get_metaset
+
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
-from ..sources.base import BaseSQLSource
+from ..sources.base import BaseSQLSource, Source
 from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
@@ -29,13 +32,18 @@ from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import ContextProvider
-from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RetriesExceededError
+from .config import (
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
+    VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
+)
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    PartialBaseModel, RetrySpec, Sql, VegaLiteSpec, make_find_tables_model,
+    DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
+    make_find_tables_model,
 )
+from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
@@ -86,7 +94,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
                 return
 
             import traceback
-            traceback.print_exc()
+            traceback.print_exception(exception)
             self.interface.send(
                 f"Error cannot be resolved:\n\n{exception}",
                 user="System",
@@ -236,9 +244,8 @@ class ChatAgent(Agent):
         It can talk about the data, if available. Or, it can also solely talk about documents.
 
         Usually not used concurrently with SQLAgent, unlike AnalystAgent.
-        Can be used concurrently with TableListAgent to describe available tables
-        and potential ideas for analysis, but if only documents are available,
-        then it can be used alone.""")
+        Can be used to describe available tables. Often used together
+        with TableLookup, DocumentLookup, or other tools.""")
 
     prompts = param.Dict(
         default={
@@ -248,7 +255,8 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=["table_vector_metaset"], readonly=True)
+    # technically not required if appended manually with tool in coordinator
+    requires = param.List(default=["vector_metaset"], readonly=True)
 
     async def respond(
         self,
@@ -453,6 +461,7 @@ class LumenBaseAgent(Agent):
                 deepcopy(messages), wrap='\n"""\n', suffix=False
             )
             with self.param.update(memory=memory):
+                # TODO: only input the inner spec to retry
                 system = await self._render_prompt(
                     "retry_output", messages=modified_messages, spec=out.spec,
                     language=out.language,
@@ -498,7 +507,7 @@ class SQLAgent(LumenBaseAgent):
         calculating results. If the current table does not contain all
         the available data the SQL agent is also capable of joining it
         with other tables. Will generate and execute a query in a single
-        step.""")
+        step. Not useful if the user is using the same data for plotting.""")
 
     prompts = param.Dict(
         default={
@@ -515,7 +524,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["source", "table_sql_metaset"], readonly=True)
+    requires = param.List(default=["source", "sql_metaset"], readonly=True)
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -531,27 +540,25 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source: dict[str, BaseSQLSource],
         errors=None
     ):
+        errors_context = {}
         if errors:
             # get the head of the tables
             columns_context = ""
-            vector_metadata_map = self._memory["table_sql_metaset"].vector_metaset.vector_metadata_map
+            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
             for table_slug, vector_metadata in vector_metadata_map.items():
                 table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                 if table_name in tables_to_source:
-                    columns = [col.name for col in vector_metadata.table_cols]
+                    columns = [col.name for col in vector_metadata.columns]
                     columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
-            last_query = self._memory["sql"]
+            last_output = self._memory["sql"]
             num_errors = len(errors)
             errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
-            content = (
-                f"\n\nYou are a world-class SQL user. Identify why this query failed:\n```sql\n{last_query}\n```\n\n"
-                f"Your goal is to try a different query to address the question while avoiding these issues:\n```\n{errors}\n```\n\n"
-                f"Note a penalty of $100 will be incurred for every time the issue occurs, and thus far you have been penalized ${num_errors * 100}! "
-                f"Use your best judgement to address them. If the error is `syntax error at or near \")\"`, double check you used "
-                f"table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`. Ensure no inline comments are present. "
-                f"For extra context, here are the tables and columns available:\n{columns_context}\n"
-            )
-            messages = mutate_user_message(content, messages)
+            errors_context = {
+                "errors": errors,
+                "last_output": last_output,
+                "num_errors": num_errors,
+                "columns_context": columns_context,
+            }
 
         join_required = len(tables_to_source) > 1
         comments = comments if join_required else ""  # comments are about joins
@@ -561,7 +568,7 @@ class SQLAgent(LumenBaseAgent):
             join_required=join_required,
             dialect=dialect,
             comments=comments,
-            has_errors=bool(errors),
+            **errors_context
         )
         with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -572,7 +579,7 @@ class SQLAgent(LumenBaseAgent):
                     step_message = output.chain_of_thought or ""
                     step.stream(step_message, replace=True)
                 if output.query:
-                    sql_query = clean_sql(output.query)
+                    sql_query = clean_sql(output.query, dialect)
                 if sql_query and output.expr_slug:
                     step.stream(f"\n`{output.expr_slug}`\n```sql\n{sql_query}\n```", replace=True)
                 self._memory["sql"] = sql_query
@@ -626,7 +633,8 @@ class SQLAgent(LumenBaseAgent):
         try:
             df = await get_data(pipeline)
         except Exception as e:
-            source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
+            if isinstance(source, DuckDBSource):
+                source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
             report_error(e, step)
             raise e
 
@@ -642,18 +650,11 @@ class SQLAgent(LumenBaseAgent):
 
     @retry_llm_output()
     async def _find_tables(self, messages: list[Message], errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
-        if errors:
-            content = (
-                "Your goal is to try to address the question while avoiding these issues:\n"
-                f"```\n{errors}\n```\n\n"
-            )
-            messages = mutate_user_message(content, messages)
-
         sources = {source.name: source for source in self._memory["sources"]}
-        vector_metaset = self._memory["table_sql_metaset"].vector_metaset
+        vector_metaset = self._memory["sql_metaset"].vector_metaset
         selected_slugs = list(
             #  if no tables/cols are subset
-            vector_metaset.sel_tables_cols or
+            vector_metaset.selected_columns or
             vector_metaset.vector_metadata_map
         )
         if len(selected_slugs) == 0:
@@ -663,7 +664,7 @@ class SQLAgent(LumenBaseAgent):
         with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             if len(selected_slugs) > 1:
                 system = await self._render_prompt(
-                    "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR
+                    "find_tables", messages, separator=SOURCE_TABLE_SEPARATOR, errors=errors,
                 )
                 find_tables_model = self._get_model("find_tables", tables=selected_slugs)
                 model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
@@ -680,7 +681,7 @@ class SQLAgent(LumenBaseAgent):
                     step.stream(chain_of_thought, replace=True)
 
                 if selected_slugs := output.selected_tables:
-                    stream_details('\n'.join(selected_slugs), step, title="Relevant tables", auto=False)
+                    stream_details('\n'.join(slug.split(SOURCE_TABLE_SEPARATOR)[-1] for slug in selected_slugs), step, title="Relevant tables", auto=False)
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
             tables_to_source = {}
@@ -688,7 +689,7 @@ class SQLAgent(LumenBaseAgent):
             for table_slug in selected_slugs:
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
-                step.stream(f"\n{a_table!r}")
+                step.stream(f"\n\n{a_table!r}")
         return tables_to_source, chain_of_thought
 
     async def respond(
@@ -710,9 +711,185 @@ class SQLAgent(LumenBaseAgent):
         return pipeline
 
 
+class DbtslAgent(LumenBaseAgent, DbtslMixin):
+    """
+    Responsible for creating and executing queries against a dbt Semantic Layer
+    to answer user questions about business metrics.
+    """
+
+    purpose = param.String(default="""
+        Responsible for displaying tables to answer user queries about
+        business metrics using dbt Semantic Layers. This agent can compile
+        and execute metric queries against a dbt Semantic Layer.
+        Only useful if the looked up dbt metrics contain all the metrics
+        to answer the user query and does not require IterativeTableLookup.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "response_model": DbtslQueryParams,
+                "template": PROMPTS_DIR / "DbtslAgent" / "main.jinja2",
+            },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"
+            },
+        }
+    )
+
+    provides = param.List(default=["table", "sql", "pipeline", "data", "vector_metaset", "sql_metaset"], readonly=True)
+
+    requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
+
+    source = param.ClassSelector(class_=BaseSQLSource, doc="""
+        The source associated with the dbt Semantic Layer.""")
+
+    _extensions = ('codeeditor', 'tabulator',)
+
+    _output_type = SQLOutput
+
+    def __init__(self, source: Source, **params):
+        super().__init__(source=source, **params)
+
+    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        """
+        Update the SQL specification in memory.
+        """
+        memory["sql"] = event.new
+
+    @retry_llm_output()
+    async def _create_valid_query(
+        self,
+        messages: list[Message],
+        title: str | None = None,
+        errors: list | None = None
+    ):
+        """
+        Create a valid dbt Semantic Layer query based on user messages.
+        """
+        system_prompt = await self._render_prompt(
+            "main",
+            messages,
+            errors=errors,
+        )
+
+        with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=DbtslQueryParams,
+            )
+
+            query_params = None
+            try:
+                async for output in response:
+                    step_message = output.chain_of_thought or ""
+                    step.stream(step_message, replace=True)
+
+                query_params = {
+                    "metrics": output.metrics,
+                    "group_by": output.group_by,
+                    "limit": output.limit,
+                    "order_by": output.order_by,
+                    "where": output.where,
+                }
+                expr_slug = output.expr_slug
+
+                # Ensure required fields are present
+                if "metrics" not in query_params or not query_params["metrics"]:
+                    raise ValueError("Query must include at least one metric")
+
+                # Ensure limit exists with a default value if not provided
+                if "limit" not in query_params or not query_params["limit"]:
+                    query_params["limit"] = 10000
+
+                formatted_params = json.dumps(query_params, indent=2)
+                step.stream(f"\n\n`{expr_slug}`\n```json\n{formatted_params}\n```")
+
+                self._memory["dbtsl_query_params"] = query_params
+            except asyncio.CancelledError as e:
+                step.failed_title = "Cancelled dbt Semantic Layer query generation"
+                raise e
+
+        if step.failed_title and step.failed_title.startswith("Cancelled"):
+            raise asyncio.CancelledError()
+        elif not query_params:
+            raise ValueError("No dbt Semantic Layer query was generated.")
+
+        try:
+            # Execute the query against the dbt Semantic Layer
+            client = self._get_dbtsl_client()
+            async with client.session():
+                sql_query = await client.compile_sql(
+                    metrics=query_params.get('metrics', []),
+                    group_by=query_params.get('group_by'),
+                    limit=query_params.get('limit'),
+                    order_by=query_params.get('order_by'),
+                    where=query_params.get('where')
+                )
+
+                # Log the compiled SQL for debugging
+                step.stream(f"\nCompiled SQL:\n```sql\n{sql_query}\n```", replace=False)
+
+            sql_expr_source = self.source.create_sql_expr_source({expr_slug: sql_query})
+            self._memory["sql"] = sql_query
+
+            # Apply transforms
+            sql_transforms = [SQLLimit(limit=1_000_000, write=self.source.dialect, pretty=True, identify=False)]
+            transformed_sql_query = sql_query
+            for sql_transform in sql_transforms:
+                transformed_sql_query = sql_transform.apply(transformed_sql_query)
+                if transformed_sql_query != sql_query:
+                    stream_details(f'```sql\n{transformed_sql_query}\n```', step, title=f"{sql_transform.__class__.__name__} Applied")
+
+            # Create pipeline and get data
+            pipeline = await get_pipeline(
+                source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms
+            )
+
+            df = await get_data(pipeline)
+            sql_metaset = await get_metaset({sql_expr_source.name: sql_expr_source}, [expr_slug])
+            vector_metaset = sql_metaset.vector_metaset
+
+            # Update memory
+            self._memory["data"] = await describe_data(df)
+            self._memory["sources"].append(sql_expr_source)
+            self._memory["source"] = sql_expr_source
+            self._memory["pipeline"] = pipeline
+            self._memory["table"] = pipeline.table
+            self._memory["vector_metaset"] = vector_metaset
+            self._memory["sql_metaset"] = sql_metaset
+            return sql_query, pipeline
+        except Exception as e:
+            report_error(e, step)
+            raise e
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Responds to user messages by generating and executing a dbt Semantic Layer query.
+        """
+        try:
+            sql_query, pipeline = await self._create_valid_query(messages, step_title)
+        except RetriesExceededError as e:
+            traceback.print_exception(e)
+            self._memory["__error__"] = str(e)
+            return None
+
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        return pipeline
+
+
+
 class BaseViewAgent(LumenBaseAgent):
 
-    requires = param.List(default=["pipeline", "table_sql_metaset"], readonly=True)
+    requires = param.List(default=["pipeline"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
 
@@ -736,23 +913,35 @@ class BaseViewAgent(LumenBaseAgent):
         step_title: str | None = None,
         errors: list[str] | None = None,
     ) -> dict[str, Any]:
+        errors_context = {}
         if errors:
-           errors = '\n'.join(errors)
-           if self._last_output:
-               json_spec = load_json(self._last_output["json_spec"])
-               messages = mutate_user_message(
-                   f"\nNote, your last specification did not work as intended:\n```json\n{json_spec}\n```\n\n"
-                   f"Your task is to expertly address these errors so they do not occur again:\n```\n{errors}\n```\n",
-                   messages
-               )
+            errors = ('\n'.join(f"{i+1}. {error}" for i, error in enumerate(errors))).strip()
+            try:
+                last_output = load_json(self._last_output["json_spec"])
+            except Exception:
+                last_output = ""
+
+            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
+            columns_context = ""
+            for table_slug, vector_metadata in vector_metadata_map.items():
+                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
+                if table_name in pipeline.table:
+                    columns = [col.name for col in vector_metadata.columns]
+                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
+            errors_context = {
+                "errors": errors,
+                "last_output": last_output,
+                "num_errors": len(errors),
+                "columns_context": columns_context,
+            }
 
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system = await self._render_prompt(
             "main",
             messages,
             table=pipeline.table,
-            has_errors=bool(errors),
             doc=doc,
+            **errors_context,
         )
 
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -763,6 +952,7 @@ class BaseViewAgent(LumenBaseAgent):
             response_model=self._get_model("main", schema=schema),
         )
 
+        e = None
         error = ""
         with self._add_step(
             title=step_title or "Generating view...",
@@ -777,6 +967,7 @@ class BaseViewAgent(LumenBaseAgent):
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
+                traceback.print_exception(e)
                 context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
                 report_error(e, step, language="json", context=context)
 
@@ -882,6 +1073,10 @@ class VegaLiteAgent(BaseViewAgent):
                 "response_model": VegaLiteSpec,
                 "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"
             },
+            "retry_output": {
+                "response_model": RetrySpec,
+                "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"
+            },
         }
     )
 
@@ -899,6 +1094,65 @@ class VegaLiteAgent(BaseViewAgent):
             return
         memory['view'] = dict(spec, type=self.view_type)
 
+    def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str):
+        # standardize the vega spec, by migrating to layer
+        if "layer" not in vega_spec:
+            vega_spec["layer"] = [{"encoding": vega_spec.pop("encoding", None), "mark": vega_spec.pop("mark", None)}]
+
+        # make it zoomable
+        if "params" not in vega_spec:
+            vega_spec["params"] = []
+
+        # Get existing param names
+        existing_param_names = {
+            param.get('name') for param in vega_spec["params"]
+            if isinstance(param, dict) and 'name' in param
+        }
+        for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
+            if p.get('name') not in existing_param_names:
+                vega_spec["params"].append(p)
+
+        if "projection" not in vega_spec:
+            vega_spec["projection"] = {"type": "mercator"}
+        vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
+
+        # Handle map projections and add geographic outlines
+        # - albersUsa projection is incompatible with world map data
+        # - Each map type needs appropriate boundary outlines
+        has_world_map = "world-110m.json" in vega_spec_str
+        uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
+
+        # If trying to use albersUsa with world map, switch to mercator projection
+        if has_world_map and uses_albers_usa:
+            vega_spec["projection"] = "mercator"  # cannot use albersUsa with world-110m
+        # Add world map outlines if needed
+        elif not has_world_map and not uses_albers_usa:
+            vega_spec["layer"].append(VEGA_MAP_LAYER["world"])
+        return vega_spec
+
+    async def _ensure_columns_exists(self, vega_spec: dict):
+        schema = await get_schema(self._memory["pipeline"])
+
+        for layer in vega_spec.get("layer", []):
+            encoding = layer.get("encoding", {})
+            if not encoding:
+                continue
+
+            for enc_def in encoding.values():
+                fields_to_check = []
+
+                if isinstance(enc_def, dict) and "field" in enc_def:
+                    fields_to_check.append(enc_def["field"])
+                elif isinstance(enc_def, list):
+                    fields_to_check.extend(
+                        item["field"] for item in enc_def
+                        if isinstance(item, dict) and "field" in item
+                    )
+
+                for field in fields_to_check:
+                    if field not in schema and field.lower() not in schema and field.upper() not in schema:
+                        raise ValueError(f"Field '{field}' not found in schema.")
+
     async def _extract_spec(self, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
@@ -914,10 +1168,14 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         self._output_type._validate_spec(vega_spec)
+        await self._ensure_columns_exists(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
-        if not ("latitude:" in vega_spec_str or "longitude:" in vega_spec_str or "point: true" in vega_spec_str):
+        # Handle different types of interactive controls based on chart type
+        if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
+            vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
+        elif "point: true" not in vega_spec_str or "params" not in vega_spec:
             # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]

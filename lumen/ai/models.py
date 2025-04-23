@@ -15,6 +15,9 @@ class PartialBaseModel(BaseModel, PartialLiteralMixin):
 
 class YesNo(BaseModel):
 
+    chain_of_thought: str = Field(
+        description="Explain concisely how you arrived at your answer.")
+
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
@@ -108,7 +111,6 @@ def make_columns_selection(table_slugs: list[str], **context):
             description="A list of 0-based column indices for the table specified by `table_slug`. This indicates which columns should be included in the output."
         )
 
-
     class ColumnsSelection(PartialBaseModel):
         """
         Model for selecting a subset of columns from tables.
@@ -116,7 +118,8 @@ def make_columns_selection(table_slugs: list[str], **context):
         chain_of_thought: str = Field(
             description="""
             Break down the user query into parts, and try to map out the columns to
-            the parts of the query that they are relevant to.
+            the parts of the query that they are relevant to. Select more
+            than you need, and then you can filter them out later.
             """
         )
 
@@ -154,6 +157,7 @@ def make_find_tables_model(tables):
         chain_of_thought=(str, FieldInfo(
             description="""
             Concisely consider which tables are necessary to answer the user query.
+            If there are tables that provide the same info, do not include them all; instead, pick the most relevant one.
             """
         )),
         selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
@@ -222,6 +226,50 @@ def make_iterative_selection_model(table_slugs):
         __base__=PartialBaseModel
     )
     return table_model
+
+
+class DbtslQueryParams(BaseModel):
+    """
+    Model for dbtsl.client.query() parameters.
+    """
+
+    chain_of_thought: str = Field(
+        description="""You are a world-class dbt Semantic Layer expert. Think step by step about
+        what metrics are needed, what dimensions to group by, what time granularity
+        to use, and any filters that should be applied; if filters are applied, include those
+        filtered dimensions in group_by. If there are errors, mention how you'll address the errors.
+        """
+    )
+
+    expr_slug: str = Field(
+        description="""Give the query a concise, but descriptive, slug that includes the metrics
+        and dimensions used, e.g. monthly_revenue_by_region. The slug must be unique."""
+    )
+
+    where: list[str] = Field(
+        default_factory=list,
+        description="A list of conditions to filter the results; dimensions referenced here must also be in group_by, e.g. ['metric_time__month >= date_trunc('month', '2024-09-30'::date)']"
+    )
+
+    group_by: list[str] = Field(
+        default_factory=list,
+        description="A list of dimensions to group by, e.g. ['metric_time__month'], must include dimensions from where."
+    )
+
+    limit: int = Field(
+        default=None,
+        description="The maximum number of rows to return."
+    )
+
+    metrics: list[str] = Field(
+        default_factory=list,
+        description="A list of metrics to include in the query, e.g. ['revenue']"
+    )
+
+    order_by: list[str] = Field(
+        default_factory=list,
+        description="A list of columns or expressions to order the results by, e.g. ['metric_time__month']"
+    )
 
 
 def make_refined_query_model(item_type_name: str = "items"):

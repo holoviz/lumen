@@ -422,10 +422,6 @@ class StatusBadge(Button):
     def __init__(self, **params):
         super().__init__(**params)
         self.param.update(
-            icon=self.param.status.rx().rx.pipe(
-                lambda status: self._status_mapping[status]["icon"]
-            ),
-            stylesheets=self.param.status.rx().rx.pipe(
-                lambda status: [self._base_stylesheet, self._status_stylesheets[status]]
-            ),
+            icon=param.rx(self._status_mapping)[self.param.status]["icon"],
+            stylesheets=[self._base_stylesheet, param.rx(self._status_stylesheets)[self.param.status]]
         )

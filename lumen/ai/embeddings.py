@@ -1,9 +1,13 @@
 import re
 
 from abc import abstractmethod
+from pathlib import Path
 
 import numpy as np
 import param
+
+STOP_WORDS = (Path(__file__).parent / "embeddings_stop_words.txt").read_text().splitlines()
+STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORECASE)
 
 
 class Embeddings(param.Parameterized):
@@ -26,16 +30,18 @@ class NumpyEmbeddings(Embeddings):
     >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
+    embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
+
     hash_func = param.Callable(default=hash, doc="""
         The hashing function to use to map n-grams to the vocabulary.""")
 
-    embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
+    seed = param.Integer(default=42, doc="The seed for the random number generator.")
 
     vocab_size = param.Integer(default=5000, doc="The size of the vocabulary.")
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._projection = np.random.Generator(np.random.PCG64()).normal(
+        self._projection = np.random.Generator(np.random.PCG64(seed=self.seed)).normal(
             0, 1, (self.vocab_size, self.embedding_dim)
         )
 
@@ -46,6 +52,7 @@ class NumpyEmbeddings(Embeddings):
     def embed(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
         for text in texts:
+            text = STOP_WORDS_RE.sub("", text)
             ngrams = self.get_char_ngrams(text)
             vector = np.zeros(self.vocab_size)
 
@@ -70,7 +77,7 @@ class OpenAIEmbeddings(Embeddings):
     >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
-    api_key = param.String(doc="The OpenAI API key.")
+    api_key = param.String(default=None, doc="The OpenAI API key.")
 
     model = param.String(
         default="text-embedding-3-small", doc="The OpenAI model to use."
@@ -83,7 +90,7 @@ class OpenAIEmbeddings(Embeddings):
         self.client = OpenAI(api_key=self.api_key)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        texts = [text.replace("\n", " ") for text in texts]
+        texts = [text.replace("\n", " ").strip() for text in texts]
         response = self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
 

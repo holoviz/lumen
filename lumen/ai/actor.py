@@ -1,3 +1,5 @@
+import datetime
+
 from abc import abstractmethod
 from contextlib import nullcontext
 from pathlib import Path
@@ -129,6 +131,7 @@ class Actor(param.Parameterized):
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
         context["memory"] = self._memory
         context["actor_name"] = self.name
+        context["current_datetime"] = datetime.datetime.now()
         return context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
@@ -137,7 +140,11 @@ class Actor(param.Parameterized):
         context = await self._gather_prompt_context(prompt_name, messages, **context)
 
         prompt_label = f"\033[92m{self.name}.prompts['{prompt_name}']['template']\033[0m"
-        if isinstance(prompt_template, str) and not Path(prompt_template).exists():
+        try:
+            path_exists = Path(prompt_template).exists()
+        except OSError:
+            path_exists = False
+        if isinstance(prompt_template, str) and not path_exists:
             # check if all the format_kwargs keys are contained in prompt_template
             # e.g. the key, "memory", is not used in "string template".format(memory=memory)
             format_kwargs = dict(**overrides, **context)

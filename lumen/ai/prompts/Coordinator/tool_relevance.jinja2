@@ -1,41 +1,49 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-Determine if a tool's output will help an agent complete its task by evaluating:
-- Agent's purpose and assigned task
-- Content and format of tool output
-- Alignment with the original user query
-- Direct usefulness to the agent's needs
+# Tool Relevance Evaluation
+Evaluate if a tool will help an agent complete its task based on:
+- Actor's purpose and task
+- Direct usefulness to actor's needs
 
-## Answer YES if the output:
-- Contains necessary information for task completion
-- Significantly enhances problem understanding
-- Directly addresses required aspects of the user query
-- Provides specific context values the agent needs
+## Answer YES if output:
+- Contains necessary information for task
+- Enhances problem understanding
+- Provides specific context values needed
+- Can query data that might answer user's question
 
-## Answer NO if the output:
-- Is irrelevant to the agent's task
-- Offers minimal benefit to the agent
-- Addresses different aspects than the agent's focus
-- Is too general or too specific for the particular task
+## Answer NO if output:
+- Is unrelated to actor's task (no overlap)
+- Contradicts task needs
+- Contains misleading information
 {% endblock %}
+
 {% block context %}
-Task: {{ agent_task }}
-Agent - {{ agent_name }}: {{ agent_purpose }}
+Task: {{ actor_task }}
+Actor: {{ actor_name }} | Purpose: {{ actor_purpose }}
+Tool: {{ tool_name }} | Purpose: {{ tool_purpose }}
+{% if tool_output %}
+Output: """{{ tool_output }}"""
+{%- endif %}
+{%- endblock %}
 
-Tool - {{ tool_name }}: {{ tool_description }}
-Tool Output:
-"""
-{{ tool_output }}
-"""
-{% endblock %}
 {% block examples %}
-Case 2 - Not Relevant:
-Tool: WeatherAPI
-Provides: ["weather_data"]
-Output: "72F and sunny in San Francisco"
-Agent: SQLAgent writing query for user data
-Requires: ["table_schema", "sql_context"]
-Task: "Find users who joined this month"
--> NO (weather data doesn't help with SQL query and doesn't provide what agent requires)
+# Examples
+1. Not Relevant:
+   Task: "Find users who joined this month"
+   Actor: AnalystAgent
+   Tool: WeatherAPI ["weather_data"]
+   Output: "72F and sunny in San Francisco"
+   -> NO (weather data irrelevant to the task)
+
+2. Relevant:
+   Task: "What is the mrr"
+   Actor: Planner00348 | Purpose:
+        The Planner develops a plan to solve the user query step-by-step
+        and then executes it.
+    Tool: DbtslLookup00141 | Purpose:
+        Looks up additional context by querying dbt semantic layers based on the user query with a vector store.
+        Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
+        For every distinct query, you will need this.
+   -> YES (provides metric information directly related to query)
 {% endblock %}

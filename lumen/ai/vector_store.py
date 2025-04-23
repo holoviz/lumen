@@ -1,12 +1,14 @@
 import json
 
 from abc import abstractmethod
+from pathlib import Path
 
 import duckdb
 import numpy as np
 import param
 
 from .embeddings import Embeddings, NumpyEmbeddings
+from .utils import log_debug
 
 
 class VectorStore(param.Parameterized):
@@ -100,6 +102,21 @@ class VectorStore(param.Parameterized):
         Returns
         -------
         List of assigned IDs for the added items.
+        """
+
+    @abstractmethod
+    def upsert(self, items: list[dict]) -> list[int]:
+        """
+        Add items to the vector store if similar items don't exist, update them if they do.
+
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+
+        Returns
+        -------
+        List of assigned IDs for the added or updated items.
         """
 
     def add_file(self, filename, ext=None, metadata=None) -> list[int]:
@@ -215,6 +232,17 @@ class NumpyVectorStore(VectorStore):
         vector_store = NumpyVectorStore()
         vector_store.add_file('https://lumen.holoviz.org')
         vector_store.query('LLM', threshold=0.1)
+
+    Use upsert to avoid adding duplicate content:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import NumpyVectorStore
+
+        vector_store = NumpyVectorStore()
+        vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
+        # Won't add duplicate if content is similar and metadata matches
+        vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
     """
 
     def __init__(self, **params):
@@ -267,7 +295,7 @@ class NumpyVectorStore(VectorStore):
 
         return similarities
 
-    def add(self, items: list[dict]) -> list[int]:
+    def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
         """
         Add items to the vector store.
 
@@ -275,6 +303,9 @@ class NumpyVectorStore(VectorStore):
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        force_ids: list[int] = None
+            Optional list of IDs to use instead of generating new ones.
+            Must be the same length as flattened items after chunking.
 
         Returns
         -------
@@ -296,7 +327,17 @@ class NumpyVectorStore(VectorStore):
                 text_and_metadata_list.append(text_and_metadata)
 
         embeddings = np.array(self.embeddings.embed(text_and_metadata_list), dtype=np.float32)
-        new_ids = [self._get_next_id() for _ in all_texts]
+
+        if force_ids is not None:
+            # Use the provided IDs
+            if len(force_ids) != len(all_texts):
+                raise ValueError(f"force_ids length ({len(force_ids)}) must match number of chunks ({len(all_texts)})")
+            new_ids = force_ids
+            # Update _current_id if necessary
+            self._current_id = max(self._current_id, *force_ids) if force_ids else self._current_id
+        else:
+            # Generate new IDs
+            new_ids = [self._get_next_id() for _ in all_texts]
 
         if self.vectors is not None:
             embeddings = np.vstack([self.vectors, embeddings])
@@ -427,6 +468,91 @@ class NumpyVectorStore(VectorStore):
         self.metadata = [meta for i, meta in enumerate(self.metadata) if keep_mask[i]]
         self.ids = [id_ for i, id_ in enumerate(self.ids) if keep_mask[i]]
 
+    def upsert(self, items: list[dict]) -> list[int]:
+        """
+        Add items to the vector store if similar items don't exist, update them if they do.
+
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+
+        Returns
+        -------
+        List of assigned IDs for the added or updated items.
+        """
+        if not items:
+            return []
+
+        if self.vectors is None or len(self.vectors) == 0:
+            return self.add(items)
+
+        assigned_ids = []
+        items_to_add = []
+
+        # Create text-to-indices mapping for fast lookups
+        text_to_indices = {}
+        for idx, text in enumerate(self.texts):
+            if text not in text_to_indices:
+                text_to_indices[text] = []
+            text_to_indices[text].append(idx)
+
+        for item in items:
+            text = item["text"]
+            metadata = item.get("metadata", {}) or {}
+
+            # Check for exact text match
+            match_indices = text_to_indices.get(text, [])
+
+            # If no exact match found, check for chunked text match
+            if not match_indices:
+                for chunk in self._chunk_text(text):
+                    if chunk in text_to_indices:
+                        match_indices.extend(text_to_indices[chunk])
+
+            if match_indices:
+                match_found = False
+
+                for idx in match_indices:
+                    existing_id = self.ids[idx]
+                    existing_meta = self.metadata[idx]
+
+                    # Check for metadata value conflicts (same keys, different values)
+                    has_value_conflict = False
+                    common_keys = set(metadata.keys()) & set(existing_meta.keys())
+                    for key in common_keys:
+                        if metadata[key] != existing_meta[key]:
+                            has_value_conflict = True
+                            break
+
+                    if has_value_conflict:
+                        # If values conflict, this is not a match
+                        continue
+
+                    # If metadata keys are different but no value conflicts, update existing
+                    if set(metadata.keys()) != set(existing_meta.keys()):
+                        self.delete([existing_id])
+                        new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[existing_id])
+                        assigned_ids.extend(new_ids)
+                    else:
+                        # Exact metadata match - reuse existing
+                        assigned_ids.append(existing_id)
+
+                    match_found = True
+                    break
+
+                if match_found:
+                    continue
+
+            # If no exact match, add as new item
+            items_to_add.append(item)
+
+        if items_to_add:
+            new_ids = self.add(items_to_add)
+            assigned_ids.extend(new_ids)
+
+        return assigned_ids
+
     def clear(self) -> None:
         """
         Clear all items from the vector store.
@@ -440,7 +566,7 @@ class NumpyVectorStore(VectorStore):
         self._current_id = 0
 
     def __len__(self) -> int:
-        return len(self.vectors)
+        return len(self.texts) if self.vectors is not None else 0
 
 
 class DuckDBVectorStore(VectorStore):
@@ -456,20 +582,45 @@ class DuckDBVectorStore(VectorStore):
         vector_store = DuckDBStore(uri=':memory:)
         vector_store.add_file('https://lumen.holoviz.org')
         vector_store.query('LLM', threshold=0.1)
+
+    Use upsert to avoid adding duplicate content:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import DuckDBStore
+
+        vector_store = DuckDBStore(uri=':memory:)
+        vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
+        # Won't add duplicate if content is similar and metadata matches
+        vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
     """
 
     uri = param.String(default=":memory:", doc="The URI of the DuckDB database")
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.connection = duckdb.connect(database=self.uri)
-        self._initialized = False
+        connection = duckdb.connect(':memory:')
+        # following the instructions from
+        # https://duckdb.org/docs/stable/extensions/vss.html#persistence
+        connection.execute("INSTALL 'vss';")
+        connection.execute("LOAD 'vss';")
+        connection.execute("SET hnsw_enable_experimental_persistence = true;")
 
-    def _setup_database(self, embedding_dim) -> None:
+        if self.uri == ':memory:':
+            self.connection = connection
+            self._initialized = False
+            return
+        uri_exists = Path(self.uri).exists()
+        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        connection.execute("USE embedded;")
+        self.connection = connection
+        has_documents = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
+        ).fetchone()[0] > 0
+        self._initialized = uri_exists and has_documents
+
+    def _setup_database(self, embedding_dim: int) -> None:
         """Set up the DuckDB database with necessary tables and indexes."""
-        self.connection.execute("INSTALL 'vss';")
-        self.connection.execute("LOAD 'vss';")
-        self.connection.execute("SET hnsw_enable_experimental_persistence = true;")
         self.connection.execute("CREATE SEQUENCE IF NOT EXISTS documents_id_seq;")
 
         self.connection.execute(
@@ -480,18 +631,18 @@ class DuckDBVectorStore(VectorStore):
                 metadata JSON,
                 embedding FLOAT[{embedding_dim}]
             );
-        """
+            """
         )
 
         self.connection.execute(
             """
             CREATE INDEX IF NOT EXISTS embedding_index
             ON documents USING HNSW (embedding) WITH (metric = 'cosine');
-        """
+            """
         )
         self._initialized = True
 
-    def add(self, items: list[dict]) -> list[int]:
+    def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
         """
         Add items to the vector store.
 
@@ -499,6 +650,9 @@ class DuckDBVectorStore(VectorStore):
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        force_ids: list[int] = None
+            Optional list of IDs to use instead of generating new ones.
+            Must match the number of chunks created after chunking.
 
         Returns
         -------
@@ -508,6 +662,7 @@ class DuckDBVectorStore(VectorStore):
         all_metadata = []
         text_and_metadata_list = []
 
+        # First, chunk all items to determine total number of chunks
         for item in items:
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
@@ -519,29 +674,57 @@ class DuckDBVectorStore(VectorStore):
                 all_metadata.append(metadata)
                 text_and_metadata_list.append(text_and_metadata)
 
-        embeddings = self.embeddings.embed(text_and_metadata_list)
+        # Validate force_ids if provided
+        if force_ids is not None:
+            if len(force_ids) != len(all_texts):
+                raise ValueError(f"force_ids length ({len(force_ids)}) must match number of chunks ({len(all_texts)})")
 
+        embeddings = self.embeddings.embed(text_and_metadata_list)
         text_ids = []
+
         for i in range(len(all_texts)):
             vector = np.array(embeddings[i], dtype=np.float32)
             if not self._initialized:
                 self._setup_database(len(vector))
-            result = self.connection.execute(
-                """
-                INSERT INTO documents (text, metadata, embedding)
-                VALUES (?, ?::JSON, ?) RETURNING id;
-                """,
-                [
-                    all_texts[i],
-                    json.dumps(all_metadata[i]),
-                    vector.tolist(),
-                ],
-            )
-            fetched = result.fetchone()
-            if fetched:
-                text_ids.append(fetched[0])
+
+            # Use the force_id if provided
+            if force_ids is not None:
+                # Explicitly set the ID
+                result = self.connection.execute(
+                    """
+                    INSERT INTO documents (id, text, metadata, embedding)
+                    VALUES (?, ?, ?::JSON, ?) RETURNING id;
+                    """,
+                    [
+                        force_ids[i],
+                        all_texts[i],
+                        json.dumps(all_metadata[i]),
+                        vector.tolist(),
+                    ],
+                )
+                fetched = result.fetchone()
+                if fetched:
+                    text_ids.append(fetched[0])
+                else:
+                    raise ValueError("Failed to insert item with specified ID into DuckDB.")
             else:
-                raise ValueError("Failed to insert item into DuckDB.")
+                # Let the database generate the ID
+                result = self.connection.execute(
+                    """
+                    INSERT INTO documents (text, metadata, embedding)
+                    VALUES (?, ?::JSON, ?) RETURNING id;
+                    """,
+                    [
+                        all_texts[i],
+                        json.dumps(all_metadata[i]),
+                        vector.tolist(),
+                    ],
+                )
+                fetched = result.fetchone()
+                if fetched:
+                    text_ids.append(fetched[0])
+                else:
+                    raise ValueError("Failed to insert item into DuckDB.")
 
         return text_ids
 
@@ -688,8 +871,94 @@ class DuckDBVectorStore(VectorStore):
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
         self._initialized = False
 
+    def upsert(self, items: list[dict]) -> list[int]:
+        """
+        Add items to the vector store if similar items don't exist, update them if they do.
+
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+
+        Returns
+        -------
+        List of assigned IDs for the added or updated items.
+        """
+        if not items:
+            return []
+
+        if not self._initialized:
+            log_debug("Database not initialized. Adding items directly.")
+            return self.add(items)
+
+        assigned_ids = []
+        items_to_add = []
+
+        for item in items:
+            text = item["text"]
+            metadata = item.get("metadata", {}) or {}
+
+            # Check for exact text match
+            query = """
+                SELECT id, metadata
+                FROM documents
+                WHERE text = ?
+            """
+            result = self.connection.execute(query, [text]).fetchall()
+            # Check for chunked text match
+            if not result:
+                for chunk in self._chunk_text(text):
+                    result.extend(self.connection.execute(query, [chunk]).fetchall())
+
+            match_found = False
+            for row in result:
+                item_id = row[0]
+                existing_metadata = json.loads(row[1])
+
+                # Check for metadata value conflicts
+                has_value_conflict = False
+                common_keys = set(metadata.keys()) & set(existing_metadata.keys())
+                for key in common_keys:
+                    if metadata[key] != existing_metadata[key]:
+                        has_value_conflict = True
+                        break
+
+                if has_value_conflict:
+                    # If values conflict, try next match
+                    continue
+
+                # If metadata keys are different but no value conflicts, update existing
+                if set(metadata.keys()) != set(existing_metadata.keys()):
+                    self.delete([item_id])
+                    new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[item_id])
+                    assigned_ids.extend(new_ids)
+                else:
+                    # Exact metadata match - reuse existing
+                    assigned_ids.append(item_id)
+
+                match_found = True
+                break
+
+            if not match_found:
+                # No exact text match, add as new
+                items_to_add.append(item)
+
+        if items_to_add:
+            new_ids = self.add(items_to_add)
+            assigned_ids.extend(new_ids)
+            log_debug(f"Added {len(items_to_add)} new items to the vector store.")
+
+        log_debug(len(self))
+        return assigned_ids
+
     def __len__(self) -> int:
         if not self._initialized:
             return 0
         result = self.connection.execute("SELECT COUNT(*) FROM documents;").fetchone()
         return result[0]
+
+    def close(self) -> None:
+        """Close the DuckDB connection."""
+        if self.connection:
+            self.connection.close()
+            self.connection = None

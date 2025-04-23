@@ -7,7 +7,8 @@ import sqlglot
 
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
-    SQLLimit, SQLMinMax, SQLOverride, SQLSample, SQLSelectFrom, SQLTransform,
+    SQLLimit, SQLMinMax, SQLOverride, SQLRemoveSourceSeparator, SQLSample,
+    SQLSelectFrom, SQLTransform,
 )
 
 
@@ -488,3 +489,69 @@ class TestSQLSelectFrom:
         result = SQLSelectFrom.apply_to(sql_in)
         expected = 'SELECT * FROM "/path/to/my_data.parquet"'
         assert result == expected
+
+
+class TestSQLRemoveSourceSeparator:
+
+    @pytest.mark.parametrize("quoted", [True, False])
+    def test_no_change(self, quoted):
+        table = '"table1"' if quoted else "table1"
+        sql_in = f"SELECT * FROM {table}"
+        result = SQLRemoveSourceSeparator.apply_to(sql_in)
+        expected = f"SELECT * FROM {table}"
+        assert result == expected
+
+    def test_basic(self):
+        sql_in = "SELECT * FROM source__@__table2"
+        result = SQLRemoveSourceSeparator.apply_to(sql_in)
+        expected = "SELECT * FROM table2"
+        assert result == expected
+
+    def test_read(self):
+        sql_in = "SELECT * FROM read_csv('source__@__table2.csv')"
+        result = SQLRemoveSourceSeparator.apply_to(sql_in, read="duckdb")
+        expected = "SELECT * FROM READ_CSV('table2.csv')"
+        assert result == expected
+
+    def test_complex(self):
+        sql_in = """
+            WITH data_centers AS (
+                SELECT
+                    "FacName" AS "Facility_Name",
+                    CAST(SUBSTRING("geometry", 7, LENGTH("geometry") - 7) AS TEXT) AS "Coordinates",
+                    "lon" AS "Longitude",
+                    "lat" AS "Latitude",
+                    'Data Center' AS "Type"
+                FROM
+                    READ_CSV('ProvidedSource00000__@__data_centers.csv')
+            ),
+            power_plants AS (
+                SELECT
+                    "Plant name" AS "Facility_Name",
+                    "Plant longitude" AS "Longitude",
+                    "Plant latitude" AS "Latitude",
+                    "Plant primary fuel category" AS "Type"
+                FROM
+                    READ_CSV('ProvidedSource00000__@__plant_specific_buffers.csv')
+            )
+
+            SELECT
+                "Facility_Name",
+                "Longitude",
+                "Latitude",
+                "Type"
+            FROM
+                data_centers
+            UNION ALL
+            SELECT
+                "Facility_Name",
+                "Longitude",
+                "Latitude",
+                "Type"
+            FROM
+                power_plants;
+        """
+        result = SQLRemoveSourceSeparator.apply_to(sql_in, read="duckdb")
+        assert "__@__" not in result
+        assert "READ_CSV('plant_specific_buffers.csv')" in result
+        assert "READ_CSV('data_centers.csv')" in result

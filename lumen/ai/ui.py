@@ -44,9 +44,8 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
-from .models import YesNo
 from .tools import TableLookup
-from .utils import format_exception
+from .vector_store import VectorStore
 
 if TYPE_CHECKING:
     from .views import LumenOutput
@@ -205,6 +204,12 @@ class UI(Viewer):
     tools = param.List(doc="""
        List of Tools that can be invoked by the coordinator.""")
 
+    vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for the tools. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
+
     __abstract = True
 
     def __init__(
@@ -244,6 +249,7 @@ class UI(Viewer):
             tools=self.tools,
             logs_db_path=self.logs_db_path,
             within_ui=True,
+            vector_store=self.vector_store,
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
@@ -278,38 +284,30 @@ class UI(Viewer):
 
     async def _verify_llm(self):
         try:
-            self._llm_status_badge.status = "running"
-            await self.llm.invoke(
-                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
-                model_spec="ui",
-                response_model=YesNo
-            )
-            self._llm_status_badge.param.update(status="success", name='LLM Ready')
+            await self.llm.initialize(log_level=self.log_level)
             self.interface.disabled = False
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
-            self._llm_status_badge.param.update(
-                status="failed",
-                name="LLM Not Connected",
-                description='❌ '+format_exception(e, limit=3 if self.log_level == 'DEBUG' else "Failed to connect to LLM"),
-            )
 
-        table_lookup = None
         for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
                 table_lookup = tool
                 break
 
+        if not table_lookup:
+            self._vector_store_status_badge.param.update(
+                status="success", name='Vector Store Ready')
+            return
+
         self._vector_store_status_badge.status = "running"
-        if table_lookup is not None:
-            while True:
-                await asyncio.sleep(1)
-                if table_lookup._ready:
-                    break
-
-        self._vector_store_status_badge.param.update(
-            status="success", name='Vector Store Ready')
-
+        while table_lookup._ready is False:
+            await asyncio.sleep(0.5)
+            if table_lookup._ready:
+                self._vector_store_status_badge.param.update(
+                    status="success", name='Vector Store Ready')
+            elif table_lookup._ready is None:
+                self._vector_store_status_badge.param.update(
+                    status="danger", name='Vector Store Error')
 
     def _destroy(self, session_context):
         """
@@ -374,7 +372,7 @@ class UI(Viewer):
             page = Page(
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
-                header=[self._llm_status_badge, self._vector_store_status_badge],
+                header=[self.llm.status(), self._vector_store_status_badge],
                 main=[self._main],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
@@ -463,7 +461,6 @@ class ExplorerUI(UI):
         **params
     ):
         super().__init__(data=data, **params)
-        self.interface.show_button_name = False
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
@@ -666,7 +663,8 @@ class ExplorerUI(UI):
             async def render_plan(_, old, new):
                 nonlocal new_exploration
                 plan = local_memory["plan"]
-                if any(step.expert_or_tool == 'SQLAgent' for step in plan.steps):
+                if any(step.expert_or_tool in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
+                    # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     new_exploration = True
 
@@ -700,7 +698,8 @@ class ExplorerUI(UI):
             # added yet and we launched a new exploration
             async def remove_output(_, __, ___):
                 nonlocal new_exploration
-                del memory['__error__']
+                if "__error__" in local_memory:
+                    del memory['__error__']
                 if outputs or not new_exploration:
                     return
                 exploration = self._explorations.value['view']
