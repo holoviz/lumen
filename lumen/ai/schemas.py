@@ -178,7 +178,7 @@ class SQLMetaset:
                     context += f"Row count: {len(sql_data.schema)}\n"
 
             max_length = 20
-            cols_to_show = vector_metadata.columns
+            cols_to_show = vector_metadata.columns or []
             if truncate is not None and vector_metaset.selected_columns:
                 cols_to_show = [col for col in cols_to_show if col.name in vector_metaset.selected_columns.get(table_slug, [])]
 
@@ -187,7 +187,7 @@ class SQLMetaset:
             if truncate:
                 cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
             else:
-                cols_to_show = list(cols_to_show) or []
+                cols_to_show = list(cols_to_show)
                 original_indices = list(range(len(cols_to_show)))
                 show_ellipsis = False
 
