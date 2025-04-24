@@ -519,8 +519,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 max_user_messages=self.history
             )
 
-            agents = {agent.name[:-5]: agent for agent in self.agents}
-            tools = {tool.name[:-5]: tool for tool in self._tools["main"]}
+            # the master dict of agents / tools to be used downstream
+            # change this for filling models' literals
+            agents = {agent.name[:-5]: agent for agent in self.agents if not any(excluded_key in self._memory for excluded_key in agent.exclusions)}
+            tools = {tool.name[:-5]: tool for tool in self._tools["main"] if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
 
             execution_graph = await self._compute_execution_graph(messages, agents, tools)
             if execution_graph is None:
@@ -812,6 +814,7 @@ class Planner(Coordinator):
         # ensure these candidates are satisfiable
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
+        # also filter out agents where excluded keys exist in memory
         agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0]
         tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]
 
@@ -870,6 +873,8 @@ class Planner(Coordinator):
         unmet_dependencies = set()
         steps = []
         actors = []
+        actors_in_graph = set()
+
         for step in plan.steps:
             key = step.expert_or_tool
             actors.append(key)
@@ -877,6 +882,19 @@ class Planner(Coordinator):
                 subagent = agents[key]
             elif key in tools:
                 subagent = tools[key]
+            else:
+                # Skip if the agent or tool doesn't exist
+                log_debug(f"Warning: Agent or tool '{key}' not found in available agents/tools")
+                continue
+
+            # Check not_with constraints
+            not_with = getattr(subagent, 'not_with', [])
+            conflicts = [actor for actor in actors_in_graph if actor in not_with]
+            if conflicts:
+                # just to prompt the LLM
+                unmet_dependencies.add(f"incompatible_actor_{key}")
+                continue
+
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
@@ -904,6 +922,8 @@ class Planner(Coordinator):
                 steps.append(sql_step)
                 table_provided = True
                 unmet_dependencies -= provided
+                actors_in_graph.add('SQLAgent')
+
             execution_graph.append(
                 ExecutionNode(
                     actor=subagent,
@@ -914,12 +934,25 @@ class Planner(Coordinator):
                 )
             )
             steps.append(step)
-        last_node = execution_graph[-1]
-        if isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
+            actors_in_graph.add(key)
+
+        last_node = execution_graph[-1] if execution_graph else None
+        if last_node and isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 expert = "AnalystAgent"
             else:
                 expert = "ChatAgent"
+
+            # Check if the expert conflicts with any actor in the graph
+            not_with = getattr(agents[expert], 'not_with', [])
+            conflicts = [actor for actor in actors_in_graph if actor in not_with]
+            if conflicts:
+                # Skip the summarization step if there's a conflict
+                log_debug(f"Skipping summarization with {expert} due to conflicts: {conflicts}")
+                plan.steps = steps
+                previous_actors = actors
+                return execution_graph, unmet_dependencies, previous_actors
+
             summarize_step = type(step)(
                 expert_or_tool=expert,
                 instruction='Summarize the results.',
@@ -936,6 +969,8 @@ class Planner(Coordinator):
                     render_output=summarize_step.render_output
                 )
             )
+            actors_in_graph.add(expert)
+
         plan.steps = steps
         previous_actors = actors
         return execution_graph, unmet_dependencies, previous_actors
