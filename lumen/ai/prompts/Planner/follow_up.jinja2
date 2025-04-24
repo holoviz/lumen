@@ -20,12 +20,24 @@ Ground your reasoning in specific elements of both the current query and previou
 {%- endblock -%}
 
 {% block context -%}
-{% if "data" in memory %}
-Current Query:
-"""
+{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
+📃 Selected columns:
+{{ memory['vector_metaset'].selected_columns }}
+From query: "{{ memory['vector_metaset'].query }}"
+{%- endif %}
+
+{%- if 'sql' in memory %}
+🗃️ Current SQL:
+```sql
+{{ memory['sql'] }}
+```
+{%- endif %}
+
+{%- if 'data' in memory %}
+📊 Data summary:
 {{ memory['data'] }}
-"""
-{% endif %}
+{%- endif %}
+
 {%- endblock -%}
 
 {% block examples %}

@@ -11,6 +11,8 @@ import param
 from panel.chat import ChatFeed
 from pydantic import BaseModel
 
+from lumen.ai.config import PROMPTS_DIR
+
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import log_debug, render_template, warn_on_unused_variables
@@ -36,7 +38,9 @@ class Actor(param.Parameterized):
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
-    prompts = param.Dict(default={}, doc="""
+    prompts = param.Dict(default={
+        "main": {"template": PROMPTS_DIR / "Actor" / "main.jinja2"},
+    }, doc="""
         A dictionary of prompts used by the actor, indexed by prompt name.
         Each prompt should be defined as a dictionary containing a template
         'template' and optionally a 'model' and 'tools'.""")
@@ -63,7 +67,7 @@ class Actor(param.Parameterized):
                     "e.g. {'main': {'instructions': 'custom instructions'}}, but got "
                     f"{self.template_overrides} instead."
                 )
-            if prompt_name not in valid_prompt_names:
+            if prompt_name != "main" and prompt_name not in valid_prompt_names:
                 raise ValueError(
                     f"Prompt {prompt_name!r} is not a valid prompt name. "
                     f"Valid prompt names are {valid_prompt_names}."
@@ -366,15 +370,14 @@ class ContextProvider(param.Parameterized):
 
     def __str__(self):
         string = (
-            f"- {self.name[:-5]}\n"
+            f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
             f"  Requires: `{'`, `'.join(self.requires)}`\n"
             f"  Provides: `{'`, `'.join(self.provides)}`\n"
-            f"  Info: {' '.join(self.purpose.strip().split())}"
         )
-        if self.exclusions:
-            string += "\n  Exclusions:\n" + "\n".join(f"  - {exclusion}" for exclusion in self.exclusions)
-        if self.not_with:
-            string += "\n  Not with:\n" + "\n".join(f"  - {not_with}" for not_with in self.not_with)
         if self.conditions:
-            string += "\n  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions)
+            string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"
+        if self.exclusions:
+            string += "  Exclusions:\n" + "\n".join(f"  - {exclusion}" for exclusion in self.exclusions) + "\n"
+        if self.not_with:
+            string += "  Not with:\n" + "\n".join(f"  - {not_with}" for not_with in self.not_with) + "\n"
         return string

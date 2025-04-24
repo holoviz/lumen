@@ -192,16 +192,11 @@ class SourceAgent(Agent):
     """
 
     conditions = param.List(default=[
-        "For uploading new data sources only, not for showing available tables"
+        "Use when user wants to upload or connect to new data sources, otherwise do not use",
+        "Do not use to see if there are any relevant data sources available"
     ])
 
-    purpose = param.String(default="""
-        The SourceAgent allows a user to upload unavailable, new datasets, tables, or documents.
-
-        Only use this if the user is requesting to add a completely new table.
-        Not useful for answering what is available or loading existing datasets
-        so use other agents for these.
-        """)
+    purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
@@ -244,20 +239,15 @@ class ChatAgent(Agent):
     """
 
     conditions = param.List(default=[
+        "Best for high-level information about data or general conversation",
+        "Can be used to describe available tables",
+        "Not useful for answering data specific questions",
         "Must be paired with TableLookup or DocumentLookup",
-        "For general conversation not specific to data analysis",
-        "Use AnalystAgent instead for data-oriented discussions"
     ])
 
     purpose = param.String(default="""
-        Chats and provides info about high level data related topics,
-        e.g. the columns of the data or statistics about the data,
-        and continuing the conversation.
-
-        Is capable of providing suggestions to get started or comment on interesting tidbits.
-        It can talk about the data, if available. Or, it can also solely talk about documents.
-
-        Can be used to describe available tables.""")
+        Engages in conversations about high-level data topics,
+        offering suggestions or insights to get started.""")
 
     prompts = param.Dict(
         default={
@@ -284,8 +274,7 @@ class ChatAgent(Agent):
 class AnalystAgent(ChatAgent):
 
     conditions = param.List(default=[
-        "Best for interpreting query results from SQLAgent or DbtslAgent",
-        "Preferred over ChatAgent for data-related discussions"
+        "Best for interpreting query results from data output",
     ])
 
     purpose = param.String(default="""
@@ -378,15 +367,14 @@ class TableListAgent(ListAgent):
     """
 
     conditions = param.List(default=[
-        "For listing available tables, not for data analysis",
-        "SQLAgent or DbtslAgent are better when showing actual table contents is needed"
+        "For listing available data tables in source",
+        "Not for showing data table contents",
     ])
 
+    not_with = param.List(default=["DbtslAgent", "SQLAgent"])
+
     purpose = param.String(default="""
-        Renders a list of all availables tables to the user and lets the user
-        pick one, do not use if user has already picked a table.
-        Not useful for gathering information about the tables.
-        """)
+        Displays a list of all available tables in memory.""")
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -419,10 +407,7 @@ class DocumentListAgent(ListAgent):
     """
 
     purpose = param.String(default="""
-        Renders a list of all availables documents to the user and lets the user
-        pick one. Not useful for gathering details about the documents;
-        use ChatAgent for that instead.
-        """)
+        Displays a list of all available documents in memory.""")
 
     requires = param.List(default=["document_sources"], readonly=True)
 
@@ -523,28 +508,24 @@ class SQLAgent(LumenBaseAgent):
 
     conditions = param.List(
         default=[
-            "Preferred for data queries requiring table joins, filtering, or new calculations",
-            "Better choice than TableListAgent when asked to show table data",
-            "Works with IterativeTableLookup when additional columns are needed",
-            "Only use for new data analysis; for visualization of existing results, use current data",
-            "Defer to DbtslAgent when dbtsl_metaset is available",
+            "Start with this agent if you are unsure what to use",
             "For existing tables, only use if additional calculations are needed",
-            "When reusing tables, reference by name rather than regenerating queries"
+            "When reusing tables, reference by name rather than regenerating queries",
+            "Commonly used with IterativeTableLookup and AnalystAgent",
+            "Not useful if the user is using the same data for plotting"
         ]
     )
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["DbtslAgent", "TableListAgent", "ChatAgent"])
+    not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
 
     purpose = param.String(default="""
-        Responsible for displaying tables, generating, modifying and
-        executing SQL queries to answer user queries about the data.
-        Always executes all queries in a single step - never splits query generation
-        and execution into separate tasks. Can handle table joins, filtering,
-        aggregations, and calculations. If the current table lacks needed columns,
-        SQLAgent can join it with other tables. Not useful if the user is using
-        the same data for plotting.""")
+        Handles the display of tables and the creation, modification, and execution
+        of SQL queries to address user queries about the data. Executes queries in
+        a single step, encompassing tasks such as table joins, filtering, aggregations,
+        and calculations. If additional columns are required, SQLAgent can join the
+        current table with other tables to fulfill the query requirements.""")
 
     prompts = param.Dict(
         default={
@@ -755,16 +736,13 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     """
 
     conditions = param.List(default=[
-        "Takes precedence over SQLAgent when dbtsl_metaset is present",
-        "Does not work with IterativeTableLookup"
+        "Always use this when dbtsl_metaset is available",
     ])
 
     purpose = param.String(default="""
         Responsible for displaying tables to answer user queries about
         business metrics using dbt Semantic Layers. This agent can compile
-        and execute metric queries against a dbt Semantic Layer.
-        Only useful if the looked up dbt metrics contain all the metrics
-        to answer the user query and does not require IterativeTableLookup.""")
+        and execute metric queries against a dbt Semantic Layer.""")
 
     prompts = param.Dict(
         default={
@@ -1054,9 +1032,7 @@ class BaseViewAgent(LumenBaseAgent):
 
 class hvPlotAgent(BaseViewAgent):
 
-    purpose = param.String(default="""
-        Generates a plot of the data given a user prompt.
-        If the user asks to plot, visualize or render the data this is your best bet.""")
+    purpose = param.String(default="Generates a plot of the data given a user prompt.")
 
     prompts = param.Dict(
         default={
@@ -1108,13 +1084,7 @@ class hvPlotAgent(BaseViewAgent):
 
 class VegaLiteAgent(BaseViewAgent):
 
-    conditions = param.List(default=[
-        "Request extra columns from data agents to enable faceted or multi-layout visualizations"
-    ])
-
-    purpose = param.String(default="""
-        Generates a vega-lite specification of the plot the user requested.
-        If the user asks to plot, visualize or render the data this is your best bet.""")
+    purpose = param.String(default="Generates a vega-lite specification of the plot the user requested.")
 
     prompts = param.Dict(
         default={
@@ -1235,8 +1205,7 @@ class AnalysisAgent(LumenBaseAgent):
 
     analyses = param.List([])
 
-    purpose = param.String(default="""
-        Perform custom analyses on the data.""")
+    purpose = param.String(default="Perform custom analyses on the data.")
 
     prompts = param.Dict(
         default={
