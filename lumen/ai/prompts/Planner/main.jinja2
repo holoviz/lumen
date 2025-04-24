@@ -1,113 +1,90 @@
 {% extends 'Actor/main.jinja2' %}
 
 {%- block instructions %}
-You are team lead and have to make a plan to solve how to address the user query step-by-step by assigning subtasks to a set of experts and tools.
+You are the team lead responsible for creating a step-by-step plan to address user queries by assigning subtasks to specialized experts and tools.
 
 Ground Rules:
-- Each of these experts requires certain information and has the ability to provide certain information.
-- Make sure your plan respects the dependency chain: only assign tasks to experts when their requirements are satisfied.
-- Take advantage of information already provided in memory rather than regenerating it unnecessarily.
-- Do not perform tasks the user didn't ask for, e.g. do not plot the data unless requested or compute things if the user asked you to summarize the results in words.
-- Ensure that you provide each expert the context they need to ensure they do not repeat previous steps.
-- Do not go in details to try to solve the problem (i.e. you should not mention any specific values), just make a plan and let the experts do the work.
+- Respect dependency chains: assign tasks only when input requirements are met
+- Leverage existing memory instead of regenerating information if possible
+- Stay within scope of the user's request (don't plot unless asked, etc.)
+- Provide necessary context to experts to avoid redundant steps
+- Plan only rather than executing (avoid details)
 {%- if tools %}
-- Tools do not interact with a user, assign an expert to report, summarize or use the results.
-- When looking up information with a tool ensure the expert comes AFTER the tool.
+- Tools require expert interpretation - always pair tools with experts
+- Place experts AFTER the tools they use in your sequence
 {%- endif %}
-
-Important Agent Rules:
-- The SourceAgent is only useful for uploading new table or document sources; not for showing what's already available, which is the job for TableListAgent.
-- The SQLAgent can generate and execute multiple queries in a single step with joins. DO NOT create two separate steps for generating the query and then executing it.
-- The SQLAgent is a better candidate than TableListAgent if asked to show the table, and usually is followed by the AnalystAgent, which can help the user understand the results of the query.
-- The SQLAgent usually needs help by *IterativeTableLookup if the current columns are insufficient.
-- The SQLAgent is likely the best choice to show a dataset table unless dbtsl_metaset is available.
-- Use DbtslAgent if dbtsl_metaset is available, otherwise use SQLAgent for all purposes.
-- The DbtslAgent should not be used with IterativeTableLookup or SQLAgent, and should be prioritized if dbtsl_metaset is available.
-- Only use SQLAgent when working with new data or different analysis requirements. If the user wants to visualize, discuss, or further analyze data that's already been retrieved, use the current SQL rather than executing the query again.
-- If the user is asking for a plot of the data without any modifications, SQLAgent is unnecessary.
-- When plotting, instruct SQLAgent or DbtslAgent to select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations.
-- The ChatAgent must be used with TableLookup or other tools, but if the query is related to the data tables, please use AnalystAgent instead.
-
-Import Tools Rules:
-- The TableLookup is ideal for ChatAgent, while IterativeTableLookup is better for SQLAgent
-- Do not use tools alone without a supporting agent.
-- If you already have sufficient context in memory, do not call IterativeTableLookup or TableLookup again.
 {% endblock -%}
 
 {% block context -%}
+# Available experts & tools:
 
-{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
-The current selected columns in memory is:
-{{ memory['vector_metaset'].selected_columns }}
-based on the previous query:
-"""
-{{ memory['vector_metaset'].query }}
-"""
-{%- if is_follow_up %}
-This query has been detected as a follow-up question to the previous query. The current context should be sufficient to answer this question without retrieving new data. Prioritize using existing data in memory and avoid using IterativeTableLookup unless absolutely necessary.
-{%- else %}
-Please consider whether this is enough information to proceed with the current user query;
-if not use IterativeTableLookup to refresh the available columns in memory.
-{%- endif %}
-{%- else %}
-The current selected columns for the query have not been set yet.
-{%- endif %}
+👨‍💻 Experts & Tools
+{%- for agent in agents %}
+{{ agent }}
+{%- endfor %}
+{%- if tools %}
+{%- for tool in tools %}
+{{ tool }}
+{%- endfor %}
+{% endif %}
+
+# Current environment:
+
+Available in memory:
+{%- for key in memory.keys() %}
+- `{{ key }}`
+{%- endfor %}
+
 {% if memory.get('document_sources') %}
-Here are the documents you have access to:
+📂 Documents:
 {%- for document_source in memory['document_sources'] %}
 - '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
-
 {%- endfor %}
-{%- endif %}
+{% endif %}
 
-Here's the choice of experts, what they can provide and what they require:
-{%- for agent in agents %}
-- `{{ agent.name[:-5] }}`
-  Requires: {{ agent.requires }}
-  Provides: {{ agent.provides }}
-  Info: {{ agent.purpose.strip().split() | join(' ') }}
-{%- endfor -%}
-
-{% if tools %}
-Here's a list of tools:
-{%- for tool in tools %}
-- `{{ tool.name }}`
-  Requires: {{ tool.requires }}
-  Provides: {{ tool.provides }}
-  Info: {{ tool.purpose.strip().split() | join(' ') }}
-{%- endfor -%}
+{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
+📃 Selected columns:
+{{ memory['vector_metaset'].selected_columns }}
+From query: "{{ memory['vector_metaset'].query }}"
 {%- endif %}
 
 {%- if 'sql' in memory %}
-The following is the current SQL.
+🗃️ Current SQL:
 ```sql
 {{ memory['sql'] }}
 ```
 {%- endif %}
 
 {%- if 'data' in memory %}
-The current data loaded in memory is:
+📊 Data summary:
 {{ memory['data'] }}
 {%- endif %}
 
 {%- if 'table' in memory %}
-- The result of the previous step was the `{{ memory['table'] }}` table. If the user is referencing a previous result this is probably what they're referring to. Consider carefully if it contains all the information you need and only invoke the SQL agent if some other calculation needs to be performed.
-- If the table is completely irrelevant to the user query, you can ignore it.
-- However, if the user requests to see all the columns, they might be referring to the table that `{{ memory['table'] }} was derived from.
-- If you are invoking a SQL agent and reusing the table, tell it to reference that table by name rather than re-stating the query.
+📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
-{% if unmet_dependencies %}
-Here were your failed previous plans:
-{%- for previous_plan in previous_plans %}
-- {{ previous_plan }}
-{%- endfor %}
-These previous plans failed because it did not satisfy all requirements; the last plan failed to provide for: `{{ unmet_dependencies }}` when you selected {{ previous_actors | list }}.
 
-Please include some of these these experts to provide for the missing requirements:
+# Planning guidelines:
+
+{%- if is_follow_up and 'vector_metaset' in memory %}
+👉 This is a follow-up question - prioritize using existing data before retrieving new information
+{%- elif 'vector_metaset' in memory and not is_follow_up %}
+👉 New query with existing metadata - evaluate if current data is sufficient before requesting more
+{%- endif %}
+
+Build your plan in dependency order - ensure each expert's requirements are met by previous steps
+
+{% if unmet_dependencies %}
+# Previous failures:
+
+⚠️ Your last plan failed because it didn't satisfy: `{{ unmet_dependencies }}`
+When using: {{ previous_actors | list }}
+
+Include these to meet missing requirements:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] }}`
 {%- endfor %}
 
-Remember you only have these loaded into memory: {{ memory.keys() | list }}
+Eiher create a completely new plan or if it's close missing key dependencies, modify the previous plan to include the missing pieces.
 {% endif %}
 {%- endblock -%}

@@ -185,6 +185,10 @@ class Tool(Actor, ContextProvider):
         Whether to always use this tool, even if it is not explicitly
         required by the current context.""")
 
+    conditions = param.List(default=[
+        "Always requires a supporting agent to interpret results"
+    ])
+
 
 class VectorLookupTool(Tool):
     """
@@ -516,6 +520,13 @@ class TableLookup(VectorLookupTool):
     TableLookup tool that creates a vector store of all available tables
     and responds with relevant tables for user queries.
     """
+
+    conditions = param.List(default=[
+        "Best paired with ChatAgent for general conversation about data",
+        "Skip if sufficient context already exists in memory",
+        "Use for initial queries, not for follow-up questions with sufficient context",
+        "Not useful alongside IterativeTableLookup"
+    ])
 
     purpose = param.String(default="""
         Looks up and is able to query additional tables and columns based on the user query with a vector store.
@@ -967,6 +978,14 @@ class IterativeTableLookup(TableLookup):
     This tool uses an LLM to select tables in multiple passes, examining schemas in detail.
     """
 
+    conditions = param.List(default=[
+        "Best paired with SQLAgent for complex data queries",
+        "Skip if sufficient context already exists in memory",
+        "Avoid for follow-up questions when existing data is sufficient",
+        "Use only when existing information is insufficient for the current query",
+        "Not useful alongside TableLookup"
+    ])
+
     purpose = param.String(default="""
         Looks up and is able to query additional tables and columns based on the user query
         with a vector store and iterative selection process.
@@ -1251,7 +1270,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 self._memory.pop("dbtsl_metaset", None)
                 return ""
 
-            metrics_info = [f"- {r['metadata']['name']} (similarity: {r['similarity']:.3f})" for r in closest_metrics]
+            metrics_info = [f"- {r['metadata'].get('name')} (similarity: {r['similarity']:.3f})" for r in closest_metrics]
             stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
 
         # Process metrics and fetch dimensions

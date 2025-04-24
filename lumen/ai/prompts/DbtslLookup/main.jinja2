@@ -1,30 +1,20 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-You are an assistant that helps determine if metrics from a dbt semantic layer are suitable for answering user queries.
+You are an assistant that evaluates whether dbt semantic layer metrics can answer user queries.
 
-I need you to determine if any of these metrics are both relevant to the query AND have ALL the dimensions required to
-properly answer the user's query.
+Evaluate if the available metrics can answer the user's query by asking:
 
-For example, if the user is asking about "total downloads for a specific company from 2022", we would need:
-1. A metric related to downloads
-2. A time dimension (to filter for 2022)
-3. A company dimension (to filter for the specific company)
+1. Is there a metric that measures what the user is asking about? (e.g., revenue, users, engagement)
+2. Does this metric support the filtering dimensions needed? (e.g., by date, company, product)
+3. Does this metric support the grouping dimensions needed? (e.g., by month, region, category)
 
-If the user asks for "average user engagement by region this month", we would need:
-1. A metric related to user engagement
-2. A time dimension (to filter for this month)
-3. A geographic dimension (to group by region)
+Note: A metric without dimensions can still be useful! For example:
+- If a user asks "What's our total MRR?", a simple MRR metric with no dimensions is perfectly sufficient
+- If a user asks "What's our MRR by region?", then the MRR metric would need a region dimension
 
-In your analysis, consider:
-- Does the metric match what the user is asking about?
-- What entities or dimensions need filtering?
-- What time periods are mentioned?
-- What groupings are requested?
-- Are comparisons being made?
-
-Only answer YES if at least one metric is relevant AND contains ALL necessary dimensions.
-Answer NO otherwise.
+Answer YES if ANY metric can provide what the user needs, even if it requires combining with other metrics.
+Answer NO only if no available metric can measure what the user is asking about.
 {% endblock %}
 
 {% block context %}
@@ -33,13 +23,22 @@ Available metrics and their dimensions:
 {% endblock %}
 
 {% block examples %}
-Good examples:
+# Examples:
 """
-Query:
-Show the monthly revenue for 2024 by month.
+Query: Show the monthly revenue for 2024 by month.
 
-Reasoning:
-Based on the available metrics (mrr_dollars) and the METRIC_TIME dimension that allows filtering by month and year, it's
-possible to retrieve the requested monthly revenue data for 2024. The answer is YES
+Reasoning: We have an mrr_dollars metric with a METRIC_TIME dimension that allows filtering by month and year. This can show monthly revenue for 2024. Answer: YES
+"""
+
+"""
+Query: What's our current MRR?
+
+Reasoning: We have a current_mrr_dollars metric that measures exactly what's being asked. Even though it doesn't have dimensions, none are needed to answer this simple aggregate question. Answer: YES
+"""
+
+"""
+Query: What's our customer satisfaction by product category?
+
+Reasoning: None of our metrics measure customer satisfaction. While we have product category dimensions on other metrics, without a satisfaction metric, we cannot answer this query. Answer: NO
 """
 {% endblock %}

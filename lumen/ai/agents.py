@@ -191,6 +191,10 @@ class SourceAgent(Agent):
     provide a URI to one or more datasets.
     """
 
+    conditions = param.List(default=[
+        "For uploading new data sources only, not for showing available tables"
+    ])
+
     purpose = param.String(default="""
         The SourceAgent allows a user to upload unavailable, new datasets, tables, or documents.
 
@@ -239,6 +243,12 @@ class ChatAgent(Agent):
     and other topics  to the user.
     """
 
+    conditions = param.List(default=[
+        "Must be paired with TableLookup or other tools",
+        "For general conversation not specific to data analysis",
+        "Use AnalystAgent instead for data-oriented discussions"
+    ])
+
     purpose = param.String(default="""
         Chats and provides info about high level data related topics,
         e.g. the columns of the data or statistics about the data,
@@ -274,6 +284,11 @@ class ChatAgent(Agent):
 
 
 class AnalystAgent(ChatAgent):
+
+    conditions = param.List(default=[
+        "Best for interpreting query results from SQLAgent",
+        "Preferred over ChatAgent for data-related discussions"
+    ])
 
     purpose = param.String(default="""
         Responsible for analyzing results from SQLAgent and
@@ -364,6 +379,11 @@ class TableListAgent(ListAgent):
     """
     The TableListAgent lists all available tables and lets the user pick one.
     """
+
+    conditions = param.List(default=[
+        "For listing available tables, not for data analysis",
+        "SQLAgent or DbtslAgent are better when showing actual table contents is needed"
+    ])
 
     purpose = param.String(default="""
         Renders a list of all availables tables to the user and lets the user
@@ -504,14 +524,26 @@ class LumenBaseAgent(Agent):
 
 class SQLAgent(LumenBaseAgent):
 
+    conditions = param.List(
+        default=[
+            "Preferred for data queries requiring table joins, filtering, or new calculations",
+            "Better choice than TableListAgent when asked to show table data",
+            "Works with IterativeTableLookup when additional columns are needed",
+            "Only use for new data analysis; for visualization of existing results, use current data",
+            "Defer to DbtslAgent when dbtsl_metaset is available",
+            "For existing tables, only use if additional calculations are needed",
+            "When reusing tables, reference by name rather than regenerating queries"
+        ]
+    )
+
     purpose = param.String(default="""
         Responsible for displaying tables, generating, modifying and
-        executing SQL queries to answer user queries about the data,
-        such querying subsets of the data, aggregating the data and
-        calculating results. If the current table does not contain all
-        the available data the SQL agent is also capable of joining it
-        with other tables. Will generate and execute a query in a single
-        step. Not useful if the user is using the same data for plotting.""")
+        executing SQL queries to answer user queries about the data.
+        Always executes all queries in a single step - never splits query generation
+        and execution into separate tasks. Can handle table joins, filtering,
+        aggregations, and calculations. If the current table lacks needed columns,
+        SQLAgent can join it with other tables. Not useful if the user is using
+        the same data for plotting.""")
 
     prompts = param.Dict(
         default={
@@ -720,6 +752,11 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     Responsible for creating and executing queries against a dbt Semantic Layer
     to answer user questions about business metrics.
     """
+
+    conditions = param.List(default=[
+        "Takes precedence over SQLAgent when dbtsl_metaset is present",
+        "Does not work with IterativeTableLookup"
+    ])
 
     purpose = param.String(default="""
         Responsible for displaying tables to answer user queries about
@@ -1069,6 +1106,10 @@ class hvPlotAgent(BaseViewAgent):
 
 
 class VegaLiteAgent(BaseViewAgent):
+
+    conditions = param.List(default=[
+        "Request extra columns from data agents to enable faceted or multi-layout visualizations"
+    ])
 
     purpose = param.String(default="""
         Generates a vega-lite specification of the plot the user requested.

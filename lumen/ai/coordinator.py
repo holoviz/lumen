@@ -384,7 +384,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
         return out
 
-    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
+    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]) -> list[ExecutionNode]:
         """
         Compute the execution graph for the given messages and agents.
         The graph is a list of ExecutionNode objects that represent
@@ -520,8 +520,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             )
 
             agents = {agent.name[:-5]: agent for agent in self.agents}
+            tools = {tool.name[:-5]: tool for tool in self._tools["main"]}
 
-            execution_graph = await self._compute_execution_graph(messages, agents)
+            execution_graph = await self._compute_execution_graph(messages, agents, tools)
             if execution_graph is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
@@ -656,11 +657,10 @@ class DependencyResolver(Coordinator):
         )
         return await self._fill_model(messages, system, agent_model)
 
-    async def _compute_execution_graph(self, messages, agents: dict[str, Agent]) -> list[ExecutionNode]:
+    async def _compute_execution_graph(self, messages, agents: dict[str, Agent], tools: dict[str, Tool]) -> list[ExecutionNode]:
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
-            tools = {tool.name: tool for tool in self._tools["main"]}
             agent = None
             with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
                 try:
@@ -794,16 +794,16 @@ class Planner(Coordinator):
         self,
         messages: list[Message],
         agents: dict[str, Agent],
+        tools: dict[str, Tool],
         unmet_dependencies: set[str],
         previous_actors: list[str],
-        previous_plans: list[str],
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,
         is_follow_up: bool = False,
     ) -> BaseModel:
         agents = list(agents.values())
-        tools = list(self._tools["main"])
+        tools = list(tools.values())
         all_provides = set()
         for provider in agents + tools:
             all_provides |= set(provider.provides)
@@ -835,7 +835,6 @@ class Planner(Coordinator):
                 unmet_dependencies=unmet_dependencies,
                 candidates=agent_candidates + tool_candidates,
                 previous_actors=previous_actors,
-                previous_plans=previous_plans,
                 is_follow_up=is_follow_up
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -849,7 +848,6 @@ class Planner(Coordinator):
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     self._memory["reasoning"] = reasoning.chain_of_thought
                     step.stream(reasoning.chain_of_thought, replace=True)
-            previous_plans.append(reasoning.chain_of_thought)
         mutated_messages = mutate_user_message(
             f"Follow this latest plan: {reasoning.chain_of_thought!r} to finish answering: ",
             deepcopy(messages),
@@ -858,12 +856,18 @@ class Planner(Coordinator):
         )
         return await self._fill_model(mutated_messages, system, plan_model)
 
-    async def _resolve_plan(self, plan, agents, messages, previous_actors) -> tuple[list[ExecutionNode], set[str], list[str]]:
+    async def _resolve_plan(
+            self,
+            plan,
+            agents: dict[str, Agent],
+            tools: dict[str, Tool],
+            messages: list[Message],
+            previous_actors: list[str],
+        ) -> tuple[list[ExecutionNode], set[str], list[str]]:
         table_provided = False
         execution_graph = []
         provided = set(self._memory)
         unmet_dependencies = set()
-        tools = {tool.name: tool for tool in self._tools["main"]}
         steps = []
         actors = []
         for step in plan.steps:
@@ -936,7 +940,7 @@ class Planner(Coordinator):
         previous_actors = actors
         return execution_graph, unmet_dependencies, previous_actors
 
-    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent]) -> list[ExecutionNode]:
+    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]) -> list[ExecutionNode]:
         is_follow_up = await self._check_follow_up_question(messages)
         if not is_follow_up:
             await self._execute_planner_tools(messages)
@@ -948,8 +952,8 @@ class Planner(Coordinator):
                 step.success_title = "Using existing data for follow-up question"
 
 
-        tool_names = [tool.name for tool in self._tools["main"]]
-        agent_names = [sagent.name[:-5] for sagent in agents.values()]
+        tool_names = list(tools)
+        agent_names = list(agents)
 
         reason_model, plan_model = self._get_model(
             "main",
@@ -960,7 +964,6 @@ class Planner(Coordinator):
         unmet_dependencies = set()
         execution_graph = []
         previous_actors = []
-        previous_plans = []
         attempts = 0
 
         with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
@@ -970,7 +973,7 @@ class Planner(Coordinator):
                 plan = None
                 try:
                     plan = await self._make_plan(
-                        messages, agents, unmet_dependencies, previous_actors, previous_plans,
+                        messages, agents, tools, unmet_dependencies, previous_actors,
                         reason_model, plan_model, istep, is_follow_up=is_follow_up
                     )
                 except asyncio.CancelledError as e:
@@ -981,7 +984,7 @@ class Planner(Coordinator):
                     istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                     traceback.print_exception(e)
                     raise e
-                execution_graph, unmet_dependencies, previous_actors = await self._resolve_plan(plan, agents, messages, previous_actors)
+                execution_graph, unmet_dependencies, previous_actors = await self._resolve_plan(plan, agents, tools, messages, previous_actors)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                     attempts += 1
