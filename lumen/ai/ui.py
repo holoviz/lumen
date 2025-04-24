@@ -188,7 +188,6 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
-        self._llm_status_badge = StatusBadge(name="LLM Pending")
         self._vector_store_status_badge = StatusBadge(name="Vector Store Pending")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -214,12 +213,13 @@ class UI(Viewer):
         self._vector_store_status_badge.status = "running"
         while table_lookup._ready is False:
             await asyncio.sleep(0.5)
-            if table_lookup._ready:
-                self._vector_store_status_badge.param.update(
-                    status="success", name='Vector Store Ready')
-            elif table_lookup._ready is None:
-                self._vector_store_status_badge.param.update(
-                    status="danger", name='Vector Store Error')
+
+        if table_lookup._ready:
+            self._vector_store_status_badge.param.update(
+                status="success", name='Vector Store Ready')
+        elif table_lookup._ready is None:
+            self._vector_store_status_badge.param.update(
+                status="danger", name='Vector Store Error')
 
     def _destroy(self, session_context):
         """
