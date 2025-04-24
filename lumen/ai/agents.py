@@ -244,7 +244,7 @@ class ChatAgent(Agent):
     """
 
     conditions = param.List(default=[
-        "Must be paired with TableLookup or other tools",
+        "Must be paired with TableLookup or DocumentLookup",
         "For general conversation not specific to data analysis",
         "Use AnalystAgent instead for data-oriented discussions"
     ])
@@ -257,9 +257,7 @@ class ChatAgent(Agent):
         Is capable of providing suggestions to get started or comment on interesting tidbits.
         It can talk about the data, if available. Or, it can also solely talk about documents.
 
-        Usually not used concurrently with SQLAgent, unlike AnalystAgent.
-        Can be used to describe available tables. Often used together
-        with TableLookup, DocumentLookup, or other tools.""")
+        Can be used to describe available tables.""")
 
     prompts = param.Dict(
         default={
@@ -286,13 +284,12 @@ class ChatAgent(Agent):
 class AnalystAgent(ChatAgent):
 
     conditions = param.List(default=[
-        "Best for interpreting query results from SQLAgent",
+        "Best for interpreting query results from SQLAgent or DbtslAgent",
         "Preferred over ChatAgent for data-related discussions"
     ])
 
     purpose = param.String(default="""
-        Responsible for analyzing results from SQLAgent and
-        providing clear, concise, and actionable insights.
+        Responsible for analyzing results and providing clear, concise, and actionable insights.
         Focuses on breaking down complex data findings into understandable points for
         high-level decision-making. Emphasizes detailed interpretation, trends, and
         relationships within the data, while avoiding general overviews or
