@@ -533,6 +533,10 @@ class SQLAgent(LumenBaseAgent):
         ]
     )
 
+    exclusions = param.List(default=["dbtsl_metaset"])
+
+    not_with = param.List(default=["DbtslAgent", "TableListAgent", "ChatAgent"])
+
     purpose = param.String(default="""
         Responsible for displaying tables, generating, modifying and
         executing SQL queries to answer user queries about the data.

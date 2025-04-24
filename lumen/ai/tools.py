@@ -528,6 +528,10 @@ class TableLookup(VectorLookupTool):
         "Not useful alongside IterativeTableLookup"
     ])
 
+    exclusions = param.List(default=["dbtsl_metaset"])
+
+    not_with = param.List(default=["IterativeTableLookup"])
+
     purpose = param.String(default="""
         Looks up and is able to query additional tables and columns based on the user query with a vector store.
         Useful for quickly gathering information about tables and their columns
@@ -985,6 +989,8 @@ class IterativeTableLookup(TableLookup):
         "Use only when existing information is insufficient for the current query",
         "Not useful alongside TableLookup"
     ])
+
+    not_with = param.List(default=["TableLookup"])
 
     purpose = param.String(default="""
         Looks up and is able to query additional tables and columns based on the user query

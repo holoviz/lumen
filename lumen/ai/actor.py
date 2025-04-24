@@ -342,6 +342,14 @@ class ContextProvider(param.Parameterized):
         While 'purpose' describes what the actor does, conditions specify
         the precise situations that warrant its use.""")
 
+    exclusions = param.List(default=[], doc="""
+        List of context values that this actor should not be invoked with.
+        This is useful for actors that are not relevant in certain contexts
+        or for actors that should not be invoked in certain situations.""")
+
+    not_with = param.List(default=[], doc="""
+        List of actors that this actor should not be invoked with.""")
+
     provides = param.List(default=[], readonly=True, doc="""
         List of context values it provides to current working memory.""")
 
@@ -363,6 +371,10 @@ class ContextProvider(param.Parameterized):
             f"  Provides: `{'`, `'.join(self.provides)}`\n"
             f"  Info: {' '.join(self.purpose.strip().split())}"
         )
+        if self.exclusions:
+            string += "\n  Exclusions:\n" + "\n".join(f"  - {exclusion}" for exclusion in self.exclusions)
+        if self.not_with:
+            string += "\n  Not with:\n" + "\n".join(f"  - {not_with}" for not_with in self.not_with)
         if self.conditions:
             string += "\n  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions)
         return string
