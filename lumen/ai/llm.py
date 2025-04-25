@@ -16,12 +16,10 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from lumen.ai.utils import log_debug, truncate_string
-
 from .components import StatusBadge
 from .interceptor import Interceptor
 from .models import YesNo
-from .utils import format_exception
+from .utils import format_exception, log_debug, truncate_string
 
 
 class Message(TypedDict):

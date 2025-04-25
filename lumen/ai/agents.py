@@ -20,8 +20,6 @@ from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
-from lumen.ai.schemas import get_metaset
-
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
@@ -44,6 +42,7 @@ from .models import (
     DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
     make_find_tables_model,
 )
+from .schemas import get_metaset
 from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic

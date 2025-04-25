@@ -11,8 +11,7 @@ import param
 from panel.chat import ChatFeed
 from pydantic import BaseModel
 
-from lumen.ai.config import PROMPTS_DIR
-
+from .config import PROMPTS_DIR
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import log_debug, render_template, warn_on_unused_variables

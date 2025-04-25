@@ -19,14 +19,13 @@ from panel.widgets import (
 )
 from param.parameterized import discard_events
 
-from lumen.ai.config import VEGA_ZOOMABLE_MAP_ITEMS
-
 from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import GraphicWalker, Table
+from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
 
 
