@@ -27,7 +27,7 @@ from panel.util import edit_readonly
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
-from ..config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from ..config import SOURCE_TABLE_SEPARATOR
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
@@ -38,6 +38,7 @@ from .agents import (
     SQLAgent, TableListAgent, VegaLiteAgent,
 )
 from .components import SplitJS, StatusBadge
+from .config import PROVIDED_SOURCE_NAME
 from .controls import SourceControls
 from .coordinator import Coordinator, Planner
 from .export import (
