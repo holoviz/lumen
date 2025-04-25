@@ -185,6 +185,10 @@ class Tool(Actor, ContextProvider):
         Whether to always use this tool, even if it is not explicitly
         required by the current context.""")
 
+    conditions = param.List(default=[
+        "Always requires a supporting agent to interpret results"
+    ])
+
 
 class VectorLookupTool(Tool):
     """
@@ -517,10 +521,17 @@ class TableLookup(VectorLookupTool):
     and responds with relevant tables for user queries.
     """
 
+    conditions = param.List(default=[
+        "Best paired with ChatAgent for general conversation about data",
+        "Skip if sufficient context already exists in memory",
+    ])
+
+    exclusions = param.List(default=["dbtsl_metaset"])
+
+    not_with = param.List(default=["IterativeTableLookup"])
+
     purpose = param.String(default="""
-        Looks up and is able to query additional tables and columns based on the user query with a vector store.
-        Useful for quickly gathering information about tables and their columns
-        to chat about.""")
+        Performs basic vector search to find relevant tables for a user query.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -967,11 +978,17 @@ class IterativeTableLookup(TableLookup):
     This tool uses an LLM to select tables in multiple passes, examining schemas in detail.
     """
 
+    conditions = param.List(default=[
+        "Skip if sufficient context already exists in memory",
+        "Avoid for follow-up questions when existing data is sufficient",
+        "Use only when existing information is insufficient for the current query",
+    ])
+
+    not_with = param.List(default=["TableLookup"])
+
     purpose = param.String(default="""
-        Looks up and is able to query additional tables and columns based on the user query
-        with a vector store and iterative selection process.
-        Uses LLM to select tables in multiple passes, examining schemas in detail.
-        Useful for SQLAgent, but not for ChatAgent.""")
+        Performs basic vector search to find relevant tables for a user query
+        with multi-pass selection.""")
 
     provides = param.List(default=["vector_metaset", "sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
@@ -1251,7 +1268,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 self._memory.pop("dbtsl_metaset", None)
                 return ""
 
-            metrics_info = [f"- {r['metadata']['name']} (similarity: {r['similarity']:.3f})" for r in closest_metrics]
+            metrics_info = [f"- {r['metadata'].get('name')}" for r in closest_metrics]
             stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
 
         # Process metrics and fetch dimensions

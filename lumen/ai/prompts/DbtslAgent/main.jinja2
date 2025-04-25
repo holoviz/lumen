@@ -19,10 +19,15 @@ Checklist:
 # Available Metrics and Dimensions
 {{ memory["dbtsl_metaset"] }}
 {% endif %}
+
+{% if "dbtsl_query_params" in memory %}
+# Previous dbt Semantic Layer query parameters
+{{ memory["dbtsl_query_params"] }}
+{% endif %}
 {%- endblock -%}
 
 {%- block examples %}
-Good examples:
+# Examples
 ```
 # Monthly metrics for the current year
 {

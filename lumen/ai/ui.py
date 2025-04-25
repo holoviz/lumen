@@ -27,10 +27,7 @@ from panel.util import edit_readonly
 from panel.viewable import Viewer
 from panel.widgets import Button, FileDownload, MultiChoice
 
-from lumen.ai.config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
-from lumen.ai.tools import TableLookup
-from lumen.ai.vector_store import VectorStore
-
+from ..config import SOURCE_TABLE_SEPARATOR
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
@@ -41,6 +38,7 @@ from .agents import (
     SQLAgent, TableListAgent, VegaLiteAgent,
 )
 from .components import SplitJS, StatusBadge
+from .config import PROVIDED_SOURCE_NAME
 from .controls import SourceControls
 from .coordinator import Coordinator, Planner
 from .export import (
@@ -48,6 +46,8 @@ from .export import (
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .tools import TableLookup
+from .vector_store import VectorStore
 
 if TYPE_CHECKING:
     from .views import LumenOutput

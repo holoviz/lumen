@@ -1,21 +1,18 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-# Tool Relevance Evaluation
-Evaluate if a tool will help an agent complete its task based on:
-- Actor's purpose and task
-- Direct usefulness to actor's needs
+Determine if a tool will help an actor complete its task by evaluating:
 
-## Answer YES if output:
-- Contains necessary information for task
-- Enhances problem understanding
-- Provides specific context values needed
-- Can query data that might answer user's question
+✅ Answer YES if the tool output:
+- Provides information directly relevant to the task
+- Adds context that helps understand or solve the problem
+- Delivers specific data values the actor needs
+- Can retrieve information that answers the user's question
 
-## Answer NO if output:
-- Is unrelated to actor's task (no overlap)
-- Contradicts task needs
-- Contains misleading information
+❌ Answer NO if the tool output:
+- Is unrelated to the actor's current task
+- Provides information that doesn't align with needs
+- Contains potentially misleading or irrelevant data
 {% endblock %}
 
 {% block context %}
@@ -24,26 +21,21 @@ Actor: {{ actor_name }} | Purpose: {{ actor_purpose }}
 Tool: {{ tool_name }} | Purpose: {{ tool_purpose }}
 {% if tool_output %}
 Output: """{{ tool_output }}"""
-{%- endif %}
+{%- endif -%}
 {%- endblock %}
-
-{% block examples %}
+{%- block examples %}
 # Examples
-1. Not Relevant:
-   Task: "Find users who joined this month"
-   Actor: AnalystAgent
-   Tool: WeatherAPI ["weather_data"]
-   Output: "72F and sunny in San Francisco"
-   -> NO (weather data irrelevant to the task)
 
-2. Relevant:
-   Task: "What is the mrr"
-   Actor: Planner00348 | Purpose:
-        The Planner develops a plan to solve the user query step-by-step
-        and then executes it.
-    Tool: DbtslLookup00141 | Purpose:
-        Looks up additional context by querying dbt semantic layers based on the user query with a vector store.
-        Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
-        For every distinct query, you will need this.
-   -> YES (provides metric information directly related to query)
+❌ NOT RELEVANT:
+Task: "Find users who joined this month"
+Actor: AnalystAgent
+Tool: WeatherAPI
+Output: "72F and sunny in San Francisco"
+-> NO (weather data irrelevant to user analysis task)
+
+✅ RELEVANT:
+Task: "What is the mrr"
+Actor: Planner | Purpose: "Develops plan to solve user query step-by-step"
+Tool: DbtslLookup | Purpose: "Looks up dbt semantic layer metrics"
+-> YES (provides metric information directly related to the query)
 {% endblock %}

@@ -18,7 +18,7 @@ from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
 try:
-    from lumen.ai.config import THIS_DIR
+    from ..ai.config import THIS_DIR
 except ImportError as e:
     print(f'You need to install lumen-ai with "lumen[ai]": {e}')
     sys.exit(1)

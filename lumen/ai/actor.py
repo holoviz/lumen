@@ -11,6 +11,7 @@ import param
 from panel.chat import ChatFeed
 from pydantic import BaseModel
 
+from .config import PROMPTS_DIR
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import log_debug, render_template, warn_on_unused_variables
@@ -36,7 +37,9 @@ class Actor(param.Parameterized):
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
-    prompts = param.Dict(default={}, doc="""
+    prompts = param.Dict(default={
+        "main": {"template": PROMPTS_DIR / "Actor" / "main.jinja2"},
+    }, doc="""
         A dictionary of prompts used by the actor, indexed by prompt name.
         Each prompt should be defined as a dictionary containing a template
         'template' and optionally a 'model' and 'tools'.""")
@@ -63,7 +66,7 @@ class Actor(param.Parameterized):
                     "e.g. {'main': {'instructions': 'custom instructions'}}, but got "
                     f"{self.template_overrides} instead."
                 )
-            if prompt_name not in valid_prompt_names:
+            if prompt_name != "main" and prompt_name not in valid_prompt_names:
                 raise ValueError(
                     f"Prompt {prompt_name!r} is not a valid prompt name. "
                     f"Valid prompt names are {valid_prompt_names}."
@@ -335,15 +338,45 @@ class ContextProvider(param.Parameterized):
     requires and provides.
     """
 
+    conditions = param.List(default=[], doc="""
+        Specific criteria that determine when this actor should be invoked.
+        These conditions establish explicit relationships between actors in the system,
+        defining the circumstances under which this actor becomes relevant.
+        While 'purpose' describes what the actor does, conditions specify
+        the precise situations that warrant its use.""")
+
+    exclusions = param.List(default=[], doc="""
+        List of context values that this actor should not be invoked with.
+        This is useful for actors that are not relevant in certain contexts
+        or for actors that should not be invoked in certain situations.""")
+
+    not_with = param.List(default=[], doc="""
+        List of actors that this actor should not be invoked with.""")
+
     provides = param.List(default=[], readonly=True, doc="""
         List of context values it provides to current working memory.""")
 
     purpose = param.String(default="", doc="""
-        Describes the purpose of this actor for consumption of
-        other actors that might invoke it.""")
+        A descriptive statement of this actor's functionality and capabilities.
+        Serves as a high-level explanation for other actors to understand
+        what this actor does and when it might be useful to invoke it.""")
 
     requires = param.List(default=[], readonly=True, doc="""
         List of context values it requires to be in memory.""")
 
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
+
+    def __str__(self):
+        string = (
+            f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
+            f"  Requires: `{'`, `'.join(self.requires)}`\n"
+            f"  Provides: `{'`, `'.join(self.provides)}`\n"
+        )
+        if self.conditions:
+            string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"
+        if self.exclusions:
+            string += "  Exclusions:\n" + "\n".join(f"  - {exclusion}" for exclusion in self.exclusions) + "\n"
+        if self.not_with:
+            string += "  Not with:\n" + "\n".join(f"  - {not_with}" for not_with in self.not_with) + "\n"
+        return string

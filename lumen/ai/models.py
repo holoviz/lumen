@@ -68,6 +68,7 @@ class RetrySpec(BaseModel):
 
 
 def make_plan_models(agents: list[str], tools: list[str]):
+    # TODO: make this inherit from PartialBaseModel
     step = create_model(
         "Step",
         expert_or_tool=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the expert or tool to assign a task to.")),
@@ -80,7 +81,10 @@ def make_plan_models(agents: list[str], tools: list[str]):
         chain_of_thought=(
             str,
             FieldInfo(
-                description="Describe at a high-level how the actions of each expert will solve the user query, and whether the current columns is sufficient to answer the query."
+                description="""
+                    Describe succinctly at a high-level how the actions of each expert will solve the user query.
+                    Address previous failures if any.
+                    """
             ),
         ),
     )
