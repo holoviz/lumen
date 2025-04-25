@@ -52,5 +52,5 @@ pip install 'lumen[ai-anthropic]'
 For models that run locally on your machine and offline (after downloading and caching):
 
 ```bash
-pip install 'lumen[ai-llama-cpp]'
+pip install 'lumen[ai-llama]'
 ```
