@@ -149,7 +149,7 @@ class UI(Viewer):
 
         if self.interface is None:
             self.interface = ChatInterface(
-                load_buffer=5,
+                load_buffer=5, sizing_mode="stretch_both"
             )
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
