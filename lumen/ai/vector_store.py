@@ -7,6 +7,7 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import param
+import semchunk
 
 from .actor import PROMPTS_DIR, LLMUser
 from .embeddings import Embeddings, NumpyEmbeddings
@@ -22,6 +23,14 @@ class VectorStore(LLMUser):
         A dictionary of prompts used by the vector store, indexed by prompt name.
         Each prompt should be defined as a dictionary containing a template
         'template' and optionally a 'model' and 'tools'.""")
+
+    chunk_func = param.Callable(default=None, doc="""
+        The function used to split documents into chunks.
+        Must accept `text`. If None, defaults to semchunk.chunkerify
+        with the chunk_size.""")
+
+    chunk_func_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments to pass to the chunking function.""")
 
     chunk_size = param.Integer(
         default=1024, doc="Maximum size of text chunks to split documents into."
@@ -44,6 +53,10 @@ class VectorStore(LLMUser):
 
     def __init__(self, **params):
         super().__init__(**params)
+        if self.chunk_func is None:
+            self.chunk_func = semchunk.chunkerify(
+                'gpt-4o-mini', chunk_size=self.chunk_size
+            )
 
     def _format_metadata_value(self, value) -> str:
         """Format a metadata value appropriately based on its type.
@@ -115,23 +128,10 @@ class VectorStore(LLMUser):
         -------
         List of text chunks.
         """
-        if self.chunk_size is None or len(text) <= self.chunk_size:
-            return [text]
-
-        words = text.split()
-        chunks = []
-        current_chunk = ""
-
-        for word in words:
-            if len(current_chunk) + len(word) + 1 <= self.chunk_size:
-                current_chunk += (" " + word) if current_chunk else word
-            else:
-                chunks.append(current_chunk)
-                current_chunk = word
-
-        if current_chunk:
-            chunks.append(current_chunk)
-        return chunks
+        try:
+            return self.chunk_func(text, chunk_size=self.chunk_size, **self.chunk_func_kwargs)
+        except TypeError:
+            return self.chunk_func(text)
 
     async def add(self, items: list[dict], force_ids: list[int] | None = None, situate: bool | None = None) -> list[int]:
         """
