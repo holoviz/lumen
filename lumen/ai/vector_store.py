@@ -44,8 +44,6 @@ class VectorStore(LLMUser):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.situate and not self.llm:
-            raise ValueError("LLM must be provided if situate is enabled.")
 
     def _format_metadata_value(self, value) -> str:
         """Format a metadata value appropriately based on its type.
@@ -135,7 +133,7 @@ class VectorStore(LLMUser):
             chunks.append(current_chunk)
         return chunks
 
-    async def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
+    async def add(self, items: list[dict], force_ids: list[int] | None = None, situate: bool | None = None) -> list[int]:
         """
         Add items to the vector store.
 
@@ -145,6 +143,9 @@ class VectorStore(LLMUser):
             List of dictionaries containing 'text' and optional 'metadata'.
         force_ids: list[int] = None
             Optional list of IDs to use instead of generating new ones.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -153,6 +154,9 @@ class VectorStore(LLMUser):
         all_texts = []
         all_metadata = []
         text_and_metadata_list = []
+
+        # Use the provided situate parameter or fall back to the class default
+        use_situate = self.situate if situate is None else situate
 
         for item in items:
             text = item["text"]
@@ -163,17 +167,19 @@ class VectorStore(LLMUser):
 
             # Generate contextual descriptions if situate is enabled
             chunk_contexts = {}
-            if self.situate and self.llm:
+            if use_situate and self.llm:
                 for chunk in content_chunks:
                     context = await self._generate_context(text, chunk)
                     chunk_contexts[chunk] = context
+            elif use_situate and not self.llm:
+                raise ValueError("LLM not provided. Cannot apply situate.")
 
             # Process each chunk with its context
             for chunk in content_chunks:
                 chunk_metadata = metadata.copy()
 
                 # Add context to metadata if situate is enabled
-                if self.situate and chunk in chunk_contexts:
+                if use_situate and chunk in chunk_contexts:
                     chunk_metadata["llm_context"] = chunk_contexts[chunk]
 
                 text_and_metadata = self._join_text_and_metadata(chunk, chunk_metadata)
@@ -186,8 +192,6 @@ class VectorStore(LLMUser):
 
         # Implement add logic in derived classes
         return await self._add_items(all_texts, all_metadata, embeddings, force_ids)
-
-
 
     @abstractmethod
     async def _add_items(
@@ -213,7 +217,7 @@ class VectorStore(LLMUser):
         List of assigned IDs for the added items.
         """
 
-    async def upsert(self, items: list[dict]) -> list[int]:
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
         """
         Add items to the vector store if similar items don't exist,
         update them if they do.
@@ -222,6 +226,9 @@ class VectorStore(LLMUser):
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -230,11 +237,7 @@ class VectorStore(LLMUser):
         # Implement in derived classes
         raise NotImplementedError("Subclasses must implement upsert.")
 
-
-
-
-
-    async def add_file(self, filename, ext=None, metadata=None) -> list[int]:
+    async def add_file(self, filename, ext=None, metadata=None, situate=None) -> list[int]:
         """
         Adds a file or a URL to the collection.
 
@@ -248,6 +251,9 @@ class VectorStore(LLMUser):
         metadata : dict | None
             A dictionary containing metadata related to the file
             (e.g., title, author, description). Defaults to None.
+        situate : bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -268,7 +274,7 @@ class VectorStore(LLMUser):
                 metadata['filename'] = filename
             doc = await asyncio.to_thread(mdit.convert_local, filename, file_extension=ext)
 
-        return await self.add([{'text': doc.text_content, 'metadata': metadata}])
+        return await self.add([{'text': doc.text_content, 'metadata': metadata}], situate=situate)
 
     @abstractmethod
     def query(
@@ -277,6 +283,7 @@ class VectorStore(LLMUser):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
+        situate: bool | None = None,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -291,6 +298,9 @@ class VectorStore(LLMUser):
             Optional metadata filters.
         threshold: float
             Minimum similarity score required for a result to be included.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -575,7 +585,7 @@ class NumpyVectorStore(VectorStore):
         self.metadata = [meta for i, meta in enumerate(self.metadata) if keep_mask[i]]
         self.ids = [id_ for i, id_ in enumerate(self.ids) if keep_mask[i]]
 
-    async def upsert(self, items: list[dict]) -> list[int]:
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
         """
         Add items to the vector store if similar items don't exist,
         update them if they do.
@@ -584,6 +594,9 @@ class NumpyVectorStore(VectorStore):
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -640,7 +653,7 @@ class NumpyVectorStore(VectorStore):
                     # If metadata keys are different but no value conflicts, update existing
                     if set(metadata.keys()) != set(existing_meta.keys()):
                         self.delete([existing_id])
-                        new_ids = await self.add([{"text": text, "metadata": metadata}], force_ids=[existing_id])
+                        new_ids = await self.add([{"text": text, "metadata": metadata}], force_ids=[existing_id], situate=situate)
                         assigned_ids.extend(new_ids)
                     else:
                         # Exact metadata match - reuse existing
@@ -656,7 +669,7 @@ class NumpyVectorStore(VectorStore):
             items_to_add.append(item)
 
         if items_to_add:
-            new_ids = await self.add(items_to_add)
+            new_ids = await self.add(items_to_add, situate=situate)
             assigned_ids.extend(new_ids)
 
         return assigned_ids
@@ -957,7 +970,7 @@ class DuckDBVectorStore(VectorStore):
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
         self._initialized = False
 
-    async def upsert(self, items: list[dict]) -> list[int]:
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
         """
         Add items to the vector store if similar items don't exist,
         update them if they do.
@@ -966,6 +979,9 @@ class DuckDBVectorStore(VectorStore):
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -1037,7 +1053,7 @@ class DuckDBVectorStore(VectorStore):
                 items_to_add.append(item)
 
         if items_to_add:
-            new_ids = await self.add(items_to_add)
+            new_ids = await self.add(items_to_add, situate=situate)
             assigned_ids.extend(new_ids)
             log_debug(f"Added {len(items_to_add)} new items to the vector store.")
 
