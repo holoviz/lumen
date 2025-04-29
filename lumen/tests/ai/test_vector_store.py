@@ -16,14 +16,14 @@ class VectorStoreTestKit:
     """
 
     @pytest.fixture
-    def store(self):
+    async def store(self):
         """
         Must be overridden in the subclass to return a fresh store instance.
         """
         raise NotImplementedError("Subclasses must override `store` fixture")
 
     @pytest.fixture
-    def empty_store(self, store):
+    async def empty_store(self, store):
         """
         Returns an empty store (clears whatever the `store` fixture gave us).
         """
@@ -440,18 +440,20 @@ class VectorStoreTestKit:
         assert len(results[0]["metadata"]) == 2, "Should now have only two metadata keys"
         assert "key3" not in results[0]["metadata"], "key3 should be removed"
 
-    def test_upsert_empty_list(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_empty_list(self, empty_store):
         """
         Verifies that upsert handles empty input gracefully.
         """
-        ids = empty_store.upsert([])
+        ids = await empty_store.upsert([])
         assert ids == [], "Should return empty list of IDs"
 
         # Store should remain empty
         all_docs = empty_store.filter_by({})
         assert len(all_docs) == 0, "Store should still be empty"
 
-    def test_upsert_long_content_no_duplication(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_long_content_no_duplication(self, empty_store):
         """
         Verifies that upsert doesn't create duplicates when adding the same long text
         that gets chunked.
@@ -465,7 +467,7 @@ class VectorStoreTestKit:
 
         # First upsert
         item = {"text": long_text, "metadata": metadata}
-        ids1 = empty_store.upsert([item])
+        ids1 = await empty_store.upsert([item])
 
         # Verify chunking occurred
         assert len(ids1) > 1, "Text should be split into multiple chunks"
@@ -474,7 +476,7 @@ class VectorStoreTestKit:
         count_after_first = len(empty_store)
 
         # Perform second upsert with the same content
-        empty_store.upsert([item])
+        await empty_store.upsert([item])
         count_after_second = len(empty_store)
 
         # Verify no new entries were created
@@ -484,7 +486,7 @@ class VectorStoreTestKit:
 class TestNumpyVectorStore(VectorStoreTestKit):
 
     @pytest.fixture
-    def store(self):
+    async def store(self):
         store = NumpyVectorStore(embeddings=NumpyEmbeddings())
         store.clear()
         return store
@@ -493,16 +495,17 @@ class TestNumpyVectorStore(VectorStoreTestKit):
 class TestDuckDBVectorStore(VectorStoreTestKit):
 
     @pytest.fixture
-    def store(self, tmp_path) -> DuckDBVectorStore:
+    async def store(self, tmp_path) -> DuckDBVectorStore:
         db_path = str(tmp_path / "test_duckdb.db")
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
         store.clear()
         return store
 
-    def test_persistence(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_persistence(self, tmp_path):
         db_path = str(tmp_path / "test_duckdb.db")
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
-        store.add([{"text": "First doc"}])
+        await store.add([{"text": "First doc"}])
         results = store.query("First doc")
         assert len(results) == 1
         assert results[0]["text"] == "First doc"
@@ -514,7 +517,8 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         assert results[0]["text"] == "First doc"
         store.close()
 
-    def test_not_initalized(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_not_initalized(self, tmp_path):
         db_path = str(tmp_path / "test_duckdb.db")
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
         store.close()
