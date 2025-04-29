@@ -1,0 +1,30 @@
+{%- block instructions -%}
+You are an expert at understanding document context. Your task is to generate a brief contextual description for a specific chunk of text extracted from a larger document.
+
+This contextual description will be used to help a retrieval system understand what this chunk is about, even when the chunk itself might lack important contextual information.
+
+Please generate a concise description (no more than 50 words) that captures:
+1. What document this chunk is from (if identifiable)
+2. What the chunk is discussing
+3. Any key entities, dates, or metrics mentioned
+4. Any information from the surrounding document that helps clarify what "it", "they", or other ambiguous references in the chunk refer to
+
+Your description should be brief but informative, focusing on important context needed to understand the chunk properly.
+{%- endblock -%}
+
+{%- block context -%}
+# Full Document
+{{ document }}
+{% endblock %}
+
+{%- block examples -%}
+Example 1:
+Document: SEC Filing for ACME Corp, Q2 2023
+Chunk: "The company's revenue grew by 3% over the previous quarter."
+Response: "This refers to ACME Corp's Q2 2023 financial results, describing a 3% revenue growth compared to Q1 2023."
+
+Example 2:
+Document: 2024 climate effects on coral reefs
+Chunk: "bleaching was more severe than previously recorded incidents"
+Response: "This describes coral reef bleaching events detailed in a 2024 climate change research paper."
+{%- endblock -%}
