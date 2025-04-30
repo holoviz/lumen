@@ -1,5 +1,6 @@
 import asyncio
 import json
+import typing as t
 
 from abc import abstractmethod
 from pathlib import Path
@@ -11,7 +12,6 @@ import semchunk
 
 from .actor import PROMPTS_DIR, LLMUser
 from .embeddings import Embeddings, NumpyEmbeddings
-from .utils import log_debug
 
 
 class VectorStore(LLMUser):
@@ -129,9 +129,11 @@ class VectorStore(LLMUser):
         List of text chunks.
         """
         try:
-            return self.chunk_func(text, chunk_size=self.chunk_size, **self.chunk_func_kwargs)
+            chunks = self.chunk_func(text, chunk_size=self.chunk_size, **self.chunk_func_kwargs)
         except TypeError:
-            return self.chunk_func(text)
+            chunks = self.chunk_func(text)
+        print(f"Chunked {text[:100]} into {len(chunks)} parts.")
+        return chunks
 
     async def add(self, items: list[dict], force_ids: list[int] | None = None, situate: bool | None = None) -> list[int]:
         """
@@ -237,7 +239,14 @@ class VectorStore(LLMUser):
         # Implement in derived classes
         raise NotImplementedError("Subclasses must implement upsert.")
 
-    async def add_file(self, filename, ext=None, metadata=None, situate=None) -> list[int]:
+    async def add_file(
+        self,
+        filename: str | t.IO | t.Any,
+        ext: str | None = None,
+        metadata: dict[str, t.Any] | None = None,
+        situate: bool | None = None,
+        upsert: bool = False
+    ) -> list[int]:
         """
         Adds a file or a URL to the collection.
 
@@ -254,6 +263,9 @@ class VectorStore(LLMUser):
         situate : bool | None
             Whether to insert a `llm_context` key in the metadata containing
             contextual about the chunks. If None, uses the class default.
+        upsert: bool
+            If True, will update existing items if similar content is found.
+            Defaults to False.
 
         Returns
         -------
@@ -274,7 +286,11 @@ class VectorStore(LLMUser):
                 metadata['filename'] = filename
             doc = await asyncio.to_thread(mdit.convert_local, filename, file_extension=ext)
 
-        return await self.add([{'text': doc.text_content, 'metadata': metadata}], situate=situate)
+        kwargs = {"items": [{"text": doc.text_content, "metadata": metadata}], "situate": situate}
+        if upsert:
+            return await self.upsert(**kwargs)
+        else:
+            return await self.add(**kwargs)
 
     @abstractmethod
     def query(
@@ -669,8 +685,11 @@ class NumpyVectorStore(VectorStore):
             items_to_add.append(item)
 
         if items_to_add:
+            print(f"Adding {len(items_to_add)} new items to the vector store.")
             new_ids = await self.add(items_to_add, situate=situate)
             assigned_ids.extend(new_ids)
+        else:
+            print("All items already exist in the vector store.")
 
         return assigned_ids
 
@@ -991,7 +1010,7 @@ class DuckDBVectorStore(VectorStore):
             return []
 
         if not self._initialized:
-            log_debug("Database not initialized. Adding items directly.")
+            print("Database not initialized. Adding items directly.")
             return await self.add(items)
 
         assigned_ids = []
@@ -1055,9 +1074,9 @@ class DuckDBVectorStore(VectorStore):
         if items_to_add:
             new_ids = await self.add(items_to_add, situate=situate)
             assigned_ids.extend(new_ids)
-            log_debug(f"Added {len(items_to_add)} new items to the vector store.")
+            print(f"Added {len(items_to_add)} new items to the vector store.")
 
-        log_debug(len(self))
+        print(len(self))
         return assigned_ids
 
     def _execute_query(self, query, params, fetchall=False):

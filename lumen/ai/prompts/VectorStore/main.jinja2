@@ -1,27 +1,46 @@
 {%- block instructions -%}
-You are an expert at understanding document context. Your task is to generate a brief contextual description for a specific chunk of text extracted from a larger document.
+Create a concise context description (15-20 words) for this document chunk that:
+1. Uses abbreviated terms where possible (docs, ref, info, etc.)
+2. Precisely identifies the document source/type
+3. Describes the chunk's specific content
+4. Resolves ambiguous references
 
-This contextual description will be used to help a retrieval system understand what this chunk is about, even when the chunk itself might lack important contextual information.
-
-Please generate a concise description (no more than 50 words) that captures:
-1. What document this chunk is from (if identifiable)
-2. What the chunk is discussing
-3. Any key entities, dates, or metrics mentioned
-4. Any information from the surrounding document that helps clarify what "it", "they", or other ambiguous references in the chunk refer to
-
-Your description should be brief but informative, focusing on important context needed to understand the chunk properly.
+Use shorthand and terse phrasing while maintaining critical information.
 {%- endblock -%}
 
 {%- block examples -%}
+Don't do this:
+Document: HoloViews integration guide
+Chunk: "To link a HoloViews plot with Panel widgets, use the pn.bind method."
+Response: "This chunk comes from the HoloViews integration guide documentation and it is discussing how to connect or link HoloViews plots with Panel widgets by utilizing the pn.bind method to establish the connection between these two components."
+
 Example 1:
 Document: SEC Filing for ACME Corp, Q2 2023
 Chunk: "The company's revenue grew by 3% over the previous quarter."
-Response: "This refers to ACME Corp's Q2 2023 financial results, describing a 3% revenue growth compared to Q1 2023."
+Response: "ACME Q2'23 report: 3% revenue growth vs Q1'23."
 
 Example 2:
-Document: 2024 climate effects on coral reefs
-Chunk: "bleaching was more severe than previously recorded incidents"
-Response: "This describes coral reef bleaching events detailed in a 2024 climate change research paper."
+Document: Panel Developer Experience Best Practices
+Chunk: "Be sure to bind obj.param.{parameter} (the Parameter object), not just {parameter} (the current Parameter value)."
+Response: "Panel dev best practices: binding to Parameter objects (obj.param.parameter) instead of values for reactive updates."
+
+Example 3:
+Document: HoloViews User Guide - Customization
+Chunk: ```python
+def hook(plot, element):
+    print('plot.state:   ', plot.state)
+    print('plot.handles: ', sorted(plot.handles.keys()))
+    plot.handles['xaxis'].axis_label_text_color = 'red'
+    plot.handles['yaxis'].axis_label_text_color = 'blue'
+
+hv.Curve([1, 2, 3]).opts(hooks=[hook])
+```
+Response: "HoloViews docs: plot hooks for low-level backend customization that HoloViews doesn't expose directly to customize the x and y axis labels' colors."
+
+Example 4:
+Document: Climate impact assessment on agriculture
+Chunk: "They found yields decreased by 17% compared to the control group."
+Response: "Climate impact study: crop yields decreased 17% vs control in drought conditions."
 {%- endblock -%}
 
 {%- block context -%}
