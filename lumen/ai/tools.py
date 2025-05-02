@@ -352,6 +352,10 @@ class VectorLookupTool(Tool):
             filters["type"] = self._item_type_name
         kwargs["filters"] = filters
         results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        if not results:
+            kwargs.pop("filters")
+            results = self.vector_store.query(query, top_k=self.n, **kwargs)
+
         # check if all metadata is the same; if so, skip
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
