@@ -167,21 +167,24 @@ class VectorStore(LLMUser):
             # Split text into chunks
             content_chunks = self._chunk_text(text)
 
-            # Generate contextual descriptions if situate is enabled
+            # Only use situate if there are multiple chunks
+            should_situate = use_situate and len(content_chunks) > 1
+
+            # Generate contextual descriptions if situate is enabled and multiple chunks exist
             chunk_contexts = {}
-            if use_situate and self.llm:
+            if should_situate and self.llm:
                 for chunk in content_chunks:
                     context = await self._generate_context(text, chunk)
                     chunk_contexts[chunk] = context
-            elif use_situate and not self.llm:
+            elif should_situate and not self.llm:
                 raise ValueError("LLM not provided. Cannot apply situate.")
 
             # Process each chunk with its context
             for chunk in content_chunks:
                 chunk_metadata = metadata.copy()
 
-                # Add context to metadata if situate is enabled
-                if use_situate and chunk in chunk_contexts:
+                # Add context to metadata if situate is enabled and multiple chunks exist
+                if should_situate and chunk in chunk_contexts:
                     chunk_metadata["llm_context"] = chunk_contexts[chunk]
 
                 text_and_metadata = self._join_text_and_metadata(chunk, chunk_metadata)
@@ -283,7 +286,7 @@ class VectorStore(LLMUser):
             doc = await asyncio.to_thread(mdit.convert_stream, filename, file_extension=ext)
         else:
             if 'filename' not in metadata:
-                metadata['filename'] = filename
+                metadata['filename'] = str(filename)
             doc = await asyncio.to_thread(mdit.convert_local, filename, file_extension=ext)
 
         kwargs = {"items": [{"text": doc.text_content, "metadata": metadata}], "situate": situate}
