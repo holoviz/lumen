@@ -263,11 +263,7 @@ class DuckDBSource(BaseSQLSource):
                 continue
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
             try:
-                try:
-                    self._connection.execute(table_expr)
-                except duckdb.InvalidInputException:
-                    table_expr = self._add_encoding_to_read_csv(query=table_expr)
-                    self._connection.execute(table_expr)
+                self._execute_with_encoding(sql_query=table_expr)
             except duckdb.CatalogException as e:
                 pattern = r"Table with name\s(\S+)"
                 match = re.search(pattern, str(e))
@@ -275,21 +271,20 @@ class DuckDBSource(BaseSQLSource):
                     name = match.group(1)
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
                     table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
-                    try:
-                        self._connection.execute(table_expr)
-                    except duckdb.InvalidInputException:
-                        table_expr = self._add_encoding_to_read_csv(query=table_expr)
-                        self._connection.execute(table_expr)
+                    self._execute_with_encoding(sql_query=table_expr)
                 else:
                     raise e
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
+        return self._execute_with_encoding(sql_query, *args, **kwargs).fetch_df()
+
+    def _execute_with_encoding(self, sql_query: str, *args, **kwargs):
         try:
-            return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
+            return self._connection.execute(sql_query)
         except duckdb.InvalidInputException:
             sql_query = self._add_encoding_to_read_csv(query=sql_query)
-            return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
+            return self._connection.execute(sql_query)
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
@@ -317,11 +312,7 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        try:
-            rel = self._connection.execute(sql_expr)
-        except duckdb.InvalidInputException:
-            sql_expr = self._add_encoding_to_read_csv(query=sql_expr)
-            rel = self._connection.execute(sql_expr)
+        rel = self._execute_with_encoding(sql_query=sql_expr)
         has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
         df = rel.fetch_df(date_as_object=True)
         if has_geom:
