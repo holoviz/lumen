@@ -270,7 +270,6 @@ class Llm(param.Parameterized):
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=messages, **kwargs)
-        print(result)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
         log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
