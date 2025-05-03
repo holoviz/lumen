@@ -27,7 +27,7 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import YesNo, make_agent_model, make_plan_models
+from .models import ThinkingYesNo, make_agent_model, make_plan_models
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
@@ -103,7 +103,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             },
             "tool_relevance": {
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
         },
     )
@@ -744,7 +744,7 @@ class Planner(Coordinator):
             },
             "follow_up": {
                 "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
         }
     )

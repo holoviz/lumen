@@ -1,10 +1,13 @@
 import asyncio
 import io
 import json
+import os
 import typing as t
 
 from abc import abstractmethod
+from collections.abc import Callable
 from pathlib import Path
+from typing import IO, Any
 
 import duckdb
 import numpy as np
@@ -15,6 +18,7 @@ from panel import cache as pn_cache
 
 from .actor import PROMPTS_DIR, LLMUser
 from .embeddings import Embeddings, NumpyEmbeddings
+from .models import YesNo
 from .utils import log_debug
 
 
@@ -24,6 +28,10 @@ class VectorStore(LLMUser):
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "VectorStore" / "main.jinja2"},
+            "should_situate": {
+                "template": PROMPTS_DIR / "VectorStore" / "should_situate.jinja2",
+                "response_model": YesNo,
+            },
         },
         doc="""
         A dictionary of prompts used by the vector store, indexed by prompt name.
@@ -111,7 +119,7 @@ class VectorStore(LLMUser):
         )
         return f"{text} {metadata_str}"
 
-    async def _generate_context(self, document: str, chunk: str, previous_context: str | None = None) -> str:
+    async def _generate_context(self, document: str, chunk: str, previous_context: str | None = None, metadata: dict | None = None) -> str:
         """Generate contextual description for a chunk using LLM.
 
         Parameters
@@ -122,6 +130,8 @@ class VectorStore(LLMUser):
             The specific chunk to contextualize
         previous_context: str
             Context from previous chunk (if any)
+        metadata: dict
+            Metadata associated with the chunk
 
         Returns
         -------
@@ -135,28 +145,80 @@ class VectorStore(LLMUser):
 
         messages = [{"role": "user", "content": chunk}]
         response = await self._invoke_prompt(
-            "main", messages, document=document, previous_context=previous_context, response_model=str
+            "main", messages, document=document, previous_context=previous_context, metadata=metadata, response_model=str
         )
-        return response
+
+        # Handle both response formats - string or response object
+        if isinstance(response, str):
+            return response
+        else:
+            print(
+                f"Used: {response.usage.prompt_tokens} total tokens ({response.usage.prompt_tokens_details.cached_tokens} cached) and output {response.usage.completion_tokens}"
+            )
+            print("\n\n")
+            return response.choices[0].message.content
 
     @pn_cache
-    def _chunk_text(self, text: str, chunk_size: int, **chunk_func_kwargs) -> list[str]:
+    def _chunk_text(self, text: str, chunk_size: int | None = None, chunk_func: Callable | None = None, **chunk_func_kwargs) -> list[str]:
         """Split text into chunks of size up to self.chunk_size.
 
         Parameters
         ----------
         text: str
             The text to split.
+        chunk_size: int
+            The maximum size of each chunk. If None, uses self.chunk_size.
+        chunk_func: Callable
+            The function to use for chunking. If None, uses self.chunk_func.
 
         Returns
         -------
         List of text chunks.
         """
+        # Use provided parameters or fall back to instance defaults
+        if chunk_size is None:
+            chunk_size = self.chunk_size
+        if chunk_func is None:
+            chunk_func = self.chunk_func
+
+        # Simple case: no chunking needed
+        if chunk_size is None or len(text) <= chunk_size:
+            return [text]
+
         try:
-            chunks = self.chunk_func(text, chunk_size=chunk_size, **chunk_func_kwargs)
+            chunks = chunk_func(text, chunk_size=chunk_size, **chunk_func_kwargs)
         except TypeError:
-            chunks = self.chunk_func(text, **chunk_func_kwargs)
+            # Fall back if chunk_size parameter isn't supported
+            chunks = chunk_func(text, **chunk_func_kwargs)
+
         return chunks
+
+    async def should_situate_chunk(self, chunk: str) -> bool:
+        """
+        Determine whether a chunk should be situated based on its content.
+
+        Parameters
+        ----------
+        chunk: str
+            The chunk text to evaluate
+
+        Returns
+        -------
+        bool
+            Whether the chunk should be situated
+        """
+        if not self.llm:
+            return self.situate
+
+        try:
+            # Use a user message to avoid conflicts with system instructions
+            messages = [{"role": "user", "content": chunk}]
+            result = await self._invoke_prompt("should_situate",  messages)
+            return result.yes
+        except Exception as e:
+            log_debug(f"Error determining if chunk should be situated: {e}")
+            # Default to the class default in case of error
+            return self.situate
 
     async def add(
         self,
@@ -194,18 +256,25 @@ class VectorStore(LLMUser):
 
             # Split text into chunks
             content_chunks = self._chunk_text(
-                text, self.chunk_size, **self.chunk_func_kwargs
+                text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs
             )
 
-            # Only use situate if there are multiple chunks
-            should_situate = use_situate and len(content_chunks) > 1
+            # Skip situating if use_situate is False
+            if not use_situate or len(content_chunks) <= 1:
+                should_situate = False
+            else:
+                should_situate = True
 
             # Generate contextual descriptions if situate is enabled and multiple chunks exist
             chunk_contexts = {}
             if should_situate and self.llm:
                 previous_context = None  # Start with no previous context
                 for chunk in content_chunks:
-                    context = await self._generate_context(text, chunk, previous_context)
+                    needs_context = await self.should_situate_chunk(chunk)
+                    if not needs_context:
+                        continue
+
+                    context = await self._generate_context(text, chunk, previous_context, metadata)
                     chunk_contexts[chunk] = context
                     previous_context = context  # Save this context for the next chunk
             elif should_situate and not self.llm:
@@ -281,9 +350,9 @@ class VectorStore(LLMUser):
 
     async def add_file(
         self,
-        filename: str | t.IO | t.Any,
+        filename: str | IO | t.Any | os.PathLike,
         ext: str | None = None,
-        metadata: dict[str, t.Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         situate: bool | None = None,
         upsert: bool = False,
     ) -> list[int]:
@@ -341,10 +410,7 @@ class VectorStore(LLMUser):
                     file_extension=ext,
                 )
 
-        kwargs = {
-            "items": [{"text": doc.text_content, "metadata": metadata}],
-            "situate": situate,
-        }
+        kwargs = {"items": [{"text": doc.text_content, "metadata": metadata}], "situate": situate}
         if upsert:
             return await self.upsert(**kwargs)
         else:
@@ -711,9 +777,7 @@ class NumpyVectorStore(VectorStore):
 
             # If no exact match found, check for chunked text match
             if not match_indices:
-                for chunk in self._chunk_text(
-                    text, self.chunk_size, **self.chunk_func_kwargs
-                ):
+                for chunk in self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs):
                     if chunk in text_to_indices:
                         match_indices.extend(text_to_indices[chunk])
 
@@ -1122,9 +1186,7 @@ class DuckDBVectorStore(VectorStore):
             # If no exact match, check for chunked text match
             if not result:
                 chunked_results = []
-                for chunk in self._chunk_text(
-                    text, self.chunk_size, **self.chunk_func_kwargs
-                ):
+                for chunk in self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs):
                     chunk_results = await asyncio.to_thread(
                         self._execute_query, query, [chunk], fetchall=True
                     )

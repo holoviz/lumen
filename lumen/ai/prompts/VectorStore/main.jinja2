@@ -17,6 +17,11 @@ Use shorthand and terse phrasing while maintaining critical information.
 # Previous Chunk Context
 {{ previous_context }}
 {% endif %}
+
+# Metadata
+{% for key, value in metadata.items() %}
+- {{ key }}: {{ value }}
+{% endfor %}
 {% endblock %}
 
 {%- block examples -%}
@@ -33,7 +38,7 @@ Response: "ACME Q2'23 report: 3% revenue growth vs Q1'23."
 Example 2:
 Document: Panel Developer Experience Best Practices
 Chunk: "Be sure to bind obj.param.{parameter} (the Parameter object), not just {parameter} (the current Parameter value)."
-Response: "Panel dev docs: binding to Parameter objects (obj.param.parameter) instead of values for reactive updates."
+Response: "Dev docs: binding to Parameter objects (obj.param.parameter) instead of values for reactive updates."
 
 Example 3:
 Document: HoloViews User Guide - Customization

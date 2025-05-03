@@ -20,7 +20,7 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import (
-    YesNo, make_columns_selection, make_iterative_selection_model,
+    ThinkingYesNo, make_columns_selection, make_iterative_selection_model,
     make_refined_query_model,
 )
 from .schemas import (
@@ -120,7 +120,8 @@ class ToolUser(Actor):
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
-        for tool in self._tools.get(prompt_name, []):
+        # TODO: INVESTIGATE WHY or self.tools is needed
+        for tool in self._tools.get(prompt_name, []) or self.tools:
             if all(requirement in self._memory for requirement in tool.requires):
                 with tool.param.update(memory=self.memory):
                     tool_context = await tool.respond(messages)
@@ -216,19 +217,19 @@ class VectorLookupTool(Tool):
             },
             "should_refresh_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
             "should_refresh_tables": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_refresh_tables.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
             "should_select_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
             "main": {
                 "template": PROMPTS_DIR / "DbtslLookup" / "main.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
         },
         doc="Dictionary of available prompts for the tool."
@@ -421,6 +422,40 @@ class VectorLookupTool(Tool):
                 stream_details(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n", step, auto=False)
 
         return best_results
+
+    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
+        """
+        Respond to a user query using the vector store.
+
+        Parameters
+        ----------
+        messages: list[Message]
+            The user query and any additional context
+        **kwargs: Any
+            Additional arguments for the response
+
+        Returns
+        -------
+        str
+            The response from the vector store
+        """
+        query = messages[-1]["content"]
+
+        # Perform search with refinement
+        results = await self._perform_search_with_refinement(query)
+        closest_doc_chunks = [
+            f"{result['text']} (Relevance: {result['similarity']:.1f} - "
+            f"Metadata: {result['metadata']})"
+            for result in results
+            if result['similarity'] >= self.min_similarity
+        ]
+
+        if not closest_doc_chunks:
+            return ""
+
+        message = "Please augment your response with the following context if relevant:\n"
+        message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
+        return message
 
 
 class DocumentLookup(VectorLookupTool):

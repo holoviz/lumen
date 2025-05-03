@@ -178,7 +178,6 @@ class LLMUser(param.Parameterized):
         The structured response from the LLM
         """
         system = await self._render_prompt(prompt_name, messages, **context)
-
         if response_model is None:
             try:
                 response_model = self._get_model(prompt_name, **context)
@@ -197,7 +196,6 @@ class LLMUser(param.Parameterized):
             response_model=response_model,
             model_spec=model_spec,
         )
-
         return result
 
     async def _stream_prompt(
