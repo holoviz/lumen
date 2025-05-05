@@ -17,11 +17,6 @@ Answer YES if ANY metric can provide what the user needs, even if it requires co
 Answer NO only if no available metric can measure what the user is asking about.
 {% endblock %}
 
-{% block context %}
-Available metrics and their dimensions:
-{{ dbtsl_metaset }}
-{% endblock %}
-
 {% block examples %}
 # Examples:
 """
@@ -41,4 +36,9 @@ Query: What's our customer satisfaction by product category?
 
 Reasoning: None of our metrics measure customer satisfaction. While we have product category dimensions on other metrics, without a satisfaction metric, we cannot answer this query. Answer: NO
 """
+{% endblock %}
+
+{% block context %}
+Available metrics and their dimensions:
+{{ dbtsl_metaset }}
 {% endblock %}
