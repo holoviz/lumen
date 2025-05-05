@@ -384,7 +384,7 @@ class VectorLookupTool(Tool):
         if "type" not in filters:
             filters["type"] = self._item_type_name
         kwargs["filters"] = filters
-        results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        results = await self.vector_store.query(query, top_k=self.n, **kwargs)
 
         # check if all metadata is the same; if so, skip
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
@@ -416,7 +416,7 @@ class VectorLookupTool(Tool):
                     break
 
                 current_query = refined_query
-                new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
+                new_results = await self.vector_store.query(refined_query, top_k=self.n, **kwargs)
                 new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
 
                 improvement = new_best_similarity - best_similarity

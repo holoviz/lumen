@@ -267,6 +267,7 @@ class ChatAgent(Agent):
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
         system_prompt = await self._render_prompt("main", messages, **context)
+        print(context)
         return await self._stream(messages, system_prompt)
 
 

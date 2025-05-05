@@ -295,7 +295,7 @@ class VectorStore(LLMUser):
 
         # Get embeddings for all chunks
         embeddings = np.array(
-            self.embeddings.embed(text_and_metadata_list), dtype=np.float32
+            await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
         )
 
         # Implement add logic in derived classes
@@ -417,7 +417,7 @@ class VectorStore(LLMUser):
             return await self.add(**kwargs)
 
     @abstractmethod
-    def query(
+    async def query(
         self,
         text: str,
         top_k: int = 5,
@@ -617,7 +617,7 @@ class NumpyVectorStore(VectorStore):
 
         return new_ids
 
-    def query(
+    async def query(
         self,
         text: str,
         top_k: int = 5,
@@ -644,7 +644,7 @@ class NumpyVectorStore(VectorStore):
         """
         if self.vectors is None:
             return []
-        query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
+        query_embedding = np.array((await self.embeddings.embed([text]))[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
 
         if filters and len(self.vectors) > 0:
@@ -1011,7 +1011,7 @@ class DuckDBVectorStore(VectorStore):
 
         return text_ids
 
-    def query(
+    async def query(
         self,
         text: str,
         top_k: int = 5,
@@ -1039,7 +1039,7 @@ class DuckDBVectorStore(VectorStore):
         if not self._initialized:
             return []
         query_embedding = np.array(
-            self.embeddings.embed([text])[0], dtype=np.float32
+            (await self.embeddings.embed([text]))[0], dtype=np.float32
         ).tolist()
         vector_dim = len(query_embedding)
 
