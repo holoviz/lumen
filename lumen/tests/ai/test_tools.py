@@ -1,7 +1,5 @@
 import pytest
 
-from lumen.ai.vector_store import NumpyVectorStore
-
 try:
     import lumen.ai  # noqa
 except ModuleNotFoundError:
@@ -12,6 +10,7 @@ from lumen.ai.memory import _Memory
 from lumen.ai.tools import (
     DocumentLookup, FunctionTool, IterativeTableLookup, TableLookup,
 )
+from lumen.ai.vector_store import NumpyVectorStore
 
 
 def add(a: int, b: int) -> int:
