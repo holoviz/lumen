@@ -9,21 +9,6 @@ Create a concise context description (15-20 words) for this document chunk that:
 Use shorthand and terse phrasing while maintaining critical information.
 {%- endblock -%}
 
-{%- block context %}
-# Full Document
-{{ document }}
-
-{% if previous_context %}
-# Previous Chunk Context
-{{ previous_context }}
-{% endif %}
-
-# Metadata
-{% for key, value in metadata.items() %}
-- {{ key }}: {{ value }}
-{% endfor %}
-{% endblock %}
-
 {%- block examples -%}
 Don't do this:
 Document: HoloViews integration guide
@@ -53,3 +38,19 @@ hv.Curve([1, 2, 3]).opts(hooks=[hook])
 ```
 Response: "HoloViews docs: plot hooks for low-level backend customization to modify axis label colors."
 {%- endblock -%}
+
+{%- block context -%}
+# Full Document
+{{ document }}
+{% endblock %}
+
+{% if previous_context %}
+# Previous Chunk Context
+{{ previous_context }}
+{% endif %}
+
+# Metadata
+{% for key, value in metadata.items() %}
+- {{ key }}: {{ value }}
+{% endfor %}
+{% endblock %}
