@@ -101,7 +101,7 @@ class ToolUser(Actor):
                     tool.interface = self.interface or params.get("interface")
 
                 # Apply any additional configuration from subclasses
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools or prompt_tools, **params)
                 for key, value in tool_kwargs.items():
                     if key not in ('llm', 'interface') and hasattr(tool, key):
                         setattr(tool, key, value)
@@ -109,13 +109,12 @@ class ToolUser(Actor):
                 instantiated_tools.append(tool)
             elif isinstance(tool, FunctionType):
                 # Function tools only get basic kwargs
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools or prompt_tools, **params)
                 instantiated_tools.append(FunctionTool(tool, **tool_kwargs))
             else:
                 # For classes that need to be instantiated
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools or prompt_tools, **params)
                 instantiated_tools.append(tool(**tool_kwargs))
-
         return instantiated_tools
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
@@ -134,6 +133,12 @@ class VectorLookupToolUser(ToolUser):
     """
     VectorLookupToolUser is a mixin class for actors that use vector lookup tools.
     """
+
+    document_vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for document tools. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
 
     vector_store = param.ClassSelector(
         class_=VectorStore, default=None, doc="""
@@ -162,16 +167,43 @@ class VectorLookupToolUser(ToolUser):
         # Get base kwargs from parent
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
-        # Find vector store from tools if any
+        # If the tool is already instantiated and has a vector_store, use it
+        if isinstance(tool, VectorLookupTool) and tool.vector_store is not None:
+            return kwargs
+        elif tool._item_type_name == "document" and self.document_vector_store is not None:
+            kwargs["vector_store"] = self.document_vector_store
+            return kwargs
+        elif self.vector_store is not None:
+            kwargs["vector_store"] = self.vector_store
+            return kwargs
+
         vector_store = next(
             (t.vector_store for t in prompt_tools
              if isinstance(t, VectorLookupTool)),
             None
-        ) or self.vector_store or params.get("vector_store")
-
+        )
+        # Only inherit vector_store if the _item_type_name is the same
         if hasattr(tool, "vector_store") and vector_store is not None:
-            kwargs["vector_store"] = vector_store
+            # Find the source tool that provided the vector_store
+            source_tool = next(
+                (t for t in prompt_tools
+                 if isinstance(t, VectorLookupTool) and hasattr(t, "vector_store")
+                 and t.vector_store is vector_store),
+                None
+            )
 
+            # Get item types for comparison
+            # Handle both class types and instances
+            tool_item_type = getattr(tool, "_item_type_name", None)
+            source_item_type = getattr(source_tool, "_item_type_name", None) if source_tool else None
+
+            # Only set vector_store if item types match (e.g., IterativeTableLookup and TableLookup both use "tables")
+            # or if either doesn't specify a type (None)
+            if tool_item_type is None or source_item_type is None or tool_item_type == source_item_type:
+                kwargs["vector_store"] = vector_store
+        else:
+            # default to NumpyVectorStore if not provided
+            kwargs["vector_store"] = NumpyVectorStore()
         return kwargs
 
 
