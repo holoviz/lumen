@@ -231,10 +231,10 @@ class VectorLookupTool(Tool):
     enable_query_refinement = param.Boolean(default=True, doc="""
         Whether to enable query refinement for improving search results.""")
 
-    min_similarity = param.Number(default=0.05, doc="""
+    min_similarity = param.Number(default=0.3, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=10, bounds=(1, None), doc="""
+    n = param.Integer(default=5, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     prompts = param.Dict(
@@ -280,7 +280,7 @@ class VectorLookupTool(Tool):
         Vector store object which is queried to provide additional context
         before responding.""")
 
-    _item_type_name: str = "items"
+    _item_type_name: str = None
 
     __abstract = True
 
@@ -381,7 +381,7 @@ class VectorLookupTool(Tool):
         iteration = 0
 
         filters = kwargs.pop("filters", {})
-        if "type" not in filters:
+        if self._item_type_name and "type" not in filters:
             filters["type"] = self._item_type_name
         kwargs["filters"] = filters
         results = await self.vector_store.query(query, top_k=self.n, **kwargs)
@@ -626,6 +626,12 @@ class TableLookup(VectorLookupTool):
 
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
+
+    min_similarity = param.Number(default=0.05, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=10, bounds=(1, None), doc="""
+        The number of document results to return.""")
 
     sync_sources = param.Boolean(default=True, doc="""
         Whether to automatically sync newly added data sources to the vector store.""")
