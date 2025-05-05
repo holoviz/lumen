@@ -19,6 +19,8 @@ from panel.viewable import Viewable, Viewer
 from panel.widgets import Button
 from pydantic import BaseModel
 
+from lumen.ai.vector_store import VectorStore
+
 from ..views.base import Panel, View
 from .actor import Actor
 from .agents import (
@@ -137,7 +139,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         interface: ChatFeed | ChatInterface | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         tools: list[Tool | type[Tool]] | None = None,
-        vector_store: Tool | None = None,
+        vector_store: VectorStore | None = None,
+        document_vector_store: VectorStore | None = None,
         logs_db_path: str = "",
         **params,
     ):
@@ -247,7 +250,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if "tools" not in params["prompts"]["main"]:
             params["prompts"]["main"]["tools"] = []
         params["prompts"]["main"]["tools"] += [tool for tool in tools]
-        super().__init__(llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path, vector_store=vector_store, **params)
+        super().__init__(
+            llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path,
+            vector_store=vector_store, document_vector_store=document_vector_store, **params
+        )
 
         welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
         interface.send(

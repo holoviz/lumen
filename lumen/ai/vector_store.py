@@ -487,6 +487,10 @@ class VectorStore(LLMUser):
     def __len__(self) -> int:
         """Return the number of items in the vector store."""
 
+    @abstractmethod
+    def close(self) -> None:
+        """Close the vector store and release any resources."""
+
 
 class NumpyVectorStore(VectorStore):
     """
@@ -844,6 +848,17 @@ class NumpyVectorStore(VectorStore):
 
     def __len__(self) -> int:
         return len(self.texts) if self.vectors is not None else 0
+
+    def close(self) -> None:
+        """Close the vector store and release any resources.
+
+        For NumpyVectorStore, this clears vectors to free memory.
+        """
+        self.vectors = None
+        self.texts = []
+        self.metadata = []
+        self.ids = []
+        self._current_id = 0
 
 
 class DuckDBVectorStore(VectorStore):
