@@ -493,7 +493,7 @@ class DocumentLookup(VectorLookupTool):
 
         # Make a single upsert call with all documents
         if items_to_upsert:
-            self.vector_store.upsert(items_to_upsert)
+            await self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
@@ -695,7 +695,7 @@ class TableLookup(VectorLookupTool):
                     task = asyncio.create_task(self._enrich_metadata(source, table))
                     tasks.append(task)
             else:
-                self.vector_store.upsert([
+                await self.vector_store.upsert([
                     {"text": table_name, "metadata": {"source": source.name, "table_name": table_name, "type": "table"}}
                     for table_name in tables
                 ])
@@ -712,7 +712,7 @@ class TableLookup(VectorLookupTool):
         ]
         if enriched_entries:
             log_debug(f"Enriching {len(enriched_entries)} table metadata entries.")
-            self.vector_store.upsert(enriched_entries)
+            await self.vector_store.upsert(enriched_entries)
         log_debug("All table metadata tasks completed.")
         self._ready = True
 
@@ -1247,7 +1247,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
         # Make a single upsert call with all metrics
         if items_to_upsert:
-            self.vector_store.upsert(items_to_upsert)
+            await self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """

@@ -31,7 +31,7 @@ class VectorStoreTestKit:
         return store
 
     @pytest.fixture
-    def store_with_three_docs(self, store):
+    async def store_with_three_docs(self, store):
         """
         Returns a store preloaded with three documents for convenience.
         """
@@ -49,23 +49,27 @@ class VectorStoreTestKit:
                 "metadata": {"title": "receipt", "department": "accounting"},
             },
         ]
-        store.add(items)
+        await store.add(items)
         return store
 
-    def test_filter_by_title_receipt(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_filter_by_title_receipt(self, store_with_three_docs):
         filtered = store_with_three_docs.filter_by({"title": "receipt"})
         assert len(filtered) == 2
 
-    def test_filter_by_department_management(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_filter_by_department_management(self, store_with_three_docs):
         filtered_mgmt = store_with_three_docs.filter_by({"department": "management"})
         assert len(filtered_mgmt) == 1
         assert filtered_mgmt[0]["metadata"]["title"] == "org_chart"
 
-    def test_filter_by_nonexistent_filter(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_filter_by_nonexistent_filter(self, store_with_three_docs):
         filtered_none = store_with_three_docs.filter_by({"title": "does_not_exist"})
         assert len(filtered_none) == 0
 
-    def test_filter_by_limit_and_offset(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_filter_by_limit_and_offset(self, store_with_three_docs):
         filtered_limited = store_with_three_docs.filter_by({"title": "receipt"}, limit=1)
         assert len(filtered_limited) == 1
 
@@ -73,7 +77,8 @@ class VectorStoreTestKit:
         assert len(filtered_offset) == 1
         assert filtered_offset[0]["text"] == "A second receipt with different details"
 
-    def test_query_with_filter_title_org_chart(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_query_with_filter_title_org_chart(self, store_with_three_docs):
         query_text = "CEO reports to?"
         results = store_with_three_docs.query(query_text)
         assert len(results) >= 1
@@ -85,33 +90,39 @@ class VectorStoreTestKit:
         assert results[0]["metadata"]["title"] == "org_chart"
         assert "CEO" in results[0]["text"]
 
-    def test_query_1_threshold(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_query_1_threshold(self, store_with_three_docs):
         text = "Food: $10, Drinks: $5, Total: $15"
         metadata = {"title": "receipt", "department": "accounting"}
         stored_embedding_text = store_with_three_docs._join_text_and_metadata(text, metadata)
         results = store_with_three_docs.query(stored_embedding_text, threshold=0.99)
         assert len(results) == 1
 
-    def test_query_empty_store(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_query_empty_store(self, empty_store):
         results = empty_store.query("some query")
         assert results == []
 
-    def test_filter_empty_store(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_filter_empty_store(self, empty_store):
         filtered = empty_store.filter_by({"key": "value"})
         assert filtered == []
 
-    def test_delete_empty_store(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_delete_empty_store(self, empty_store):
         empty_store.delete([1, 2, 3])
         results = empty_store.query("some query")
         assert results == []
 
-    def test_delete_empty_list(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_delete_empty_list(self, store_with_three_docs):
         original_count = len(store_with_three_docs.filter_by({}))
         store_with_three_docs.delete([])
         after_count = len(store_with_three_docs.filter_by({}))
         assert original_count == after_count
 
-    def test_delete_specific_ids(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_delete_specific_ids(self, store_with_three_docs):
         all_docs = store_with_three_docs.filter_by({})
         target_id = all_docs[0]["id"]
         store_with_three_docs.delete([target_id])
@@ -120,23 +131,26 @@ class VectorStoreTestKit:
         remaining_ids = [doc["id"] for doc in remaining_docs]
         assert target_id not in remaining_ids
 
-    def test_clear_store(self, store_with_three_docs):
+    @pytest.mark.asyncio
+    async def test_clear_store(self, store_with_three_docs):
         store_with_three_docs.clear()
         results = store_with_three_docs.filter_by({})
         assert len(results) == 0
 
-    def test_add_docs_without_metadata(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_add_docs_without_metadata(self, empty_store):
         items = [
             {"text": "Document one with no metadata"},
             {"text": "Document two with no metadata"},
         ]
-        ids = empty_store.add(items)
+        ids = await empty_store.add(items)
         assert len(ids) == 2
 
         results = empty_store.query("Document one")
         assert len(results) > 0
 
-    def test_add_docs_with_nonstring_metadata(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_add_docs_with_nonstring_metadata(self, empty_store):
         items = [
             {
                 "text": "Doc with int metadata",
@@ -147,12 +161,13 @@ class VectorStoreTestKit:
                 "metadata": {"tags": ["foo", "bar"]},
             },
         ]
-        empty_store.add(items)
+        await empty_store.add(items)
 
         results = empty_store.filter_by({})
         assert len(results) == 2
 
-    def test_add_long_text_chunking(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_add_long_text_chunking(self, empty_store):
         """
         Verifies that adding a document with text longer than `chunk_size` is chunked properly.
         """
@@ -167,13 +182,14 @@ class VectorStoreTestKit:
                 "metadata": {"title": "long_document"},
             }
         ]
-        ids = empty_store.add(items)
+        ids = await empty_store.add(items)
 
         # Should have multiple chunks, hence multiple IDs
         # (The exact number depends on chunk_size & text length.)
         assert len(ids) > 1, "Expected more than one chunk/ID due to forced chunking"
 
-    def test_query_long_text_chunking(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_query_long_text_chunking(self, empty_store):
         """
         Verifies querying a store containing a large text still returns sensible results.
         """
@@ -186,7 +202,7 @@ class VectorStoreTestKit:
                 "metadata": {"title": "very_large_document"},
             }
         ]
-        empty_store.add(items)
+        await empty_store.add(items)
 
         # Query for a word we know is in the text.
         # Not a perfect test since this is a mocked embedding, but ensures no errors.
@@ -200,7 +216,8 @@ class VectorStoreTestKit:
             "Expected the big doc chunk to show up in the results"
         )
 
-    def test_add_multiple_large_documents(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_add_multiple_large_documents(self, empty_store):
         """
         Verifies behavior when multiple large documents are added.
         """
@@ -220,7 +237,7 @@ class VectorStoreTestKit:
             },
         ]
 
-        ids = empty_store.add(items)
+        ids = await empty_store.add(items)
         # At least more than 2 chunks, since each doc is forced to chunk
         assert len(ids) > 2, "Expected more than 2 chunks total for two large docs"
 
@@ -238,30 +255,32 @@ class VectorStoreTestKit:
         found_doc1 = any("large_document_1" in r["metadata"].get("title", "") for r in results)
         assert found_doc1, "Expected to find at least one chunk belonging to doc1"
 
-    def test_upsert_new_item(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_new_item(self, empty_store):
         """
         Verifies that upsert adds a new item when it doesn't exist.
         """
         item = {"text": "A new document", "metadata": {"source": "test"}}
-        ids = empty_store.upsert([item])
+        ids = await empty_store.upsert([item])
         assert len(ids) == 1, "Should add one item"
 
         results = empty_store.query("A new document")
         assert len(results) == 1, "Should be able to query the added item"
         assert results[0]["metadata"]["source"] == "test", "Metadata should match"
 
-    def test_upsert_skip_duplicate(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_skip_duplicate(self, empty_store):
         """
         Verifies that upsert skips items with high similarity and matching metadata.
         """
         # Add initial item
         item1 = {"text": "Hello world!", "metadata": {"source": "greeting"}}
-        ids1 = empty_store.upsert([item1])
+        ids1 = await empty_store.upsert([item1])
         assert len(ids1) == 1, "Should add one item"
 
         # Try to add same item again - should be skipped
         item2 = {"text": "Hello world!", "metadata": {"source": "greeting"}}
-        ids2 = empty_store.upsert([item2])
+        ids2 = await empty_store.upsert([item2])
         assert len(ids2) == 1, "Should return one ID"
         assert ids2[0] == ids1[0], "Should return the same ID as before"
 
@@ -269,18 +288,19 @@ class VectorStoreTestKit:
         all_docs = empty_store.filter_by({})
         assert len(all_docs) == 1, "Should still have only one item"
 
-    def test_upsert_add_with_different_metadata(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_add_with_different_metadata(self, empty_store):
         """
         Verifies that upsert adds items with similar text but different metadata.
         """
         # Add initial item
         item1 = {"text": "Hello universe!", "metadata": {"source": "greeting1"}}
-        ids1 = empty_store.upsert([item1])
+        ids1 = await empty_store.upsert([item1])
         assert len(ids1) == 1, "Should add one item"
 
         # Add similar item but with different metadata
         item2 = {"text": "Hello universe!", "metadata": {"source": "greeting2"}}
-        ids2 = empty_store.upsert([item2])
+        ids2 = await empty_store.upsert([item2])
         assert len(ids2) == 1, "Should add one item"
         assert ids2[0] != ids1[0], "Should have a different ID"
 
@@ -288,7 +308,8 @@ class VectorStoreTestKit:
         all_docs = empty_store.filter_by({})
         assert len(all_docs) == 2, "Should have two items"
 
-    def test_upsert_multiple_items(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_multiple_items(self, empty_store):
         """
         Verifies that upsert handles multiple items correctly.
         """
@@ -297,7 +318,7 @@ class VectorStoreTestKit:
             {"text": "Item one", "metadata": {"id": 1}},
             {"text": "Item two", "metadata": {"id": 2}},
         ]
-        ids1 = empty_store.upsert(items1)
+        ids1 = await empty_store.upsert(items1)
         assert len(ids1) == 2, "Should add two items"
 
         # Try to add a mix of duplicate and new items
@@ -305,7 +326,7 @@ class VectorStoreTestKit:
             {"text": "Item one", "metadata": {"id": 1}},  # Duplicate
             {"text": "Item three", "metadata": {"id": 3}},  # New
         ]
-        ids2 = empty_store.upsert(items2)
+        ids2 = await empty_store.upsert(items2)
         assert len(ids2) == 2, "Should return two IDs"
         assert ids2[0] == ids1[0], "First ID should be the same as before"
         assert ids2[1] != ids1[1], "Second ID should be different"
@@ -314,14 +335,15 @@ class VectorStoreTestKit:
         all_docs = empty_store.filter_by({})
         assert len(all_docs) == 3, "Should have three items total"
 
-    def test_upsert_with_additional_metadata(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_with_additional_metadata(self, empty_store):
         """
         Verifies that upsert correctly handles adding items with identical text
         but with additional metadata fields.
         """
         # Add initial item with minimal metadata
         item1 = {"text": "Hello Python world!", "metadata": {"language": "python"}}
-        ids1 = empty_store.upsert([item1])
+        ids1 = await empty_store.upsert([item1])
         assert len(ids1) == 1, "Should add one item"
 
         # Query to verify initial content
@@ -338,7 +360,7 @@ class VectorStoreTestKit:
                 "purpose": "test"      # Additional field
             }
         }
-        ids2 = empty_store.upsert([item2])
+        ids2 = await empty_store.upsert([item2])
         assert len(ids2) == 1, "Should return one ID"
 
         # Should be treated as an update, not a new item
@@ -350,7 +372,8 @@ class VectorStoreTestKit:
         assert "version" in updated_item["metadata"], "Should have updated with new metadata fields"
         assert updated_item["metadata"]["version"] == "3.9", "New metadata value should be present"
 
-    def test_upsert_with_exact_same_content(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_with_exact_same_content(self, empty_store):
         """
         Verifies that upsert doesn't create duplicates when adding the exact same
         text and metadata multiple times.
@@ -359,9 +382,9 @@ class VectorStoreTestKit:
         item = {"text": "print('Hello!')", "metadata": {"language": "py"}}
 
         # Upsert multiple times with identical content
-        ids1 = empty_store.upsert([item])
-        ids2 = empty_store.upsert([item])
-        ids3 = empty_store.upsert([item])
+        ids1 = await empty_store.upsert([item])
+        ids2 = await empty_store.upsert([item])
+        ids3 = await empty_store.upsert([item])
 
         assert len(ids1) == 1, "Should add one item on first upsert"
         assert len(ids2) == 1, "Should return one ID on second upsert"
@@ -375,7 +398,8 @@ class VectorStoreTestKit:
         all_docs = empty_store.filter_by({})
         assert len(all_docs) == 1, "Should have only one item after multiple upserts of same content"
 
-    def test_upsert_with_removed_metadata(self, empty_store):
+    @pytest.mark.asyncio
+    async def test_upsert_with_removed_metadata(self, empty_store):
         """
         Verifies that upsert correctly handles removing metadata keys.
         """
@@ -388,7 +412,7 @@ class VectorStoreTestKit:
                 "key3": "value3"
             }
         }
-        ids1 = empty_store.upsert([item1])
+        ids1 = await empty_store.upsert([item1])
         assert len(ids1) == 1, "Should add one item"
 
         # Verify initial state
@@ -406,7 +430,7 @@ class VectorStoreTestKit:
                 # key3 is removed
             }
         }
-        ids2 = empty_store.upsert([item2])
+        ids2 = await empty_store.upsert([item2])
         assert len(ids2) == 1, "Should return one ID"
         assert ids2[0] == ids1[0], "Should return the same ID as before"
 
