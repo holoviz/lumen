@@ -15,14 +15,6 @@ Determine if a tool will help an actor complete its task by evaluating:
 - Contains potentially misleading or irrelevant data
 {% endblock %}
 
-{% block context %}
-Task: {{ actor_task }}
-Actor: {{ actor_name }} | Purpose: {{ actor_purpose }}
-Tool: {{ tool_name }} | Purpose: {{ tool_purpose }}
-{% if tool_output %}
-Output: """{{ tool_output }}"""
-{%- endif -%}
-{%- endblock %}
 {%- block examples %}
 # Examples
 
@@ -39,3 +31,12 @@ Actor: Planner | Purpose: "Develops plan to solve user query step-by-step"
 Tool: DbtslLookup | Purpose: "Looks up dbt semantic layer metrics"
 -> YES (provides metric information directly related to the query)
 {% endblock %}
+
+{% block context %}
+Task: {{ actor_task }}
+Actor: {{ actor_name }} | Purpose: {{ actor_purpose }}
+Tool: {{ tool_name }} | Purpose: {{ tool_purpose }}
+{% if tool_output %}
+Output: """{{ tool_output }}"""
+{%- endif -%}
+{%- endblock %}
