@@ -11,11 +11,11 @@ As the expert of vega-lite, generate the plot the user requested as a vega-lite 
 - No `marks` at same level as `layer`/`concat`
 
 # ENCODING BEST PRACTICES
-- Choose marks by goal: bar (comparison), line (trends), point (distribution/correlation), area (composition)
+- Choose marks by goal: horizontal bar (comparison), line (trends), point (distribution/correlation), area (composition)
 - Encoding priority: position → color → size → shape
 - Dense data: use opacity, bin, jitter, or aggregate
 - Format numbers with `format: .Nf` for N decimal places
-- Sort categorical variables (use `sort: y` (on the value field) and if text is available, place on the text)
+- Sort categorical variables (use `sort: y` (on the value field) and if text is available, place in both encodings)
 
 # DATA HANDLING
 - Year ints/floats: (e.g. 2020 or 1984.0), choose type: quantitative if length > 10 or type: ordinal if length <= 10
