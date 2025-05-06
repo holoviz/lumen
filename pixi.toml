@@ -61,6 +61,8 @@ openai = "*"
 pyarrow = "*"
 pydantic = ">=2.8.0"
 pydantic-extra-types = "*"
+semchunk = "*"
+tiktoken = "*"
 
 [feature.ai-local.dependencies]
 huggingface_hub = "*"

@@ -1,16 +1,15 @@
 {%- block instructions -%}
 Create a concise context description (15-20 words) for this document chunk that:
-1. Uses abbreviated terms where possible (docs, ref, info, etc.)
-2. Precisely identifies the document source/type
-3. Describes the chunk's specific content
-4. Resolves ambiguous references
+1. Uses a prefix based on the document's file path or source type (e.g., "Panel docs:", "Textual docs:", "API ref:")
+2. If previous context exists, use the same prefix style for consistency
+3. Uses abbreviated terms where possible (docs, ref, info, etc.)
+4. Describes the chunk's specific content
+5. Resolves ambiguous references
 
 Use shorthand and terse phrasing while maintaining critical information.
 {%- endblock -%}
 
-{%- block examples %}
-# Examples
-
+{%- block examples -%}
 Don't do this:
 Document: HoloViews integration guide
 Chunk: "To link a HoloViews plot with Panel widgets, use the pn.bind method."
@@ -24,7 +23,7 @@ Response: "ACME Q2'23 report: 3% revenue growth vs Q1'23."
 Example 2:
 Document: Panel Developer Experience Best Practices
 Chunk: "Be sure to bind obj.param.{parameter} (the Parameter object), not just {parameter} (the current Parameter value)."
-Response: "Panel dev best practices: binding to Parameter objects (obj.param.parameter) instead of values for reactive updates."
+Response: "Dev docs: binding to Parameter objects (obj.param.parameter) instead of values for reactive updates."
 
 Example 3:
 Document: HoloViews User Guide - Customization
@@ -37,24 +36,21 @@ def hook(plot, element):
 
 hv.Curve([1, 2, 3]).opts(hooks=[hook])
 ```
-Response: "HoloViews docs: plot hooks for low-level backend customization that HoloViews doesn't expose directly to customize the x and y axis labels' colors."
-
-Example 4:
-Document: Climate impact assessment on agriculture
-Chunk: "They found yields decreased by 17% compared to the control group."
-Response: "Climate impact study: crop yields decreased 17% vs control in drought conditions."
+Response: "HoloViews docs: plot hooks for low-level backend customization to modify axis label colors."
 {%- endblock -%}
 
-{%- block context %}
+{%- block context -%}
 # Full Document
-
-"""
 {{ document }}
-"""
-{% if metadata %}
-Metadata:
+{% endblock %}
+
+{% if previous_context %}
+# Previous Chunk Context
+{{ previous_context }}
+{% endif %}
+
+# Metadata
 {% for key, value in metadata.items() %}
 - {{ key }}: {{ value }}
 {% endfor %}
-{% endif %}
-{%- endblock %}
+{% endblock %}

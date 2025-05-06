@@ -12,7 +12,7 @@ STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORE
 
 class Embeddings(param.Parameterized):
     @abstractmethod
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts."""
 
 
@@ -27,7 +27,7 @@ class NumpyEmbeddings(Embeddings):
 
     :Example:
     >>> embeddings = NumpyEmbeddings()
-    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
     embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
@@ -49,7 +49,7 @@ class NumpyEmbeddings(Embeddings):
         text = re.sub(r"\W+", "", text.lower())
         return [text[i : i + n] for i in range(len(text) - n + 1)]
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
         for text in texts:
             text = STOP_WORDS_RE.sub("", text)
@@ -74,7 +74,7 @@ class OpenAIEmbeddings(Embeddings):
 
     :Example:
     >>> embeddings = OpenAIEmbeddings()
-    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
     api_key = param.String(default=None, doc="The OpenAI API key.")
@@ -85,13 +85,13 @@ class OpenAIEmbeddings(Embeddings):
 
     def __init__(self, **params):
         super().__init__(**params)
-        from openai import OpenAI
+        from openai import AsyncOpenAI
 
-        self.client = OpenAI(api_key=self.api_key)
+        self.client = AsyncOpenAI(api_key=self.api_key)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         texts = [text.replace("\n", " ").strip() for text in texts]
-        response = self.client.embeddings.create(input=texts, model=self.model)
+        response = await self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
 
 
@@ -101,7 +101,7 @@ class AzureOpenAIEmbeddings(Embeddings):
 
     :Example:
     >>> embeddings = AzureOpenAIEmbeddings()
-    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
     api_key = param.String(doc="The Azure API key.")
 
@@ -115,17 +115,17 @@ class AzureOpenAIEmbeddings(Embeddings):
 
     def __init__(self, **params):
         super().__init__(**params)
-        from openai import AzureOpenAI
+        from openai import AsyncAzureOpenAI
 
-        self.client = AzureOpenAI(
+        self.client = AsyncAzureOpenAI(
             api_key=self.api_key,
             api_version=self.api_version,
             azure_endpoint=self.provider_endpoint,
         )
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         texts = [text.replace("\n", " ") for text in texts]
-        response = self.client.embeddings.create(input=texts, model=self.model)
+        response = await self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
 
 
@@ -136,7 +136,7 @@ class HuggingFaceEmbeddings(Embeddings):
 
     :Example:
     >>> embeddings = HuggingFaceEmbeddings()
-    >>> embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
     device = param.String(default="cpu", doc="Device to run the model on (e.g., 'cpu' or 'cuda').")
 
@@ -150,7 +150,7 @@ class HuggingFaceEmbeddings(Embeddings):
         self._model = AutoModel.from_pretrained(self.model).to(self.device)
         self.embedding_dim = self._model.config.hidden_size
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         import torch
         texts = [text.replace("\n", " ") for text in texts]
         inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(self.device)
