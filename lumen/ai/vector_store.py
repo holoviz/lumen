@@ -57,6 +57,14 @@ class VectorStore(LLMUser):
         default=1024, doc="Maximum size of text chunks to split documents into."
     )
 
+    chunk_tokenizer = param.String(
+        default="gpt-4o-mini",
+        doc="""
+        If using the default chunk_func, the tokenizer used to split documents into chunks.
+        Must be a valid tokenizer name from the transformers or tiktoken library.
+        Otherwise, please pass in a custom chunk_func.""",
+    )
+
     embeddings = param.ClassSelector(
         class_=Embeddings,
         default=NumpyEmbeddings(),
@@ -79,7 +87,7 @@ class VectorStore(LLMUser):
         super().__init__(**params)
         if self.chunk_func is None:
             self.chunk_func = semchunk.chunkerify(
-                "gpt-4o-mini", chunk_size=self.chunk_size
+                self.chunk_tokenizer, chunk_size=self.chunk_size
             )
 
     def _format_metadata_value(self, value) -> str:
