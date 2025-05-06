@@ -5,26 +5,6 @@ You are an agent responsible for creating dbt Semantic Layer query parameters th
 Try not to take the query too literally, but instead focus on the user's intent and the business metrics required.
 {% endblock -%}
 
-{% block context -%}
-Checklist:
-- Only use metrics and dimensions explicitly available in the dbt Semantic Layer.
-- If referencing a dimension in the WHERE clause, be sure the dimension is also included in the GROUP BY clause.
-- When using time dimensions, always specify both the dimension name and granularity: `dimension_name__granularity`.
-- Always include a limit (default to 10000 if not specified) to avoid excessive data return.
-- For time filtering, use SQL date functions like `date_trunc('year', metric_time__month)`.
-
-{{ tool_context | default('') }}
-
-{% if memory["dbtsl_metaset"] %}
-# Available Metrics and Dimensions
-{{ memory["dbtsl_metaset"] }}
-{% endif %}
-
-{% if "dbtsl_query_params" in memory %}
-# Previous dbt Semantic Layer query parameters
-{{ memory["dbtsl_query_params"] }}
-{% endif %}
-{%- endblock -%}
 
 {%- block examples %}
 # Examples
@@ -57,3 +37,24 @@ Checklist:
 `invalid identifier` might indicate you left out the time granularity or forgot to include it in group_by, i.e. metric_time -> metric_time__month"
 {% endif %}
 {% endblock -%}
+
+{% block context -%}
+Checklist:
+- Only use metrics and dimensions explicitly available in the dbt Semantic Layer.
+- If referencing a dimension in the WHERE clause, be sure the dimension is also included in the GROUP BY clause.
+- When using time dimensions, always specify both the dimension name and granularity: `dimension_name__granularity`.
+- Always include a limit (default to 10000 if not specified) to avoid excessive data return.
+- For time filtering, use SQL date functions like `date_trunc('year', metric_time__month)`.
+
+{{ tool_context | default('') }}
+
+{% if memory["dbtsl_metaset"] %}
+# Available Metrics and Dimensions
+{{ memory["dbtsl_metaset"] }}
+{% endif %}
+
+{% if "dbtsl_query_params" in memory %}
+# Previous dbt Semantic Layer query parameters
+{{ memory["dbtsl_query_params"] }}
+{% endif %}
+{%- endblock -%}

@@ -120,7 +120,13 @@ class UI(Viewer):
 
     vector_store = param.ClassSelector(
         class_=VectorStore, default=None, doc="""
-        The vector store to use for the tools. If not provided, a new one will be created
+        The vector store to use for tools unrelated to documents. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
+
+    document_vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for document-related tools. If not provided, a new one will be created
         or inferred from the tools provided."""
     )
 
@@ -163,6 +169,7 @@ class UI(Viewer):
             logs_db_path=self.logs_db_path,
             within_ui=True,
             vector_store=self.vector_store,
+            document_vector_store=self.document_vector_store,
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(

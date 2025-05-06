@@ -18,26 +18,6 @@ unexpected results.
 Keep your response under three paragraphs top, unless elaboration is requested.
 {% endblock %}
 
-{% block context %}
-Here was the plan that was executed:
-"""
-{{ memory.reasoning }}
-"""
-
-Here is the current dataset:
-{{ memory.data }}
-
-{% if 'sql' in memory %}
-Here is the current SQL query:
-```sql
-{{ memory.sql }}
-```
-{%- endif -%}
-{%- if memory.data|length == 0 -%}
-The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
-and try to make educated guess what other columns or values should be used instead.
-{%- endif -%}
-{%- endblock -%}
 {%- block examples -%}
 {%- if memory.data|length == 0 -%}
 Here's an example of a good reply...
@@ -103,3 +83,24 @@ warranting immediate investigation. The unusual December retention dip across al
 collection issue or seasonal effect that requires validation before making strategic decisions.
 {%- endif -%}
 {%- endblock %}
+
+{% block context %}
+Here was the plan that was executed:
+"""
+{{ memory.reasoning }}
+"""
+
+Here is the current dataset:
+{{ memory.data }}
+
+{% if 'sql' in memory %}
+Here is the current SQL query:
+```sql
+{{ memory.sql }}
+```
+{%- endif -%}
+{%- if memory.data|length == 0 -%}
+The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
+and try to make educated guess what other columns or values should be used instead.
+{%- endif -%}
+{%- endblock -%}

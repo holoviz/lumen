@@ -20,7 +20,7 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import (
-    YesNo, make_columns_selection, make_iterative_selection_model,
+    ThinkingYesNo, make_columns_selection, make_iterative_selection_model,
     make_refined_query_model,
 )
 from .schemas import (
@@ -101,7 +101,7 @@ class ToolUser(Actor):
                     tool.interface = self.interface or params.get("interface")
 
                 # Apply any additional configuration from subclasses
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools or prompt_tools, **params)
                 for key, value in tool_kwargs.items():
                     if key not in ('llm', 'interface') and hasattr(tool, key):
                         setattr(tool, key, value)
@@ -109,18 +109,18 @@ class ToolUser(Actor):
                 instantiated_tools.append(tool)
             elif isinstance(tool, FunctionType):
                 # Function tools only get basic kwargs
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools or prompt_tools, **params)
                 instantiated_tools.append(FunctionTool(tool, **tool_kwargs))
             else:
                 # For classes that need to be instantiated
-                tool_kwargs = self._get_tool_kwargs(tool, prompt_tools, **params)
+                tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools or prompt_tools, **params)
                 instantiated_tools.append(tool(**tool_kwargs))
-
         return instantiated_tools
 
     async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
         tools_context = ""
-        for tool in self._tools.get(prompt_name, []):
+        # TODO: INVESTIGATE WHY or self.tools is needed
+        for tool in self._tools.get(prompt_name, []) or self.tools:
             if all(requirement in self._memory for requirement in tool.requires):
                 with tool.param.update(memory=self.memory):
                     tool_context = await tool.respond(messages)
@@ -133,6 +133,12 @@ class VectorLookupToolUser(ToolUser):
     """
     VectorLookupToolUser is a mixin class for actors that use vector lookup tools.
     """
+
+    document_vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for document tools. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
 
     vector_store = param.ClassSelector(
         class_=VectorStore, default=None, doc="""
@@ -161,16 +167,43 @@ class VectorLookupToolUser(ToolUser):
         # Get base kwargs from parent
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
-        # Find vector store from tools if any
+        # If the tool is already instantiated and has a vector_store, use it
+        if isinstance(tool, VectorLookupTool) and tool.vector_store is not None:
+            return kwargs
+        elif tool._item_type_name == "document" and self.document_vector_store is not None:
+            kwargs["vector_store"] = self.document_vector_store
+            return kwargs
+        elif self.vector_store is not None:
+            kwargs["vector_store"] = self.vector_store
+            return kwargs
+
         vector_store = next(
             (t.vector_store for t in prompt_tools
              if isinstance(t, VectorLookupTool)),
             None
-        ) or self.vector_store or params.get("vector_store")
-
+        )
+        # Only inherit vector_store if the _item_type_name is the same
         if hasattr(tool, "vector_store") and vector_store is not None:
-            kwargs["vector_store"] = vector_store
+            # Find the source tool that provided the vector_store
+            source_tool = next(
+                (t for t in prompt_tools
+                 if isinstance(t, VectorLookupTool) and hasattr(t, "vector_store")
+                 and t.vector_store is vector_store),
+                None
+            )
 
+            # Get item types for comparison
+            # Handle both class types and instances
+            tool_item_type = getattr(tool, "_item_type_name", None)
+            source_item_type = getattr(source_tool, "_item_type_name", None) if source_tool else None
+
+            # Only set vector_store if item types match (e.g., IterativeTableLookup and TableLookup both use "tables")
+            # or if either doesn't specify a type (None)
+            if tool_item_type is None or source_item_type is None or tool_item_type == source_item_type:
+                kwargs["vector_store"] = vector_store
+        else:
+            # default to NumpyVectorStore if not provided
+            kwargs["vector_store"] = NumpyVectorStore()
         return kwargs
 
 
@@ -198,10 +231,10 @@ class VectorLookupTool(Tool):
     enable_query_refinement = param.Boolean(default=True, doc="""
         Whether to enable query refinement for improving search results.""")
 
-    min_similarity = param.Number(default=0.05, doc="""
+    min_similarity = param.Number(default=0.3, doc="""
         The minimum similarity to include a document.""")
 
-    n = param.Integer(default=10, bounds=(1, None), doc="""
+    n = param.Integer(default=5, bounds=(1, None), doc="""
         The number of document results to return.""")
 
     prompts = param.Dict(
@@ -216,19 +249,19 @@ class VectorLookupTool(Tool):
             },
             "should_refresh_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
             "should_refresh_tables": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_refresh_tables.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
             "should_select_columns": {
                 "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
             "main": {
                 "template": PROMPTS_DIR / "DbtslLookup" / "main.jinja2",
-                "response_model": YesNo,
+                "response_model": ThinkingYesNo,
             },
         },
         doc="Dictionary of available prompts for the tool."
@@ -247,7 +280,7 @@ class VectorLookupTool(Tool):
         Vector store object which is queried to provide additional context
         before responding.""")
 
-    _item_type_name: str = "items"
+    _item_type_name: str = None
 
     __abstract = True
 
@@ -348,10 +381,11 @@ class VectorLookupTool(Tool):
         iteration = 0
 
         filters = kwargs.pop("filters", {})
-        if "type" not in filters:
+        if self._item_type_name and "type" not in filters:
             filters["type"] = self._item_type_name
         kwargs["filters"] = filters
-        results = self.vector_store.query(query, top_k=self.n, **kwargs)
+        results = await self.vector_store.query(query, top_k=self.n, **kwargs)
+
         # check if all metadata is the same; if so, skip
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
@@ -382,7 +416,7 @@ class VectorLookupTool(Tool):
                     break
 
                 current_query = refined_query
-                new_results = self.vector_store.query(refined_query, top_k=self.n, **kwargs)
+                new_results = await self.vector_store.query(refined_query, top_k=self.n, **kwargs)
                 new_best_similarity = max([result.get('similarity', 0) for result in new_results], default=0)
 
                 improvement = new_best_similarity - best_similarity
@@ -417,6 +451,40 @@ class VectorLookupTool(Tool):
                 stream_details(f"Final query after {iteration} iterations: '{final_query}' with similarity {best_similarity:.3f}\n", step, auto=False)
 
         return best_results
+
+    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
+        """
+        Respond to a user query using the vector store.
+
+        Parameters
+        ----------
+        messages: list[Message]
+            The user query and any additional context
+        **kwargs: Any
+            Additional arguments for the response
+
+        Returns
+        -------
+        str
+            The response from the vector store
+        """
+        query = messages[-1]["content"]
+
+        # Perform search with refinement
+        results = await self._perform_search_with_refinement(query)
+        closest_doc_chunks = [
+            f"{result['text']} (Relevance: {result['similarity']:.1f} - "
+            f"Metadata: {result['metadata']})"
+            for result in results
+            if result['similarity'] >= self.min_similarity
+        ]
+
+        if not closest_doc_chunks:
+            return ""
+
+        message = "Please augment your response with the following context if relevant:\n"
+        message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
+        return message
 
 
 class DocumentLookup(VectorLookupTool):
@@ -493,7 +561,7 @@ class DocumentLookup(VectorLookupTool):
 
         # Make a single upsert call with all documents
         if items_to_upsert:
-            self.vector_store.upsert(items_to_upsert)
+            await self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: Any) -> str:
         query = messages[-1]["content"]
@@ -558,6 +626,12 @@ class TableLookup(VectorLookupTool):
 
     max_concurrent = param.Integer(default=1, doc="""
         Maximum number of concurrent metadata fetch operations.""")
+
+    min_similarity = param.Number(default=0.05, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=10, bounds=(1, None), doc="""
+        The number of document results to return.""")
 
     sync_sources = param.Boolean(default=True, doc="""
         Whether to automatically sync newly added data sources to the vector store.""")
@@ -695,7 +769,7 @@ class TableLookup(VectorLookupTool):
                     task = asyncio.create_task(self._enrich_metadata(source, table))
                     tasks.append(task)
             else:
-                self.vector_store.upsert([
+                await self.vector_store.upsert([
                     {"text": table_name, "metadata": {"source": source.name, "table_name": table_name, "type": "table"}}
                     for table_name in tables
                 ])
@@ -712,7 +786,7 @@ class TableLookup(VectorLookupTool):
         ]
         if enriched_entries:
             log_debug(f"Enriching {len(enriched_entries)} table metadata entries.")
-            self.vector_store.upsert(enriched_entries)
+            await self.vector_store.upsert(enriched_entries)
         log_debug("All table metadata tasks completed.")
         self._ready = True
 
@@ -1247,7 +1321,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
         # Make a single upsert call with all metrics
         if items_to_upsert:
-            self.vector_store.upsert(items_to_upsert)
+            await self.vector_store.upsert(items_to_upsert)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """

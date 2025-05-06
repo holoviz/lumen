@@ -1,0 +1,24 @@
+{%- block instructions -%}
+Determine if this chunk needs a contextual description ("situating").
+
+A chunk needs situating when it:
+- Contains ambiguous pronouns (it, they, this, these)
+- References entities or concepts not defined in the chunk
+- Would be confusing when read in isolation
+
+Respond yes if this chunk needs context to be understood, no if it's self-contained.
+{%- endblock -%}
+
+{%- block examples -%}
+Example 1:
+Chunk: "The company's revenue grew by 3% over the previous quarter."
+Response:
+chain_of_thought: This chunk contains an ambiguous reference to "the company" without identifying which one.
+yes: true
+
+Example 2:
+Chunk: "ACME Q2'23 report: 3% revenue growth vs Q1'23"
+Response:
+chain_of_thought: This chunk is self-contained with specific entity (ACME) and timeframe (Q2'23, Q1'23).
+yes: false
+{%- endblock -%}
