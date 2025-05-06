@@ -302,7 +302,7 @@ class LlamaCpp(Llm):
 
         model_kwargs = self.model_kwargs["default"]
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            return super()._get_model_kwargs(model_kwargs)
+            model_kwargs = super()._get_model_kwargs(model_kwargs)
         else:
             repo, model_spec = model_spec.rsplit("/", 1)
             if ":" in model_spec:
