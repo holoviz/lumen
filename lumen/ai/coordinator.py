@@ -526,7 +526,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if isinstance(self.llm, LlamaCpp):
                 with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
-                    step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
+                    if 'repo' in default_kwargs and 'model_file' in default_kwargs:
+                        step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
+                    elif 'model_path' in default_kwargs:
+                        step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
 
             # TODO INVESTIGATE
@@ -836,7 +839,7 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
         unmet_dependencies: set[str],
         previous_actors: list[str],
-        previous_plans: str,
+        previous_plans: list,
         reason_model: type[BaseModel],
         plan_model: type[BaseModel],
         step: ChatStep,

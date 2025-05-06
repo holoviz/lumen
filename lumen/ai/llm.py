@@ -302,7 +302,7 @@ class LlamaCpp(Llm):
 
         model_kwargs = self.model_kwargs["default"]
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            return super()._get_model_kwargs(model_kwargs)
+            model_kwargs = super()._get_model_kwargs(model_kwargs)
         else:
             repo, model_spec = model_spec.rsplit("/", 1)
             if ":" in model_spec:
@@ -358,8 +358,8 @@ class LlamaCpp(Llm):
             return client_callable
         if 'repo' in model_kwargs:
             from huggingface_hub import hf_hub_download
-            repo = model_kwargs.pop('repo', model_kwargs.get('repo_id'))
-            model_file = model_kwargs.pop('model_file')
+            repo = model_kwargs.get('repo', model_kwargs.get('repo_id'))
+            model_file = model_kwargs.get('model_file')
             model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
         elif 'model_path' in model_kwargs:
             model_path = model_kwargs['model_path']
@@ -376,8 +376,8 @@ class LlamaCpp(Llm):
             logits_all=False,
             use_mlock=True,
             verbose=False,
-            **model_kwargs
         )
+        llm_kwargs.update(model_kwargs)
         client_callable = await asyncio.to_thread(self._cache_model, model_spec, mode=mode, **llm_kwargs)
         return client_callable
 
