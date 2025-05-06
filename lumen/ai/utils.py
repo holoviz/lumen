@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import inspect
+import io
 import json
 import math
 import re
@@ -778,3 +779,40 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO) -> str:
+    """
+    Detects the given file object's encoding.
+
+    Parameters
+    ----------
+    file_obj : Path | io.BytesIO | io.StringIO
+        File object or path object to detect encoding.
+
+    Returns
+    -------
+    str
+    """
+    import chardet
+    encoding = ""
+
+    if isinstance(file_obj, str):
+        file_obj = Path(file_obj)
+
+    if isinstance(file_obj, Path):
+        with file_obj.open("rb") as f:
+            data = f.read()
+        detected_encoding = chardet.detect(data)
+        encoding = detected_encoding["encoding"]
+
+    if isinstance(file_obj, bytes):
+        detected_encoding = chardet.detect(file_obj)
+        encoding = detected_encoding["encoding"]
+
+    if encoding == "ISO-8859-1":
+        encoding = "latin-1"
+    if encoding.lower() == "ascii":
+        encoding = "utf-8"
+
+    return encoding.lower()

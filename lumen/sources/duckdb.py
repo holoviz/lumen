@@ -263,7 +263,7 @@ class DuckDBSource(BaseSQLSource):
                 continue
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
             try:
-                self._execute_with_encoding(sql_query=table_expr)
+                self._connection.execute(sql_query=table_expr)
             except duckdb.CatalogException as e:
                 pattern = r"Table with name\s(\S+)"
                 match = re.search(pattern, str(e))
@@ -271,20 +271,13 @@ class DuckDBSource(BaseSQLSource):
                     name = match.group(1)
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
                     table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
-                    self._execute_with_encoding(sql_query=table_expr)
+                    self._connection.execute(sql_query=table_expr)
                 else:
                     raise e
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
-        return self._execute_with_encoding(sql_query, *args, **kwargs).fetch_df()
-
-    def _execute_with_encoding(self, sql_query: str, *args, **kwargs):
-        try:
-            return self._connection.execute(sql_query)
-        except duckdb.InvalidInputException:
-            sql_query = self._add_encoding_to_read_csv(query=sql_query)
-            return self._connection.execute(sql_query)
+        return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
@@ -312,7 +305,7 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        rel = self._execute_with_encoding(sql_query=sql_expr)
+        rel = self._connection.execute(sql_query=sql_expr)
         has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
         df = rel.fetch_df(date_as_object=True)
         if has_geom:
@@ -325,22 +318,6 @@ class DuckDBSource(BaseSQLSource):
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
-
-    def _add_encoding_to_read_csv(self, query: str) -> str:
-        searches = None
-        if "READ_CSV" in query:
-            searches = re.search(pattern=r"READ_CSV\((.*?)\)", string=query)
-        elif "read_csv" in query:
-            searches = re.search(pattern=r"read_csv\((.*?)\)", string=query)
-
-        if hasattr(searches, "group") and searches is not None:
-            str_to_modify = searches.group(0)
-        else:
-            return query
-
-        modified_str = str_to_modify[:-1] + ", encoding='latin-1')"
-        new_query = query.replace(str_to_modify, modified_str)
-        return new_query
 
     def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
         """

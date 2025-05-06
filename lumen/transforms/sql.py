@@ -205,13 +205,21 @@ class SQLFormat(SQLTransform):
         str
             The formatted SQL query with all placeholders replaced.
         """
+        from sqlglot.expressions import ReadCSV
         sql_template = re.sub(r'\{(\w+)\}', r':\1', sql_in)
         expression = self.parse_sql(sql_template)
         if self.parameters:
-            parameters = {
-                k: Identifier(this=v, quoted=self.identify) if isinstance(v, str) else v
-                for k, v in self.parameters.items()
-            }
+            parameters = {}
+            for k, v in self.parameters.items():
+                if isinstance(v, str):
+                    parameters[k] = Identifier(this=v, quoted=self.identify)
+                else:
+                    from lumen.ai.utils import detect_file_encoding
+                    csv_file = v.this.this
+                    encoding = detect_file_encoding(file_obj=csv_file)
+                    updated_file = f"'{csv_file}', encoding='{encoding}'"
+                    v = ReadCSV(this=updated_file)
+                    parameters[k] = v
             replaced_expression = replace_placeholders(expression, **parameters)
         return self.to_sql(replaced_expression,)
 
