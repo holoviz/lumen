@@ -3,74 +3,78 @@
 {% block instructions %}
 As the expert of vega-lite, generate the plot the user requested as a vega-lite specification
 
-ESSENTIAL REQUIREMENTS:
-- Reference the table name, i.e. `data: name: <TABLE_NAME>`. Do not make up or copy data values.
-- Use the column names verbatim
-- Include tooltips by default: `"tooltips": true`
-- Include a human-readable, descriptive title, xlabel, ylabel, and legend
-- Do not include descriptions; they will be discarded
-- `marks` key must not be on the same level as the `layer` or `concat` keys
+# CORE REQUIREMENTS
+- Use `data: {name: TABLE_NAME}` - never invent data
+- Use exact column names from source
+- Include tooltips by default
+- Add clear title, axis labels, and legend titles
+- No `marks` at same level as `layer`/`concat`
 
-VISUALIZATION FUNDAMENTALS:
-- Choose marks based on analytical goal: horizontal bar (comparison), line (trends/tracks), point (distribution/correlation), area
-(composition)
-- Use position (x/y) for primary relationships, then color (categorical), size (quantitative), shape (≤6 categories)
-- Handle overplotting in dense visualizations: opacity, aggregation, binning, or jitter
+# ENCODING BEST PRACTICES
+- Choose marks by goal: horizontal bar (comparison), line (trends), point (distribution/correlation), area (composition)
+- Encoding priority: position → color → size → shape
+- Dense data: use opacity, bin, jitter, or aggregate
+- Format numbers with `format: .Nf` for N decimal places
+- Sort categorical variables (use `sort: y` (on the value field) and if text is available, place in both encodings)
 
-DATA HANDLING:
-- Years as numbers (2010, 2011): treat as quantitative, not temporal
-- Date formats ('2010-01'): use temporal type
-- Split date components: combine with `calculate: datetime(datum.Year, datum.Month - 1)`
-- Time encoding: select appropriate `timeUnit` granularity
-- Sorting: use "ascending"/"descending" or reference encoding (e.g., `sort: y` or `sort: -y`), especially for bar charts
-- Categorical variables: use `detail` for generation without visual channel, `facet` for moderate cardinality
-- Part-to-whole relationships: use `stack` with normalization when percentages matter more than values
+# DATA HANDLING
+- Year ints/floats: (e.g. 2020 or 1984.0), choose type: quantitative if length > 10 or type: ordinal if length <= 10
+- Date strings (e.g. 2020-01-01 or 19840308 14:00): type=temporal with appropriate timeUnit
+- Combine date fields: `calculate: datetime(datum.Year, datum.Month-1)`
+- Categorical: use `detail` or `facet` appropriately
+- Part-to-whole: use `stack` with normalization
 
-ANNOTATIONS & ENHANCEMENTS:
-- When creating visualizations, enhance your plots by strategically selecting additional columns that provide context and depth. Include meaningful categorical fields in tooltips for clarity on hover, while choosing appropriate variables for color, size, and shape encodings that reveal patterns in the data. Identify fields that support effective faceting or layering to show relationships, ensuring your visualization tells a complete and nuanced story rather than simply plotting the most obvious variables.
-- Add value labels directly on bars by creating a layered chart with text marks showing the precise values, adjusting domains to accommodate the labels, and ensuring proper text positioning relative to the bars
-- Use `text` marks with strategic positioning for key insights
-- Implement reference lines for benchmarks, averages, or thresholds
-- When showing uncertainty, incorporate `errorBar` or `errorBand` marks
-- For global maps include https://vega.github.io/vega-datasets/data/world-110m.json with `mercator` projection.
-- For US state-level additionally include https://vega.github.io/vega-lite/data/us-10m.json
-- Ensure the `domain` values are available in the data
+# ENHANCEMENTS
+- Add value labels via layered text marks; format to declutter
+- Use tooltips to show context variables
+- Include reference lines for benchmarks
+- Show uncertainty with errorBars/errorBands
+- For maps: use appropriate projections and boundary files
+- Prefer horizontal bar charts for categorical data
 
-SCALES & FORMATTING:
-- Choose scale types (`linear`, `log`, `symlog`, `sqrt`) based on data distribution
-- Color schemes: sequential (continuous), diverging (midpoint), categorical (nominal)
-- Format axes/legends for readability
-- For dual-axis: use separate scales with aligned axes
+# SCALES & FORMATTING
+- Scale by distribution: linear, log, symlog, sqrt
+- Color: sequential (continuous), diverging (midpoint), categorical
+- Format axes for readability
+- Dual-axis: use separate aligned scales
 {%- endblock %}
 {%- block examples %}
-Basic example:
+Example templates, where v=value field and c=category field
+
+Bar:
 ```yaml
 data:
-  name: <TABLE_NAME>
+  name: {table}
 layer:
   - encoding:
-    ...
-    mark:
-      ...
-```
-Facet example:
+      x: {field: v, type: quantitative, title: t.v}
+      y: {field: c, type: ordinal, title: t.c, sort: x}
+      tooltip:
+        - {field: c, type: ordinal, title: t.c}
+        - {field: v, type: quantitative, title: t.v, format: .{d}f}
+    mark: bar
+  - encoding:
+      text: {field: v, type: quantitative, format: .{d}f}
+      x: {field: v, type: quantitative}
+      y: {field: c, type: ordinal, sort: x}
+    mark: {type: text, align: left, dx: 5}
+title: {text: t.chart, fontSize: 16}
+
+Time series:
 ```yaml
-facet:
-  field: "..."
-  type: "ordinal"
-  columns: 2
-spec:
-  layer:
-    - mark: ...
-      encoding:
-        x: {...}
-        y: {...}
-        color: {...}
-    - mark: ...
-      encoding:
-        x: {...}
-        y: {...}
+...
+  - encoding:
+      x:
+        field: year
+        type: quantitative
+        axis: {"format": "0000"}
+      y:
+        field: v
+        type: quantitative
+...
 ```
+```
+
 {% endblock %}
 
 {% block errors %}
@@ -87,10 +91,8 @@ layer:
       format:
         feature: ...
         type: ...
-      url: ...
     mark:
       fill: ...
-      stroke: ...
       type: ...
   - mark:
       type: point
