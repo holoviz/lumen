@@ -206,7 +206,13 @@ class UI(Viewer):
 
     vector_store = param.ClassSelector(
         class_=VectorStore, default=None, doc="""
-        The vector store to use for the tools. If not provided, a new one will be created
+        The vector store to use for tools unrelated to documents. If not provided, a new one will be created
+        or inferred from the tools provided."""
+    )
+
+    document_vector_store = param.ClassSelector(
+        class_=VectorStore, default=None, doc="""
+        The vector store to use for document-related tools. If not provided, a new one will be created
         or inferred from the tools provided."""
     )
 
@@ -250,6 +256,7 @@ class UI(Viewer):
             logs_db_path=self.logs_db_path,
             within_ui=True,
             vector_store=self.vector_store,
+            document_vector_store=self.document_vector_store,
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
@@ -274,9 +281,7 @@ class UI(Viewer):
             styles={'position': 'relative', 'right': '20px', 'top': '-1px'},
             sizing_mode='stretch_width'
         )
-        self._sidebar = None
-        self._main = self._coordinator
-        self._llm_status_badge = StatusBadge(name="LLM Pending")
+        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         self._vector_store_status_badge = StatusBadge(name="Vector Store Pending")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -302,12 +307,13 @@ class UI(Viewer):
         self._vector_store_status_badge.status = "running"
         while table_lookup._ready is False:
             await asyncio.sleep(0.5)
-            if table_lookup._ready:
-                self._vector_store_status_badge.param.update(
-                    status="success", name='Vector Store Ready')
-            elif table_lookup._ready is None:
-                self._vector_store_status_badge.param.update(
-                    status="danger", name='Vector Store Error')
+
+        if table_lookup._ready:
+            self._vector_store_status_badge.param.update(
+                status="success", name='Vector Store Ready')
+        elif table_lookup._ready is None:
+            self._vector_store_status_badge.param.update(
+                status="danger", name='Vector Store Error')
 
     def _destroy(self, session_context):
         """

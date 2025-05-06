@@ -18,14 +18,13 @@ from panel_material_ui import (
 )
 from param.parameterized import discard_events
 
-from lumen.ai.config import VEGA_ZOOMABLE_MAP_ITEMS
-
 from ..base import Component
 from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import GraphicWalker, Table
+from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
 
 
@@ -55,7 +54,8 @@ class LumenOutput(Viewer):
             language=self.language,
             theme="tomorrow_night" if config.theme == "dark" else "tomorrow",
             sizing_mode="stretch_both",
-            on_keyup=False
+            on_keyup=False,
+            indent=2,
         )
         code_editor.link(self, bidirectional=True, value='spec')
         copy_icon = ButtonIcon(

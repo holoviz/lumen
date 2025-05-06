@@ -14,10 +14,10 @@ from panel import Column
 from panel.chat import ChatMessage, ChatStep
 from panel.pane.image import ImageBase
 
-from lumen.ai.views import LumenOutput
-from lumen.config import config
-from lumen.pipeline import Pipeline
-from lumen.views import View
+from ..config import config
+from ..pipeline import Pipeline
+from ..views import View
+from .views import LumenOutput
 
 
 def make_md_cell(text: str):

@@ -12,6 +12,7 @@ from panel.chat import ChatFeed
 from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
+from .config import PROMPTS_DIR
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import log_debug, render_template, warn_on_unused_variables
@@ -26,20 +27,19 @@ class NullStep:
         log_debug(f"[{text}")
 
 
-class Actor(param.Parameterized):
-
-    interface = param.ClassSelector(class_=ChatFeed, doc="""
-        The interface for the Coordinator to interact with.""")
+class LLMUser(param.Parameterized):
+    """
+    Mixin for classes that use prompts with LLMs.
+    Provides parameters and methods for prompt templating and LLM interactions.
+    """
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
 
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
-
-    prompts = param.Dict(default={}, doc="""
-        A dictionary of prompts used by the actor, indexed by prompt name.
+    prompts = param.Dict(default={
+        "main": {"template": PROMPTS_DIR / "Actor" / "main.jinja2"},
+    }, doc="""
+        A dictionary of prompts, indexed by prompt name.
         Each prompt should be defined as a dictionary containing a template
         'template' and optionally a 'model' and 'tools'.""")
 
@@ -47,7 +47,7 @@ class Actor(param.Parameterized):
         The layout progress updates will be streamed to.""")
 
     template_overrides = param.Dict(default={}, doc="""
-        Overrides the template's 'instructions', 'context', 'tools', or 'examples' jinja2 blocks.
+        Overrides the template's blocks (instructions, context, tools, examples).
         Is a nested dictionary with the prompt name (e.g. main) as the key
         and the block names as the inner keys with the new content as the
         values.""")
@@ -56,10 +56,9 @@ class Actor(param.Parameterized):
         super().__init__(**params)
         self._validate_template_overrides()
         self._validate_prompts()
-        if self.interface is None:
-            self._null_step = NullStep()
 
     def _validate_template_overrides(self):
+        """Validate that template overrides are correctly formatted."""
         valid_prompt_names = self.param["prompts"].default.keys()
         for prompt_name, template_override in self.template_overrides.items():
             if not isinstance(template_override, dict):
@@ -68,13 +67,14 @@ class Actor(param.Parameterized):
                     "e.g. {'main': {'instructions': 'custom instructions'}}, but got "
                     f"{self.template_overrides} instead."
                 )
-            if prompt_name not in valid_prompt_names:
+            if prompt_name != "main" and prompt_name not in valid_prompt_names:
                 raise ValueError(
                     f"Prompt {prompt_name!r} is not a valid prompt name. "
                     f"Valid prompt names are {valid_prompt_names}."
                 )
 
     def _validate_prompts(self):
+        """Validate that prompts have correct structure."""
         for prompt_name in self.prompts:
             if prompt_name not in self.param.prompts.default:
                 raise ValueError(
@@ -88,18 +88,15 @@ class Actor(param.Parameterized):
                     "Valid keys are 'template', 'response_model', 'tools', and 'llm_spec'."
                 )
 
-    @property
-    def _memory(self) -> _Memory:
-        return memory if self.memory is None else self.memory
-
     def _lookup_prompt_key(self, prompt_name: str, key: str):
+        """Look up a specific key in a prompt template, with inheritance."""
         if prompt_name in self.prompts and key in self.prompts[prompt_name]:
             prompt_spec = self.prompts[prompt_name]
         elif prompt_name in self.param.prompts.default and key in self.param.prompts.default[prompt_name]:
             prompt_spec = self.param.prompts.default[prompt_name]
         else:
             for cls in type(self).__mro__:
-                if issubclass(cls, Actor):
+                if hasattr(cls, 'param') and hasattr(cls.param, 'prompts'):
                     if key in cls.param.prompts.default.get(prompt_name, {}):
                         prompt_spec = cls.param.prompts.default[prompt_name]
                         break
@@ -112,6 +109,7 @@ class Actor(param.Parameterized):
         return prompt_spec[key]
 
     def _get_model(self, prompt_name: str, **context) -> type[BaseModel]:
+        """Get the response model for a prompt."""
         model_spec = self._lookup_prompt_key(prompt_name, "response_model")
         if isinstance(model_spec, FunctionType):
             model = model_spec(**context)
@@ -130,12 +128,12 @@ class Actor(param.Parameterized):
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
-        context["memory"] = self._memory
-        context["actor_name"] = self.name
+        """Gather context for the prompt template."""
         context["current_datetime"] = datetime.datetime.now()
         return context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
+        """Render a prompt template with context."""
         prompt_template = self._lookup_prompt_key(prompt_name, "template")
         overrides = self.template_overrides.get(prompt_name, {})
         context = await self._gather_prompt_context(prompt_name, messages, **context)
@@ -147,15 +145,11 @@ class Actor(param.Parameterized):
             path_exists = False
         if isinstance(prompt_template, str) and not path_exists:
             # check if all the format_kwargs keys are contained in prompt_template
-            # e.g. the key, "memory", is not used in "string template".format(memory=memory)
             format_kwargs = dict(**overrides, **context)
             warn_on_unused_variables(prompt_template, format_kwargs, prompt_label)
             try:
                 prompt = prompt_template.format(**format_kwargs)
             except KeyError as e:
-                # check if all the format variables in prompt_template
-                # are available from format_kwargs, e.g. the key, "var",
-                # is not available in context "string template {var}".format(memory=memory)
                 raise KeyError(
                     f"Unexpected template variable: {e}. To resolve this, "
                     f"please ensure overrides contains the {e} key"
@@ -179,7 +173,7 @@ class Actor(param.Parameterized):
         **context
     ) -> Any:
         """
-        Convenience method that combines rendering a prompt and invoking the LLM.
+        Render a prompt and invoke the LLM.
 
         Parameters
         ----------
@@ -188,20 +182,17 @@ class Actor(param.Parameterized):
         messages : list[Message]
             The conversation messages
         response_model : type[BaseModel], optional
-            Pydantic model to structure the response, if None will use the model
-            defined in the prompt configuration
+            Pydantic model to structure the response
         model_spec : str, optional
-            Specification for which LLM to use, if None will use the model_spec
-            defined in the prompt configuration or fall back to self.llm_spec_key
+            Specification for which LLM to use
         **context : dict
-            Additional context variables to pass to the prompt template
+            Additional context variables for the prompt template
 
         Returns
         -------
         The structured response from the LLM
         """
         system = await self._render_prompt(prompt_name, messages, **context)
-
         if response_model is None:
             try:
                 response_model = self._get_model(prompt_name, **context)
@@ -220,7 +211,6 @@ class Actor(param.Parameterized):
             response_model=response_model,
             model_spec=model_spec,
         )
-
         return result
 
     async def _stream_prompt(
@@ -233,7 +223,7 @@ class Actor(param.Parameterized):
         **context
     ):
         """
-        Convenience method that combines rendering a prompt and streaming responses from the LLM.
+        Render a prompt and stream responses from the LLM.
 
         Parameters
         ----------
@@ -242,15 +232,13 @@ class Actor(param.Parameterized):
         messages : list[Message]
             The conversation messages
         response_model : type[BaseModel], optional
-            Pydantic model to structure the response, if None will use the model
-            defined in the prompt configuration
+            Pydantic model to structure the response
         model_spec : str, optional
-            Specification for which LLM to use, if None will use the model_spec
-            defined in the prompt configuration or fall back to self.llm_spec_key
+            Specification for which LLM to use
         field : str, optional
             Specific field to extract from the response model
         **context : dict
-            Additional context variables to pass to the prompt template
+            Additional context variables for the prompt template
 
         Yields
         ------
@@ -264,7 +252,6 @@ class Actor(param.Parameterized):
             try:
                 response_model = self._get_model(prompt_name, **context)
             except (KeyError, AttributeError):
-                # If no model is specified, return raw response
                 pass
 
         # Determine the model specification
@@ -284,30 +271,12 @@ class Actor(param.Parameterized):
         ):
             yield chunk
 
-    @abstractmethod
-    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> Any:
-        """
-        Responds to the provided messages.
-        """
-
-    @classmethod
-    def get_prompt_template(cls, key: str = "main") -> str:
-        """
-        Returns the template for the given prompt key.
-
-        Parameters
-        ----------
-        key : str, optional
-            The key of the prompt to return the template for. Default is "main".
-
-        Returns
-        -------
-        The template associated with the given prompt key.
-        """
-        return cls._lookup_prompt_key(cls, key, "template").read_text()
-
     @property
     def llm_spec_key(self):
+        """
+        Converts class name to a snake_case model identifier.
+        Used for looking up model configurations in model_kwargs.
+        """
         # Remove "Agent" suffix from class name
         name = self.__class__.__name__.replace("Agent", "")
 
@@ -334,6 +303,46 @@ class Actor(param.Parameterized):
         return result
 
 
+class Actor(LLMUser):
+
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
+
+    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
+        Local memory which will be used to provide the agent context.
+        If None the global memory will be used.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.interface is None:
+            self._null_step = NullStep()
+
+    def _add_step(self, title: str = "", **kwargs):
+        """Private contextmanager for adding steps to the interface.
+
+        If self.interface is None, returns a nullcontext that captures calls.
+        Otherwise, returns the interface's add_step contextmanager.
+        """
+        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+
+    @property
+    def _memory(self) -> _Memory:
+        return memory if self.memory is None else self.memory
+
+    async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
+        """Gather context for the prompt template."""
+        context = await super()._gather_prompt_context(prompt_name, messages, **context)
+        context["memory"] = self._memory
+        context["actor_name"] = self.name
+        return context
+
+    @abstractmethod
+    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> Any:
+        """
+        Responds to the provided messages.
+        """
+
+
 class ContextProvider(param.Parameterized):
     """
     ContextProvider describes the interface an Actor has to define
@@ -342,15 +351,45 @@ class ContextProvider(param.Parameterized):
     requires and provides.
     """
 
+    conditions = param.List(default=[], doc="""
+        Specific criteria that determine when this actor should be invoked.
+        These conditions establish explicit relationships between actors in the system,
+        defining the circumstances under which this actor becomes relevant.
+        While 'purpose' describes what the actor does, conditions specify
+        the precise situations that warrant its use.""")
+
+    exclusions = param.List(default=[], doc="""
+        List of context values that this actor should not be invoked with.
+        This is useful for actors that are not relevant in certain contexts
+        or for actors that should not be invoked in certain situations.""")
+
+    not_with = param.List(default=[], doc="""
+        List of actors that this actor should not be invoked with.""")
+
     provides = param.List(default=[], readonly=True, doc="""
         List of context values it provides to current working memory.""")
 
     purpose = param.String(default="", doc="""
-        Describes the purpose of this actor for consumption of
-        other actors that might invoke it.""")
+        A descriptive statement of this actor's functionality and capabilities.
+        Serves as a high-level explanation for other actors to understand
+        what this actor does and when it might be useful to invoke it.""")
 
     requires = param.List(default=[], readonly=True, doc="""
         List of context values it requires to be in memory.""")
 
     async def requirements(self, messages: list[Message]) -> list[str]:
         return self.requires
+
+    def __str__(self):
+        string = (
+            f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
+            f"  Requires: `{'`, `'.join(self.requires)}`\n"
+            f"  Provides: `{'`, `'.join(self.provides)}`\n"
+        )
+        if self.conditions:
+            string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"
+        if self.exclusions:
+            string += "  Exclusions:\n" + "\n".join(f"  - {exclusion}" for exclusion in self.exclusions) + "\n"
+        if self.not_with:
+            string += "  Not with:\n" + "\n".join(f"  - {not_with}" for not_with in self.not_with) + "\n"
+        return string

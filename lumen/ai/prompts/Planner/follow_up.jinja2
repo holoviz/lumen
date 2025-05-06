@@ -19,12 +19,42 @@ Rules:
 Ground your reasoning in specific elements of both the current query and previously selected columns.
 {%- endblock -%}
 
+{% block examples %}
+# Examples
+
+✅ FOLLOW-UP (YES):
+User query: "Can you create a time series?"
+Data in memory: Annual revenue data with time and dollars columns
+-> YES (query is asking to visualize the existing time-based data already in memory)
+
+✅ FOLLOW-UP (YES):
+User query: "Show only the last 3 months"
+Data in memory: Data with time column extending to the last 3 months
+-> YES (can be done with existing data)
+
+❌ NOT FOLLOW-UP (NO):
+User query: "What's the total capacity?"
+Data in memory: Only revenue data
+-> NO (explicitly asking for new/refreshed data)
+{% endblock %}
+
 {% block context -%}
-{% if "data" in memory %}
-Current Query:
-"""
+{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
+📃 Selected columns:
+{{ memory['vector_metaset'].selected_columns }}
+From query: "{{ memory['vector_metaset'].query }}"
+{%- endif %}
+
+{%- if 'sql' in memory %}
+🗃️ Current SQL:
+```sql
+{{ memory['sql'] }}
+```
+{%- endif %}
+
+{%- if 'data' in memory %}
+📊 Data summary:
 {{ memory['data'] }}
-"""
-{% endif %}
+{%- endif %}
 
 {%- endblock -%}

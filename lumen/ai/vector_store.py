@@ -1,18 +1,57 @@
+import asyncio
+import io
 import json
+import os
+import typing as t
 
 from abc import abstractmethod
+from collections.abc import Callable
 from pathlib import Path
+from typing import IO, Any
 
 import duckdb
 import numpy as np
 import param
+import semchunk
 
+from panel import cache as pn_cache
+
+from .actor import PROMPTS_DIR, LLMUser
 from .embeddings import Embeddings, NumpyEmbeddings
+from .models import YesNo
 from .utils import log_debug
 
 
-class VectorStore(param.Parameterized):
+class VectorStore(LLMUser):
     """Abstract base class for a vector store."""
+
+    prompts = param.Dict(
+        default={
+            "main": {"template": PROMPTS_DIR / "VectorStore" / "main.jinja2"},
+            "should_situate": {
+                "template": PROMPTS_DIR / "VectorStore" / "should_situate.jinja2",
+                "response_model": YesNo,
+            },
+        },
+        doc="""
+        A dictionary of prompts used by the vector store, indexed by prompt name.
+        Each prompt should be defined as a dictionary containing a template
+        'template' and optionally a 'model' and 'tools'.""",
+    )
+
+    chunk_func = param.Callable(
+        default=None,
+        doc="""
+        The function used to split documents into chunks.
+        Must accept `text`. If None, defaults to semchunk.chunkerify
+        with the chunk_size.""",
+    )
+
+    chunk_func_kwargs = param.Dict(
+        default={},
+        doc="""
+        Additional keyword arguments to pass to the chunking function.""",
+    )
 
     chunk_size = param.Integer(
         default=1024, doc="Maximum size of text chunks to split documents into."
@@ -23,6 +62,25 @@ class VectorStore(param.Parameterized):
         default=NumpyEmbeddings(),
         doc="Embeddings object for text processing.",
     )
+
+    excluded_metadata = param.List(
+        default=["llm_context"],
+        doc="List of metadata keys to exclude when creating the embeddings.",
+    )
+
+    situate = param.Boolean(
+        default=False,
+        doc="""
+        Whether to insert a `llm_context` key in the metadata containing
+        contextual about the chunks.""",
+    )
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.chunk_func is None:
+            self.chunk_func = semchunk.chunkerify(
+                "gpt-4o-mini", chunk_size=self.chunk_size
+            )
 
     def _format_metadata_value(self, value) -> str:
         """Format a metadata value appropriately based on its type.
@@ -55,42 +113,119 @@ class VectorStore(param.Parameterized):
         Combined text with metadata appended.
         """
         metadata_str = " ".join(
-            f"({key}: {self._format_metadata_value(value)})" for key, value in metadata.items()
+            f"({key}: {self._format_metadata_value(value)})"
+            for key, value in metadata.items()
+            if key not in self.excluded_metadata
         )
         return f"{text} {metadata_str}"
 
-    def _chunk_text(self, text: str) -> list[str]:
+    async def _generate_context(self, document: str, chunk: str, previous_context: str | None = None, metadata: dict | None = None) -> str:
+        """Generate contextual description for a chunk using LLM.
+
+        Parameters
+        ----------
+        document: str
+            The complete original document
+        chunk: str
+            The specific chunk to contextualize
+        previous_context: str
+            Context from previous chunk (if any)
+        metadata: dict
+            Metadata associated with the chunk
+
+        Returns
+        -------
+        str
+            A contextual description of the chunk
+        """
+        if not self.llm:
+            raise ValueError(
+                "LLM not provided. Cannot generate contextual descriptions."
+            )
+
+        messages = [{"role": "user", "content": chunk}]
+        response = await self._invoke_prompt(
+            "main", messages, document=document, previous_context=previous_context, metadata=metadata, response_model=str
+        )
+
+        # Handle both response formats - string or response object
+        if isinstance(response, str):
+            return response
+        else:
+            print(
+                f"Used: {response.usage.prompt_tokens} total tokens ({response.usage.prompt_tokens_details.cached_tokens} cached) and output {response.usage.completion_tokens}"
+            )
+            print("\n\n")
+            return response.choices[0].message.content
+
+    @pn_cache
+    def _chunk_text(self, text: str, chunk_size: int | None = None, chunk_func: Callable | None = None, **chunk_func_kwargs) -> list[str]:
         """Split text into chunks of size up to self.chunk_size.
 
         Parameters
         ----------
         text: str
             The text to split.
+        chunk_size: int
+            The maximum size of each chunk. If None, uses self.chunk_size.
+        chunk_func: Callable
+            The function to use for chunking. If None, uses self.chunk_func.
 
         Returns
         -------
         List of text chunks.
         """
-        if self.chunk_size is None or len(text) <= self.chunk_size:
+        # Use provided parameters or fall back to instance defaults
+        if chunk_size is None:
+            chunk_size = self.chunk_size
+        if chunk_func is None:
+            chunk_func = self.chunk_func
+
+        # Simple case: no chunking needed
+        if chunk_size is None or len(text) <= chunk_size:
             return [text]
 
-        words = text.split()
-        chunks = []
-        current_chunk = ""
+        try:
+            chunks = chunk_func(text, chunk_size=chunk_size, **chunk_func_kwargs)
+        except TypeError:
+            # Fall back if chunk_size parameter isn't supported
+            chunks = chunk_func(text, **chunk_func_kwargs)
 
-        for word in words:
-            if len(current_chunk) + len(word) + 1 <= self.chunk_size:
-                current_chunk += (" " + word) if current_chunk else word
-            else:
-                chunks.append(current_chunk)
-                current_chunk = word
-
-        if current_chunk:
-            chunks.append(current_chunk)
         return chunks
 
-    @abstractmethod
-    def add(self, items: list[dict]) -> list[int]:
+    async def should_situate_chunk(self, chunk: str) -> bool:
+        """
+        Determine whether a chunk should be situated based on its content.
+
+        Parameters
+        ----------
+        chunk: str
+            The chunk text to evaluate
+
+        Returns
+        -------
+        bool
+            Whether the chunk should be situated
+        """
+        if not self.llm:
+            return self.situate
+
+        try:
+            # Use a user message to avoid conflicts with system instructions
+            messages = [{"role": "user", "content": chunk}]
+            result = await self._invoke_prompt("should_situate",  messages)
+            return result.yes
+        except Exception as e:
+            log_debug(f"Error determining if chunk should be situated: {e}")
+            # Default to the class default in case of error
+            return self.situate
+
+    async def add(
+        self,
+        items: list[dict],
+        force_ids: list[int] | None = None,
+        situate: bool | None = None,
+    ) -> list[int]:
         """
         Add items to the vector store.
 
@@ -98,28 +233,129 @@ class VectorStore(param.Parameterized):
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        force_ids: list[int] = None
+            Optional list of IDs to use instead of generating new ones.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
+
+        Returns
+        -------
+        List of assigned IDs for the added items.
+        """
+        all_texts = []
+        all_metadata = []
+        text_and_metadata_list = []
+
+        # Use the provided situate parameter or fall back to the class default
+        use_situate = self.situate if situate is None else situate
+
+        for item in items:
+            text = item["text"]
+            metadata = item.get("metadata", {}) or {}
+
+            # Split text into chunks
+            content_chunks = self._chunk_text(
+                text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs
+            )
+
+            # Skip situating if use_situate is False
+            if not use_situate or len(content_chunks) <= 1:
+                should_situate = False
+            else:
+                should_situate = True
+
+            # Generate contextual descriptions if situate is enabled and multiple chunks exist
+            chunk_contexts = {}
+            if should_situate and self.llm:
+                previous_context = None  # Start with no previous context
+                for chunk in content_chunks:
+                    needs_context = await self.should_situate_chunk(chunk)
+                    if not needs_context:
+                        continue
+
+                    context = await self._generate_context(text, chunk, previous_context, metadata)
+                    chunk_contexts[chunk] = context
+                    previous_context = context  # Save this context for the next chunk
+            elif should_situate and not self.llm:
+                raise ValueError("LLM not provided. Cannot apply situate.")
+
+            # Process each chunk with its context
+            for chunk in content_chunks:
+                chunk_metadata = metadata.copy()
+
+                # Add context to metadata if situate is enabled and multiple chunks exist
+                if should_situate and chunk in chunk_contexts:
+                    chunk_metadata["llm_context"] = chunk_contexts[chunk]
+
+                text_and_metadata = self._join_text_and_metadata(chunk, chunk_metadata)
+                all_texts.append(chunk)
+                all_metadata.append(chunk_metadata)
+                text_and_metadata_list.append(text_and_metadata)
+
+        # Get embeddings for all chunks
+        embeddings = np.array(
+            await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
+        )
+
+        # Implement add logic in derived classes
+        return await self._add_items(all_texts, all_metadata, embeddings, force_ids)
+
+    @abstractmethod
+    async def _add_items(
+        self,
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray,
+        force_ids: list[int] | None = None,
+    ) -> list[int]:
+        """
+        Internal method to add items to the vector store.
+
+        Parameters
+        ----------
+        texts: list[str]
+            List of text chunks.
+        metadata: list[dict]
+            List of metadata dictionaries for each chunk.
+        embeddings: np.ndarray
+            Matrix of embedding vectors.
+        force_ids: list[int] | None
+            Optional list of IDs to use instead of generating new ones.
 
         Returns
         -------
         List of assigned IDs for the added items.
         """
 
-    @abstractmethod
-    def upsert(self, items: list[dict]) -> list[int]:
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
         """
-        Add items to the vector store if similar items don't exist, update them if they do.
+        Add items to the vector store if similar items don't exist,
+        update them if they do.
 
         Parameters
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
         List of assigned IDs for the added or updated items.
         """
+        # Implement in derived classes
+        raise NotImplementedError("Subclasses must implement upsert.")
 
-    def add_file(self, filename, ext=None, metadata=None) -> list[int]:
+    async def add_file(
+        self,
+        filename: str | IO | t.Any | os.PathLike,
+        ext: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        situate: bool | None = None,
+        upsert: bool = False,
+    ) -> list[int]:
         """
         Adds a file or a URL to the collection.
 
@@ -133,32 +369,61 @@ class VectorStore(param.Parameterized):
         metadata : dict | None
             A dictionary containing metadata related to the file
             (e.g., title, author, description). Defaults to None.
+        situate : bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
+        upsert: bool
+            If True, will update existing items if similar content is found.
+            Defaults to False.
 
         Returns
         -------
         List of assigned IDs for the added items.
         """
-        from markitdown import MarkItDown
+        from markitdown import FileConversionException, MarkItDown, StreamInfo
+
         if metadata is None:
             metadata = {}
         mdit = MarkItDown()
-        if isinstance(filename, str) and filename.startswith(('http://', 'https://')):
-            doc = mdit.convert_url(filename)
-        elif hasattr(filename, 'read'):
-            doc = mdit.convert_stream(filename, file_extension=ext)
+
+        # Run the potentially blocking file operations in a thread
+        if isinstance(filename, str) and filename.startswith(("http://", "https://")):
+            doc = await asyncio.to_thread(mdit.convert_url, filename)
+        elif hasattr(filename, "read"):
+            doc = await asyncio.to_thread(
+                mdit.convert_stream, filename, file_extension=ext
+            )
         else:
-            if 'filename' not in metadata:
-                metadata['filename'] = filename
-            doc = mdit.convert_local(filename, file_extension=ext)
-        return self.add([{'text': doc.text_content, 'metadata': metadata}])
+            if "filename" not in metadata:
+                metadata["filename"] = str(filename)
+            try:
+                doc = await asyncio.to_thread(
+                    mdit.convert_local, filename, file_extension=ext
+                )
+            except FileConversionException:  # for ascii issues
+                with open(filename, encoding="utf-8") as f:
+                    text_content = f.read()
+                doc = await asyncio.to_thread(
+                    mdit.convert_stream,
+                    io.BytesIO(text_content.encode("utf-8")),
+                    stream_info=StreamInfo(charset="utf-8"),
+                    file_extension=ext,
+                )
+
+        kwargs = {"items": [{"text": doc.text_content, "metadata": metadata}], "situate": situate}
+        if upsert:
+            return await self.upsert(**kwargs)
+        else:
+            return await self.add(**kwargs)
 
     @abstractmethod
-    def query(
+    async def query(
         self,
         text: str,
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = 0.0,
+        situate: bool | None = None,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -173,6 +438,9 @@ class VectorStore(param.Parameterized):
             Optional metadata filters.
         threshold: float
             Minimum similarity score required for a result to be included.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -218,6 +486,11 @@ class VectorStore(param.Parameterized):
     @abstractmethod
     def __len__(self) -> int:
         """Return the number of items in the vector store."""
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close the vector store and release any resources."""
+
 
 class NumpyVectorStore(VectorStore):
     """
@@ -295,60 +568,56 @@ class NumpyVectorStore(VectorStore):
 
         return similarities
 
-    def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
+    async def _add_items(
+        self,
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray,
+        force_ids: list[int] | None = None,
+    ) -> list[int]:
         """
-        Add items to the vector store.
+        Internal method to add items to the vector store.
 
         Parameters
         ----------
-        items: list[dict]
-            List of dictionaries containing 'text' and optional 'metadata'.
-        force_ids: list[int] = None
+        texts: list[str]
+            List of text chunks.
+        metadata: list[dict]
+            List of metadata dictionaries for each chunk.
+        embeddings: np.ndarray
+            Matrix of embedding vectors.
+        force_ids: list[int] | None
             Optional list of IDs to use instead of generating new ones.
-            Must be the same length as flattened items after chunking.
 
         Returns
         -------
         List of assigned IDs for the added items.
         """
-        all_texts = []
-        all_metadata = []
-        text_and_metadata_list = []
-
-        for item in items:
-            text = item["text"]
-            metadata = item.get("metadata", {}) or {}
-
-            content_chunks = self._chunk_text(text)
-            for chunk in content_chunks:
-                text_and_metadata = self._join_text_and_metadata(chunk, metadata)
-                all_texts.append(chunk)
-                all_metadata.append(metadata)
-                text_and_metadata_list.append(text_and_metadata)
-
-        embeddings = np.array(self.embeddings.embed(text_and_metadata_list), dtype=np.float32)
-
         if force_ids is not None:
             # Use the provided IDs
-            if len(force_ids) != len(all_texts):
-                raise ValueError(f"force_ids length ({len(force_ids)}) must match number of chunks ({len(all_texts)})")
+            if len(force_ids) != len(texts):
+                raise ValueError(
+                    f"force_ids length ({len(force_ids)}) must match number of chunks ({len(texts)})"
+                )
             new_ids = force_ids
             # Update _current_id if necessary
-            self._current_id = max(self._current_id, *force_ids) if force_ids else self._current_id
+            self._current_id = (
+                max(self._current_id, *force_ids) if force_ids else self._current_id
+            )
         else:
             # Generate new IDs
-            new_ids = [self._get_next_id() for _ in all_texts]
+            new_ids = [self._get_next_id() for _ in texts]
 
         if self.vectors is not None:
             embeddings = np.vstack([self.vectors, embeddings])
         self.vectors = embeddings
-        self.texts.extend(all_texts)
-        self.metadata.extend(all_metadata)
+        self.texts.extend(texts)
+        self.metadata.extend(metadata)
         self.ids.extend(new_ids)
 
         return new_ids
 
-    def query(
+    async def query(
         self,
         text: str,
         top_k: int = 5,
@@ -375,14 +644,16 @@ class NumpyVectorStore(VectorStore):
         """
         if self.vectors is None:
             return []
-        query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32)
+        query_embedding = np.array((await self.embeddings.embed([text]))[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
 
         if filters and len(self.vectors) > 0:
             mask = np.ones(len(self.vectors), dtype=bool)
             for key, value in filters.items():
                 mask &= np.array([item.get(key) == value for item in self.metadata])
-            similarities = np.where(mask, similarities, -1.0)  # make filtered similarity values == -1
+            similarities = np.where(
+                mask, similarities, -1.0
+            )  # make filtered similarity values == -1
 
         results = []
         if len(similarities) > 0:
@@ -468,14 +739,18 @@ class NumpyVectorStore(VectorStore):
         self.metadata = [meta for i, meta in enumerate(self.metadata) if keep_mask[i]]
         self.ids = [id_ for i, id_ in enumerate(self.ids) if keep_mask[i]]
 
-    def upsert(self, items: list[dict]) -> list[int]:
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
         """
-        Add items to the vector store if similar items don't exist, update them if they do.
+        Add items to the vector store if similar items don't exist,
+        update them if they do.
 
         Parameters
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -485,7 +760,7 @@ class NumpyVectorStore(VectorStore):
             return []
 
         if self.vectors is None or len(self.vectors) == 0:
-            return self.add(items)
+            return await self.add(items)
 
         assigned_ids = []
         items_to_add = []
@@ -506,7 +781,7 @@ class NumpyVectorStore(VectorStore):
 
             # If no exact match found, check for chunked text match
             if not match_indices:
-                for chunk in self._chunk_text(text):
+                for chunk in self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs):
                     if chunk in text_to_indices:
                         match_indices.extend(text_to_indices[chunk])
 
@@ -532,7 +807,11 @@ class NumpyVectorStore(VectorStore):
                     # If metadata keys are different but no value conflicts, update existing
                     if set(metadata.keys()) != set(existing_meta.keys()):
                         self.delete([existing_id])
-                        new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[existing_id])
+                        new_ids = await self.add(
+                            [{"text": text, "metadata": metadata}],
+                            force_ids=[existing_id],
+                            situate=situate,
+                        )
                         assigned_ids.extend(new_ids)
                     else:
                         # Exact metadata match - reuse existing
@@ -548,8 +827,10 @@ class NumpyVectorStore(VectorStore):
             items_to_add.append(item)
 
         if items_to_add:
-            new_ids = self.add(items_to_add)
+            new_ids = await self.add(items_to_add, situate=situate)
             assigned_ids.extend(new_ids)
+        else:
+            log_debug("All items already exist in the vector store.")
 
         return assigned_ids
 
@@ -567,6 +848,17 @@ class NumpyVectorStore(VectorStore):
 
     def __len__(self) -> int:
         return len(self.texts) if self.vectors is not None else 0
+
+    def close(self) -> None:
+        """Close the vector store and release any resources.
+
+        For NumpyVectorStore, this clears vectors to free memory.
+        """
+        self.vectors = None
+        self.texts = []
+        self.metadata = []
+        self.ids = []
+        self._current_id = 0
 
 
 class DuckDBVectorStore(VectorStore):
@@ -599,24 +891,35 @@ class DuckDBVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        connection = duckdb.connect(':memory:')
+        connection = duckdb.connect(":memory:")
         # following the instructions from
         # https://duckdb.org/docs/stable/extensions/vss.html#persistence
         connection.execute("INSTALL 'vss';")
         connection.execute("LOAD 'vss';")
         connection.execute("SET hnsw_enable_experimental_persistence = true;")
 
-        if self.uri == ':memory:':
+        if self.uri == ":memory:":
             self.connection = connection
             self._initialized = False
             return
         uri_exists = Path(self.uri).exists()
-        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        try:
+            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+        except duckdb.CatalogException:
+            # handle "Failure while replaying WAL file"
+            # remove .wal uri on corruption
+            wal_path = Path(str(self.uri) + ".wal")
+            if wal_path.exists():
+                wal_path.unlink()
+            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
         connection.execute("USE embedded;")
         self.connection = connection
-        has_documents = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
-        ).fetchone()[0] > 0
+        has_documents = (
+            connection.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
+            ).fetchone()[0]
+            > 0
+        )
         self._initialized = uri_exists and has_documents
 
     def _setup_database(self, embedding_dim: int) -> None:
@@ -642,93 +945,73 @@ class DuckDBVectorStore(VectorStore):
         )
         self._initialized = True
 
-    def add(self, items: list[dict], force_ids: list[int] | None = None) -> list[int]:
+    async def _add_items(
+        self,
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray,
+        force_ids: list[int] | None = None,
+    ) -> list[int]:
         """
-        Add items to the vector store.
+        Internal method to add items to the vector store.
 
         Parameters
         ----------
-        items: list[dict]
-            List of dictionaries containing 'text' and optional 'metadata'.
-        force_ids: list[int] = None
+        texts: list[str]
+            List of text chunks.
+        metadata: list[dict]
+            List of metadata dictionaries for each chunk.
+        embeddings: np.ndarray
+            Matrix of embedding vectors.
+        force_ids: list[int] | None
             Optional list of IDs to use instead of generating new ones.
-            Must match the number of chunks created after chunking.
 
         Returns
         -------
         List of assigned IDs for the added items.
         """
-        all_texts = []
-        all_metadata = []
-        text_and_metadata_list = []
-
-        # First, chunk all items to determine total number of chunks
-        for item in items:
-            text = item["text"]
-            metadata = item.get("metadata", {}) or {}
-
-            content_chunks = self._chunk_text(text)
-            for chunk in content_chunks:
-                text_and_metadata = self._join_text_and_metadata(chunk, metadata)
-                all_texts.append(chunk)
-                all_metadata.append(metadata)
-                text_and_metadata_list.append(text_and_metadata)
-
         # Validate force_ids if provided
-        if force_ids is not None:
-            if len(force_ids) != len(all_texts):
-                raise ValueError(f"force_ids length ({len(force_ids)}) must match number of chunks ({len(all_texts)})")
+        if force_ids is not None and len(force_ids) != len(texts):
+            raise ValueError(
+                f"force_ids length ({len(force_ids)}) must match number of chunks ({len(texts)})"
+            )
 
-        embeddings = self.embeddings.embed(text_and_metadata_list)
+        # Set up database if not initialized
+        if not self._initialized and len(texts) > 0:
+            vector_dim = embeddings.shape[1]
+            self._setup_database(vector_dim)
+
         text_ids = []
 
-        for i in range(len(all_texts)):
+        for i in range(len(texts)):
             vector = np.array(embeddings[i], dtype=np.float32)
-            if not self._initialized:
-                self._setup_database(len(vector))
 
-            # Use the force_id if provided
+            # Prepare parameters and query
             if force_ids is not None:
-                # Explicitly set the ID
-                result = self.connection.execute(
-                    """
+                query = """
                     INSERT INTO documents (id, text, metadata, embedding)
                     VALUES (?, ?, ?::JSON, ?) RETURNING id;
-                    """,
-                    [
-                        force_ids[i],
-                        all_texts[i],
-                        json.dumps(all_metadata[i]),
-                        vector.tolist(),
-                    ],
-                )
-                fetched = result.fetchone()
-                if fetched:
-                    text_ids.append(fetched[0])
-                else:
-                    raise ValueError("Failed to insert item with specified ID into DuckDB.")
-            else:
-                # Let the database generate the ID
-                result = self.connection.execute(
                     """
+                params = [
+                    force_ids[i],
+                    texts[i],
+                    json.dumps(metadata[i]),
+                    vector.tolist(),
+                ]
+            else:
+                query = """
                     INSERT INTO documents (text, metadata, embedding)
                     VALUES (?, ?::JSON, ?) RETURNING id;
-                    """,
-                    [
-                        all_texts[i],
-                        json.dumps(all_metadata[i]),
-                        vector.tolist(),
-                    ],
-                )
-                fetched = result.fetchone()
-                if fetched:
-                    text_ids.append(fetched[0])
-                else:
-                    raise ValueError("Failed to insert item into DuckDB.")
+                    """
+                params = [texts[i], json.dumps(metadata[i]), vector.tolist()]
+
+            # Run the potentially blocking DB operation in a thread
+            result = await asyncio.to_thread(self._execute_query, query, params)
+            text_ids.append(result)
 
         return text_ids
 
-    def query(
+    async def query(
         self,
         text: str,
         top_k: int = 5,
@@ -755,7 +1038,9 @@ class DuckDBVectorStore(VectorStore):
         """
         if not self._initialized:
             return []
-        query_embedding = np.array(self.embeddings.embed([text])[0], dtype=np.float32).tolist()
+        query_embedding = np.array(
+            (await self.embeddings.embed([text]))[0], dtype=np.float32
+        ).tolist()
         vector_dim = len(query_embedding)
 
         base_query = f"""
@@ -789,7 +1074,7 @@ class DuckDBVectorStore(VectorStore):
                 for row in result
             ]
         except duckdb.Error as e:
-            print(f"Error during query: {e}")
+            log_debug(f"Error during query: {e}")
             return []
 
     def filter_by(
@@ -871,14 +1156,18 @@ class DuckDBVectorStore(VectorStore):
         self.connection.execute("DROP SEQUENCE IF EXISTS documents_id_seq;")
         self._initialized = False
 
-    def upsert(self, items: list[dict]) -> list[int]:
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
         """
-        Add items to the vector store if similar items don't exist, update them if they do.
+        Add items to the vector store if similar items don't exist,
+        update them if they do.
 
         Parameters
         ----------
         items: list[dict]
             List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -888,8 +1177,7 @@ class DuckDBVectorStore(VectorStore):
             return []
 
         if not self._initialized:
-            log_debug("Database not initialized. Adding items directly.")
-            return self.add(items)
+            return await self.add(items)
 
         assigned_ids = []
         items_to_add = []
@@ -904,11 +1192,21 @@ class DuckDBVectorStore(VectorStore):
                 FROM documents
                 WHERE text = ?
             """
-            result = self.connection.execute(query, [text]).fetchall()
-            # Check for chunked text match
+
+            # Execute the query in a thread
+            result = await asyncio.to_thread(
+                self._execute_query, query, [text], fetchall=True
+            )
+
+            # If no exact match, check for chunked text match
             if not result:
-                for chunk in self._chunk_text(text):
-                    result.extend(self.connection.execute(query, [chunk]).fetchall())
+                chunked_results = []
+                for chunk in self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs):
+                    chunk_results = await asyncio.to_thread(
+                        self._execute_query, query, [chunk], fetchall=True
+                    )
+                    chunked_results.extend(chunk_results)
+                result = chunked_results
 
             match_found = False
             for row in result:
@@ -930,7 +1228,9 @@ class DuckDBVectorStore(VectorStore):
                 # If metadata keys are different but no value conflicts, update existing
                 if set(metadata.keys()) != set(existing_metadata.keys()):
                     self.delete([item_id])
-                    new_ids = self.add([{"text": text, "metadata": metadata}], force_ids=[item_id])
+                    new_ids = await self.add(
+                        [{"text": text, "metadata": metadata}], force_ids=[item_id]
+                    )
                     assigned_ids.extend(new_ids)
                 else:
                     # Exact metadata match - reuse existing
@@ -944,12 +1244,32 @@ class DuckDBVectorStore(VectorStore):
                 items_to_add.append(item)
 
         if items_to_add:
-            new_ids = self.add(items_to_add)
+            new_ids = await self.add(items_to_add, situate=situate)
             assigned_ids.extend(new_ids)
             log_debug(f"Added {len(items_to_add)} new items to the vector store.")
 
-        log_debug(len(self))
         return assigned_ids
+
+    def _execute_query(self, query, params, fetchall=False):
+        """Execute a DuckDB query and return results.
+
+        Parameters
+        ----------
+        query: str
+            SQL query to execute
+        params: list
+            Parameters for the query
+        fetchall: bool
+            If True, return all results; otherwise return the first column of the first row
+
+        Returns
+        -------
+        Query results based on the fetchall parameter
+        """
+        result = self.connection.execute(query, params)
+        if fetchall:
+            return result.fetchall()
+        return result.fetchone()[0]
 
     def __len__(self) -> int:
         if not self._initialized:

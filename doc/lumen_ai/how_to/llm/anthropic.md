@@ -16,7 +16,7 @@ By default Lumen will pick the first LLM provider it can find an API key for. By
 
 1. Set the Environment Variable
 
-Set the OPENAI_API_KEY environment variable in your system. This allows Lumen AI to automatically detect and use Anthropic as the provider.
+Set the ANTHROPIC_API_KEY environment variable in your system. This allows Lumen AI to automatically detect and use Anthropic as the provider.
 
 ::::{tab-set}
 

@@ -750,3 +750,31 @@ def truncate_iterable(iterable, max_length=20) -> tuple[list, list, bool]:
         original_indices = list(range(len(iterable_list)))
         show_ellipsis = False
     return cols_to_show, original_indices, show_ellipsis
+
+
+async def with_timeout(coro, timeout_seconds=10, default_value=None, error_message=None):
+    """
+    Executes a coroutine with a timeout.
+
+    Parameters
+    ----------
+    coro : coroutine
+        The coroutine to execute with a timeout
+    timeout_seconds : float, default=10
+        Maximum number of seconds to wait before timing out
+    default_value : Any, default=None
+        Value to return if timeout occurs
+    error_message : str, default=None
+        Custom error message to log on timeout
+
+    Returns
+    -------
+    Any
+        Result of the coroutine if it completes in time, otherwise default_value
+    """
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        if error_message:
+            log_debug(error_message)
+        return default_value

@@ -4,7 +4,7 @@ import sqlite3
 
 import param
 
-from lumen.ai.utils import log_debug
+from .utils import log_debug
 
 
 class ChatLogs(param.Parameterized):

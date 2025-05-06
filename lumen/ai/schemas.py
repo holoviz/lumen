@@ -69,7 +69,7 @@ class VectorMetaset:
                 context += f"Base SQL: {vector_metadata.base_sql}\n\n"
 
             max_length = 20
-            cols_to_show = vector_metadata.columns
+            cols_to_show = vector_metadata.columns or []
             if truncate is not None:
                 cols_to_show = [col for col in cols_to_show if col.name in self.selected_columns.get(table_slug, [])]
 
@@ -178,7 +178,7 @@ class SQLMetaset:
                     context += f"Row count: {len(sql_data.schema)}\n"
 
             max_length = 20
-            cols_to_show = vector_metadata.columns
+            cols_to_show = vector_metadata.columns or []
             if truncate is not None and vector_metaset.selected_columns:
                 cols_to_show = [col for col in cols_to_show if col.name in vector_metaset.selected_columns.get(table_slug, [])]
 

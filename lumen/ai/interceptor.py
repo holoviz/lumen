@@ -12,7 +12,7 @@ import param
 
 from pydantic import BaseModel
 
-from lumen.ai.utils import log_debug
+from .utils import log_debug
 
 
 class Message(BaseModel):

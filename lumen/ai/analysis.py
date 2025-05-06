@@ -5,9 +5,8 @@ import param
 
 from panel.viewable import Viewable
 
-from lumen.ai.config import SOURCE_TABLE_SEPARATOR
-
 from ..base import Component
+from .config import SOURCE_TABLE_SEPARATOR
 from .controls import SourceControls
 from .memory import memory
 from .utils import get_data
