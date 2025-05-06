@@ -10,7 +10,7 @@ from typing import Any
 import param
 
 from panel.chat import ChatFeed
-from panel.io import state
+from panel.io.state import state
 from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource

@@ -158,7 +158,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -171,8 +170,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
         messages: list[Message]
             The list of messages corresponding to the user query and any other
             system messages to be included.
-        render_output: bool
-            Whether to render the output to the chat interface.
         step_title: str | None
             If the Agent response is part of a longer query this describes
             the step currently being processed.
@@ -206,7 +203,6 @@ class SourceAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         source_controls = SourceControls(
@@ -261,7 +257,6 @@ class ChatAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
@@ -327,7 +322,6 @@ class ListAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         items = self._get_items()
@@ -448,7 +442,6 @@ class LumenBaseAgent(Agent):
         component: Component,
         message: pn.chat.ChatMessage = None,
         messages: list | None = None,
-        render_output: bool = False,
         title: str | None = None,
         **kwargs
     ):
@@ -482,7 +475,6 @@ class LumenBaseAgent(Agent):
         out = self._output_type(
             component=component,
             footer=[retry_controls],
-            render_output=render_output,
             title=title,
             **kwargs
         )
@@ -657,6 +649,10 @@ class SQLAgent(LumenBaseAgent):
             vector_metaset.selected_columns or
             vector_metaset.vector_metadata_map
         )
+        if "previous_state" in self._memory:
+            previous_state = self._memory["previous_state"]
+            selected_slugs += list(previous_state.selected_columns)
+
         if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 
@@ -695,7 +691,6 @@ class SQLAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         tables_to_source, comments = await self._find_tables(messages)
@@ -707,7 +702,7 @@ class SQLAgent(LumenBaseAgent):
             traceback.print_exception(e)
             self._memory["__error__"] = str(e)
             return None
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
         return pipeline
 
 
@@ -869,7 +864,6 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -882,7 +876,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
         return pipeline
 
 
@@ -986,7 +980,6 @@ class BaseViewAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -1003,7 +996,7 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(view, messages=messages, title=step_title)
         return view
 
 
@@ -1207,7 +1200,6 @@ class AnalysisAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
         agents: list[Agent] | None = None,
     ) -> Any:
@@ -1293,7 +1285,6 @@ class AnalysisAgent(LumenBaseAgent):
                 view,
                 analysis=analysis,
                 pipeline=pipeline,
-                render_output=render_output,
                 title=step_title
             )
         return view

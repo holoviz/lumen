@@ -376,7 +376,7 @@ class UI(Viewer):
                 main=[self._main],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
-                sidebar_variant='drawer',
+                sidebar_variant='temporary',
             )
             page.servable()
             return page
@@ -393,7 +393,7 @@ class UI(Viewer):
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for exts in self._coordinator.agents for ext in exts}, design='material', notifications=True
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions}, notifications=True
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
 
@@ -511,8 +511,8 @@ class ExplorerUI(UI):
         """
         Cleanup on session destroy
         """
-        for c in self._contexts:
-            c.cleanup()
+        for c in self._explorations.items[1:]:
+            c['view'].context.cleanup()
 
     def _global_export_notebook(self):
         cells, extensions = [], []
@@ -600,10 +600,12 @@ class ExplorerUI(UI):
         view_item = {'label': title, 'removeable': True, 'view': exploration, 'icon': None, 'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]}
         with hold():
             self.interface.objects = conversation
+            self._idle.set()
             self._explorations.param.update(
                 items=self._explorations.items+[view_item],
                 value=view_item
             )
+            self._idle.clear()
             self._output[:] = [output]
             self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
             await self._update_conversation()

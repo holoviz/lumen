@@ -18,10 +18,11 @@ from .utils import log_debug, render_template, warn_on_unused_variables
 
 
 class NullStep:
+
     def __init__(self):
         self.status = None
 
-    def stream(self, text):
+    def stream(self, text, **kwargs):
         log_debug(f"[{text}")
 
 

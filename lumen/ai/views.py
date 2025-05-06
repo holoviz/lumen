@@ -11,8 +11,6 @@ import yaml
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Column, Row
-from panel.pane import Markdown
-from panel.param import ParamMethod
 from panel.viewable import Viewer
 from panel.widgets import CodeEditor, LoadingSpinner
 from panel_material_ui import (
@@ -40,8 +38,6 @@ class LumenOutput(Viewer):
     loading = param.Boolean()
 
     footer = param.List()
-
-    render_output = param.Boolean(default=True)
 
     spec = param.String(allow_None=True)
 
@@ -88,21 +84,7 @@ class LumenOutput(Viewer):
         )
         icons = Row(copy_icon, download_icon, *self.footer)
         code_col = Column(code_editor, icons, sizing_mode="stretch_both")
-        if self.render_output:
-            placeholder = Column(
-                ParamMethod(self.render, inplace=True),
-                sizing_mode="stretch_width"
-            )
-            self._main = Tabs(
-                ("Code", code_col),
-                ("Output", placeholder),
-                styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-                active=self.active,
-                dynamic=True
-            )
-            self._main.link(self, bidirectional=True, active='active')
-        else:
-            self._main = code_col
+        self._main = code_col
         self._main.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
@@ -152,20 +134,13 @@ class LumenOutput(Viewer):
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.insert(0, full_data)
-        return Column(
-            controls,
-            Markdown(f'### Table: {pipeline.table}', margin=0),
-            table
-        )
+        return Column(controls, table)
 
     @param.depends('spec', 'active')
     async def render(self):
         yield LoadingSpinner(
             value=True, name="Rendering component...", height=50, width=50
         )
-
-        if self.render_output and (self.active != (len(self._main)-1)) or self.spec is None:
-            return
 
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
@@ -292,13 +267,12 @@ class AnalysisOutput(LumenOutput):
         controls = self.analysis.controls()
         if controls is not None or not self.analysis.autorun:
             controls = Column() if controls is None else controls
-            if not self.render_output:
-                self._main = Tabs(
-                    ('Specification', self._main),
-                    styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-                    active=self.active,
-                    dynamic=True
-                )
+            self._main = Tabs(
+                ('Specification', self._main),
+                styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
+                active=self.active,
+                dynamic=True
+            )
             if self.analysis._run_button:
                 run_button = self.analysis._run_button
                 run_button.param.watch(self._rerun, 'clicks')
