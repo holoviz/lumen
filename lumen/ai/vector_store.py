@@ -87,9 +87,6 @@ class VectorStore(LLMUser):
 
     def __init__(self, **params):
         super().__init__(**params)
-        # If embeddings is None, use NumpyEmbeddings as default
-        if self.embeddings is None:
-            self.embeddings = NumpyEmbeddings()
         if self.chunk_func is None:
             self.chunk_func = semchunk.chunkerify(
                 self.chunk_tokenizer, chunk_size=self.chunk_size
@@ -1211,7 +1208,6 @@ class DuckDBVectorStore(VectorStore):
 
         try:
             result = self.connection.execute(base_query, params).fetchall()
-            print(result)
             return [
                 {
                     "id": row[0],
