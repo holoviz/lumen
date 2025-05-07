@@ -5,7 +5,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.embeddings import NumpyEmbeddings
+from lumen.ai.embeddings import Embeddings, NumpyEmbeddings
 from lumen.ai.vector_store import DuckDBVectorStore, NumpyVectorStore
 
 
@@ -545,3 +545,16 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         results = await store.query("First doc")
         assert len(results) == 0
         store.close()
+
+    async def test_check_embeddings_consistency(self, tmp_path):
+        db_path = str(tmp_path / "test_duckdb.db")
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        store.add([{"text": "First doc"}])
+        store.close()
+
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        assert len(store.query("First doc")) == 1
+        store.close()
+
+        with pytest.raises(ValueError, match="Provided embeddings class"):
+            DuckDBVectorStore(uri=db_path, embeddings=Embeddings())

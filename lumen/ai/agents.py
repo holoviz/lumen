@@ -241,7 +241,7 @@ class ChatAgent(Agent):
         "Best for high-level information about data or general conversation",
         "Can be used to describe available tables",
         "Not useful for answering data specific questions",
-        "Must be paired with TableLookup or DocumentLookup",
+        "Can be paired with TableLookup or DocumentLookup",
     ])
 
     purpose = param.String(default="""
@@ -257,7 +257,7 @@ class ChatAgent(Agent):
     )
 
     # technically not required if appended manually with tool in coordinator
-    requires = param.List(default=["vector_metaset"], readonly=True)
+    requires = param.List(default=[], readonly=True)
 
     async def respond(
         self,
