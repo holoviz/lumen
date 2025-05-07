@@ -1046,7 +1046,7 @@ class DuckDBVectorStore(VectorStore):
         for param_name, stored_value in stored_params.items():
             if hasattr(self.embeddings, param_name):
                 current_value = getattr(self.embeddings, param_name)
-                if current_value != stored_value and param_name in ['model', 'dimensions', 'chunk_size']:
+                if current_value != stored_value and param_name in ['model', 'embedding_dim', 'chunk_size']:
                     raise ValueError(
                         f"Provided embeddings parameter '{param_name}' value '{current_value}' "
                         f"does not match stored value '{stored_value}'. This would result in "
