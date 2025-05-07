@@ -1182,7 +1182,7 @@ class VegaLiteAgent(BaseViewAgent):
         # Handle different types of interactive controls based on chart type
         if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
             vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
-        elif "point: true" not in vega_spec_str or "params" not in vega_spec:
+        elif ("point: true" not in vega_spec_str or "params" not in vega_spec) and vega_spec_str.count("encoding:") == 1:
             # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
