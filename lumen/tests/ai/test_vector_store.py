@@ -549,11 +549,11 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
     async def test_check_embeddings_consistency(self, tmp_path):
         db_path = str(tmp_path / "test_duckdb.db")
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
-        store.add([{"text": "First doc"}])
+        await store.add([{"text": "First doc"}])
         store.close()
 
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
-        assert len(store.query("First doc")) == 1
+        assert len(await store.query("First doc")) == 1
         store.close()
 
         with pytest.raises(ValueError, match="Provided embeddings class"):
