@@ -87,7 +87,7 @@ def make_plan_models(agents: list[str], tools: list[str]):
                 description="""
                     Briefly summarize the user's goal and categorize the question type:
                     high-level, data-focused, or other. Identify the most relevant and compatible actors,
-                    explaining their requirements. If there were previous failures, discuss them.
+                    explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
                     """
             ),
         ),
