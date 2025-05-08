@@ -294,6 +294,19 @@ class AnalystAgent(ChatAgent):
 
     requires = param.List(default=["source", "pipeline"], readonly=True)
 
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        context = {"tool_context": await self._use_tools("main", messages)}
+        system_prompt = await self._render_prompt("main", messages, **context)
+        await self._stream(messages, system_prompt)
+
+        if len(self._memory["data"]) == 0 and self._memory.get("sql"):
+            self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query. Please try a different approach."
+
 
 class ListAgent(Agent):
     """
