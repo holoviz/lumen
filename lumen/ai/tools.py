@@ -592,6 +592,7 @@ class TableLookup(VectorLookupTool):
     conditions = param.List(default=[
         "Best paired with ChatAgent for general conversation about data",
         "Skip if sufficient context already exists in memory",
+        "Not useful for data related queries",
     ])
 
     exclusions = param.List(default=["dbtsl_metaset"])
@@ -599,7 +600,7 @@ class TableLookup(VectorLookupTool):
     not_with = param.List(default=["IterativeTableLookup"])
 
     purpose = param.String(default="""
-        Performs basic vector search to find relevant tables for a user query.""")
+        Discovers relevant tables using vector search, providing context for other agents.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -1054,6 +1055,7 @@ class IterativeTableLookup(TableLookup):
 
     conditions = param.List(default=[
         "Skip if sufficient context already exists in memory",
+        "Useful for answering data queries",
         "Avoid for follow-up questions when existing data is sufficient",
         "Use only when existing information is insufficient for the current query",
     ])
@@ -1061,8 +1063,7 @@ class IterativeTableLookup(TableLookup):
     not_with = param.List(default=["TableLookup"])
 
     purpose = param.String(default="""
-        Performs basic vector search to find relevant tables for a user query
-        with multi-pass selection.""")
+        Looks up the most relevant tables and provides SQL schemas of those tables.""")
 
     provides = param.List(default=["vector_metaset", "sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")

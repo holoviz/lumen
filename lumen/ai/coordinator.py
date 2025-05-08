@@ -919,7 +919,7 @@ class Planner(Coordinator):
         actors_in_graph = set()
 
         for step in plan.steps:
-            key = step.expert_or_tool
+            key = step.actor
             actors.append(key)
             if key in agents:
                 subagent = agents[key]
@@ -947,7 +947,7 @@ class Planner(Coordinator):
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
-                    expert_or_tool='SQLAgent',
+                    actor='SQLAgent',
                     instruction='Load the table',
                     title='Loading table',
                     render_output=False
@@ -996,7 +996,7 @@ class Planner(Coordinator):
                 return execution_graph, unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
-                expert_or_tool=expert,
+                actor=expert,
                 instruction='Summarize the results.',
                 title='Summarizing results',
                 render_output=False
@@ -1066,7 +1066,7 @@ class Planner(Coordinator):
                 self._memory["plan"] = plan
                 istep.stream('\n\nHere are the steps:\n\n')
                 for i, step in enumerate(plan.steps):
-                    istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
+                    istep.stream(f"{i+1}. {step.actor}: {step.instruction}\n")
                 if attempts > 0:
                     istep.success_title = f"Plan with {len(plan.steps)} steps created after {attempts + 1} attempts"
                 else:
