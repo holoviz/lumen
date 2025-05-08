@@ -52,6 +52,7 @@ python = "3.13.*"
 COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
+chardet = "*"
 duckdb = "*"
 griffe = "*"
 instructor = ">=1.6.4"

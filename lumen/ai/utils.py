@@ -795,24 +795,34 @@ def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO) -> str:
     str
     """
     import chardet
-    encoding = ""
+
+    # Create a default encoding type.
+    detected_encoding = {"encoding": "utf-8"}
 
     if isinstance(file_obj, str):
-        file_obj = Path(file_obj)
+        try:
+            _ = Path(file_obj).exists()
+        except OSError:
+            pass
 
+    # Handle if a path is given.
     if isinstance(file_obj, Path):
         with file_obj.open("rb") as f:
             data = f.read()
         detected_encoding = chardet.detect(data)
         encoding = detected_encoding["encoding"]
 
+    # Handle if a string or bytes object is given.
     if isinstance(file_obj, bytes):
         detected_encoding = chardet.detect(file_obj)
-        encoding = detected_encoding["encoding"]
+    elif isinstance(file_obj, str):
+        detected_encoding = chardet.detect(file_obj.encode())
+
+    encoding = detected_encoding["encoding"]
 
     if encoding == "ISO-8859-1":
         encoding = "latin-1"
-    if encoding.lower() == "ascii":
+    if encoding == "ascii":
         encoding = "utf-8"
 
     return encoding.lower()
