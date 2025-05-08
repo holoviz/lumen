@@ -195,7 +195,7 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
-        self._vector_store_status_badge = StatusBadge(name="Vector Store Pending")
+        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._verify_llm)
@@ -214,7 +214,7 @@ class UI(Viewer):
 
         if not table_lookup:
             self._vector_store_status_badge.param.update(
-                status="success", name='Vector Store Ready')
+                status="success", name='Tables Vector Store Ready')
             return
 
         self._vector_store_status_badge.status = "running"
@@ -223,10 +223,10 @@ class UI(Viewer):
 
         if table_lookup._ready:
             self._vector_store_status_badge.param.update(
-                status="success", name='Vector Store Ready')
+                status="success", name='Tables Vector Store Ready')
         elif table_lookup._ready is None:
             self._vector_store_status_badge.param.update(
-                status="danger", name='Vector Store Error')
+                status="danger", name='Tables Vector Store Error')
 
     def _destroy(self, session_context):
         """

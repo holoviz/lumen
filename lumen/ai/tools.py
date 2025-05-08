@@ -777,6 +777,8 @@ class TableLookup(VectorLookupTool):
         if tasks:
             ready_task = asyncio.create_task(self._mark_ready_when_done(tasks))
             ready_task.add_done_callback(self._handle_ready_task_done)
+        else:
+            self._ready = True
 
     async def _mark_ready_when_done(self, tasks):
         """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
