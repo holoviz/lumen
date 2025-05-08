@@ -300,13 +300,10 @@ class AnalystAgent(ChatAgent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        context = {"tool_context": await self._use_tools("main", messages)}
-        system_prompt = await self._render_prompt("main", messages, **context)
-        await self._stream(messages, system_prompt)
-
+        messages = super().respond(messages, render_output, step_title)
         if len(self._memory["data"]) == 0 and self._memory.get("sql"):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query. Please try a different approach."
-
+        return messages
 
 class ListAgent(Agent):
     """
