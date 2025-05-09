@@ -85,3 +85,12 @@ Line (inherit from bar's template)
 ...
 ```
 {% endblock %}
+
+{% block errors %}
+{{ super() }}
+
+{% if errors is defined and errors %}
+For extra context, here are the tables and columns available:
+{{ columns_context }}
+{% endif %}
+{% endblock %}
