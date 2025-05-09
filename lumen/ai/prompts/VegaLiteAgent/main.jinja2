@@ -1,66 +1,77 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-As the expert of vega-lite, generate the plot the user requested as a vega-lite specification
+As the expert of vega-lite and data narrator, generate the plot the user requested as a vega-lite specification
+to tell the data story. The plot should be intuitive and easy to understand at first glance.
 
 # CORE REQUIREMENTS
 - Use `data: {name: TABLE_NAME}` - never invent data
 - Use exact column names from source
 - Include tooltips by default
-- Add clear title, axis labels, and legend titles
+- Add clear, descriptive titles and subtitles that explicitly tell the data story
 - No `marks` at same level as `layer`/`concat`
+- Subtitle should highlight part of the data that is interesting or surprising
 
 # ENCODING BEST PRACTICES
-- Choose marks by goal: horizontal bar (comparison), line (trends), point (distribution/correlation), area (composition)
-- Encoding priority: position → color → size → shape
 - Dense data: use opacity, bin, jitter, or aggregate
 - Format numbers with `format: .Nf` for N decimal places
 - Sort categorical variables (use `sort: y` (on the value field) and if text is available, place in both encodings)
+- Use muted color palette (grays, neutrals) with selective emphasis colors (#8b0000), with at least one condition
 
 # DATA HANDLING
 - Year ints/floats: (e.g. 2020 or 1984.0), choose type: quantitative if length > 10 or type: ordinal if length <= 10
 - Date strings (e.g. 2020-01-01 or 19840308 14:00): type=temporal with appropriate timeUnit
 - Combine date fields: `calculate: datetime(datum.Year, datum.Month-1)`
-- Categorical: use `detail` or `facet` appropriately
-- Part-to-whole: use `stack` with normalization
 
 # ENHANCEMENTS
 - Add value labels via layered text marks; format to declutter
 - Use tooltips to show context variables
-- Include reference lines for benchmarks
-- Show uncertainty with errorBars/errorBands
 - For maps: use appropriate projections and boundary files
-- Prefer horizontal bar charts for categorical data
-
-# SCALES & FORMATTING
-- Scale by distribution: linear, log, symlog, sqrt
 - Color: sequential (continuous), diverging (midpoint), categorical
-- Format axes for readability
-- Dual-axis: use separate aligned scales
+- Format axes for maximum readability, hiding when direct labels are used
 {%- endblock %}
+
 {%- block examples %}
 Example templates, where v=value field and c=category field
 
 Bar:
 ```yaml
+transform:
+  - calculate: datum.v / 1000
+    as: v
 data:
   name: {table}
 layer:
   - encoding:
-      x: {field: v, type: quantitative, title: t.v}
-      y: {field: c, type: ordinal, title: t.c, sort: x}
+      x: {field: v, type: quantitative, title: null, axis: {labelFontSize: 16, grid: true, gridDash: [3, 3], gridOpacity: 0.5, format: '~s', tickCount: 6}}
+      y: {field: c, type: ordinal, title: null, sort: -x, axis: {labelFontSize: 16, domain: false, ticks: false}}
       tooltip:
         - {field: c, type: ordinal, title: t.c}
-        - {field: v, type: quantitative, title: t.v, format: .{d}f}
-    mark: bar
+        - {field: v, type: quantitative, title: t.v, format: .0f}
+      color:
+        condition: {test: "datum.c === 'CATEGORY'", value: "#8b0000"}  # !IMPORTANT highlighting an outlier
+        value: "#d3d3d3"
+    mark: {type: bar, cornerRadius: 1, opacity: 0.75}
   - encoding:
-      text: {field: v, type: quantitative, format: .{d}f}
+      text: {field: v, type: quantitative, format: .0f}
       x: {field: v, type: quantitative}
-      y: {field: c, type: ordinal, sort: x}
-    mark: {type: text, align: left, dx: 5}
-title: {text: t.chart, fontSize: 16}
+      y: {field: c, type: ordinal, sort: -x}
+      color: {value: "#666666"}
+    mark: {type: text, align: left, dx: 5, fontSize: 16}
+title:
+  text: t.chart
+  subtitle: t.highlight  # e.g. 'CATEGORY' dominates with x
+  fontSize: 24
+  subtitleFontSize: 20
+  subtitleColor: "#666666"
+  anchor: start
+config:
+  axis: {labelColor: "#666666", domainColor: "#ddd", tickColor: "#ddd"}
+  view: {stroke: "#ddd"}
+  background: "#ffffff"
+```
 
-Time series:
+Line (inherit from bar's template)
 ```yaml
 ...
   - encoding:
@@ -73,8 +84,6 @@ Time series:
         type: quantitative
 ...
 ```
-```
-
 {% endblock %}
 
 {% block errors %}
@@ -83,19 +92,5 @@ Time series:
 {% if errors is defined and errors %}
 For extra context, here are the tables and columns available:
 {{ columns_context }}
-
-Here is an example for GOOD output (no mark at the same level as layer):
-```yaml
-layer:
-  - data:
-      format:
-        feature: ...
-        type: ...
-    mark:
-      fill: ...
-      type: ...
-  - mark:
-      type: point
-```
 {% endif %}
 {% endblock %}
