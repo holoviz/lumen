@@ -13,7 +13,7 @@ PYTHONIOENCODING = "utf-8"
 test-310 = ["py310", "test-core", "test", "ai", "sql"]
 test-311 = ["py311", "test-core", "test", "ai", "sql"]
 test-312 = ["py312", "test-core", "test", "ai", "sql"]
-test-core = ["py313", "test-core"]
+test-core = ["py313", "test-core", "ai"]
 docs = ["py311", "doc", "ai", "sql"]
 build = ["py311", "build"]
 lint = ["py311", "lint"]
@@ -52,6 +52,7 @@ python = "3.13.*"
 COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
+chardet = "*"
 duckdb = "*"
 griffe = "*"
 instructor = ">=1.6.4"

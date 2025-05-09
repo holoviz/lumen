@@ -257,7 +257,9 @@ class UI(Viewer):
                 if src.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{src}')"
                 elif src.endswith(".csv"):
-                    table = f"read_csv('{src}')"
+                    from lumen.ai.utils import detect_file_encoding
+                    encoding = detect_file_encoding(file_obj=src)
+                    table = f"read_csv('{src}', encoding='{encoding}')"
                 elif src.endswith(".json"):
                     table = f"read_json_auto('{src}')"
                 else:
