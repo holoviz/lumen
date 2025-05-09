@@ -14,6 +14,7 @@ from panel.widgets import (
     ToggleIcon,
 )
 
+from ..ai.utils import detect_file_encoding
 from ..sources.duckdb import DuckDBSource
 from .memory import _Memory, memory
 
@@ -197,7 +198,6 @@ class SourceControls(Viewer):
             self._upload_tabs.clear()
             self._media_controls.clear()
             for filename, file in self._file_input.value.items():
-                from lumen.ai.utils import detect_file_encoding
                 encoding = detect_file_encoding(file_obj=file)
                 file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
                 if filename.lower().endswith(TABLE_EXTENSIONS):

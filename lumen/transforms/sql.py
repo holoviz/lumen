@@ -4,6 +4,7 @@ import datetime as dt
 import pathlib
 import re
 
+from copy import deepcopy
 from typing import ClassVar
 
 import param  # type: ignore
@@ -141,6 +142,32 @@ class SQLTransform(Transform):
         expression = expressions[0]
         return expression
 
+    def _add_encoding_to_read_csv(self, expression: Expression) -> Expression:
+        """
+        Add file encoding when reading CSV files using DuckDB.
+
+        Parameters
+        ----------
+        expression : Expression
+            An sqlglot expression object.
+
+        Returns
+        -------
+        Expression
+            A modified expression that includes the file encoding.
+        """
+        from lumen.ai.utils import detect_file_encoding
+
+        expr = deepcopy(expression)
+        if isinstance(expr, ReadCSV):
+            read_csv = expr.find(ReadCSV) or ReadCSV()
+            literal = read_csv.find(SQLLiteral) or SQLLiteral()
+            if pathlib.Path(literal.this).suffix.lower() == ".csv" and "encoding" not in literal.this:
+                encoding = detect_file_encoding(file_obj=literal.this)
+                expr.find(ReadCSV).find(SQLLiteral).replace(SQLLiteral(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
+
+        return expr
+
     def to_sql(self, expression: Expression) -> str:
         """
         Convert sqlglot expression back to SQL string.
@@ -158,13 +185,7 @@ class SQLTransform(Transform):
         if self.optimize:
             expression = optimize(expression, dialect=self.read)
 
-        # Determine if we are reading a CSV and add file encoding to the READ_CSV method.
-        if isinstance(expression, ReadCSV):
-            literal = expression.find(ReadCSV).find(SQLLiteral)
-            if pathlib.Path(literal.this).suffix.lower() == ".csv" and "encoding" not in literal.this:
-                from lumen.ai.utils import detect_file_encoding
-                encoding = detect_file_encoding(file_obj=literal.this)
-                expression.find(ReadCSV).find(SQLLiteral).replace(SQLLiteral(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
+        expression = self._add_encoding_to_read_csv(expression=expression)
 
         return expression.sql(
             comments=self.comments,
