@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 import re
 
 from typing import ClassVar
@@ -12,7 +13,7 @@ from sqlglot import parse
 from sqlglot.expressions import (
     LT, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min, Null,
     Select, Star, Table, TableSample, and_, func, or_, replace_placeholders,
-    replace_tables, select,
+    replace_tables, select, ReadCSV
 )
 from sqlglot.optimizer import optimize
 
@@ -157,6 +158,14 @@ class SQLTransform(Transform):
         if self.optimize:
             expression = optimize(expression, dialect=self.read)
 
+        # Determine if we are reading a CSV and add file encoding to the READ_CSV method.
+        if isinstance(expression, ReadCSV):
+            literal = expression.find(ReadCSV).find(SQLLiteral)
+            if pathlib.Path(literal.this).suffix.lower() == ".csv" and "encoding" not in literal.this:
+                from lumen.ai.utils import detect_file_encoding
+                encoding = detect_file_encoding(file_obj=literal.this)
+                expression.find(ReadCSV).find(SQLLiteral).replace(SQLLiteral(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
+
         return expression.sql(
             comments=self.comments,
             dialect=self.write,
@@ -205,7 +214,6 @@ class SQLFormat(SQLTransform):
         str
             The formatted SQL query with all placeholders replaced.
         """
-        from sqlglot.expressions import ReadCSV
         sql_template = re.sub(r'\{(\w+)\}', r':\1', sql_in)
         expression = self.parse_sql(sql_template)
         if self.parameters:
@@ -214,11 +222,6 @@ class SQLFormat(SQLTransform):
                 if isinstance(v, str):
                     parameters[k] = Identifier(this=v, quoted=self.identify)
                 else:
-                    from lumen.ai.utils import detect_file_encoding
-                    csv_file = v.this.this
-                    encoding = detect_file_encoding(file_obj=csv_file)
-                    updated_file = f"'{csv_file}', encoding='{encoding}'"
-                    v = ReadCSV(this=updated_file)
                     parameters[k] = v
             replaced_expression = replace_placeholders(expression, **parameters)
         return self.to_sql(replaced_expression,)

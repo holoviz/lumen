@@ -796,12 +796,11 @@ def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO) -> str:
     """
     import chardet
 
-    # Create a default encoding type.
-    detected_encoding = {"encoding": "utf-8"}
-
     if isinstance(file_obj, str):
         try:
-            _ = Path(file_obj).exists()
+            path_exists = Path(file_obj).exists()
+            if path_exists:
+                file_obj = Path(file_obj)
         except OSError:
             pass
 
