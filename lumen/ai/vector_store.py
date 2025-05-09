@@ -17,6 +17,7 @@ import param
 import semchunk
 
 from panel import cache as pn_cache
+from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
 from .embeddings import Embeddings, NumpyEmbeddings
@@ -397,12 +398,13 @@ class VectorStore(LLMUser):
         directory_path = Path(directory)
         if not directory_path.exists() or not directory_path.is_dir():
             raise ValueError(f"Directory {directory} does not exist or is not a directory")
+        file_paths = list(directory_path.rglob(pattern))
 
         base_metadata = metadata or {}
 
         # Collect files that match the pattern and don't match exclude patterns
         all_ids = []
-        for file_path in directory_path.rglob(pattern):
+        for file_path in tqdm(file_paths, unit="file", desc="Embedding files"):
             # Skip directories
             if not file_path.is_file():
                 continue
