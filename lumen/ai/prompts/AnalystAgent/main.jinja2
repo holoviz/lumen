@@ -91,7 +91,11 @@ Here was the plan that was executed:
 """
 
 Here is the current dataset:
+{% if memory.data|length == 0 %}
+The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt the user to click the rerun button below if they'd like to try again.
+{% else %}
 {{ memory.data }}
+{% endif %}
 
 {% if 'sql' in memory %}
 Here is the current SQL query:

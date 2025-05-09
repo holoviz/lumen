@@ -294,6 +294,16 @@ class AnalystAgent(ChatAgent):
 
     requires = param.List(default=["source", "pipeline"], readonly=True)
 
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        messages = super().respond(messages, render_output, step_title)
+        if len(self._memory["data"]) == 0 and self._memory.get("sql"):
+            self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
+        return messages
 
 class ListAgent(Agent):
     """
