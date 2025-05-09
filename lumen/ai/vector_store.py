@@ -1010,24 +1010,7 @@ class DuckDBVectorStore(VectorStore):
         Raises ValueError if there's a mismatch that would cause empty query results.
         """
         # Check if metadata table exists
-        has_metadata = (
-            self.connection.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'vector_store_metadata';"
-            ).fetchone()[0]
-            > 0
-        )
-
-        if not has_metadata:
-            return  # No metadata table, can't check consistency
-
-        result = self.connection.execute(
-            "SELECT value FROM vector_store_metadata WHERE key = 'embeddings';"
-        ).fetchone()
-
-        if not result:
-            return
-
-        stored_config = json.loads(result[0])
+        stored_config = self._get_embeddings_config() or {"class": "", "params": {}}
         stored_class = stored_config["class"]
         stored_params = stored_config["params"]
 
