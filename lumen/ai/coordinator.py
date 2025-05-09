@@ -919,7 +919,7 @@ class Planner(Coordinator):
         actors_in_graph = set()
 
         for step in plan.steps:
-            key = step.expert_or_tool
+            key = step.actor
             actors.append(key)
             if key in agents:
                 subagent = agents[key]
@@ -947,7 +947,7 @@ class Planner(Coordinator):
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
-                    expert_or_tool='SQLAgent',
+                    actor='SQLAgent',
                     instruction='Load the table',
                     title='Loading table',
                     render_output=False
@@ -981,22 +981,22 @@ class Planner(Coordinator):
         last_node = execution_graph[-1] if execution_graph else None
         if last_node and isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
-                expert = "AnalystAgent"
+                actor = "AnalystAgent"
             else:
-                expert = "ChatAgent"
+                actor = "ChatAgent"
 
-            # Check if the expert conflicts with any actor in the graph
-            not_with = getattr(agents[expert], 'not_with', [])
+            # Check if the actor conflicts with any actor in the graph
+            not_with = getattr(agents[actor], 'not_with', [])
             conflicts = [actor for actor in actors_in_graph if actor in not_with]
             if conflicts:
                 # Skip the summarization step if there's a conflict
-                log_debug(f"Skipping summarization with {expert} due to conflicts: {conflicts}")
+                log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 plan.steps = steps
                 previous_actors = actors
                 return execution_graph, unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
-                expert_or_tool=expert,
+                actor=actor,
                 instruction='Summarize the results.',
                 title='Summarizing results',
                 render_output=False
@@ -1004,14 +1004,14 @@ class Planner(Coordinator):
             steps.append(summarize_step)
             execution_graph.append(
                 ExecutionNode(
-                    actor=agents[expert],
-                    provides=agents[expert].provides,
+                    actor=agents[actor],
+                    provides=agents[actor].provides,
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                     render_output=summarize_step.render_output
                 )
             )
-            actors_in_graph.add(expert)
+            actors_in_graph.add(actor)
 
         plan.steps = steps
         previous_actors = actors
@@ -1066,7 +1066,7 @@ class Planner(Coordinator):
                 self._memory["plan"] = plan
                 istep.stream('\n\nHere are the steps:\n\n')
                 for i, step in enumerate(plan.steps):
-                    istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
+                    istep.stream(f"{i+1}. {step.actor}: {step.instruction}\n")
                 if attempts > 0:
                     istep.success_title = f"Plan with {len(plan.steps)} steps created after {attempts + 1} attempts"
                 else:

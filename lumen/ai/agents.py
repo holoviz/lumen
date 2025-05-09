@@ -376,7 +376,7 @@ class TableListAgent(ListAgent):
     """
 
     conditions = param.List(default=[
-        "For listing available data tables in source",
+        "For listing available data tables in source to the user, but not for planning",
         "Not for showing data table contents",
     ])
 
@@ -520,8 +520,7 @@ class SQLAgent(LumenBaseAgent):
             "Start with this agent if you are unsure what to use",
             "For existing tables, only use if additional calculations are needed",
             "When reusing tables, reference by name rather than regenerating queries",
-            "Commonly used with IterativeTableLookup and AnalystAgent",
-            "Not useful if the user is using the same data for plotting"
+            "Not useful if the user is using the same data for plotting",
         ]
     )
 
