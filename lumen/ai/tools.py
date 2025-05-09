@@ -24,8 +24,8 @@ from .models import (
     make_refined_query_model,
 )
 from .schemas import (
-    Column, DbtslMetadata, DbtslMetaset, PreviousState, SQLMetadata,
-    SQLMetaset, VectorMetadata, VectorMetaset,
+    Column, DbtslMetadata, DbtslMetaset, MCPMetaset, MCPResource, MCPTool,
+    PreviousState, SQLMetadata, SQLMetaset, VectorMetadata, VectorMetaset,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
@@ -1462,6 +1462,222 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
             except Exception as e:
                 dim_info["error"] = f"Error fetching dimension values: {e!s}"
         return dim_name, dim_info
+
+
+class MCPServer(param.Parameterized):
+    """
+    Configuration for an MCP server connection.
+    """
+    name = param.String(doc="Name of the MCP server")
+
+    transport = param.String(doc="Supports various transports (Stdio, SSE, In-Memory)")
+
+
+class MCPLookupTool(VectorLookupTool):
+    """
+    Discovers relevant MCP capabilities using vector search.
+    Indexes all tools and resources from all servers as vector embeddings.
+    """
+
+    servers = param.List(item_type=MCPServer, doc="List of MCP server configurations")
+
+    provides = param.List(default=["mcp_metaset"], readonly=True, doc="""
+        List of context values this Tool provides to current working memory.""")
+
+    min_similarity = param.Number(default=0.01, doc="""
+        The minimum similarity to include a document.""")
+
+    n = param.Integer(default=5, bounds=(1, None), doc="""
+        The number of results to return for tools and resources each.""")
+
+    # Override the item type name for vector store indexing
+    _item_type_name = "mcp"
+
+    def __init__(self, **params):
+        """Initialize the MCPLookupTool."""
+        if 'vector_store' not in params:
+            params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
+        super().__init__(**params)
+        self._mcp_clients = {}
+        self._mcp_tools = {}
+        self._mcp_resources = {}
+        # Start indexing right away
+        state.execute(self._update_vector_store)
+
+    async def _get_client(self, server: MCPServer):
+        """Get or create a client for the specified server."""
+        try:
+            from fastmcp import Client
+        except ImportError:
+            raise ImportError("Please install the fastmcp package to use MCPLookupTool")
+
+        if server.name not in self._mcp_clients:
+            # Create a new client for this server
+            self._mcp_clients[server.name] = Client(server.transport)
+
+        return self._mcp_clients[server.name]
+
+    async def _update_vector_store(self):
+        """Connect to all MCP servers and index their tools and resources."""
+        with self._add_step(title="Indexing MCP servers") as step:
+            items_to_upsert = []
+
+            for server in self.servers:
+                step.stream(f"Connecting to MCP server: {server.name}\n")
+                async with await self._get_client(server) as client:
+
+                    # Index tools
+                    tools = await client.list_tools()
+                    step.stream(f"\n\nDiscovered {len(tools)} tools in {server.name}")
+
+                    for tool in tools:
+                        tool_name = tool.name
+                        tool_desc = tool.description
+
+                        # Store full tool info for later use
+                        self._mcp_tools[f"{server.name}:{tool_name}"] = {
+                            "name": tool_name,
+                            "description": tool_desc,
+                            "parameters": tool.inputSchema["properties"],
+                            "server": server
+                        }
+
+                        # Prepare for vector store
+                        enriched_text = f"Tool: {tool_name}\nInfo: {tool_desc}"
+                        if "parameters" in tool:
+                            for param_name, param_info in tool["parameters"].items():
+                                param_desc = param_info.get("description", "")
+                                enriched_text += f"\nParameter: {param_name} - {param_desc}"
+
+                        items_to_upsert.append({
+                            "text": enriched_text,
+                            "metadata": {
+                                "type": "tool",
+                                "name": tool_name,
+                                "server_name": server.name,
+                                "transport": server.transport
+                            }
+                        })
+
+                    # Index resources
+                    resources = await client.list_resources()
+                    step.stream(f"\n\nDiscovered {len(resources)} resources in {server.name}")
+
+                    for resource in resources:
+                        resource_uri = resource["uri"]
+                        resource_desc = resource.get("description", "")
+
+                        # Store full resource info for later use
+                        self._mcp_resources[f"{server.name}:{resource_uri}"] = {
+                            "uri": resource_uri,
+                            "description": resource_desc,
+                            "server": server
+                        }
+
+                        # Prepare for vector store
+                        enriched_text = f"Resource: {resource_uri}\nInfo: {resource_desc}"
+
+                        items_to_upsert.append({
+                            "text": enriched_text,
+                            "metadata": {
+                                "type": "resource",
+                                "uri": resource_uri,
+                                "server_name": server.name,
+                                "transport": server.transport
+                            }
+                        })
+
+            # Upsert all items at once
+            if items_to_upsert:
+                step.stream(f"Indexing {len(items_to_upsert)} MCP capabilities")
+                await self.vector_store.upsert(items_to_upsert)
+                step.success_title = f"Indexed {len(items_to_upsert)} MCP capabilities"
+            else:
+                step.failed_title = "No MCP capabilities found"
+
+    async def respond(self, messages: list, **kwargs: Any) -> str:
+        """Find relevant MCP tools and resources based on the user query."""
+        query = messages[-1]["content"]
+
+        with self._add_step(title="Searching for relevant MCP capabilities") as step:
+            # Search for tools
+            step.stream(f"\n\nSearching for MCP tools relevant to: '{query}'")
+            tool_results = await self._perform_search_with_refinement(
+                query,
+                filters={"type": "tool"}
+            )
+
+            # Search for resources
+            step.stream(f"\n\nSearching for MCP resources relevant to: '{query}'")
+            resource_results = await self._perform_search_with_refinement(
+                query, filters={"type": "resource"}
+            )
+
+            # Create MCPMetaset
+            metaset = MCPMetaset(query=query)
+
+            # Process tool results
+            for result in tool_results:
+                if result['similarity'] >= self.min_similarity:
+                    name = result['metadata']['name']
+                    server_name = result['metadata']['server_name']
+                    transport = result['metadata']['transport']
+
+                    # Get full tool details from stored data
+                    tool_key = f"{server_name}:{name}"
+                    if tool_key in self._mcp_tools:
+                        tool_data = self._mcp_tools[tool_key]
+
+                        metaset.tools[name] = MCPTool(
+                            name=name,
+                            description=tool_data["description"],
+                            similarity=result['similarity'],
+                            transport=transport,
+                            parameters=tool_data["parameters"]
+                        )
+
+            # Process resource results
+            for result in resource_results:
+                if result['similarity'] >= self.min_similarity:
+                    uri = result['metadata']['uri']
+                    server_name = result['metadata']['server_name']
+                    transport = result['metadata']['transport']
+
+                    # Get full resource details from stored data
+                    resource_key = f"{server_name}:{uri}"
+                    if resource_key in self._mcp_resources:
+                        resource_data = self._mcp_resources[resource_key]
+
+                        metaset.resources[uri] = MCPResource(
+                            uri=uri,
+                            description=resource_data["description"],
+                            similarity=result['similarity'],
+                            transport=transport
+                        )
+
+            # Store in memory
+            self._memory["mcp_metaset"] = metaset
+
+            # Log the results
+            step.stream(f"\nFound {len(metaset.tools)} relevant tools and {len(metaset.resources)} relevant resources")
+
+            if metaset.tools:
+                tool_info = "\n".join([f"- {name} ({tool.similarity:.2f}): {tool.description}" for name, tool in metaset.tools.items()])
+                stream_details(tool_info, step, title="Relevant MCP Tools", auto=False)
+
+            if metaset.resources:
+                resource_info = "\n".join([f"- {uri} ({resource.similarity:.2f}): {resource.description}" for uri, resource in metaset.resources.items()])
+                stream_details(resource_info, step, title="Relevant MCP Resources", auto=False)
+
+            if not metaset.tools and not metaset.resources:
+                step.stream("\nNo relevant MCP capabilities found")
+                step.status = "failed"
+                return ""
+
+            step.success_title = f"Found {len(metaset.tools) + len(metaset.resources)} MCP capabilities"
+
+            # Return formatted context
+            return metaset.selected_context
 
 
 class FunctionTool(Tool):

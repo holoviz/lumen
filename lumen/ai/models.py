@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
@@ -301,4 +301,22 @@ def make_refined_query_model(item_type_name: str = "items"):
             """
         )),
         __base__=PartialBaseModel
+    )
+
+
+class MCPToolExecution(BaseModel):
+    """
+    Model for selecting and executing an MCP tool.
+    """
+    chain_of_thought: str | None = Field(
+        None,
+        description="Your reasoning process for selecting the appropriate MCP tool and extracting parameters"
+    )
+    tool_name: str = Field(
+        ...,
+        description="The name of the selected MCP tool that is most appropriate for this query"
+    )
+    parameters: dict[str, Any] = Field(
+        {},
+        description="The parameters to pass to the MCP tool, extracted from the user query"
     )
