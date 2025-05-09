@@ -39,8 +39,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
-    make_find_tables_model,
+    DbtslQueryParams, MCPToolExecution, PartialBaseModel, RetrySpec, Sql,
+    VegaLiteSpec, make_find_tables_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -1207,6 +1207,186 @@ class VegaLiteAgent(BaseViewAgent):
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {'spec': vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+
+
+class MCPAgent(Agent):
+    """
+    Agent responsible for executing MCP tools based on the MCPMetaset.
+
+    MCPAgent uses an LLM to select the most appropriate tool based on the user query,
+    extract parameters from the query, execute the selected MCP tool, and interpret
+    the results.
+    """
+    conditions = param.List(default=[
+        "Use when MCP tools are available and relevant to the query",
+        "Used for executing external tools and retrieving resources",
+    ])
+
+    purpose = param.String(default="""
+        Executes Model Context Protocol (MCP) tools to integrate with external
+        systems and capabilities. MCPAgent can call tools from various MCP
+        servers to perform actions based on the user query.""")
+
+    requires = param.List(default=["mcp_metaset"], readonly=True)
+
+    provides = param.List(default=["mcp_result"], readonly=True)
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "response_model": MCPToolExecution,
+                "template": PROMPTS_DIR / "MCPAgent" / "main.jinja2",
+            },
+        }
+    )
+
+    _clients = {}
+
+    async def _get_client(self, server_url: str, transport_type: str = "auto"):
+        """Get or create a client for the specified server URL."""
+        try:
+            from fastmcp import Client
+        except ImportError:
+            raise ImportError("Please install the fastmcp package to use MCPAgent")
+
+        if server_url not in self._clients:
+            # Select the appropriate transport
+            transport_kwargs = {}
+            if transport_type == "sse":
+                from fastmcp.client.transports import SSETransport
+                transport = SSETransport(server_url)
+                transport_kwargs["transport"] = transport
+            elif transport_type == "stdio":
+                from fastmcp.client.transports import PythonStdioTransport
+                transport = PythonStdioTransport(server_url)
+                transport_kwargs["transport"] = transport
+            elif transport_type == "websocket":
+                from fastmcp.client.transports import WSTransport
+                transport = WSTransport(server_url)
+                transport_kwargs["transport"] = transport
+            else:  # auto
+                transport_kwargs["url"] = server_url
+
+            # Create the client
+            self._clients[server_url] = Client(**transport_kwargs)
+
+        return self._clients[server_url]
+
+    @retry_llm_output()
+    async def _select_and_execute_tool(self, messages: list[Message], metaset, errors: list | None = None):
+        """Use LLM to select the appropriate tool, extract parameters, and execute it."""
+        with self._add_step(title="Selecting and executing MCP tool") as step:
+            # Render the prompt template for tool selection and parameter extraction
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                metaset=metaset,
+                errors=errors
+            )
+
+            # Get the model
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            response_model = self._get_model("main")
+
+            # Invoke the LLM to select a tool and extract parameters
+            step.stream("Analyzing query to select appropriate MCP tool...")
+
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=response_model
+            )
+
+            async for output in response:
+                if output.chain_of_thought:
+                    step.stream(output.chain_of_thought, replace=True)
+
+            # Get the final output
+            selected_tool = output.tool_name
+            parameters = output.parameters
+
+            if not selected_tool or selected_tool not in metaset.tools:
+                step.failed_title = "Could not identify a suitable MCP tool"
+                step.stream("\nNo suitable MCP tool found for this query", replace=False)
+                return None, None
+
+            # Get the tool details
+            tool = metaset.tools[selected_tool]
+            server_url = tool.server_url
+
+            # Format parameters for display
+            formatted_params = json.dumps(parameters, indent=2)
+            stream_details(
+                f"Tool: {selected_tool}\nParameters:\n{formatted_params}",
+                step,
+                title="Selected MCP Tool",
+                auto=False
+            )
+
+            # Execute the tool
+            step.stream(f"\nExecuting MCP tool: {selected_tool}...")
+            try:
+                client = await self._get_client(server_url)
+
+                # Call the tool
+                result = await client.call_tool(selected_tool, parameters)
+
+                # Format the result for display
+                if isinstance(result, (dict, list)):
+                    formatted_result = json.dumps(result, indent=2)
+                else:
+                    formatted_result = str(result)
+
+                stream_details(
+                    formatted_result,
+                    step,
+                    title="MCP Tool Result",
+                    auto=False
+                )
+
+                step.success_title = f"Successfully executed MCP tool: {selected_tool}"
+                return selected_tool, result
+
+            except Exception as e:
+                step.failed_title = f"Error executing MCP tool: {selected_tool}"
+                step.stream(f"\nError: {e!s}")
+                return selected_tool, {"error": str(e)}
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        """Select and execute an MCP tool based on the user query."""
+        # Get the MCPMetaset from memory
+        metaset = self._memory.get("mcp_metaset")
+        if not metaset:
+            raise ValueError("No MCP metaset found in memory")
+
+        # Select and execute the appropriate tool
+        tool_name, tool_result = await self._select_and_execute_tool(messages, metaset)
+
+        if tool_name and tool_result:
+            # Store the result in memory
+            self._memory["mcp_result"] = {
+                "tool": tool_name,
+                "result": tool_result
+            }
+
+            # Format and stream the response
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                metaset=metaset,
+                selected_tool=tool_name,
+                tool_result=tool_result
+            )
+
+            return await self._stream(messages, system_prompt)
+        else:
+            return "No suitable MCP tool could be found or executed for this query."
 
 
 class AnalysisAgent(LumenBaseAgent):
