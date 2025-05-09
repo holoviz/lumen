@@ -57,6 +57,7 @@ class LumenOutput(Viewer):
             language=self.language,
             theme="tomorrow_night" if config.theme == "dark" else "tomorrow",
             sizing_mode="stretch_both",
+            soft_tabs=True,
             on_keyup=False,
             indent=2,
         )
