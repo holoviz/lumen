@@ -879,7 +879,7 @@ class TableLookup(VectorLookupTool):
                     continue
                 cols_lengths.add(len(vector_metadata.columns))
 
-        if max(cols_lengths) <= 30 and sum(cols_lengths) <= 70:
+        if not cols_lengths or (max(cols_lengths) <= 30 and sum(cols_lengths) <= 70):
             return False
 
         try:
