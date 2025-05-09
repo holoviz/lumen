@@ -12,8 +12,8 @@ import sqlglot
 from sqlglot import parse
 from sqlglot.expressions import (
     LT, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min, Null,
-    Select, Star, Table, TableSample, and_, func, or_, replace_placeholders,
-    replace_tables, select, ReadCSV
+    ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
+    replace_placeholders, replace_tables, select,
 )
 from sqlglot.optimizer import optimize
 
