@@ -1136,9 +1136,9 @@ class DuckDBVectorStore(VectorStore):
             # Run the potentially blocking DB operation in a thread
             async with self._add_items_lock:
                 result = await asyncio.to_thread(self._execute_query, query, params)
-            text_ids.append(result)
+                text_ids.append(result)
 
-            return text_ids
+        return text_ids
 
     async def query(
         self,
