@@ -86,6 +86,7 @@ class VectorStore(LLMUser):
     )
 
     def __init__(self, **params):
+        self._add_items_lock = asyncio.Lock()  # Lock for thread-safe add_items
         super().__init__(**params)
         if self.chunk_func is None:
             self.chunk_func = semchunk.chunkerify(
@@ -1133,8 +1134,9 @@ class DuckDBVectorStore(VectorStore):
                 params = [texts[i], json.dumps(metadata[i]), vector.tolist()]
 
             # Run the potentially blocking DB operation in a thread
-            result = await asyncio.to_thread(self._execute_query, query, params)
-            text_ids.append(result)
+            async with self._add_items_lock:
+                result = await asyncio.to_thread(self._execute_query, query, params)
+                text_ids.append(result)
 
         return text_ids
 
