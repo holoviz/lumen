@@ -17,8 +17,10 @@ Here's a summary of the dataset the user just asked about:
 {{ memory['data'] }}
 ```
 {%- endif %}
-{%- if 'vector_metaset' in memory %}
-{# officially not required #}
+{%- if 'vector_metaset' not in memory and 'agent_tool_contexts' not in memory %}
+The user has not provided any data or documents to chat about. Please prompt the user
+to upload some data or documents.
+{%- elif 'vector_metaset' in memory %}
 {{ memory['vector_metaset'].min_context }}
 {%- endif %}
 {% endblock -%}
