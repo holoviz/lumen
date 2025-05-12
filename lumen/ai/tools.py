@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import traceback
 
@@ -755,6 +753,7 @@ class TableLookup(VectorLookupTool):
     async def _update_vector_store(self, _, __, sources):
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
+        processed_sources = []
 
         # Use class variable to track which sources are currently being processed
         vector_store_id = id(self.vector_store)
@@ -768,6 +767,8 @@ class TableLookup(VectorLookupTool):
 
             # Mark this source as in progress for this vector store
             self._sources_in_progress[vector_store_id].add(source.name)
+            processed_sources.append(source.name)
+
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 if isinstance(source, DuckDBSource):
                     self._raw_metadata[source.name] = source.get_metadata()
@@ -791,35 +792,44 @@ class TableLookup(VectorLookupTool):
                 ])
 
         if tasks:
-            ready_task = asyncio.create_task(self._mark_ready_when_done(tasks))
+            # Pass the processed_sources to _mark_ready_when_done so it can clean up after tasks complete
+            ready_task = asyncio.create_task(self._mark_ready_when_done(tasks, vector_store_id, processed_sources))
             ready_task.add_done_callback(self._handle_ready_task_done)
         else:
             self._ready = True
+            # No tasks to wait for, so clean up immediately
+            self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
-        # Clean up the in-progress tracking for this source
-        for source in sources:
-            if vector_store_id in self._sources_in_progress and source.name in self._sources_in_progress[vector_store_id]:
-                self._sources_in_progress[vector_store_id].remove(source.name)
+    def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
+        """Clean up the sources_in_progress tracking after tasks are completed."""
+        try:
+            for source_name in processed_sources:
+                if vector_store_id in self._sources_in_progress and source_name in self._sources_in_progress[vector_store_id]:
+                    self._sources_in_progress[vector_store_id].remove(source_name)
 
-        # Remove the vector_store_id entry if empty
-        if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
-            del self._sources_in_progress[vector_store_id]
+            # Remove the vector_store_id entry if empty
+            if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
+                del self._sources_in_progress[vector_store_id]
+        except Exception as e:
+            log_debug(f"Error cleaning up sources_in_progress: {e!s}")  # Don't let cleanup errors propagate
 
-    async def _mark_ready_when_done(self, tasks):
+    async def _mark_ready_when_done(self, tasks, vector_store_id=None, processed_sources=None):
         """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
-        async with asyncio.Semaphore(self.max_concurrent):
-            enriched_entries = [
-                result for result in await asyncio.gather(*tasks, return_exceptions=True)
-                if isinstance(result, dict) and "text" in result
-            ]
-        if enriched_entries:
-            log_debug(f"Upserting {len(enriched_entries)} enriched entries")
-            await self.vector_store.upsert(enriched_entries)
-        log_debug("All table metadata tasks completed.")
-        self._ready = True
-
-        # Note: We don't need to clean up sources_in_progress here since the _update_vector_store
-        # method will handle that after all tasks are complete
+        try:
+            async with asyncio.Semaphore(self.max_concurrent):
+                enriched_entries = [
+                    result for result in await asyncio.gather(*tasks, return_exceptions=True)
+                    if isinstance(result, dict) and "text" in result
+                ]
+            if enriched_entries:
+                log_debug(f"Upserting {len(enriched_entries)} enriched entries")
+                await self.vector_store.upsert(enriched_entries)
+            log_debug("All table metadata tasks completed.")
+            self._ready = True
+        finally:
+            # Clean up sources_in_progress after tasks are done, even if there was an error
+            if vector_store_id is not None and processed_sources:
+                self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
     async def _should_refresh_tables(self, messages: list[dict[str, str]]) -> bool:
         """
