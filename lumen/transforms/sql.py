@@ -18,8 +18,8 @@ from sqlglot.expressions import (
 )
 from sqlglot.optimizer import optimize
 
-from ..util import detect_file_encoding
 from ..config import SOURCE_TABLE_SEPARATOR
+from ..util import detect_file_encoding
 from .base import Transform
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import html
 import inspect
-import io
 import json
 import math
 import re

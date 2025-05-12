@@ -14,8 +14,8 @@ from panel.widgets import (
     ToggleIcon,
 )
 
-from ..util import detect_file_encoding
 from ..sources.duckdb import DuckDBSource
+from ..util import detect_file_encoding
 from .memory import _Memory, memory
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
