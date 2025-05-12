@@ -392,7 +392,7 @@ def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO) -> str:
 
     if encoding == "ISO-8859-1":
         encoding = "latin-1"
-    if encoding == "ascii":
+    elif encoding == "ascii":
         encoding = "utf-8"
 
     return encoding.lower()
