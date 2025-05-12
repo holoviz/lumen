@@ -111,8 +111,8 @@ def test_sql_comments():
 
 def test_add_encoding_to_read_csv():
     expression: list = sqlglot.parse("READ_CSV('data/life-expectancy.csv')")
-    result = SQLTransform()._add_encoding_to_read_csv(expression[0])
-    expected = "READ_CSV('''data/life-expectancy.csv'', encoding=''utf-8''')"
+    result = SQLTransform(identify=True)._add_encoding_to_read_csv(expression[0])
+    expected = "READ_CSV('data/life-expectancy.csv', encoding='utf-8')"
     assert result.sql() == expected
 
 

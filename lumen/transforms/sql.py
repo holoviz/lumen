@@ -163,7 +163,7 @@ class SQLTransform(Transform):
             literal = read_csv.find(SQLLiteral) or SQLLiteral()
             if pathlib.Path(literal.this).suffix.lower() == ".csv" and "encoding" not in literal.this:
                 encoding = detect_file_encoding(file_obj=literal.this)
-                expr.find(ReadCSV).find(SQLLiteral).replace(SQLLiteral(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
+                expr.find(ReadCSV).find(SQLLiteral).replace(Identifier(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
 
         return expr
 
