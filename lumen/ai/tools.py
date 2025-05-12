@@ -229,8 +229,8 @@ class VectorLookupTool(Tool):
     chunks.
     """
 
-    # Class variable to track which sources have been embedded in which vector stores
-    _embedded_sources = {}
+    # Class variable to track which sources are currently being processed
+    _sources_in_progress = {}
     enable_query_refinement = param.Boolean(default=True, doc="""
         Whether to enable query refinement for improving search results.""")
 
@@ -756,18 +756,18 @@ class TableLookup(VectorLookupTool):
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
 
-        # Use class variable to track which sources were already embedded for this vector store
+        # Use class variable to track which sources are currently being processed
         vector_store_id = id(self.vector_store)
-        if vector_store_id not in self._embedded_sources:
-            self._embedded_sources[vector_store_id] = set()
+        if vector_store_id not in self._sources_in_progress:
+            self._sources_in_progress[vector_store_id] = set()
 
         for source in sources:
-            # Skip this source if it's already been embedded in this vector store
-            if source.name in self._embedded_sources[vector_store_id]:
+            # Skip this source if it's already being processed for this vector store
+            if source.name in self._sources_in_progress[vector_store_id]:
                 continue
 
-            # Mark this source as embedded for this vector store
-            self._embedded_sources[vector_store_id].add(source.name)
+            # Mark this source as in progress for this vector store
+            self._sources_in_progress[vector_store_id].add(source.name)
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 if isinstance(source, DuckDBSource):
                     self._raw_metadata[source.name] = source.get_metadata()
@@ -796,6 +796,15 @@ class TableLookup(VectorLookupTool):
         else:
             self._ready = True
 
+        # Clean up the in-progress tracking for this source
+        for source in sources:
+            if vector_store_id in self._sources_in_progress and source.name in self._sources_in_progress[vector_store_id]:
+                self._sources_in_progress[vector_store_id].remove(source.name)
+
+        # Remove the vector_store_id entry if empty
+        if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
+            del self._sources_in_progress[vector_store_id]
+
     async def _mark_ready_when_done(self, tasks):
         """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
         async with asyncio.Semaphore(self.max_concurrent):
@@ -808,6 +817,9 @@ class TableLookup(VectorLookupTool):
             await self.vector_store.upsert(enriched_entries)
         log_debug("All table metadata tasks completed.")
         self._ready = True
+
+        # Note: We don't need to clean up sources_in_progress here since the _update_vector_store
+        # method will handle that after all tasks are complete
 
     async def _should_refresh_tables(self, messages: list[dict[str, str]]) -> bool:
         """
