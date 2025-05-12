@@ -14,7 +14,7 @@ from panel.widgets import (
     ToggleIcon,
 )
 
-from ..ai.utils import detect_file_encoding
+from ..util import detect_file_encoding
 from ..sources.duckdb import DuckDBSource
 from .memory import _Memory, memory
 

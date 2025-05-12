@@ -18,6 +18,7 @@ from sqlglot.expressions import (
 )
 from sqlglot.optimizer import optimize
 
+from ..util import detect_file_encoding
 from ..config import SOURCE_TABLE_SEPARATOR
 from .base import Transform
 
@@ -156,8 +157,6 @@ class SQLTransform(Transform):
         Expression
             A modified expression that includes the file encoding.
         """
-        from lumen.ai.utils import detect_file_encoding
-
         expr = deepcopy(expression)
         if isinstance(expr, ReadCSV):
             read_csv = expr.find(ReadCSV) or ReadCSV()

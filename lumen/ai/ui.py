@@ -32,7 +32,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
-from ..util import log
+from ..util import detect_file_encoding, log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, VegaLiteAgent,
@@ -257,7 +257,6 @@ class UI(Viewer):
                 if src.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{src}')"
                 elif src.endswith(".csv"):
-                    from lumen.ai.utils import detect_file_encoding
                     encoding = detect_file_encoding(file_obj=src)
                     table = f"read_csv('{src}', encoding='{encoding}')"
                 elif src.endswith(".json"):
