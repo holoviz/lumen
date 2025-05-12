@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 import re
 
+from copy import deepcopy
 from typing import ClassVar
 
 import param  # type: ignore
@@ -11,12 +13,13 @@ import sqlglot
 from sqlglot import parse
 from sqlglot.expressions import (
     LT, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min, Null,
-    Select, Star, Table, TableSample, and_, func, or_, replace_placeholders,
-    replace_tables, select,
+    ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
+    replace_placeholders, replace_tables, select,
 )
 from sqlglot.optimizer import optimize
 
 from ..config import SOURCE_TABLE_SEPARATOR
+from ..util import detect_file_encoding
 from .base import Transform
 
 
@@ -140,6 +143,30 @@ class SQLTransform(Transform):
         expression = expressions[0]
         return expression
 
+    def _add_encoding_to_read_csv(self, expression: Expression) -> Expression:
+        """
+        Add file encoding when reading CSV files using DuckDB.
+
+        Parameters
+        ----------
+        expression : Expression
+            An sqlglot expression object.
+
+        Returns
+        -------
+        Expression
+            A modified expression that includes the file encoding.
+        """
+        expr = deepcopy(expression)
+        if isinstance(expr, ReadCSV):
+            read_csv = expr.find(ReadCSV) or ReadCSV()
+            literal = read_csv.find(SQLLiteral) or SQLLiteral()
+            if pathlib.Path(literal.this).suffix.lower() == ".csv" and "encoding" not in literal.this:
+                encoding = detect_file_encoding(file_obj=literal.this)
+                expr.find(ReadCSV).find(SQLLiteral).replace(Identifier(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
+
+        return expr
+
     def to_sql(self, expression: Expression) -> str:
         """
         Convert sqlglot expression back to SQL string.
@@ -156,6 +183,8 @@ class SQLTransform(Transform):
         """
         if self.optimize:
             expression = optimize(expression, dialect=self.read)
+
+        expression = self._add_encoding_to_read_csv(expression=expression)
 
         return expression.sql(
             comments=self.comments,
@@ -208,10 +237,12 @@ class SQLFormat(SQLTransform):
         sql_template = re.sub(r'\{(\w+)\}', r':\1', sql_in)
         expression = self.parse_sql(sql_template)
         if self.parameters:
-            parameters = {
-                k: Identifier(this=v, quoted=self.identify) if isinstance(v, str) else v
-                for k, v in self.parameters.items()
-            }
+            parameters = {}
+            for k, v in self.parameters.items():
+                if isinstance(v, str):
+                    parameters[k] = Identifier(this=v, quoted=self.identify)
+                else:
+                    parameters[k] = v
             replaced_expression = replace_placeholders(expression, **parameters)
         return self.to_sql(replaced_expression,)
 

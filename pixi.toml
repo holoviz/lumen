@@ -21,6 +21,7 @@ bq-dev = ["py313", "ai", "ai-local", "ai-llama", "bigquery", "lint", "sql", "tes
 
 [dependencies]
 bokeh = "*"
+chardet = "*"
 holoviews = ">=1.17.0"
 hvplot = "*"
 intake = "<2"

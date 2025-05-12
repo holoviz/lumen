@@ -109,6 +109,13 @@ def test_sql_comments():
     assert result == expected
 
 
+def test_add_encoding_to_read_csv():
+    expression: list = sqlglot.parse("READ_CSV('data/life-expectancy.csv')")
+    result = SQLTransform(identify=True)._add_encoding_to_read_csv(expression[0])
+    expected = "READ_CSV('data/life-expectancy.csv', encoding='utf-8')"
+    assert result.sql() == expected
+
+
 def test_sql_error_level():
     with pytest.raises(
         sqlglot.errors.ParseError, match="Expected table name but got"

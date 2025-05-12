@@ -15,6 +15,7 @@ from panel.widgets import (
 )
 
 from ..sources.duckdb import DuckDBSource
+from ..util import detect_file_encoding
 from .memory import _Memory, memory
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
@@ -197,7 +198,8 @@ class SourceControls(Viewer):
             self._upload_tabs.clear()
             self._media_controls.clear()
             for filename, file in self._file_input.value.items():
-                file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
+                encoding = detect_file_encoding(file_obj=file)
+                file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
                 if filename.lower().endswith(TABLE_EXTENSIONS):
                     table_controls = TableControls(
                         file_obj,
