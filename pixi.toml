@@ -53,7 +53,7 @@ python = "3.13.*"
 COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
-duckdb = "*"
+duckdb = ">=1.2.0"
 griffe = "*"
 instructor = ">=1.6.4"
 markitdown = "!=0.1.1"
