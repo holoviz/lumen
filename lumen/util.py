@@ -14,7 +14,6 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
-import chardet
 import pandas as pd
 import panel as pn
 import param
@@ -354,19 +353,21 @@ def slugify(value, allow_unicode=False) -> str:
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
-def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO) -> str:
+def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO | str | bytes) -> str:
     """
     Detects the given file object's encoding.
 
     Parameters
     ----------
-    file_obj : Path | io.BytesIO | io.StringIO
+    file_obj : Path | io.BytesIO | io.StringIO | str | bytes
         File object or path object to detect encoding.
 
     Returns
     -------
     str
     """
+    import chardet
+
     if isinstance(file_obj, str):
         try:
             path_exists = Path(file_obj).exists()
