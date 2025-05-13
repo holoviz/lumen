@@ -110,6 +110,7 @@ def test_sql_comments():
 
 
 def test_add_encoding_to_read_csv():
+    pytest.importorskip("chardet")
     expression: list = sqlglot.parse("READ_CSV('data/life-expectancy.csv')")
     result = SQLTransform(identify=True)._add_encoding_to_read_csv(expression[0])
     expected = "READ_CSV('data/life-expectancy.csv', encoding='utf-8')"
