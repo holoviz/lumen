@@ -28,7 +28,7 @@ from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import (
-    Panel, VegaLiteView, View, hvPlotUIView,
+    HoloViewsView, Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import ContextProvider
 from .config import (
@@ -931,7 +931,7 @@ class BaseViewAgent(LumenBaseAgent):
         super().__init__(**params)
 
 
-    @retry_llm_output()
+    # @retry_llm_output()
     async def _create_valid_spec(
         self,
         messages: list[Message],
@@ -992,6 +992,7 @@ class BaseViewAgent(LumenBaseAgent):
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
 
+            spec = ""
             self._last_output = dict(output)
             try:
                 spec = await self._extract_spec(self._last_output)
@@ -1064,6 +1065,8 @@ class hvPlotAgent(BaseViewAgent):
         model = param_to_pydantic(self.view_type, base_model=PartialBaseModel, excluded=excluded, schema=schema, extra_fields={
             "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
         })
+        print(model)
+        breakpoint()
         return model[self.view_type.__name__]
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
@@ -1087,6 +1090,39 @@ class hvPlotAgent(BaseViewAgent):
             spec["rasterize"] = True
             spec["cnorm"] = "log"
         return spec
+
+
+class HoloViewsAgent(hvPlotAgent):
+
+    purpose = param.String(default="Generates a plot of the data given a user prompt.")
+
+    prompts = param.Dict(
+        default={
+            "main": {"template": PROMPTS_DIR / "HoloViewsAgent" / "main.jinja2"},
+        }
+    )
+
+    view_type = HoloViewsView
+
+    async def _update_spec(self, memory, event: param.parameterized.Event):
+        try:
+            spec = await self._extract_spec({"yaml_spec": event.new})
+        except Exception:
+            return
+        memory["view"] = dict(spec, type=self.view_type)
+
+    async def _extract_spec(self, spec: dict):
+        if yaml_spec := spec.get("yaml_spec"):
+            hv_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
+        elif json_spec := spec.get("json_spec"):
+            hv_spec = json.loads(json_spec)
+        breakpoint()
+        return {
+            "spec": hv_spec,
+            "sizing_mode": "stretch_both",
+            "min_height": 300,
+            "max_width": 1200,
+        }
 
 
 class VegaLiteAgent(BaseViewAgent):
