@@ -21,7 +21,6 @@ bq-dev = ["py313", "ai", "ai-local", "ai-llama", "bigquery", "lint", "sql", "tes
 
 [dependencies]
 bokeh = "*"
-chardet = "*"
 holoviews = ">=1.17.0"
 hvplot = "*"
 intake = "<2"
@@ -53,6 +52,7 @@ python = "3.13.*"
 COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
+chardet = "*"
 duckdb = ">=1.2.0"
 griffe = "*"
 instructor = ">=1.6.4"
