@@ -15,15 +15,15 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column, HSpacer, Row
+from panel.layout import Column as PnColumn, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, FileDownload, List,
-    MultiChoice, Page, Paper, Tabs,
+    Button, ChatFeed, ChatInterface, ChatMessage, Column, FileDownload, List,
+    MultiChoice, Page, Paper, Row, Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -38,12 +38,13 @@ from .agents import (
 from .components import SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from .controls import SourceControls
-from .coordinator import Coordinator, Planner
+from .coordinator import Coordinator, Plan, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .report import Report
 from .tools import TableLookup
 from .vector_store import VectorStore
 
@@ -51,6 +52,38 @@ if TYPE_CHECKING:
     from .views import LumenOutput
 
 DataT = str | Path | Source | Pipeline
+
+
+UI_INTRO_MESSAGE = """
+👋 Click a suggestion below or upload a data source to get started!
+
+Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
+and visualize data without writing code.
+
+On the chat interface...
+
+💬 Ask questions in plain English to generate SQL queries and visualizations\\
+🔍 Inspect and validate results through conversation\\
+📝 Get summaries and key insights from your data\\
+🧩 Apply custom analyses with a click of a button
+
+If unsatisfied with the results...
+
+🔄 Use the Rerun button to re-run the last query\\
+⏪ Use the Undo button to remove the last query\\
+🗑️ Use the Clear button to start a new session
+
+Click the toggle, or drag the edge, to expand the sidebar and...
+
+📚 Upload sources (tables and documents) by dragging or selecting files\\
+🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download\\
+💾 Access all generated tables and visualizations under tabs\\
+📤 Export your session as a reproducible notebook
+
+Note, if the vector store (above) is pending, results may be degraded until it is ready.
+
+📖 Learn more about [Lumen AI](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html)
+"""
 
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
@@ -71,11 +104,12 @@ class TableExplorer(Viewer):
         super().__init__(**params)
         self._table_select = MultiChoice(
             placeholder="Select table(s)", sizing_mode='stretch_width',
-            max_height=200, max_items=5
+            max_height=200, max_items=5, min_height=65, margin=0
         )
         self._explore_button = Button(
-            name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
-            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers
+            name='Explore table(s)', icon='add_chart', button_type='primary', align='center', icon_size="2em",
+            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers, height=65,
+            margin=(0, 0, 0, 10), width=200
         )
         self._input_row = Row(self._table_select, self._explore_button)
         self._source_map = {}
@@ -88,7 +122,7 @@ class TableExplorer(Viewer):
         self._controls.param.watch(self._explore_table_if_single, "add")
         self._tabs = Tabs(self._controls, dynamic=True, sizing_mode='stretch_both')
         self._layout = Column(
-            self._input_row,self._tabs, sizing_mode='stretch_both',
+            self._input_row, self._tabs, sizing_mode='stretch_both',
         )
 
     def _update_source_map(self, old=None, new=None, sources=None, init=False):
@@ -242,8 +276,16 @@ class UI(Viewer):
             self.interface = ChatInterface(
                 callback_exception='verbose',
                 load_buffer=5,
+                margin=(0, 5, 10, 10),
                 sizing_mode="stretch_both"
             )
+            self.interface._widget.color = "primary"
+            welcome_message = UI_INTRO_MESSAGE
+            self.interface.send(
+                Markdown(welcome_message, sizing_mode="stretch_width"),
+                user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
+            )
+
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
@@ -281,8 +323,8 @@ class UI(Viewer):
             styles={'position': 'relative', 'right': '20px', 'top': '-1px'},
             sizing_mode='stretch_width'
         )
-        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
-        self._vector_store_status_badge = StatusBadge(name="Vector Store Pending")
+        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both', align="center")
+        self._vector_store_status_badge = StatusBadge(name="Vector Store Pending", align="center")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._verify_llm)
@@ -378,7 +420,7 @@ class UI(Viewer):
             page = Page(
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
-                header=[self.llm.status(), self._vector_store_status_badge],
+                header=[self.llm.status(), self._vector_store_status_badge, self._report_toggle],
                 main=[self._main],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
@@ -430,11 +472,16 @@ class Exploration(param.Parameterized):
 
     conversation = Children()
 
+    plan = param.ClassSelector(class_=Plan)
+
     title = param.String(default="")
 
     subtitle = param.String(default="")
 
     view = Child()
+
+    def __panel__(self):
+        return self.view
 
 
 class ExplorerUI(UI):
@@ -470,7 +517,14 @@ class ExplorerUI(UI):
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
-        self._explorations = List(dense=True, label='Explorations', margin=0, sizing_mode='stretch_width')
+        self._explorations = List(
+            dense=True, label='Explorations', margin=(-50, 0, 0, 0), sizing_mode='stretch_width'
+        )
+        self._reorder_switch = Switch(
+            label='Edit', styles={'margin-left': 'auto', 'z-index': '999'},
+            disabled=self._explorations.param.items.rx.len()<2
+        )
+        self._reorder_switch.param.watch(self._toggle_reorder, 'value')
         self._explorations.on_action('remove', self._delete_exploration)
         self._explorer = TableExplorer(interface=self.interface)
         self._explorations_intro = Markdown(
@@ -479,6 +533,14 @@ class ExplorerUI(UI):
             sizing_mode='stretch_width',
             visible=self._explorations.param["items"].rx.bool().rx.not_()
         )
+        self._report_toggle = ToggleIcon(
+            icon="chat",
+            active_icon="summarize",
+            value=False,
+            styles={"margin-left": "auto"},
+            sx={".MuiIcon-root": {"color": "white"}}
+        )
+        self._report_toggle.param.watch(self._toggle_report, ['value'])
         self._home = Exploration(
             context=memory,
             title='Home',
@@ -497,18 +559,49 @@ class ExplorerUI(UI):
             filename=f"{self.title.replace(' ', '_')}.ipynb"
         )
         self._exports.visible = False
-        self._output = Paper(self._home.view, elevation=2, margin=5, sx={'p': 5}, sizing_mode='stretch_both')
+        self._output = Paper(
+            self._home.view, elevation=2, margin=(0, 10, 10, 5), sx={'p': 4},
+            height_policy='max', sizing_mode="stretch_both"
+        )
         self._split = SplitJS(
             left=self._coordinator,
             right=self._output,
             invert=self.chat_ui_position != 'left',
             sizing_mode='stretch_both'
         )
+        self._report = Column()
         self._main = Column(self._split)
-        self._sidebar = Column(self._explorations)
+        self._sidebar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
         self._last_synced = None
+
+    def _toggle_reorder(self, event):
+        items = self._explorations.items[:1]
+        reorder_actions = [
+            {'label': 'Move Up', 'inline': True, 'icon': 'keyboard_arrow_up'},
+            {'label': 'Move Down', 'inline': True, 'icon': 'keyboard_arrow_down'}
+        ]
+        for item in self._explorations.items[1:]:
+            item = dict(item)
+            if event.new:
+                item['actions'] = item['actions'] + reorder_actions
+            else:
+                item['actions'] = [
+                    action for action in item['actions'] if action['label'] not in ('Move Up', 'Move Down')
+                ]
+            items.append(item)
+        self._explorations.items = items
+
+    def _toggle_report(self, event):
+        if event.new:
+            self._main[:] = [Report(
+                subtasks=[
+                    exploration['view'].plan for exploration in self._explorations.items[1:]
+                ]
+            )]
+        else:
+            self._main[:] = [self._split]
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
@@ -551,7 +644,8 @@ class ExplorerUI(UI):
             if self._last_synced is exploration:
                 exploration.conversation = self.interface.objects
             else:
-                exploration.conversation = self._snapshot_messages()
+                # Otherwise snapshot the conversation
+                event.old['view'].conversation = self._snapshot_messages()
 
         with hold():
             self._set_conversation(exploration.conversation)
@@ -592,10 +686,15 @@ class ExplorerUI(UI):
     async def _add_exploration(self, title: str, memory: _Memory):
         # Sanpshot previous conversation
         last_exploration = self._explorations.value['view']
-        last_exploration.conversation = self._snapshot_messages(new=True)
+        is_home = last_exploration is self._home
+        if is_home:
+            last_exploration.conversation = [self.interface.objects[0]]
+            conversation = self.interface.objects[1:]
+        else:
+            last_exploration.conversation = self._snapshot_messages(new=True)
+            conversation = list(self.interface.objects)
 
         # Create new exploration
-        conversation = list(self.interface.objects)
         output = Column(sizing_mode='stretch_both', loading=True)
         exploration = Exploration(
             context=memory,
@@ -627,7 +726,7 @@ class ExplorerUI(UI):
                 margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
             )
             if sql.count('\n') > 10:
-                sql_pane = Column(
+                sql_pane = PnColumn(
                     sql_pane, max_height=325, scroll='y-auto', name='SQL'
                 )
             if len(view) and view[0].name == 'SQL':
@@ -724,7 +823,8 @@ class ExplorerUI(UI):
             try:
                 self._idle.clear()
                 with self._coordinator.param.update(memory=local_memory):
-                    await callback(contents, user, instance)
+                    plan = await callback(contents, user, instance)
+                self._explorations.value['view'].plan = plan
             finally:
                 self._explorations.value['view'].conversation = self.interface.objects
                 self._idle.set()

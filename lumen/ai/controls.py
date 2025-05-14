@@ -4,12 +4,12 @@ import zipfile
 import pandas as pd
 import param
 
-from panel.layout import Column, FlexBox, Row
 from panel.pane.markup import Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator
 from panel_material_ui import (
-    Button, NestedSelect, Select, Tabs, TextInput, ToggleIcon,
+    Button, Column, FlexBox, NestedSelect, Row, Select, Tabs, TextInput,
+    ToggleIcon,
 )
 
 from ..sources.duckdb import DuckDBSource
@@ -124,9 +124,9 @@ class SourceControls(Viewer):
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
         self._markitdown = None
         self._file_input = FileDropper(
-            height=100,
+            height=200,
             multiple=self.param.multiple,
-            margin=(10, 10, 0, 10),
+            margin=0,
             sizing_mode="stretch_width",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
@@ -386,17 +386,19 @@ class RetryControls(Viewer):
         super().__init__(**params)
         icon = ToggleIcon.from_param(
             self.param.active,
-            name=" ",
+            label=" ",
             description="Prompt LLM to retry",
-            icon="repeat-once",
-            active_icon="x",
-            margin=5,
+            icon="edit",
+            active_icon="cancel",
+            margin=(5, 0),
+            size="1em"
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",
             visible=icon.param.value,
             max_length=200,
             margin=(5, 0),
+            size="small"
         )
         row = Row(icon, self._text_input)
         self._row = row

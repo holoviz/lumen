@@ -363,7 +363,7 @@ class TableListAgent(ListAgent):
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available tables in memory.""")
+        Displays a list of all available tables to the user. Not useful for identifying which table to use.""")
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -530,6 +530,8 @@ class SQLAgent(LumenBaseAgent):
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
     requires = param.List(default=["source", "sql_metaset"], readonly=True)
+
+    user = param.String(default="SQL")
 
     _extensions = ('codeeditor', 'tabulator',)
 
@@ -753,6 +755,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     source = param.ClassSelector(class_=BaseSQLSource, doc="""
         The source associated with the dbt Semantic Layer.""")
+
+    user = param.String(default="DBT")
 
     _extensions = ('codeeditor', 'tabulator',)
 

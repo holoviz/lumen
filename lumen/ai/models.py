@@ -77,7 +77,6 @@ def make_plan_models(agents: list[str], tools: list[str]):
         expert_or_tool=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the expert or tool to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
-        render_output=(bool, FieldInfo(description="Whether the output of the expert should be rendered. If the user wants to see the table, and the expert is SQL, then this should be `True`.")),
     )
     reasoning = create_model(
         'Reasoning',

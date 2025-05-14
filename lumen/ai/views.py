@@ -10,11 +10,12 @@ import yaml
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
-from panel.layout import Column, Row
+from panel.pane import Markdown
+from panel.param import ParamRef
 from panel.viewable import Viewer
 from panel.widgets import CodeEditor, LoadingSpinner
 from panel_material_ui import (
-    Alert, Button, ButtonIcon, Checkbox, Tabs,
+    Alert, Button, Checkbox, Column, IconButton, Row, Tabs,
 )
 from param.parameterized import discard_events
 
@@ -23,7 +24,7 @@ from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..views.base import GraphicWalker, Table
+from ..views.base import Table
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
 
@@ -46,27 +47,35 @@ class LumenOutput(Viewer):
 
     def __init__(self, **params):
         if 'spec' not in params and 'component' in params and params['component'] is not None:
-            component_spec = params['component'].to_spec()
-            params['spec'] = yaml.dump(component_spec)
+            try:
+                component_spec = params['component'].to_spec()
+                params['spec'] = yaml.dump(component_spec)
+            except Exception:
+                params['spec'] = None
         super().__init__(**params)
         code_editor = CodeEditor(
-            value=self.param.spec,
+            value=self.param.spec.rx.or_(""),
             language=self.language,
-            theme="tomorrow_night" if config.theme == "dark" else "tomorrow",
-            sizing_mode="stretch_both",
+            theme="github_dark" if config.theme == "dark" else "github_light_default",
+            sizing_mode="stretch_width",
             on_keyup=False,
             indent=2,
         )
         code_editor.link(self, bidirectional=True, value='spec')
-        copy_icon = ButtonIcon(
-            icon="copy", active_icon="check", toggle_duration=1000, description="Copy YAML to clipboard"
+        placeholder = Markdown(
+            f'{self.title} output could not be serialized and may therefore not be edited.'
+        )
+        copy_icon = IconButton(
+            icon="content_copy", active_icon="check", margin=(5, 0), toggle_duration=1000,
+            description="Copy YAML to clipboard", size="0.7em", color="default"
         )
         copy_icon.js_on_click(
             args={"code_editor": code_editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
-        download_icon = ButtonIcon(
-            icon="download", active_icon="check", toggle_duration=1000, description="Download YAML to file"
+        download_icon = IconButton(
+            icon="download", active_icon="check", margin=(5, 0), toggle_duration=1000,
+            description="Download YAML to file", size="0.8em", color="default"
         )
         download_icon.js_on_click(
             args={"code_editor": code_editor},
@@ -82,32 +91,34 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = Row(copy_icon, download_icon, *self.footer)
-        code_col = Column(code_editor, icons, sizing_mode="stretch_both")
-        self._main = code_col
+        icons = Row(
+            copy_icon, download_icon, *self.footer,
+            height=50, margin=(0, 0, 5, 5)
+        )
+        code_col = Column(
+            code_editor,
+            icons,
+            sizing_mode="stretch_both"
+        )
+        no_spec = self.param.spec.rx.is_(None)
+        self._main = ParamRef(no_spec.rx.where(placeholder, code_col), min_height=no_spec.rx.where(None, 300))
         self._main.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
 
     async def _render_pipeline(self, pipeline):
-        if GraphicWalker._panel_type:
-            table = GraphicWalker(
-                pipeline=pipeline, tab='data', renderer='profiler',
-                kernel_computation=True, sizing_mode="stretch_both",
-            )
-        else:
-            table = Table(
-                pipeline=pipeline, pagination='remote',
-                min_height=500, sizing_mode="stretch_both", stylesheets=[
-                """
-                .tabulator-footer {
-                display: flex;
-                text-align: left;
-                padding: 0px;
-                }
-                """
-                ]
-            )
+        table = Table(
+            pipeline=pipeline, pagination='remote',
+            min_height=500, sizing_mode="stretch_both", stylesheets=[
+            """
+            .tabulator-footer {
+            display: flex;
+            text-align: left;
+            padding: 0px;
+            }
+            """
+            ]
+        )
         download = Download(
             view=table, hide=False, filename=f'{pipeline.table}',
             format='csv'

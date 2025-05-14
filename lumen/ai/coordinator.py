@@ -25,7 +25,7 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import ThinkingYesNo, make_agent_model, make_plan_models
-from .report import Task
+from .report import Section, Task
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
@@ -34,56 +34,22 @@ from .utils import (
 )
 from .vector_store import VectorStore
 
-UI_INTRO_MESSAGE = """
-👋 Click a suggestion below or upload a data source to get started!
 
-Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
-and visualize data without writing code.
-
-On the chat interface...
-
-💬 Ask questions in plain English to generate SQL queries and visualizations
-🔍 Inspect and validate results through conversation
-📝 Get summaries and key insights from your data
-🧩 Apply custom analyses with a click of a button
-
-If unsatisfied with the results...
-
-🔄 Use the Rerun button to re-run the last query
-⏪ Use the Undo button to remove the last query
-🗑️ Use the Clear button to start a new session
-
-Click the toggle, or drag the edge, to expand the sidebar and...
-
-📚 Upload sources (tables and documents) by dragging or selecting files
-🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
-💾 Access all generated tables and visualizations under tabs
-📤 Export your session as a reproducible notebook
-
-Note, if the vector store (above) is pending, results may be degraded until it is ready.
-
-📖 Learn more about [Lumen AI](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html)
-"""
-
-
-class Plan(Task):
+class Plan(Section):
     """
     A Plan is a Task that is a collection of other Tasks.
     """
 
     interface = param.ClassSelector(class_=ChatFeed)
 
-    subtasks = param.List(item_type=Task)
-
-    level = 2
-
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
-        steps_layout = self.steps_layout or Column()
-        with self.interface.add_step(title=f"Running {task.title}...", steps_layout=steps_layout) as step:
+        with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
             try:
-                with task.param.update(memory=self.memory, interface=self.interface, steps_layout=steps_layout):
+                with task.param.update(
+                    memory=self.memory, interface=self.interface, steps_layout=self.steps_layout, history=self.history
+                ):
                     outputs += await task.execute(**kwargs)
             except asyncio.CancelledError as e:
                 step.failed_title = f"{task.title} agent was cancelled"
@@ -96,7 +62,7 @@ class Plan(Task):
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{task.title} failed to provide declared context.")
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
-            step.stream(f"\n\n`Successfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
+            step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
         return outputs
 
@@ -264,12 +230,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             vector_store=vector_store, document_vector_store=document_vector_store, **params
         )
 
-        welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
-        interface.send(
-            welcome_message,
-            user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
-        )
-        interface.button_properties={
+        interface.button_properties = {
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
             "clear": {"callback": on_clear},
@@ -385,9 +346,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             num_objects=len(self.interface.objects),
         )
 
-    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
+    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
-        await self.respond(contents)
+        return await self.respond(contents)
 
     async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -469,7 +430,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            with plan.param.update(history=messages, memory=self._memory, interface=self.interface):
+            with plan.param.update(history=messages, memory=self._memory, interface=self.interface, steps_layout=self.steps_layout):
                 await plan.execute()
 
             if "pipeline" in self._memory:
@@ -479,7 +440,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         for message_obj in self.interface.objects[::-1]:
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
-                break
+        return plan
 
     async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message]) -> bool:
         result = await self._invoke_prompt(
@@ -706,7 +667,16 @@ class Planner(Coordinator):
             msg["content"] for msg in reversed(messages)
             if msg.get("role") == "user"), ""
         )
-        with self.interface.add_step(title="Gathering context for planning...", user="Assistant") as step:
+
+        steps_layout = self.steps_layout
+        if self.interface and steps_layout is None:
+            steps_layout = None
+            for step_message in reversed(self.interface.objects[-5:]):
+                if step_message.user == "Planner" and isinstance(step_message.object, Card):
+                    steps_layout = step_message.object
+                    break
+
+        with self.interface.add_step(title="Gathering context for planning...", user="Assistant", steps_layout=steps_layout) as step:
             for tool in self.planner_tools:
                 is_relevant = await self._check_tool_relevance(
                     tool, "", self, f"Gather context for planning to answer {user_query}", messages
@@ -720,13 +690,13 @@ class Planner(Coordinator):
 
                 tool_name = getattr(tool, "name", type(tool).__name__)
                 step.stream(f"Using {tool_name} to gather planning context...")
-
                 task = Task(
                     interface=self.interface,
                     memory=self._memory,
                     subtasks=[tool],
                     instruction=user_query,
                     title=f"Gathering context with {tool_name}",
+                    steps_layout=steps_layout,
                 )
                 await task.execute()
                 if task.status != "error":
@@ -931,14 +901,16 @@ class Planner(Coordinator):
         previous_plans, previous_actors = [], []
         attempts = 0
         plan = None
-        with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
+        with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
+            if self.steps_layout is None:
+                self.steps_layout = self.interface.objects[-1].object
             while not planned:
                 if attempts > 0:
                     log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
                 raw_plan = None
                 try:
                     raw_plan = await self._make_plan(
-                        messages, agents, unmet_dependencies, previous_plans,
+                        messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
                         reason_model, plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                     )
                 except asyncio.CancelledError as e:
@@ -949,7 +921,7 @@ class Planner(Coordinator):
                     istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                     traceback.print_exception(e)
                     raise e
-                plan, unmet_dependencies, previous_actors = await self._resolve_plan(raw_plan, agents, messages, previous_actors)
+                plan, unmet_dependencies, previous_actors = await self._resolve_plan(raw_plan, agents, tools, messages, previous_actors)
                 if unmet_dependencies:
                     istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                     attempts += 1

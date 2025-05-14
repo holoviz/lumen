@@ -168,7 +168,7 @@ class VectorLookupToolUser(ToolUser):
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
         # If the tool is already instantiated and has a vector_store, use it
-        if isinstance(tool, VectorLookupTool) and tool.vector_store is not None:
+        if not isinstance(tool, VectorLookupTool) or (isinstance(tool, VectorLookupTool) and tool.vector_store is not None):
             return kwargs
         elif tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
@@ -390,7 +390,7 @@ class VectorLookupTool(Tool):
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
 
-        with self._add_step(title="Vector Search with Refinement") as step:
+        with self._add_step(title="Vector Search with Refinement", steps_layout=self.steps_layout) as step:
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
@@ -917,7 +917,7 @@ class TableLookup(VectorLookupTool):
             return vector_metaset.selected_columns
 
         try:
-            with self._add_step(title="Column Selection") as step:
+            with self._add_step(title="Column Selection", steps_layout=self.steps_layout) as step:
                 selected_columns = {}
                 vector_metadata_map = vector_metaset.vector_metadata_map
                 table_slugs = list(vector_metaset.vector_metadata_map)
@@ -1035,7 +1035,7 @@ class TableLookup(VectorLookupTool):
             except Exception:
                 log_debug("Failed to select columns, skipping column selection.")
         else:
-            with self._add_step(title="Column Selection Skipped") as step:
+            with self._add_step(title="Column Selection Skipped", steps_layout=self.steps_layout) as step:
                 step.stream("Column subsetting skipped")
 
         self._previous_state = PreviousState(

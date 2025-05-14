@@ -88,7 +88,8 @@ class Task(Viewer):
         memory = task.memory or self.memory
         messages = self.history + [{'content': self.instruction, 'role': 'user'}]
         with task.param.update(
-            interface=self.interface, llm=task.llm or self.llm, memory=memory, steps_layout=self.steps_layout
+            interface=self.interface, llm=task.llm or self.llm, memory=memory,
+            steps_layout=self.steps_layout
         ):
             if isinstance(task, Actor):
                 out = await task.respond(messages, **kwargs)
@@ -99,12 +100,13 @@ class Task(Viewer):
                         if isinstance(out, Viewable):
                             out = Panel(object=out, pipeline=self.memory.get('pipeline'))
                         out = LumenOutput(
-                            component=out, render_output=self.render_output, title=task.title
+                            component=out, title=self.title
                         )
                         message_kwargs = dict(value=out, user=task.name)
                         if self.interface:
                             self.interface.stream(**message_kwargs)
-                if isinstance(out, (Viewable, View)):
+                            self.memory['outputs'] = self.memory['outputs'] + [out]
+                if isinstance(out, (Viewable, View, LumenOutput)):
                     new = [out]
                 else:
                     new = self.memory['outputs'][pre-1:]
@@ -136,8 +138,6 @@ class Section(Task):
     """
     A Section consists of multiple Tasks which are executed and rendered in sequence.
     """
-
-    history = param.List()
 
     subtasks = param.List(item_type=Task)
 
@@ -184,7 +184,8 @@ class Report(Task):
         )
 
     def _populate_view(self):
-        self._view[:] = [(subtask.title, subtask) for subtask in self.subtasks if isinstance(subtask, Task)]
+        self._view[:] = objects = [(subtask.title, subtask) for subtask in self.subtasks if isinstance(subtask, Task)]
+        self._view.active = list(range(len(objects)))
 
     async def _run_task(self, i: int, task: Task | Actor):
         self._view.active = self._view.active + [i]
