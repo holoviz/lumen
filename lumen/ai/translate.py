@@ -15,8 +15,7 @@ from typing import (
 import param
 
 from griffe import Docstring, DocstringSectionKind
-from instructor.dsl.partial import \
-    PartialLiteralMixin  # Assuming this is correctly available
+from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import (
     BaseModel, ConfigDict, Field, PrivateAttr, create_model,
 )
