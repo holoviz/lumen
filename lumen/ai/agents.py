@@ -1065,8 +1065,6 @@ class hvPlotAgent(BaseViewAgent):
         model = param_to_pydantic(self.view_type, base_model=PartialBaseModel, excluded=excluded, schema=schema, extra_fields={
             "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
         })
-        print(model)
-        breakpoint()
         return model[self.view_type.__name__]
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
@@ -1111,19 +1109,21 @@ class HoloViewsAgent(hvPlotAgent):
             return
         memory["view"] = dict(spec, type=self.view_type)
 
-    async def _extract_spec(self, spec: dict):
-        if yaml_spec := spec.get("yaml_spec"):
-            hv_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
-        elif json_spec := spec.get("json_spec"):
-            hv_spec = json.loads(json_spec)
-        breakpoint()
-        return {
-            "spec": hv_spec,
-            "sizing_mode": "stretch_both",
-            "min_height": 300,
-            "max_width": 1200,
+    async def _extract_spec(self, spec: dict[str, Any]):
+        spec = {
+            key: val for key, val in spec.items()
+            if val is not None
         }
-
+        spec.pop("chain_of_thought", None)
+        spec["type"] = "holoviews"
+        if spec.get("geo", False):
+            try:
+                import geoviews  # noqa: F401
+            except ImportError:
+                spec["geo"] = False
+        self.view_type.validate(spec)
+        spec.pop("type", None)
+        return spec
 
 class VegaLiteAgent(BaseViewAgent):
 

@@ -49,7 +49,12 @@ if TYPE_CHECKING:
     from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
-
+VALID_HV_OPERATIONS = tuple([
+    getattr(hv.operation, op)
+    for op in hv.operation.__all__
+    if issubclass(getattr(hv.operation, op), hv.operation.Operation)
+    and op not in ("Operation", "function", "method")
+])
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -968,7 +973,7 @@ class hvPlotView(hvPlotBaseView, HoloViewsElementView):
     its simple API.
     """
 
-    operations = param.List(item_type=param.ParameterizedFunction, doc="""
+    operations = param.List(item_type=VALID_HV_OPERATIONS, doc="""
         Operations to apply to HoloViews plot.""")
 
     view_type = 'hvplot'
@@ -1041,7 +1046,7 @@ class HoloViewsView(HoloViewsElementView):
         The columns to group by when rendering the plot.""")
 
     kind = param.Selector(
-        default=None, doc="The HoloViews element to use.",
+        default="Points", doc="The HoloViews element to use.",
         objects=[
             'Curve',
             'Bars',
@@ -1105,10 +1110,15 @@ class HoloViewsView(HoloViewsElementView):
     vdims = param.ListSelector(doc="""
         The columns to render on the y-axis and/or z-axis.""")
 
+    operations = param.List(
+        item_type=VALID_HV_OPERATIONS, doc="""Operation to apply on the plot.""")
+
     opts = param.Dict(default={}, doc="""
         HoloViews options to apply on the plot.""")
 
     _panel_type = pn.pane.HoloViews
+
+    view_type = 'holoviews'
 
     def get_plot(self, df):
         processed = {}
@@ -1125,13 +1135,15 @@ class HoloViewsView(HoloViewsElementView):
         if self.geo:
             import geoviews as gv
             plot = gv.Dataset(df, kdims=key_dims, vdims=self.vdims).to(
-                getattr(gv, self.kind)
-            ).opts(self.kind, **self.opts)
+                getattr(gv, self.kind, gv.Points)
+            ) * gv.feature.coastline()
         else:
             plot = hv.Dataset(df, kdims=key_dims, vdims=self.vdims).to(
-                getattr(hv, self.kind)
-            ).opts(self.kind, **self.opts)  # ("Curve", **opts)
-        plot = plot.opts(**self.opts) if self.opts else plot
+                getattr(hv, self.kind, hv.Points)
+            )
+        if self.opts:
+            plot = plot.opts(self.kind, **self.opts)
+        plot = plot.opts(responsive=True, tools=["hover"])
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
         return plot

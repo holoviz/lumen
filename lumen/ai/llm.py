@@ -224,15 +224,14 @@ class Llm(param.Parameterized):
             return
 
         string = ""
-        chunks = await self.invoke(
-            messages,
+        invoke_kwargs = dict(
             system=system,
             response_model=response_model,
-            stream=True,
             allow_partial=True,
             model_spec=model_spec,
             **kwargs,
         )
+        chunks = await self.invoke(messages, stream=True, **invoke_kwargs)
         try:
             async for chunk in chunks:
                 if response_model is None:
