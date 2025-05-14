@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib
+import io
 import os
 import re
 import sys
@@ -9,6 +10,7 @@ import unicodedata
 
 from functools import partial, wraps
 from logging import getLogger
+from pathlib import Path
 from subprocess import check_output
 
 import bokeh
@@ -349,3 +351,49 @@ def slugify(value, allow_unicode=False) -> str:
         )
     value = re.sub(r"[^\w\s-]", "", value.lower())
     return re.sub(r"[-\s]+", "-", value).strip("-_")
+
+
+def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO | str | bytes) -> str:
+    """
+    Detects the given file object's encoding.
+
+    Parameters
+    ----------
+    file_obj : Path | io.BytesIO | io.StringIO | str | bytes
+        File object or path object to detect encoding.
+
+    Returns
+    -------
+    str
+    """
+    import chardet
+
+    if isinstance(file_obj, str):
+        try:
+            path_exists = Path(file_obj).exists()
+            if path_exists:
+                file_obj = Path(file_obj)
+        except OSError:
+            pass
+
+    # Handle if a path is given.
+    if isinstance(file_obj, Path):
+        with file_obj.open("rb") as f:
+            data = f.read()
+        detected_encoding = chardet.detect(data)
+        encoding = detected_encoding["encoding"]
+
+    # Handle if a string or bytes object is given.
+    if isinstance(file_obj, bytes):
+        detected_encoding = chardet.detect(file_obj)
+    elif isinstance(file_obj, str):
+        detected_encoding = chardet.detect(file_obj.encode())
+
+    encoding = detected_encoding["encoding"]
+
+    if encoding == "ISO-8859-1":
+        encoding = "latin-1"
+    elif encoding == "ascii":
+        encoding = "utf-8"
+
+    return encoding.lower()

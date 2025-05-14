@@ -74,8 +74,8 @@ def make_plan_models(agents: list[str], tools: list[str]):
     # TODO: make this inherit from PartialBaseModel
     step = create_model(
         "Step",
-        expert_or_tool=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the expert or tool to assign a task to.")),
-        instruction=(str, FieldInfo(description="Instructions to the expert to assist in the task, and whether rendering is required.")),
+        actor=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the actor to assign a task to.")),
+        instruction=(str, FieldInfo(description="Instructions to the actor to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
     )
     reasoning = create_model(
@@ -84,8 +84,9 @@ def make_plan_models(agents: list[str], tools: list[str]):
             str,
             FieldInfo(
                 description="""
-                    Describe succinctly at a high-level how the actions of each expert will solve the user query.
-                    Address previous failures if any.
+                    Briefly summarize the user's goal and categorize the question type:
+                    high-level, data-focused, or other. Identify the most relevant and compatible actors,
+                    explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
                     """
             ),
         ),

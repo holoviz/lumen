@@ -388,8 +388,6 @@ class ContextProvider(param.Parameterized):
         )
         if self.conditions:
             string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"
-        if self.exclusions:
-            string += "  Exclusions:\n" + "\n".join(f"  - {exclusion}" for exclusion in self.exclusions) + "\n"
         if self.not_with:
             string += "  Not with:\n" + "\n".join(f"  - {not_with}" for not_with in self.not_with) + "\n"
         return string

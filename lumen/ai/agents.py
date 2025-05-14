@@ -248,8 +248,7 @@ class ChatAgent(Agent):
         }
     )
 
-    # technically not required if appended manually with tool in coordinator
-    requires = param.List(default=["vector_metaset"], readonly=True)
+    requires = param.List(default=[], readonly=True)
 
     async def respond(
         self,
@@ -285,6 +284,16 @@ class AnalystAgent(ChatAgent):
 
     requires = param.List(default=["source", "pipeline"], readonly=True)
 
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        messages = await super().respond(messages, render_output, step_title)
+        if len(self._memory["data"]) == 0 and self._memory.get("sql"):
+            self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
+        return messages
 
 class ListAgent(Agent):
     """
@@ -356,7 +365,7 @@ class TableListAgent(ListAgent):
     """
 
     conditions = param.List(default=[
-        "For listing available data tables in source",
+        "For listing available data tables in source to the user, but not for planning",
         "Not for showing data table contents",
     ])
 
@@ -498,8 +507,7 @@ class SQLAgent(LumenBaseAgent):
             "Start with this agent if you are unsure what to use",
             "For existing tables, only use if additional calculations are needed",
             "When reusing tables, reference by name rather than regenerating queries",
-            "Commonly used with IterativeTableLookup and AnalystAgent",
-            "Not useful if the user is using the same data for plotting"
+            "Not useful if the user is using the same data for plotting",
         ]
     )
 

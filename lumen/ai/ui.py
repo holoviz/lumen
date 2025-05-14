@@ -30,7 +30,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
-from ..util import log
+from ..util import detect_file_encoding, log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, VegaLiteAgent,
@@ -324,7 +324,7 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both', align="center")
-        self._vector_store_status_badge = StatusBadge(name="Vector Store Pending", align="center")
+        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending", align="center")
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._verify_llm)
@@ -343,7 +343,7 @@ class UI(Viewer):
 
         if not table_lookup:
             self._vector_store_status_badge.param.update(
-                status="success", name='Vector Store Ready')
+                status="success", name='Tables Vector Store Ready')
             return
 
         self._vector_store_status_badge.status = "running"
@@ -352,10 +352,10 @@ class UI(Viewer):
 
         if table_lookup._ready:
             self._vector_store_status_badge.param.update(
-                status="success", name='Vector Store Ready')
+                status="success", name='Tables Vector Store Ready')
         elif table_lookup._ready is None:
             self._vector_store_status_badge.param.update(
-                status="danger", name='Vector Store Error')
+                status="danger", name='Tables Vector Store Error')
 
     def _destroy(self, session_context):
         """
@@ -386,7 +386,8 @@ class UI(Viewer):
                 if src.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{src}')"
                 elif src.endswith(".csv"):
-                    table = f"read_csv('{src}')"
+                    encoding = detect_file_encoding(file_obj=src)
+                    table = f"read_csv('{src}', encoding='{encoding}')"
                 elif src.endswith(".json"):
                     table = f"read_json_auto('{src}')"
                 else:
@@ -770,7 +771,7 @@ class ExplorerUI(UI):
             async def render_plan(_, old, new):
                 nonlocal new_exploration
                 plan = local_memory["plan"]
-                if any(step.expert_or_tool in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
+                if any(step.actor in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
                     # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     new_exploration = True

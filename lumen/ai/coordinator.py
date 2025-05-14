@@ -804,7 +804,7 @@ class Planner(Coordinator):
         actors_in_graph = set()
 
         for step in plan.steps:
-            key = step.expert_or_tool
+            key = step.actor
             actors.append(key)
             if key in agents:
                 subagent = agents[key]
@@ -832,7 +832,7 @@ class Planner(Coordinator):
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
                 sql_step = type(step)(
-                    expert_or_tool='SQLAgent',
+                    actor='SQLAgent',
                     instruction='Load the table',
                     title='Loading table',
                 )
@@ -860,34 +860,35 @@ class Planner(Coordinator):
         last_task = tasks[-1]
         if isinstance(last_task.subtasks[0], Tool) and not isinstance(last_task.subtasks[0], TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
-                expert = "AnalystAgent"
+                actor = "AnalystAgent"
             else:
-                expert = "ChatAgent"
+                actor = "ChatAgent"
 
-            # Check if the expert conflicts with any actor in the graph
-            not_with = getattr(agents[expert], 'not_with', [])
+            # Check if the actor conflicts with any actor in the graph
+            not_with = getattr(agents[actor], 'not_with', [])
             conflicts = [actor for actor in actors_in_graph if actor in not_with]
             if conflicts:
                 # Skip the summarization step if there's a conflict
-                log_debug(f"Skipping summarization with {expert} due to conflicts: {conflicts}")
+                log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 plan.steps = steps
                 previous_actors = actors
                 return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
-                expert_or_tool=expert,
+                actor=actor,
                 instruction='Summarize the results.',
                 title='Summarizing results',
             )
             steps.append(summarize_step)
             tasks.append(
                 Task(
-                    subtasks=[agents[expert]],
+                    subtasks=[agents[actor]],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                 )
             )
-            actors_in_graph.add(expert)
+            actors_in_graph.add(actor)
+
         plan.steps = steps
         return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, actors
 
@@ -901,41 +902,44 @@ class Planner(Coordinator):
         previous_plans, previous_actors = [], []
         attempts = 0
         plan = None
-        with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
-            if self.steps_layout is None:
-                self.steps_layout = self.interface.objects[-1].object
-            while not planned:
-                if attempts > 0:
-                    log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
-                raw_plan = None
-                try:
-                    raw_plan = await self._make_plan(
-                        messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
-                        reason_model, plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
+        with self.interface.param.update(callback_exception="raise"):
+            with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
+                if self.steps_layout is None:
+                    self.steps_layout = self.interface.objects[-1].object
+                while not planned:
+                    if attempts > 0:
+                        log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
+                    plan = None
+                    try:
+                        raw_plan = await self._make_plan(
+                            messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
+                            reason_model, plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
+                        )
+                    except asyncio.CancelledError as e:
+                        istep.failed_title = 'Planning was cancelled, please try again.'
+                        traceback.print_exception(e)
+                        raise e
+                    except Exception as e:
+                        istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                        traceback.print_exception(e)
+                        raise e
+                    plan, unmet_dependencies, previous_actors = await self._resolve_plan(
+                        raw_plan, agents, tools, messages, previous_actors
                     )
-                except asyncio.CancelledError as e:
-                    istep.failed_title = 'Planning was cancelled, please try again.'
-                    traceback.print_exception(e)
-                    raise e
-                except Exception as e:
-                    istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
-                    traceback.print_exception(e)
-                    raise e
-                plan, unmet_dependencies, previous_actors = await self._resolve_plan(raw_plan, agents, tools, messages, previous_actors)
-                if unmet_dependencies:
-                    istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
-                    attempts += 1
-                else:
-                    planned = True
-                if attempts > 5:
-                    istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
-                    e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
-                    traceback.print_exception(e)
-                    raise e
+                    if unmet_dependencies:
+                        istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
+                        attempts += 1
+                    else:
+                        planned = True
+                    if attempts > 5:
+                        istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
+                        e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
+                        traceback.print_exception(e)
+                        raise e
             self._memory["plan"] = raw_plan
             istep.stream('\n\nHere are the steps:\n\n')
             for i, step in enumerate(raw_plan.steps):
-                istep.stream(f"{i+1}. {step.expert_or_tool}: {step.instruction}\n")
+                istep.stream(f"{i+1}. {step.actor}: {step.instruction}\n")
             if attempts > 0:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
             else:

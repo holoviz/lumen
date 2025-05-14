@@ -58,6 +58,7 @@ class LumenOutput(Viewer):
             language=self.language,
             theme="github_dark" if config.theme == "dark" else "github_light_default",
             sizing_mode="stretch_width",
+            soft_tabs=True,
             on_keyup=False,
             indent=2,
         )
