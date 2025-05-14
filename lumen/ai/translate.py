@@ -504,8 +504,15 @@ def param_to_pydantic(
 
 
 def pydantic_to_param_instance(model: BaseModel) -> param.Parameterized:
-    parameterized_class = model._parameterized  # type: ignore
-    valid_param_names = set(parameterized_class.param)
+    """
+    Tries to convert a Pydantic model instance back to a param.Parameterized instance.
+    Only valid if the model was initially translated using `param_to_pydantic`.
+    """
+    try:
+        parameterized_class = model._parameterized  # type: ignore
+        valid_param_names = set(parameterized_class.param)
+    except AttributeError:
+        raise ValueError("The provided model does not have a _parameterized attribute, indicating it was not created from a param.Parameterized class.")
 
     kwargs = {}
     for key, value in model:
