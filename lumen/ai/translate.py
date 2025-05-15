@@ -42,6 +42,7 @@ PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.Callable: Callable,
     param.Magnitude: float,
     param.HookList: list[Callable],
+    param.Range: tuple[float, float],
 }
 PandasDataFrame = TypeVar("PandasDataFrame")
 DocstringStyle = Literal["google", "numpy", "sphinx"]
