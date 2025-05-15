@@ -70,31 +70,18 @@ class Agent(Viewer, ToolUser, ContextProvider):
     contents such as forms or widgets to gather user input.
     """
 
-    debug = param.Boolean(
-        default=False,
-        doc="""
-        Whether to enable verbose error reporting.""",
-    )
+    debug = param.Boolean(default=False, doc="""
+        Whether to enable verbose error reporting.""")
 
-    llm = param.ClassSelector(
-        class_=Llm,
-        doc="""
-        The LLM implementation to query.""",
-    )
+    llm = param.ClassSelector(class_=Llm, doc="""
+        The LLM implementation to query.""")
 
-    steps_layout = param.ClassSelector(
-        default=None,
-        class_=Column,
-        allow_None=True,
-        doc="""
+    steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
         The layout progress updates will be streamed to.""",
     )
 
-    user = param.String(
-        default="Agent",
-        doc="""
-        The name of the user that will be respond to the user query.""",
-    )
+    user = param.String(default="Agent", doc="""
+        The name of the user that will be respond to the user query.""")
 
     # Panel extensions this agent requires to be loaded
     _extensions = ()
@@ -201,8 +188,7 @@ class SourceAgent(Agent):
         default=[
             "Use when user wants to upload or connect to new data sources, otherwise do not use",
             "Do not use to see if there are any relevant data sources available",
-        ]
-    )
+        ])
 
     purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
 
@@ -256,8 +242,7 @@ class ChatAgent(Agent):
     purpose = param.String(
         default="""
         Engages in conversations about high-level data topics,
-        offering suggestions or insights to get started."""
-    )
+        offering suggestions or insights to get started.""")
 
     prompts = param.Dict(
         default={
@@ -395,9 +380,7 @@ class TableListAgent(ListAgent):
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(
-        default="""
-        Displays a list of all available tables in memory."""
-    )
+        default="""Displays a list of all available tables in memory.""")
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -430,9 +413,7 @@ class DocumentListAgent(ListAgent):
     """
 
     purpose = param.String(
-        default="""
-        Displays a list of all available documents in memory."""
-    )
+        default="""Displays a list of all available documents in memory.""")
 
     requires = param.List(default=["document_sources"], readonly=True)
 
