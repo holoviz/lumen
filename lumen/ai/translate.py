@@ -147,11 +147,9 @@ def _get_model(type_, created_models: dict[str, type[BaseModel]]) -> Any:
     try:
         if issubclass(type_, param.Parameterized):
             if type_.__name__ not in created_models and hasattr(type_, "param"):
-                # Pass the default base_model (ArbitraryTypesModel) for parent conversion
-                # if not already part of a specific conversion chain.
                 param_to_pydantic(type_, created_models=created_models, process_subclasses=True)
             type_ = created_models.get(type_.__name__, type_.__name__)
-    except TypeError:
+    except TypeError: # issubclass can raise TypeError if type_ is not a class (e.g. an instance or specific type obj)
         pass
     return type_
 
@@ -181,26 +179,44 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
         if parameter.default is not None and parameter.default is not PydanticUndefined:
             field_kwargs["default"] = parameter.default
     elif param_type is param.ClassSelector:
+        # Handle instantiate=False: field should accept the class itself.
         if hasattr(parameter, "instantiate") and not parameter.instantiate:
-            if hasattr(parameter.class_, "param"):
-                param_to_pydantic(parameter.class_, created_models=created_models, process_subclasses=True)
-            if parameter.default is not None and inspect.isclass(parameter.default):
-                if hasattr(parameter.default, "param"):
-                    param_to_pydantic(parameter.default, created_models=created_models, process_subclasses=True)
+            pydantic_model_classes_for_type = []
+            param_classes_to_process = parameter.class_
+            if not isinstance(param_classes_to_process, tuple):
+                param_classes_to_process = (param_classes_to_process,)
 
-            base_class_name = parameter.class_.__name__
-            # Type should be the Pydantic model class itself, not an instance
-            type_ = created_models.get(base_class_name, parameter.class_)
+            for cls_item in param_classes_to_process:
+                if hasattr(cls_item, "param"): # If it's a param.Parameterized subclass
+                    # Ensure its Pydantic model is created
+                    param_to_pydantic(cls_item, created_models=created_models, process_subclasses=True)
+                    pydantic_model_classes_for_type.append(created_models.get(cls_item.__name__, cls_item))
+                else: # If it's a regular class
+                    pydantic_model_classes_for_type.append(cls_item)
+
+            if len(pydantic_model_classes_for_type) == 1:
+                # Pydantic type will be type[PydanticModel] or type[RegularClass]
+                type_ = type[pydantic_model_classes_for_type[0]]
+            else:
+                # Pydantic type will be Union[type[PydanticModelA], type[PydanticModelB], ...]
+                union_args = tuple(type[m_cls] for m_cls in pydantic_model_classes_for_type)
+                type_ = Union.__getitem__(union_args)
 
             if parameter.default is not None:
                 if inspect.isclass(parameter.default):
-                    default_class_name = parameter.default.__name__
-                    # Default should also be the Pydantic model class
-                    field_kwargs["default"] = created_models.get(default_class_name, parameter.default)
-                else:  # Potentially an instance, or other non-class default.
-                    field_kwargs["default"] = parameter.default
-
-        elif isinstance(parameter.class_, tuple):
+                    # Default value for Pydantic field should be the Pydantic model class (if applicable)
+                    # or the regular class itself.
+                    default_value_for_pydantic = created_models.get(parameter.default.__name__, parameter.default)
+                    field_kwargs["default"] = default_value_for_pydantic
+                else:
+                    # A non-class default for instantiate=False ClassSelector is unusual and likely problematic.
+                    warnings.warn(
+                        f"Parameter '{parameter.name}' is a ClassSelector with instantiate=False, "
+                        f"but its default value '{parameter.default!r}' is not a class. "
+                        "This default will not be translated to the Pydantic model.", UserWarning
+                    )
+        # Handle instantiate=True (or default behavior)
+        elif isinstance(parameter.class_, tuple): # Union of classes, instantiate instances
             for cls in parameter.class_:
                 if hasattr(cls, "param"):
                     param_to_pydantic(cls, created_models=created_models, process_subclasses=True)
@@ -209,22 +225,25 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
                 model_name = cls.__name__
                 if hasattr(cls, "param") and model_name in created_models:
                     mapped_types.append(created_models[model_name])
-                else:  # Not a param class or not converted, use raw type or mapping
-                    mapped_types.append(PARAM_TYPE_MAPPING.get(cls, cls))
+                else: # Not a param class or not converted, use raw type or mapping
+                    mapped_types.append(PARAM_TYPE_MAPPING.get(cls, cls)) # Should just be cls if not in mapping
             type_ = Union.__getitem__(tuple(mapped_types))
-            if parameter.default is not None:  # Add default handling for tuple class types
+            if parameter.default is not None:
                 field_kwargs["default"] = parameter.default
-
-        else:
-            type_ = _get_model(parameter.class_, created_models)
+        else: # Single class, instantiate instance
+            type_ = _get_model(parameter.class_, created_models) # Gets Pydantic model class
             if parameter.default is not None:
                 if callable(parameter.default) and not inspect.isclass(parameter.default):
                     default_factory = parameter.default
                     field_kwargs["default_factory"] = default_factory
-                elif isinstance(parameter.default, param.Parameterized):
-                    pass  # Leave default undefined for pydantic to handle via type_
+                elif isinstance(parameter.default, param.Parameterized): # Default is an instance
+                    # Pydantic will initialize from type if default is an instance of compatible param class
+                    # Or, if we want to pass the raw instance: field_kwargs["default"] = parameter.default
+                    # For now, let Pydantic handle instantiation from type.
+                    pass
                 else:
                     field_kwargs["default"] = parameter.default
+
     elif param_type in [param.List, param.ListSelector]:
         type_ = list
         if parameter.default is not None:
@@ -249,18 +268,17 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
             else:
                 type_ = list[_get_model(parameter.item_type, created_models)]
         elif param_type is param.ListSelector:
-            # Ensure literals is not None; if it's None, this might error or behave unexpectedly
             type_ = list[_create_literal(literals if literals is not None else [])]
     elif param_type is param.Dict:
         type_ = dict
-        if parameter.default == {}:  # Check for empty dict default specifically
+        if parameter.default == {}:
             field_kwargs["default_factory"] = dict
         elif parameter.default is not None:
-            if callable(parameter.default):  # Typically for default_factory, but param.Dict doesn't have it
-                pass  # Let Pydantic handle callable default if it's not default_factory
+            if callable(parameter.default):
+                pass
             else:
                 field_kwargs["default"] = parameter.default
-        elif parameter.default is None and parameter.allow_None:  # Explicitly handle None default with allow_None
+        elif parameter.default is None and parameter.allow_None:
             field_kwargs["default"] = None
 
     elif param_type in [param.Selector, param.ObjectSelector]:
@@ -268,13 +286,13 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
             field_kwargs["default"] = parameter.default
 
         current_literals = literals
-        if not current_literals and hasattr(parameter, "objects"):  # Use objects if literals not provided
+        if not current_literals and hasattr(parameter, "objects"):
             current_literals = parameter.objects
 
         if current_literals:
             type_ = _create_literal(current_literals)
-        else:  # Fallback if no literals or objects
-            type_ = Any if parameter.allow_None else str  # Or object, or more specific based on context
+        else:
+            type_ = Any if parameter.allow_None else str
     elif issubclass(param_type, param.DataFrame):
         type_ = PandasDataFrame
     elif parameter.name == "align":
@@ -290,13 +308,14 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
         try:
             field_kwargs["ge"] = parameter.bounds[0]
             field_kwargs["le"] = parameter.bounds[1]
-        except (TypeError, IndexError):  # Handle if bounds is not as expected
+        except (TypeError, IndexError):
             pass
 
     is_none_default = parameter.default is None
 
     if parameter.allow_None:
-        type_ = Union[type_, None]  # type: ignore # noqa: UP007
+        type_ = Union[type_, None]  # noqa: UP007
+        # using Union instead of | because of https://github.com/567-labs/instructor/issues/1523
         if is_none_default and "default" not in field_kwargs and "default_factory" not in field_kwargs:
             field_kwargs["default"] = None
 
@@ -307,18 +326,17 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
 def param_to_pydantic(
     parameterized: type[param.Parameterized] | list[type[param.Parameterized]],
     base_model: type[BaseModel] = ArbitraryTypesModel,
-    created_models: dict[str, type[BaseModel]] | None = None,  # MODIFIED type hint
+    created_models: dict[str, type[BaseModel]] | None = None,
     schema: dict[str, Any] | None = None,
     excluded: str | list[str] = "_internal_params",
     extra_fields: dict[str, tuple[type, FieldInfo]] | None = None,
-    process_subclasses: bool = True,  # ADDED parameter
-) -> dict[str, type[BaseModel]]:  # MODIFIED return type hint
+    process_subclasses: bool = True,
+) -> dict[str, type[BaseModel]]:
     if created_models is None:
         created_models = {}
 
     if isinstance(parameterized, list):
         for param_class in parameterized:
-            # Propagate process_subclasses when handling a list
             param_to_pydantic(
                 param_class,
                 base_model=base_model,
@@ -326,7 +344,7 @@ def param_to_pydantic(
                 schema=schema,
                 excluded=excluded,
                 extra_fields=extra_fields,
-                process_subclasses=process_subclasses,  # PROPAGATE
+                process_subclasses=process_subclasses,
             )
         return created_models
 
@@ -335,56 +353,40 @@ def param_to_pydantic(
         return created_models
 
     pydantic_model_bases = []
-    # Iterate over direct base classes of `parameterized`
     for param_parent_cls in parameterized.__bases__:
-        # Check if the parent is a param.Parameterized class itself,
-        # but not the root param.Parameterized (to avoid issues if param.Parameterized is in created_models)
         if issubclass(param_parent_cls, param.Parameterized) and param_parent_cls is not param.Parameterized:
-            # Ensure parent Pydantic model is created if it doesn't exist
             if param_parent_cls.__name__ not in created_models:
-                # Recursively call param_to_pydantic for the parent.
-                # Propagate `base_model` for consistent ultimate ancestor.
-                # Propagate `process_subclasses`.
                 param_to_pydantic(
                     param_parent_cls,
                     base_model=base_model,
                     created_models=created_models,
-                    # schema, excluded, extra_fields are generally not propagated
-                    # to parents unless explicitly needed, as they are often
-                    # specific to the current class conversion.
-                    process_subclasses=process_subclasses,  # PROPAGATE
+                    process_subclasses=process_subclasses,
                 )
-
-            # If the parent Pydantic model was created or already existed, add it to bases
             if param_parent_cls.__name__ in created_models:
                 parent_pydantic_cls = created_models[param_parent_cls.__name__]
-                if parent_pydantic_cls not in pydantic_model_bases:  # Avoid duplicates
+                if parent_pydantic_cls not in pydantic_model_bases:
                     pydantic_model_bases.append(parent_pydantic_cls)
 
-    # If no direct param parent Pydantic model was added (e.g., `parameterized`
-    # inherits directly from param.Parameterized, or its param parents weren't
-    # converted for some reason), then use the `base_model` argument as the base.
     if not pydantic_model_bases:
         if isinstance(base_model, tuple):
-            # If base_model is a tuple of bases, add them all
             for b_item in base_model:
-                if b_item not in pydantic_model_bases:  # Should be redundant if list is empty
+                if b_item not in pydantic_model_bases:
                     pydantic_model_bases.append(b_item)
-        elif base_model not in pydantic_model_bases:  # Should be redundant if list is empty
+        elif base_model not in pydantic_model_bases:
             pydantic_model_bases.append(base_model)
 
     current_excluded: list[str]
     if isinstance(excluded, str) and hasattr(parameterized, excluded):
         current_excluded = getattr(parameterized, excluded, [])
-    elif isinstance(excluded, list):  # If excluded is already a list
+    elif isinstance(excluded, list):
         current_excluded = excluded
-    else:  # Fallback: excluded is a string but not an attribute, or other unexpected type
+    else:
         current_excluded = []
 
     field_params = list(getattr(parameterized, "_field_params", []))
 
     fields = {}
-    private_attrs: dict[str, PrivateAttr] = {}  # Store PrivateAttr objects
+    private_attrs: dict[str, PrivateAttr] = {}
     use_literal_mixin = False
 
     for parameter_name in parameterized.param:
@@ -392,27 +394,28 @@ def param_to_pydantic(
             continue
         parameter = parameterized.param[parameter_name]
 
-        # Handle nested Parameterized classes in ClassSelector or List item_type
         classes_to_process_for_field = []
-        if hasattr(parameter, "class_"):  # For param.ClassSelector
-            if isinstance(parameter.class_, tuple):
-                classes_to_process_for_field.extend(c for c in parameter.class_ if inspect.isclass(c))
-            elif inspect.isclass(parameter.class_):
-                classes_to_process_for_field.append(parameter.class_)
-        if hasattr(parameter, "item_type"):  # For param.List
-            if isinstance(parameter.item_type, tuple):
-                classes_to_process_for_field.extend(c for c in parameter.item_type if inspect.isclass(c))
-            elif inspect.isclass(parameter.item_type):
-                classes_to_process_for_field.append(parameter.item_type)
+        if hasattr(parameter, "class_"):
+            param_cls_attr = parameter.class_
+            if isinstance(param_cls_attr, tuple):
+                classes_to_process_for_field.extend(c for c in param_cls_attr if inspect.isclass(c))
+            elif inspect.isclass(param_cls_attr):
+                classes_to_process_for_field.append(param_cls_attr)
+        if hasattr(parameter, "item_type"):
+            item_type_attr = parameter.item_type
+            if isinstance(item_type_attr, tuple):
+                classes_to_process_for_field.extend(c for c in item_type_attr if inspect.isclass(c))
+            elif inspect.isclass(item_type_attr):
+                classes_to_process_for_field.append(item_type_attr)
 
         for cls_to_check in classes_to_process_for_field:
             if hasattr(cls_to_check, "param") and cls_to_check.__name__ != parameterized_name:
                 if cls_to_check.__name__ not in created_models:
-                    param_to_pydantic(  # Recursive call for nested class types
+                    param_to_pydantic(
                         cls_to_check,
                         base_model=base_model,
                         created_models=created_models,
-                        process_subclasses=process_subclasses,  # PROPAGATE
+                        process_subclasses=process_subclasses,
                     )
 
         literals = list(schema) if schema and parameter_name in field_params else None
@@ -422,29 +425,28 @@ def param_to_pydantic(
             use_literal_mixin = True
 
         if parameter_name == "schema":
-            field_info.alias = "schema"  # type: ignore
+            field_info.alias = "schema"
             parameter_name = "schema_"
         elif parameter_name == "copy":
-            field_info.alias = "copy"  # type: ignore
+            field_info.alias = "copy"
             parameter_name = "copy_"
         elif parameter_name.startswith("_"):
-            # Ensure default is wrapped in PrivateAttr for private fields
             private_attrs[parameter_name] = PrivateAttr(default=parameter.default if parameter.default is not None else None)
-            continue  # Skip adding to regular fields
+            continue
 
-        # Pydantic's FieldInfo.from_annotation handles default Undefined for required params.
-        # We only override if param has a specific default that Pydantic might miss.
         if field_info.default is PydanticUndefined and parameter.default is not None:
-            field_info.default = parameter.default
-        # If allow_None is True, Pydantic will make it Optional if not already.
-        # Explicit `default=None` is set by parameter_to_field if param.default is None and allow_None.
+             # Check if default was already handled by parameter_to_field (e.g. for instantiate=False)
+            if not (isinstance(parameter, param.ClassSelector) and \
+                    hasattr(parameter, "instantiate") and not parameter.instantiate and \
+                    inspect.isclass(parameter.default)):
+                field_info.default = parameter.default
+
         fields[parameter_name] = (type_, field_info)
 
     if use_literal_mixin:
         if PartialLiteralMixin not in pydantic_model_bases:
             pydantic_model_bases.append(PartialLiteralMixin)
 
-    # Deduplicate bases while preserving order (important for MRO)
     final_model_creation_base: type[BaseModel] | tuple[type[BaseModel], ...]
     unique_final_bases = []
     seen_bases = set()
@@ -453,117 +455,137 @@ def param_to_pydantic(
             unique_final_bases.append(b_item)
             seen_bases.add(b_item)
 
-    if not unique_final_bases:  # Should ideally not happen if ArbitraryTypesModel is a fallback
+    if not unique_final_bases:
         final_model_creation_base = ArbitraryTypesModel
     elif len(unique_final_bases) == 1:
         final_model_creation_base = unique_final_bases[0]
     else:
         final_model_creation_base = tuple(unique_final_bases)
 
-    fields["_parameterized"] = (type, parameterized)  # type: ignore
-
     if extra_fields:
         fields.update(extra_fields)
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)  # For `__parameterized__` field
+        warnings.simplefilter("ignore", RuntimeWarning)
         pydantic_model = create_model(
             parameterized.__name__,
             __base__=final_model_creation_base,
-            **fields,  # type: ignore
+            **fields,
         )
 
-    # Add private attributes to the model class after creation
+    setattr(pydantic_model, "_param_source_class", parameterized)
+
     for attr_name, private_attr_obj in private_attrs.items():
         setattr(pydantic_model, attr_name, private_attr_obj)
 
-    created_models[pydantic_model.__name__] = pydantic_model  # type: ignore
+    created_models[pydantic_model.__name__] = pydantic_model
+
 
     if process_subclasses:
         try:
-            # Use a set to avoid processing the same subclass multiple times
             subclasses_to_process = set(parameterized.__subclasses__())
-        except TypeError:  # Should not happen for classes, but defensive
+        except TypeError:
             subclasses_to_process = set()
 
         for sub_cls in subclasses_to_process:
-            # Check if it's a param.Parameterized class and not yet processed
             if (
                 inspect.isclass(sub_cls)
                 and issubclass(sub_cls, param.Parameterized)
                 and sub_cls is not param.Parameterized
                 and sub_cls.__name__ not in created_models
             ):
-                # Recursively call for subclasses
                 param_to_pydantic(
                     sub_cls,
-                    base_model=base_model,  # Propagate original base_model for consistency
-                    created_models=created_models,  # Pass the same dict to accumulate models
-                    schema=None,  # Schemas are specific, don't propagate by default
-                    excluded=excluded,  # Propagate exclusion rules
-                    extra_fields=None,  # Extra fields are specific
-                    process_subclasses=True,  # Continue processing for sub-subclasses
+                    base_model=base_model,
+                    created_models=created_models,
+                    schema=None,
+                    excluded=excluded,
+                    extra_fields=None,
+                    process_subclasses=True,
                 )
     return created_models
 
 
 def pydantic_to_param_instance(model: BaseModel) -> param.Parameterized:
-    """
-    Tries to convert a Pydantic model instance back to a param.Parameterized instance.
-    Only valid if the model was initially translated using `param_to_pydantic`.
-    """
     try:
-        parameterized_class = model._parameterized  # type: ignore
+        parameterized_class = model.__class__._param_source_class
         valid_param_names = set(parameterized_class.param)
+        param_definition_map = parameterized_class.param
     except AttributeError:
-        raise ValueError("The provided model does not have a _parameterized attribute, indicating it was not created from a param.Parameterized class.")
+        raise ValueError(
+            "The provided model does not have a _param_source_class attribute, "
+            "indicating it was not correctly created from a param.Parameterized class or the attribute is missing."
+        )
 
     kwargs = {}
-    for key, value in model:
+    model_dict = model.model_dump()
+
+    for key, _ in model_dict.items(): # Iterate over keys from model_dump
         original_key = key
-        # Handle aliased fields (schema_ -> schema, copy_ -> copy)
         if key == "schema_" and "schema" in valid_param_names:
             original_key = "schema"
         elif key == "copy_" and "copy" in valid_param_names:
             original_key = "copy"
 
         if original_key not in valid_param_names:
-            continue  # Skip fields not present in the param.Parameterized class
+            continue
 
-        if isinstance(value, BaseModel):
-            # Recursively convert nested Pydantic models to param.Parameterized instances
-            kwargs[original_key] = pydantic_to_param_instance(value)
-        elif isinstance(value, Color):  # pydantic_extra_types.color.Color
-            kwargs[original_key] = value.as_hex()
-        elif isinstance(value, list):
+        actual_value = getattr(model, key) # Get actual value from model instance
+        param_obj = param_definition_map[original_key]
+
+        if (inspect.isclass(actual_value) and
+            issubclass(actual_value, BaseModel) and
+            hasattr(actual_value, "_param_source_class") and
+            isinstance(param_obj, param.ClassSelector) and
+            hasattr(param_obj, "instantiate") and
+            not param_obj.instantiate):
+            kwargs[original_key] = actual_value._param_source_class
+        elif isinstance(actual_value, BaseModel):
+            kwargs[original_key] = pydantic_to_param_instance(actual_value)
+        elif isinstance(actual_value, Color):
+            kwargs[original_key] = actual_value.as_hex()
+        elif isinstance(actual_value, list):
             processed_list = []
-            for item in value:
-                if isinstance(item, BaseModel):
-                    processed_list.append(pydantic_to_param_instance(item))
+            original_list_items = getattr(model, key)
+            for item_idx, item_in_dump in enumerate(actual_value):
+                original_item = original_list_items[item_idx]
+                if isinstance(original_item, BaseModel):
+                    processed_list.append(pydantic_to_param_instance(original_item))
                 else:
-                    # Otherwise, keep the item as is (e.g., str, int, dict if not a model)
-                    processed_list.append(item)
+                    processed_list.append(original_item)
             kwargs[original_key] = processed_list
-        elif isinstance(value, dict):  # For general dictionaries
-            # Recursively process dictionaries that might contain BaseModel instances
-            # This is important if a dict field itself can contain Pydantic models
-            # (though less common for param.Dict which usually expects simple types or
-            # specific structures not auto-converted to Pydantic models by param_to_pydantic).
+        elif isinstance(actual_value, dict) and not isinstance(param_obj, param.Dict):
+            # This condition is to handle general dicts that might contain BaseModels,
+            # but specifically not for param.Dict fields which are handled by direct assignment of 'value'
+            # (which would be the dict from model_dump).
+            # This block might need re-evaluation if param.Dict itself can contain Pydantic models
+            # that need recursive conversion. For now, assume param.Dict values are simple.
             sub_kwargs = {}
-            for k, v_item in value.items():
-                if isinstance(v_item, BaseModel):
-                    sub_kwargs[k] = pydantic_to_param_instance(v_item)
+            original_dict_items = getattr(model, key) # Get the actual dict from the model
+            for k, v_item_in_dump in actual_value.items():
+                original_v_item = original_dict_items[k]
+                if isinstance(original_v_item, BaseModel):
+                    sub_kwargs[k] = pydantic_to_param_instance(original_v_item)
                 else:
-                    sub_kwargs[k] = v_item
+                    sub_kwargs[k] = original_v_item
             kwargs[original_key] = sub_kwargs
-        elif original_key == "table" and isinstance(value, str) and "." in value:
-            # Specific handling for 'table' field as per original code
-            kwargs[original_key] = value.split(".")[0]
+        elif original_key == "table" and isinstance(actual_value, str) and "." in actual_value:
+            kwargs[original_key] = actual_value.split(".")[0]
         else:
-            # For all other types, assign the value directly
-            kwargs[original_key] = value
+            # For all other types (including simple ones from model_dump, or param.Dict value)
+            kwargs[original_key] = actual_value # Use the value from model_dump (or actual_value from model)
 
-    parameterized_instance = parameterized_class(**kwargs)
+    try:
+        parameterized_instance = parameterized_class(**kwargs)
+    except TypeError as e:
+        # Attempt with .instance() if direct instantiation fails, common for some param classes
+        # This might occur if __init__ is not standard.
+        try:
+            parameterized_instance = parameterized_class.instance(**kwargs)
+        except Exception as e_instance:
+            raise TypeError(f"Failed to instantiate {parameterized_class.__name__} with direct __init__: {e}. "
+                            f"Also failed with .instance(): {e_instance}. Kwargs: {kwargs}") from e_instance
+
     return parameterized_instance
 
 
