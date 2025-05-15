@@ -77,8 +77,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
         The LLM implementation to query.""")
 
     steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
-        The layout progress updates will be streamed to.""",
-    )
+        The layout progress updates will be streamed to.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -278,8 +277,7 @@ class AnalystAgent(ChatAgent):
         Focuses on breaking down complex data findings into understandable points for
         high-level decision-making. Emphasizes detailed interpretation, trends, and
         relationships within the data, while avoiding general overviews or
-        superficial descriptions."""
-    )
+        superficial descriptions.""")
 
     prompts = param.Dict(
         default={
@@ -305,10 +303,8 @@ class ListAgent(Agent):
     Abstract base class for agents that display a list of items to the user.
     """
 
-    purpose = param.String(
-        default="""
-        Renders a list of items to the user and lets the user pick one."""
-    )
+    purpose = param.String(default="""
+        Renders a list of items to the user and lets the user pick one.""")
 
     requires = param.List(default=[], readonly=True)
 
@@ -379,8 +375,8 @@ class TableListAgent(ListAgent):
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
-    purpose = param.String(
-        default="""Displays a list of all available tables in memory.""")
+    purpose = param.String(default="""
+        Displays a list of all available tables in memory.""")
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -412,8 +408,8 @@ class DocumentListAgent(ListAgent):
     The DocumentListAgent lists all available documents provided by the user.
     """
 
-    purpose = param.String(
-        default="""Displays a list of all available documents in memory.""")
+    purpose = param.String(default="""
+        Displays a list of all available documents in memory.""")
 
     requires = param.List(default=["document_sources"], readonly=True)
 
