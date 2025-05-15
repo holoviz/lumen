@@ -40,6 +40,8 @@ PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.Parameter: object,
     param.Color: Color,
     param.Callable: Callable,
+    param.Magnitude: float,
+    param.HookList: list[Callable],
 }
 PandasDataFrame = TypeVar("PandasDataFrame")
 DocstringStyle = Literal["google", "numpy", "sphinx"]
@@ -169,7 +171,10 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
     if parameter.doc:
         field_kwargs["description"] = " ".join(parameter.doc.split())
     if not literals and hasattr(parameter, "get_range"):
-        literals = list(parameter.get_range())
+        try:
+            literals = list(parameter.get_range())
+        except TypeError:
+            literals = None
 
     if param_type in PARAM_TYPE_MAPPING:
         type_ = PARAM_TYPE_MAPPING[param_type]
