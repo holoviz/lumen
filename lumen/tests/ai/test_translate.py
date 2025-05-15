@@ -1,14 +1,16 @@
 import param
 import pytest
 
+from pydantic import BaseModel, Field
+
+from lumen.ai.translate import param_to_pydantic, pydantic_to_param_instance
+
 try:
     import lumen.ai
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from pydantic import BaseModel, Field
 
-from lumen.ai.translate import param_to_pydantic, pydantic_to_param_instance
 
 try:
     import lumen.ai  # noqa
