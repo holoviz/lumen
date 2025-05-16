@@ -564,3 +564,25 @@ def test_round_trip_with_no_instantiate():
     test = pydantic_to_param_instance(test_pydantic(subtest=subtest_pydantic))
     assert isinstance(test, Test)
     assert test.subtest is SubTest
+
+
+
+def test_excluded():
+    class SubTest(param.Parameterized):
+
+        a = param.String(default="a")
+
+
+    class Test(param.Parameterized):
+
+        b = param.String(default="b")
+
+        subtest = param.ClassSelector(class_=SubTest, is_instance=False, instantiate=False)
+
+    models = param_to_pydantic(Test, excluded=["subtest"])
+    test_pydantic = models["Test"]
+    subtest_pydantic = models["SubTest"]
+
+    test = pydantic_to_param_instance(test_pydantic(subtest=subtest_pydantic))
+    assert isinstance(test, Test)
+    assert test.subtest is SubTest
