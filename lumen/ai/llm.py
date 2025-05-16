@@ -147,8 +147,11 @@ class Llm(param.Parameterized):
         kwargs.update(input_kwargs)
 
         if response_model is not None:
-            if allow_partial:
+            # partials do not support nested basemodels very well
+            if kwargs.get("stream") and allow_partial and "$defs" not in response_model.model_json_schema():
                 response_model = Partial[response_model]
+            else:
+                kwargs["stream"] = False
             kwargs["response_model"] = response_model
 
         output = await self.run_client(model_spec, messages, **kwargs)
@@ -232,6 +235,12 @@ class Llm(param.Parameterized):
             **kwargs,
         )
         chunks = await self.invoke(messages, stream=True, **invoke_kwargs)
+
+        if isinstance(chunks, BaseModel):
+            # Not actually streaming due to unsupported model
+            yield chunks
+            return
+
         try:
             async for chunk in chunks:
                 if response_model is None:
