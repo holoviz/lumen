@@ -9,7 +9,7 @@ import param
 from panel.layout.base import ListLike, NamedListLike
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
-    Accordion, ChatFeed, ChatMessage, Container, Paper, Progress, Tabs,
+    Accordion, ChatFeed, ChatMessage, Column, Container, Paper, Progress, Tabs,
     Typography,
 )
 
@@ -59,7 +59,7 @@ class Task(Viewer):
         self._populate_view()
 
     def _init_view(self):
-        self._view = self._output = pn.Column(sizing_mode='stretch_width')
+        self._view = self._output = Column(sizing_mode='stretch_width')
 
     def _populate_view(self):
         self._view[:] = []
@@ -78,8 +78,8 @@ class Task(Viewer):
         elif isinstance(out, LumenOutput):
             return Tabs(
                 ('Specification', out),
-                ('Output', pn.param.ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')),
-                active=1, sizing_mode='stretch_width'
+                ('Output', pn.param.ParamMethod(out.render, inplace=True, sizing_mode='stretch_width')),
+                active=1, sizing_mode='stretch_width', min_height=0
             )
 
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
@@ -177,11 +177,9 @@ class Report(Task):
     level = 1
 
     def _init_view(self):
-        self._view = Accordion(sizing_mode='stretch_width')
-        self._output = Paper(
-            Typography(self.title, variant='h3'),
-            self._view
-        )
+        self._title = Typography(self.title, variant='h3')
+        self._view = Accordion(sizing_mode='stretch_width', min_height=0)
+        self._output = Paper(self._title, self._view, styles={"height": "95%", "overflow-y": "auto"}, sizing_mode="stretch_both")
 
     def _populate_view(self):
         self._view[:] = objects = [(subtask.title, subtask) for subtask in self.subtasks if isinstance(subtask, Task)]
@@ -192,4 +190,4 @@ class Report(Task):
         return await super()._run_task(i, task)
 
     def __panel__(self):
-        return Container(self._output)
+        return Container(self._output, sizing_mode="stretch_both", height_policy="max")

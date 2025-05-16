@@ -602,7 +602,8 @@ class TableLookup(VectorLookupTool):
 
     purpose = param.String(default="""
         Discovers relevant tables using vector search, providing context for other agents.
-        Not to be used for finding tables for further analysis.""")
+        Not to be used for finding tables for further analysis (e.g. SQL), because it does
+        not provide a schema.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
