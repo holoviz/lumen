@@ -11,6 +11,7 @@ from typing import (
     TYPE_CHECKING, Any, ClassVar, Literal,
 )
 
+import holoviews as hv
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -31,6 +32,11 @@ if TYPE_CHECKING:
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
 
+VALID_HV_OPERATIONS = tuple([
+    getattr(hv.operation, op)
+    for op in hv.operation.__all__
+    if issubclass(getattr(hv.operation, op), hv.operation.Operation)
+])
 
 class Transform(MultiTypeComponent):
     """
@@ -927,5 +933,16 @@ class project_lnglat(Transform):
         table[self.latitude] = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
         return table
 
+
+class HoloViewsOperation(Transform):
+    """
+    `HoloViewsOperation` applies one or more HoloViews operation to the plot.
+    """
+
+    operation = param.ClassSelector(class_=VALID_HV_OPERATIONS, doc="""
+        Operations to apply to the plot.""")
+
+    def apply(self, plot):
+        return self.operation(plot)
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Transform)]

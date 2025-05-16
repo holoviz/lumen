@@ -17,7 +17,7 @@ import yaml
 from panel.chat import ChatInterface
 from panel.layout import Column
 from panel.viewable import Viewable, Viewer
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
@@ -928,8 +928,22 @@ class BaseViewAgent(LumenBaseAgent):
 
     def __init__(self, **params):
         self._last_output = None
+        self._view_model = None
         super().__init__(**params)
 
+    @classmethod
+    def _reference_classes(cls, obj: dict[str, Any]) -> dict[str, Any]:
+        # TODO: is there a built in method for this already
+        if isinstance(obj, dict):
+            return {k: cls._reference_classes(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [cls._reference_classes(i) for i in obj]
+        elif isinstance(obj, type):
+            return f"{obj.__module__}.{obj.__qualname__}"
+        elif callable(obj):
+            return f"{obj.__module__}.{obj.__name__}"
+        else:
+            return str(obj)
 
     # @retry_llm_output()
     async def _create_valid_spec(
@@ -984,6 +998,7 @@ class BaseViewAgent(LumenBaseAgent):
 
         e = None
         error = ""
+        spec = {}
         with self._add_step(
             title=step_title or "Generating view...",
             steps_layout=self._steps_layout
@@ -992,20 +1007,24 @@ class BaseViewAgent(LumenBaseAgent):
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
 
-            spec = ""
-            self._last_output = dict(output)
+            self._last_output = spec = json.dump(self._reference_classes(output.model_dump()))
             try:
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
                 traceback.print_exception(e)
-                context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                if "json_spec" in self._last_output:
+                    # TODO: move this to Vegalite; it's not specific to BaseViewAgent
+                    context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
                 report_error(e, step, language="json", context=context)
 
         if error:
             raise ValueError(error)
 
-        log_debug(f"{self.name} settled on spec: {spec!r}.")
+        if spec:
+            log_debug(f"{self.name} settled on spec: {spec!r}.")
+        else:
+            log_debug(f"{self.name} did not settle on a spec, using empty spec.")
         return spec
 
     async def _extract_spec(self, spec: dict[str, Any]):
@@ -1033,7 +1052,11 @@ class BaseViewAgent(LumenBaseAgent):
 
         spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
-        view = self.view_type(pipeline=pipeline, **spec)
+        breakpoint()
+        try:
+            view = self.view_type(pipeline=pipeline, **spec)
+        except Exception:
+            view = pipeline
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
@@ -1051,6 +1074,8 @@ class hvPlotAgent(BaseViewAgent):
     view_type = hvPlotUIView
 
     def _get_model(self, prompt_name: str, schema: dict[str, Any]) -> type[BaseModel]:
+        if self._view_model:
+            return self._view_model
         # Find parameters
         excluded = self.view_type._internal_params + [
             "controls",
@@ -1063,9 +1088,10 @@ class hvPlotAgent(BaseViewAgent):
             "selection_group",
         ]
         model = param_to_pydantic(self.view_type, base_model=PartialBaseModel, excluded=excluded, schema=schema, extra_fields={
-            "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
-        })
-        return model[self.view_type.__name__]
+            "chain_of_thought": (str, Field(default="", description="Your thought process behind the plot.")),
+        })[self.view_type.__name__]
+        self._view_model = model
+        return model
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         spec = yaml.load(event.new, Loader=yaml.SafeLoader)
@@ -1103,6 +1129,7 @@ class HoloViewsAgent(hvPlotAgent):
     view_type = HoloViewsView
 
     async def _update_spec(self, memory, event: param.parameterized.Event):
+        breakpoint()
         try:
             spec = await self._extract_spec({"yaml_spec": event.new})
         except Exception:
@@ -1115,15 +1142,13 @@ class HoloViewsAgent(hvPlotAgent):
             if val is not None
         }
         spec.pop("chain_of_thought", None)
-        spec["type"] = "holoviews"
         if spec.get("geo", False):
             try:
                 import geoviews  # noqa: F401
             except ImportError:
                 spec["geo"] = False
-        self.view_type.validate(spec)
-        spec.pop("type", None)
         return spec
+
 
 class VegaLiteAgent(BaseViewAgent):
 

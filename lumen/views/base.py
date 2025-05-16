@@ -37,7 +37,7 @@ from ..filters.base import Filter, ParamFilter
 from ..panel import HtmlPdfDownloadButton
 from ..pipeline import Pipeline
 from ..state import state
-from ..transforms.base import Transform
+from ..transforms.base import HoloViewsOperation, Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
     VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
@@ -49,12 +49,6 @@ if TYPE_CHECKING:
     from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
-VALID_HV_OPERATIONS = tuple([
-    getattr(hv.operation, op)
-    for op in hv.operation.__all__
-    if issubclass(getattr(hv.operation, op), hv.operation.Operation)
-    and op not in ("Operation", "function", "method")
-])
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -973,7 +967,7 @@ class hvPlotView(hvPlotBaseView, HoloViewsElementView):
     its simple API.
     """
 
-    operations = param.List(item_type=VALID_HV_OPERATIONS, doc="""
+    operations = param.List(item_type=HoloViewsOperation, doc="""
         Operations to apply to HoloViews plot.""")
 
     view_type = 'hvplot'
@@ -997,9 +991,8 @@ class hvPlotView(hvPlotBaseView, HoloViewsElementView):
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
-        if self.operations:
-            for operation in self.operations:
-                plot = operation(plot)
+        for operation in self.operations:
+            plot = operation.apply(plot)
         plot = plot.opts(**self.opts) if self.opts else plot
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
@@ -1110,8 +1103,7 @@ class HoloViewsView(HoloViewsElementView):
     vdims = param.ListSelector(doc="""
         The columns to render on the y-axis and/or z-axis.""")
 
-    operations = param.List(
-        item_type=VALID_HV_OPERATIONS, doc="""Operation to apply on the plot.""")
+    operations = param.List(doc="""Operation to apply on the plot.""")
 
     opts = param.Dict(default={}, doc="""
         HoloViews options to apply on the plot.""")
@@ -1146,8 +1138,15 @@ class HoloViewsView(HoloViewsElementView):
         plot = plot.opts(responsive=True, tools=["hover"])
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
+        if self.operations:
+            for operation in self.operations:
+                plot = operation(plot)
         return plot
 
+    def from_spec(
+        cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> View:
+        ...
 
 class Table(View):
     """
