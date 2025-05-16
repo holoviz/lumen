@@ -580,9 +580,7 @@ def test_excluded():
         subtest = param.ClassSelector(class_=SubTest, is_instance=False, instantiate=False)
 
     models = param_to_pydantic(Test, excluded=["subtest"])
-    test_pydantic = models["Test"]
-    subtest_pydantic = models["SubTest"]
+    assert "subtest" not in models
 
-    test = pydantic_to_param_instance(test_pydantic(subtest=subtest_pydantic))
-    assert isinstance(test, Test)
-    assert test.subtest is SubTest
+    test_pydantic = models["Test"]
+    assert "subtest" not in test_pydantic.model_fields

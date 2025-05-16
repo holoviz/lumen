@@ -628,7 +628,7 @@ def pydantic_to_param_instance(model: BaseModel, excluded: list[str] | None = No
     kwargs = {}
     for field_name_in_model in model.model_fields_set:
         original_param_name = field_name_in_model
-        field_info = model.model_fields.get(field_name_in_model)
+        field_info = type(model).model_fields.get(field_name_in_model)
         if field_info and field_info.alias and field_info.alias in valid_param_names:
             original_param_name = field_info.alias
 
