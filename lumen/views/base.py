@@ -7,6 +7,7 @@ from __future__ import annotations
 import html
 import sys
 
+from copy import deepcopy
 from io import BytesIO, StringIO
 from typing import (
     IO, TYPE_CHECKING, Any, ClassVar, Literal,
@@ -996,10 +997,9 @@ class HoloViewsElementView(View):
         operation_specs = spec.pop("operations", [])
         if operation_specs:
             operations = []
-            for op_spec in operation_specs:
+            for op_spec in deepcopy(operation_specs):
                 operations.append(resolve_module_reference(op_spec.pop('type')).instance(**op_spec))
             spec["operations"] = operations
-        print(spec["operations"])
         return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
 
 
