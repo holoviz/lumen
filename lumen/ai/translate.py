@@ -26,8 +26,6 @@ from pydantic.fields import FieldInfo, PydanticUndefined
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_extra_types.color import Color
 
-# ... (Keep all existing constants and helper functions like _create_literal, _infer_docstring_style, ArbitraryTypesModel) ...
-
 DATE_TYPE = datetime.datetime | datetime.date
 PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.String: str,
@@ -157,8 +155,8 @@ def _infer_docstring_style(doc: str) -> DocstringStyle:
 def _get_model(
     type_: Any,
     created_models: dict[str, type[BaseModel] | str],
-    current_depth: int,  # Added
-    max_depth: int | None,  # Added
+    current_depth: int,
+    max_depth: int | None,
     excluded: str | list[str] = "_internal_params",  # Add excluded parameter
 ) -> Any:
     if isinstance(type_, tuple):
@@ -196,8 +194,8 @@ def parameter_to_field(
     parameter: param.Parameter,
     created_models: dict[str, type[BaseModel] | str],
     literals: list[str] | None,
-    current_depth: int,  # Added
-    max_depth: int | None,  # Added
+    current_depth: int,
+    max_depth: int | None,
     excluded: str | list[str] = "_internal_params",  # Add excluded parameter
 ) -> tuple[type, FieldInfo]:
     param_type = parameter.__class__
@@ -367,7 +365,7 @@ def param_to_pydantic(
     excluded: str | list[str] = "_internal_params",
     extra_fields: dict[str, tuple[type, FieldInfo]] | None = None,
     process_subclasses: bool = True,
-    max_depth: int | None = 3,
+    max_depth: int | None = 6,
     current_depth: int = 0,  # Current recursion depth for this instance
 ) -> dict[str, type[BaseModel] | str]:
     if created_models is None:
