@@ -45,7 +45,7 @@ from .models import (
 from .schemas import get_metaset
 from .services import DbtslMixin
 from .tools import ToolUser
-from .translate import param_to_pydantic
+from .translate import param_to_pydantic, pydantic_to_param_instance
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
     log_debug, mutate_user_message, parse_table_slug, report_error,
@@ -993,13 +993,23 @@ class BaseViewAgent(LumenBaseAgent):
                 step.stream(chain_of_thought, replace=True)
 
             spec = ""
-            self._last_output = dict(output)
+            breakpoint()
+            try:
+                self._last_output = pydantic_to_param_instance(output).to_spec()
+            except AttributeError:
+                # handling this way for now...
+                # TODO: AttributeError: 'functools.partial' object has no attribute 'to_spec
+                # TODO: ValueError: Views must declare a Pipeline.
+                self._last_output = pydantic_to_param_instance(output)(pipeline=pipeline).to_spec()
             try:
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
                 traceback.print_exception(e)
-                context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                if "json_spec" in self._last_output:
+                    context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                else:
+                    context = ""
                 report_error(e, step, language="json", context=context)
 
         if error:
@@ -1033,7 +1043,11 @@ class BaseViewAgent(LumenBaseAgent):
 
         spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
-        view = self.view_type(pipeline=pipeline, **spec)
+        try:
+            # why aren't we using from_spec here instead?
+            view = self.view_type(pipeline=pipeline, **spec)
+        except Exception:
+            view = self.view_type.from_spec(spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
@@ -1121,8 +1135,6 @@ class HoloViewsAgent(hvPlotAgent):
                 import geoviews  # noqa: F401
             except ImportError:
                 spec["geo"] = False
-        self.view_type.validate(spec)
-        spec.pop("type", None)
         return spec
 
 class VegaLiteAgent(BaseViewAgent):

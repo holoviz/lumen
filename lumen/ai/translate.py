@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import datetime
 import inspect
 import re
@@ -677,6 +678,10 @@ def pydantic_to_param_instance(model: BaseModel, excluded: list[str] | None = No
             kwargs[original_param_name] = actual_value.split(".")[0]
         else:
             kwargs[original_param_name] = actual_value
+
+    for k, v in kwargs.items():
+        if isinstance(v, str) and v in {"True", "False", "None"}:
+            kwargs[k] = ast.literal_eval(v)
 
     if hasattr(parameterized_class, "instance"):
         return parameterized_class.instance(**kwargs)

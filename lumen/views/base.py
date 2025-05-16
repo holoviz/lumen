@@ -997,9 +997,8 @@ class hvPlotView(hvPlotBaseView, HoloViewsElementView):
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
-        if self.operations:
-            for operation in self.operations:
-                plot = operation(plot)
+        for operation in self.operations:
+            plot = operation(plot)
         plot = plot.opts(**self.opts) if self.opts else plot
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
@@ -1143,10 +1142,43 @@ class HoloViewsView(HoloViewsElementView):
             )
         if self.opts:
             plot = plot.opts(self.kind, **self.opts)
-        plot = plot.opts(responsive=True, tools=["hover"])
+        plot = plot.opts(tools=["hover"])
+        for operation in self.operations:
+            plot = operation(plot)
         if self.selection_group or 'selection_expr' in self.param.watchers:
             plot = self._link_plot(plot)
         return plot
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        operations = spec.pop("operations")
+
+        spec["operations"] = []
+        for operation in operations:
+            op_spec = {"type": f"{operation.__module__}.{operation.__name__}"}
+            for k, v in operation.param.values().items():
+                default = getattr(type(operation), k)
+                try:
+                    is_equal = default is v
+                    if not is_equal:
+                        is_equal = default == v
+                except Exception:
+                    is_equal = False
+                if k == 'name' or is_equal:
+                    continue
+                else:
+                    op_spec[k] = v
+            spec['operations'].append(op_spec)
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None) -> View:
+        operation_specs = spec.pop("operations", [])
+        operations = []
+        for op_spec in operation_specs:
+            operations.append(resolve_module_reference(op_spec.pop('type')).instance(**op_spec))
+        spec["operations"] = operations
+        return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
 
 
 class Table(View):
