@@ -226,6 +226,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             instantiated.append(agent)
 
         # If none of the tools provide vector_metaset, add tablelookup
+        tools = tools or []
         provides_vector_metaset = any(
             "vector_metaset" in tool.provides
             for tool in tools or []
