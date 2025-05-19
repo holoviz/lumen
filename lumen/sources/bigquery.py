@@ -376,3 +376,30 @@ class BigQuerySource(BaseSQLSource):
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
+
+    def close(self):
+        """
+        Close the BigQuery client connections, releasing associated resources.
+
+        This method should be called when the source is no longer needed to prevent
+        connection leaks and properly clean up resources.
+        """
+        # Close SQL client
+        if self._sql__client is not None:
+            self._sql__client.close()
+            self._sql__client = None
+
+        # Close metadata client
+        if self._metadata__client is not None:
+            self._metadata__client.close()
+            self._metadata__client = None
+
+        # Clear credentials
+        self._credentials = None
+        self._cached_tables = None
+
+    def __del__(self):
+        """
+        Ensures resources are cleaned up when the object is garbage collected.
+        """
+        self.close()
