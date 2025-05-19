@@ -12,6 +12,8 @@ from typing import IO, Any
 
 import duckdb
 import numpy as np
+# https://duckdb.org/docs/stable/clients/python/known_issues#numpy-import-multithreading
+import numpy.core.multiarray
 import param
 import semchunk
 
