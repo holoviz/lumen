@@ -397,9 +397,3 @@ class BigQuerySource(BaseSQLSource):
         # Clear credentials
         self._credentials = None
         self._cached_tables = None
-
-    def __del__(self):
-        """
-        Ensures resources are cleaned up when the object is garbage collected.
-        """
-        self.close()

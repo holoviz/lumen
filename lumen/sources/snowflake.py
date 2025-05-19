@@ -434,9 +434,3 @@ class SnowflakeSource(BaseSQLSource):
         if self._conn is not None:
             self._conn.close()
             self._conn = None
-
-    def __del__(self):
-        """
-        Ensures resources are cleaned up when the object is garbage collected.
-        """
-        self.close()
