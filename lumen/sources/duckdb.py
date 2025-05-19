@@ -6,6 +6,8 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import duckdb
+# https://duckdb.org/docs/stable/clients/python/known_issues#numpy-import-multithreading
+import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
 
