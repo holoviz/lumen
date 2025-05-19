@@ -419,3 +419,24 @@ class SnowflakeSource(BaseSQLSource):
                 except Exception:
                     result[table_slug]["view_definition"] = "N/A"
         return result
+
+    def close(self):
+        """
+        Close the Snowflake connection and cursor, releasing associated resources.
+
+        This method should be called when the source is no longer needed to prevent
+        connection leaks and properly clean up server-side resources.
+        """
+        if self._cursor is not None:
+            self._cursor.close()
+            self._cursor = None
+
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def __del__(self):
+        """
+        Ensures resources are cleaned up when the object is garbage collected.
+        """
+        self.close()

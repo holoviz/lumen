@@ -349,3 +349,20 @@ class DuckDBSource(BaseSQLSource):
             }
             metadata[table_name] = table_metadata
         return metadata
+
+    def close(self):
+        """
+        Close the DuckDB connection, releasing associated resources.
+
+        This method should be called when the source is no longer needed to prevent
+        connection leaks and properly clean up server-side resources.
+        """
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+
+    def __del__(self):
+        """
+        Ensures resources are cleaned up when the object is garbage collected.
+        """
+        self.close()
