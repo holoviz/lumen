@@ -362,9 +362,3 @@ class DuckDBSource(BaseSQLSource):
         if self._connection is not None:
             self._connection.close()
             self._connection = None
-
-    def __del__(self):
-        """
-        Ensures resources are cleaned up when the object is garbage collected.
-        """
-        self.close()
