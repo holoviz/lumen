@@ -484,9 +484,15 @@ class Component(param.Parameterized):
         spec = {}
         for p, value in self.param.values().items():
             pobj = self.param[p]
-            if p in self._internal_params or value == pobj.default:
+            try:
+                is_equal = value is pobj.default or value == pobj.default
+            except Exception:
+                is_equal = False
+            if p in self._internal_params or is_equal:
                 continue
             elif self._is_component_key(p):
+                if value is None:
+                    continue
                 pspec = value.to_spec(context=context)
                 if not pspec:
                     continue
