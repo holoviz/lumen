@@ -100,6 +100,12 @@ class TableExplorer(Viewer):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
+
     def __init__(self, **params):
         super().__init__(**params)
         self._table_select = MultiChoice(
@@ -117,7 +123,8 @@ class TableExplorer(Viewer):
         self._update_source_map(init=True)
 
         self._controls = SourceControls(
-            select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload'
+            select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload',
+            table_upload_callbacks=self.table_upload_callbacks,
         )
         self._controls.param.watch(self._explore_table_if_single, "add")
         self._tabs = Tabs(self._controls, dynamic=True, sizing_mode='stretch_both')
@@ -534,7 +541,7 @@ class ExplorerUI(UI):
         )
         self._reorder_switch.param.watch(self._toggle_reorder, 'value')
         self._explorations.on_action('remove', self._delete_exploration)
-        self._explorer = TableExplorer(interface=self.interface)
+        self._explorer = TableExplorer(interface=self.interface, table_upload_callbacks=self.table_upload_callbacks)
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
             margin=(0, 0, 10, 10),
