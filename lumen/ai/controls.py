@@ -119,6 +119,11 @@ class SourceControls(Viewer):
 
     select_existing = param.Boolean(default=True, doc="Select existing table")
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias.""")
+
     _last_table = param.String(default="", doc="Last table added")
 
     def __init__(self, **params):
@@ -339,9 +344,18 @@ class SourceControls(Viewer):
             source = None
             n_tables = 0
             n_docs = 0
+            table_upload_callbacks = {
+                key.lstrip("."): value
+                for key, value in self.table_upload_callbacks.items()
+            }
+            custom_table_extensions = tuple(table_upload_callbacks)
             for i in range(len(self._upload_tabs)):
                 media_controls = self._media_controls[i]
-                if media_controls.extension.endswith(TABLE_EXTENSIONS):
+                if media_controls.extension.endswith(custom_table_extensions):
+                    n_tables += int(table_upload_callbacks[media_controls.extension](
+                        media_controls.file_obj, media_controls.alias
+                    ))
+                elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
                     n_tables += self._add_table(source, media_controls.file_obj, media_controls)

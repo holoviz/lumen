@@ -348,6 +348,7 @@ class UI(Viewer):
 
         self._vector_store_status_badge.status = "running"
         while table_lookup._ready is False:
+            # TODO: bind this to the _ready param so when users upload, it can show pending again!!
             await asyncio.sleep(0.5)
 
         if table_lookup._ready:
@@ -506,6 +507,12 @@ class ExplorerUI(UI):
 
     chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
         The position of the chat interface panel relative to the exploration area.""")
+
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
 
     title = param.String(default='Lumen Explorer', doc="Title of the app.")
 

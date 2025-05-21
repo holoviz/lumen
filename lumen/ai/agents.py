@@ -583,6 +583,7 @@ class SQLAgent(LumenBaseAgent):
             join_required=join_required,
             dialect=dialect,
             comments=comments,
+            separator=SOURCE_TABLE_SEPARATOR,
             **errors_context
         )
         with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
@@ -677,8 +678,13 @@ class SQLAgent(LumenBaseAgent):
             selected_slugs += list(previous_state.selected_columns)
 
         if len(selected_slugs) == 0:
+            source = next(iter(sources.values()))
+            selected_slugs = source.get_tables()[:10]
+
+        if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 
+        tables_to_source = {}
         chain_of_thought = ""
         with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             if len(selected_slugs) > 1:
@@ -703,12 +709,12 @@ class SQLAgent(LumenBaseAgent):
                     stream_details('\n'.join(slug.split(SOURCE_TABLE_SEPARATOR)[-1] for slug in selected_slugs), step, title="Relevant tables", auto=False)
                     step.success_title = f'Found {len(selected_slugs)} relevant table(s)'
 
-            tables_to_source = {}
             step.stream("Planning to use:")
             for table_slug in selected_slugs:
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
                 step.stream(f"\n\n{a_table!r}")
+
         return tables_to_source, chain_of_thought
 
     async def respond(
