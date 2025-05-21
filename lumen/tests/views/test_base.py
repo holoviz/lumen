@@ -207,7 +207,7 @@ def test_hvplot_view_to_spec(set_root):
         'table': 'test',
         'x': 'A',
         'y': 'B',
-        'alpha': 0.3
+        'alpha': 0.3,
     }
     view = View.from_spec(view, source, [])
     assert view.to_spec() == {
