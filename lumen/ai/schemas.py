@@ -363,3 +363,56 @@ class DbtslMetaset:
         for metric in self.metrics.values():
             context += str(metric)
         return context
+
+
+@dataclass
+class MCPTool:
+    """Schema for an MCP tool."""
+
+    name: str                                   # Tool name
+    description: str                            # Tool description
+    similarity: float                           # Relevance score
+    server_url: str                             # Server connection string
+    parameters: dict[str, dict[str, Any]] = field(default_factory=dict)  # Tool parameters
+
+
+@dataclass
+class MCPResource:
+    """Schema for an MCP resource."""
+
+    uri: str                                    # Resource URI
+    description: str                            # Resource description
+    similarity: float                           # Relevance score
+    server_url: str                             # Server connection string
+
+
+@dataclass
+class MCPMetaset:
+    """Schema container for MCP tools and resources."""
+
+    query: str                                  # Original user query
+    tools: dict[str, MCPTool] = field(default_factory=dict)  # Available tools
+    resources: dict[str, MCPResource] = field(default_factory=dict)  # Available resources
+
+    @property
+    def selected_context(self) -> str:
+        """Generate a formatted context string from the MCP tools and resources."""
+        context = f"# MCP Context for query: {self.query}\n\n"
+
+        if self.tools:
+            context += "## Available MCP Tools\n\n"
+            for name, tool in self.tools.items():
+                params = "\n".join([f"- {param_name}: {param_info.get('description', '')}"
+                                  for param_name, param_info in tool.parameters.items()])
+                context += f"### {name}\n{tool.description}\n\nParameters:\n{params}\n\n"
+
+        if self.resources:
+            context += "## Available MCP Resources\n\n"
+            for uri, resource in self.resources.items():
+                context += f"### {uri}\n{resource.description}\n\n"
+
+        return context
+
+    def __str__(self) -> str:
+        """String representation is the formatted context."""
+        return self.selected_context
