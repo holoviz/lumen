@@ -68,7 +68,7 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
-        self._status = StatusBadge(name="LLM Pending")
+        self._status = StatusBadge(name="LLM Pending", align="center")
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
