@@ -751,6 +751,7 @@ class TableLookup(VectorLookupTool):
         return {"text": enriched_text, "metadata": vector_metadata}
 
     async def _update_vector_store(self, _, __, sources):
+        self._ready = False
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
         processed_sources = []
