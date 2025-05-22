@@ -196,42 +196,66 @@ class UI(Viewer):
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
         self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending")
+        self._table_lookup_tool = None  # Will be set after coordinator is initialized
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
-        state.onload(self._verify_llm)
+        state.onload(self._setup_llm_and_watchers)
 
-    async def _verify_llm(self):
+    async def _setup_llm_and_watchers(self):
+        """Initialize LLM and set up reactive watchers for TableLookup readiness."""
         try:
             await self.llm.initialize(log_level=self.log_level)
             self.interface.disabled = False
         except Exception:
             traceback.print_exc()
 
+        # Find the TableLookup tool and set up reactive watching
         for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
-                table_lookup = tool
+                self._table_lookup_tool = tool
                 break
 
-        if not table_lookup:
+        if not self._table_lookup_tool:
             self._vector_store_status_badge.param.update(
                 status="success", name='Tables Vector Store Ready')
             return
 
-        self._vector_store_status_badge.status = "running"
-        while table_lookup._ready is False:
-            await asyncio.sleep(0.5)
+        # Set up reactive watching of the _ready parameter
+        self._table_lookup_tool.param.watch(self._update_vector_store_badge, '_ready')
 
-        if table_lookup._ready:
+        # Set initial badge state
+        self._update_vector_store_badge()
+
+    def _update_vector_store_badge(self, event=None):
+        """Update the vector store badge based on TableLookup readiness state."""
+        if not self._table_lookup_tool:
+            return
+
+        ready_state = self._table_lookup_tool._ready
+
+        if ready_state is False:
+            # Not ready yet - show as running/pending
             self._vector_store_status_badge.param.update(
-                status="success", name='Tables Vector Store Ready')
-        elif table_lookup._ready is None:
+                status="running", name="Tables Vector Store Pending"
+            )
+        elif ready_state is True:
+            # Ready - show as success
             self._vector_store_status_badge.param.update(
-                status="danger", name='Tables Vector Store Error')
+                status="success", name="Tables Vector Store Ready"
+            )
+        elif ready_state is None:
+            # Error state
+            self._vector_store_status_badge.param.update(
+                status="danger", name="Tables Vector Store Error"
+            )
 
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
         """
+        # Clean up parameter watchers
+        if self._table_lookup_tool:
+            self._table_lookup_tool.param.unwatch(self._update_vector_store_badge, '_ready')
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
