@@ -1,4 +1,5 @@
 import asyncio
+import fnmatch
 import importlib
 import io
 import json
@@ -18,6 +19,7 @@ import param
 import semchunk
 
 from panel import cache as pn_cache
+from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
 from .embeddings import Embeddings, NumpyEmbeddings
@@ -360,6 +362,76 @@ class VectorStore(LLMUser):
         """
         # Implement in derived classes
         raise NotImplementedError("Subclasses must implement upsert.")
+
+    async def add_directory(
+        self,
+        directory: str | os.PathLike,
+        pattern: str = "*",
+        exclude_patterns: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        situate: bool | None = None,
+        upsert: bool = False,
+    ) -> list[int]:
+        """
+        Recursively add files from a directory that match the pattern and don't match exclude patterns.
+
+        Parameters
+        ----------
+        directory : Union[str, os.PathLike]
+            The path to the directory to search for files.
+        pattern : str
+            Glob pattern to match files against (e.g., "*.txt", "*.py"). Default is "*".
+        exclude_patterns : Optional[List[str]]
+            List of patterns to exclude. Files matching any of these patterns will be skipped.
+        metadata : Optional[dict[str, Any]]
+            Base metadata to apply to all files. Will be extended with filename-specific metadata.
+        situate : Optional[bool]
+            Whether to insert a `llm_context` key in the metadata. If None, uses the class default.
+        upsert : bool
+            If True, will update existing items if similar content is found. Default is False.
+
+        Returns
+        -------
+        List[int]
+            Combined list of IDs for all added files.
+        """
+        if exclude_patterns is None:
+            exclude_patterns = []
+
+        directory_path = Path(directory)
+        if not directory_path.exists() or not directory_path.is_dir():
+            raise ValueError(f"Directory {directory} does not exist or is not a directory")
+        file_paths = list(directory_path.rglob(pattern))
+
+        base_metadata = metadata or {}
+
+        # Collect files that match the pattern and don't match exclude patterns
+        all_ids = []
+        for file_path in tqdm(file_paths, unit="file", desc="Embedding files"):
+            # Skip directories
+            if not file_path.is_file():
+                continue
+
+            # Get the relative path for exclusion checking and metadata
+            rel_path = file_path.relative_to(directory_path)
+
+            # Check against exclusion patterns
+            if any(fnmatch(str(rel_path), exclude_pattern) for exclude_pattern in exclude_patterns):
+                continue
+
+            # Create file-specific metadata by extending base metadata
+            file_metadata = base_metadata.copy()
+            file_metadata["filename"] = str(file_path)
+
+            all_ids.extend(
+                await self.add_file(
+                    filename=file_path,
+                    metadata=file_metadata,
+                    situate=situate,
+                    upsert=upsert
+                )
+            )
+        return all_ids
 
     async def add_file(
         self,
@@ -922,6 +994,8 @@ class DuckDBVectorStore(VectorStore):
         if self.uri == ":memory:":
             self.connection = connection
             self._initialized = False
+            if self.embeddings is None:
+                self.embeddings = NumpyEmbeddings()
             return
         uri_exists = Path(self.uri).exists()
         try:
