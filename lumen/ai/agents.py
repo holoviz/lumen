@@ -217,7 +217,7 @@ class SourceAgent(Agent):
         else:
             help_message = "**Please upload new dataset(s)/document(s) to continue**, or click cancel if this was unintended..."
         output.insert(0, help_message)
-        self.interface.send(output, respond=False, user="SourceAgent")
+        self.interface.send(output, respond=False, user="Assistant")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
