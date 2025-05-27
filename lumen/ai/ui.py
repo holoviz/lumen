@@ -493,12 +493,13 @@ class ExplorerUI(UI):
             self._coordinator._add_suggestions_to_footer(
                 suggestions=suggestions
             )
-        elif len(tables) > 2:
+        elif len(tables) > 1:
             table_list_agent = next(
-                (agent for agent in self.coordinator.agents if isinstance(agent, TableListAgent)),
+                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
                 None
             )
-            param.parameterized.async_executor(partial(table_list_agent.respond, []))
+            if table_list_agent:
+                param.parameterized.async_executor(partial(table_list_agent.respond, []))
 
     def _destroy(self, session_context):
         """
