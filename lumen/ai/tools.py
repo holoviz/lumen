@@ -704,6 +704,7 @@ class TableLookup(VectorLookupTool):
             key for key in (table_name.upper(), table_name.lower(), table_name)
             if key in source_metadata), None
         )
+
         if not table_name_key:
             return None
         table_name = table_name_key
