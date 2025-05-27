@@ -4,6 +4,11 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
 from lumen.ai import memory
 from lumen.ai.agents import (
     AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
