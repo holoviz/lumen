@@ -546,7 +546,7 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
-    # @retry_llm_output()
+    @retry_llm_output()
     async def _create_valid_sql(self, messages: list[Message], dialect: str, comments: str, title: str, tables_to_source: dict[str, BaseSQLSource], errors=None):
         errors_context = {}
         if errors:
