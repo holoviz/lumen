@@ -96,6 +96,8 @@ log_cli_level = "INFO"
 filterwarnings = [
     "error",
     "ignore:datetime.datetime.utcfromtimestamp():DeprecationWarning:dateutil.tz.tz", # https://github.com/dateutil/dateutil/pull/1285
+    "ignore:Couldn't find ffmpeg or avconv - defaulting to ffmpeg:RuntimeWarning",
+    "ignore:Unsupported Windows version",
 ]
 
 [tool.ruff]
