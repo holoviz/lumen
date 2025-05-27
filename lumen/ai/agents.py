@@ -189,6 +189,12 @@ class SourceAgent(Agent):
             "Do not use to see if there are any relevant data sources available",
         ])
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
+
     purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
 
     requires = param.List(default=[], readonly=True)
@@ -203,7 +209,7 @@ class SourceAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False, memory=self.memory)
+        source_controls = SourceControls(multiple=True, replace_controls=False, select_existing=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:
