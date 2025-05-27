@@ -426,7 +426,7 @@ class DocumentListAgent(ListAgent):
 
     def _get_items(self) -> list[str]:
         # extract the filename, following this pattern `Filename: 'filename'``
-        return [doc["metadata"].get("filename", "untitled") for doc in self._memory["document_sources"]]
+        return [doc["metadata"].get("filename", "untitled") for doc in self._memory.get("document_sources", [])]
 
 
 class LumenBaseAgent(Agent):

@@ -294,6 +294,10 @@ class StatusBadge(Button):
         default="pending", objects=["pending", "running", "success", "failed"]
     )
 
+    description = param.String(default="", doc="""
+        Optional description text to show as a tooltip when hovering over the status badge.
+        If empty, no tooltip will be displayed.""")
+
     _base_stylesheet = """
     :host {
         position: relative;
@@ -431,5 +435,5 @@ class StatusBadge(Button):
         super().__init__(**params)
         self.param.update(
             icon=param.rx(self._status_mapping)[self.param.status]["icon"],
-            stylesheets=[self._base_stylesheet, param.rx(self._status_stylesheets)[self.param.status]]
+            stylesheets=[self._base_stylesheet, param.rx(self._status_stylesheets)[self.param.status]],
         )

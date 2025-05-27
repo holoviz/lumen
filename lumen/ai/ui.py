@@ -195,7 +195,7 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
-        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending")
+        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending", description="Pending initialization")
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -217,7 +217,7 @@ class UI(Viewer):
 
         if not self._table_lookup_tool:
             self._vector_store_status_badge.param.update(
-                status="success", name='Tables Vector Store Ready')
+                status="success", name='Tables Vector Store Ready', description="No tables stored.")
             return
 
         # Set up reactive watching of the _ready parameter
@@ -236,17 +236,18 @@ class UI(Viewer):
         if ready_state is False:
             # Not ready yet - show as running/pending
             self._vector_store_status_badge.param.update(
-                status="running", name="Tables Vector Store Pending"
+                status="running", name="Tables Vector Store Pending", description="Pending initialization"
             )
         elif ready_state is True:
             # Ready - show as success
+            num_tables = len(self._table_lookup_tool._tables_metadata)
             self._vector_store_status_badge.param.update(
-                status="success", name="Tables Vector Store Ready"
+                status="success", name="Tables Vector Store Ready", description=f"Embedded {num_tables} table(s)"
             )
         elif ready_state is None:
             # Error state
             self._vector_store_status_badge.param.update(
-                status="danger", name="Tables Vector Store Error"
+                status="danger", name="Tables Vector Store Error", description="Error initializing tables vector store"
             )
 
     def _destroy(self, session_context):
