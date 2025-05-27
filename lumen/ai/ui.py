@@ -4,6 +4,7 @@ import asyncio
 import logging
 import traceback
 
+from functools import partial
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -483,6 +484,22 @@ class ExplorerUI(UI):
         self._idle.set()
         self._last_synced = None
         self._output.param.watch(self._update_conversation, 'active')
+
+        tables = set()
+        for source in memory.get("sources", []):
+            tables |= set(source.get_tables())
+        if len(tables) == 1:
+            suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
+            self._coordinator._add_suggestions_to_footer(
+                suggestions=suggestions
+            )
+        elif len(tables) > 1:
+            table_list_agent = next(
+                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
+                None
+            )
+            if table_list_agent:
+                param.parameterized.async_executor(partial(table_list_agent.respond, []))
 
     def _destroy(self, session_context):
         """
