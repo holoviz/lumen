@@ -95,7 +95,8 @@ Here was the plan that was executed:
 {%- if memory.get('data') %}
 Here is the current dataset:
 {% if memory.data|length == 0 %}
-The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt the user to click the rerun button below if they'd like to try again.
+The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt
+the user to click the rerun button below if they'd like to try again.
 {% else %}
 {{ memory.data }}
 {%- endif %}
@@ -108,8 +109,4 @@ Here is the current SQL query:
 ```
 {%- endif -%}
 
-{%- if memory.get('data') and memory.data|length == 0 -%}
-The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
-and try to make educated guess what other columns or values should be used instead.
-{%- endif -%}
 {%- endblock -%}
