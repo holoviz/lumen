@@ -223,7 +223,7 @@ class UI(Viewer):
             )
             if table_list_agent:
                 param.parameterized.async_executor(partial(table_list_agent.respond, []))
-        elif self._source_agent:
+        elif self._source_agent and len(memory.get("document_sources", [])) == 0:
             param.parameterized.async_executor(partial(self._source_agent.respond, []))
 
     async def _setup_llm_and_watchers(self):
