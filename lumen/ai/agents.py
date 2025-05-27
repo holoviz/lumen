@@ -195,8 +195,6 @@ class SourceAgent(Agent):
 
     provides = param.List(default=["sources", "source", "document_sources"], readonly=True)
 
-    on_init = param.Boolean(default=True)
-
     _extensions = ("filedropper",)
 
     async def respond(
@@ -359,7 +357,12 @@ class ListAgent(Agent):
         )
 
         item_list.on_click(self._use_item)
-        self.interface.stream(item_list, user="Lumen")
+        self.interface.stream(
+            pn.Column(
+                "The available tables are listed below. Click on the eye icon to show the table contents.",
+                item_list
+            ), user="Assistant"
+        )
         return item_list
 
 
