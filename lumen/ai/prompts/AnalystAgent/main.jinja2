@@ -107,9 +107,4 @@ Here is the current SQL query:
 {{ memory.sql }}
 ```
 {%- endif -%}
-
-{%- if memory.get('data') and memory.data|length == 0 -%}
-The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
-and try to make educated guess what other columns or values should be used instead.
-{%- endif -%}
 {%- endblock -%}
