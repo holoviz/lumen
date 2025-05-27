@@ -396,6 +396,12 @@ class ExplorerUI(UI):
     chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
         The position of the chat interface panel relative to the exploration area.""")
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
+
     title = param.String(default='Lumen Explorer', doc="Title of the app.")
 
     def __init__(
@@ -654,7 +660,10 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
+        controls = SourceControls(
+            select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload',
+            table_upload_callbacks=self.table_upload_callbacks
+        )
         controls.param.watch(explore_table_if_single, "add")
         tabs = Tabs(controls, dynamic=True, sizing_mode='stretch_both', design=Material)
 
