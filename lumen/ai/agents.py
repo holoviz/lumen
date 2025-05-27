@@ -28,7 +28,7 @@ from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import (
-    Panel, VegaLiteView, View, hvPlotUIView,
+    HoloViewsView, Panel, VegaLiteView, View, hvPlotUIView,
 )
 from .actor import ContextProvider
 from .config import (
@@ -45,7 +45,7 @@ from .models import (
 from .schemas import get_metaset
 from .services import DbtslMixin
 from .tools import ToolUser
-from .translate import param_to_pydantic
+from .translate import param_to_pydantic, pydantic_to_param_instance
 from .utils import (
     clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
     log_debug, mutate_user_message, parse_table_slug, report_error,
@@ -931,7 +931,7 @@ class BaseViewAgent(LumenBaseAgent):
         super().__init__(**params)
 
 
-    @retry_llm_output()
+    # @retry_llm_output()
     async def _create_valid_spec(
         self,
         messages: list[Message],
@@ -992,13 +992,24 @@ class BaseViewAgent(LumenBaseAgent):
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
 
-            self._last_output = dict(output)
+            spec = ""
+            breakpoint()
+            try:
+                self._last_output = pydantic_to_param_instance(output).to_spec()
+            except AttributeError:
+                # handling this way for now...
+                # TODO: AttributeError: 'functools.partial' object has no attribute 'to_spec
+                # TODO: ValueError: Views must declare a Pipeline.
+                self._last_output = pydantic_to_param_instance(output)(pipeline=pipeline).to_spec()
             try:
                 spec = await self._extract_spec(self._last_output)
             except Exception as e:
                 error = str(e)
                 traceback.print_exception(e)
-                context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                if "json_spec" in self._last_output:
+                    context = f'```\n{yaml.safe_dump(load_json(self._last_output["json_spec"]))}\n```'
+                else:
+                    context = ""
                 report_error(e, step, language="json", context=context)
 
         if error:
@@ -1032,7 +1043,11 @@ class BaseViewAgent(LumenBaseAgent):
 
         spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
-        view = self.view_type(pipeline=pipeline, **spec)
+        try:
+            # why aren't we using from_spec here instead?
+            view = self.view_type(pipeline=pipeline, **spec)
+        except Exception:
+            view = self.view_type.from_spec(spec)
         self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
         return view
 
@@ -1088,6 +1103,39 @@ class hvPlotAgent(BaseViewAgent):
             spec["cnorm"] = "log"
         return spec
 
+
+class HoloViewsAgent(hvPlotAgent):
+
+    purpose = param.String(default="Generates a plot of the data given a user prompt.")
+
+    prompts = param.Dict(
+        default={
+            "main": {"template": PROMPTS_DIR / "HoloViewsAgent" / "main.jinja2"},
+        }
+    )
+
+    view_type = HoloViewsView
+
+    async def _update_spec(self, memory, event: param.parameterized.Event):
+        try:
+            spec = await self._extract_spec({"yaml_spec": event.new})
+        except Exception:
+            return
+        memory["view"] = dict(spec, type=self.view_type)
+
+    async def _extract_spec(self, spec: dict[str, Any]):
+        spec = {
+            key: val for key, val in spec.items()
+            if val is not None
+        }
+        spec.pop("chain_of_thought", None)
+        spec["type"] = "holoviews"
+        if spec.get("geo", False):
+            try:
+                import geoviews  # noqa: F401
+            except ImportError:
+                spec["geo"] = False
+        return spec
 
 class VegaLiteAgent(BaseViewAgent):
 

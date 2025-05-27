@@ -23,7 +23,7 @@ from lumen.ai.agents import {{ agent }}
 {%- endif -%}
 {% if temperature is defined %}
   {%- set args = args + ["temperature=" ~ temperature] -%}
-{%- endif -%}
+{%- endif %}
 llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
 {% endif %}
 
