@@ -40,7 +40,6 @@ from .agents import (
 )
 from .components import SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME
-from .controls import SourceControls
 from .coordinator import Coordinator, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
@@ -107,6 +106,12 @@ class UI(Viewer):
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
+
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
 
     template = param.Selector(
         default=config.param.template.names['fast'],
@@ -196,11 +201,30 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
+        self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
         self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending", description="Pending initialization")
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._setup_llm_and_watchers)
+
+        tables = set()
+        for source in memory.get("sources", []):
+            tables |= set(source.get_tables())
+        if len(tables) == 1:
+            suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
+            self._coordinator._add_suggestions_to_footer(
+                suggestions=suggestions
+            )
+        elif len(tables) > 1:
+            table_list_agent = next(
+                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
+                None
+            )
+            if table_list_agent:
+                param.parameterized.async_executor(partial(table_list_agent.respond, []))
+        elif self._source_agent and len(memory.get("document_sources", [])) == 0:
+            param.parameterized.async_executor(partial(self._source_agent.respond, []))
 
     async def _setup_llm_and_watchers(self):
         """Initialize LLM and set up reactive watchers for TableLookup readiness."""
@@ -332,11 +356,22 @@ class UI(Viewer):
                     self._vector_store_status_badge,
                     sizing_mode="stretch_width",
                     align="center",
-                )
+                ),
             )
+            if self._source_agent:
+                self._source_agent.table_upload_callbacks = self.table_upload_callbacks
+                template.header.append(
+                    Row(
+                        Button(name="Upload Data", icon="upload", button_type="success", on_click=self._trigger_source_agent),
+                    )
+                )
             template.main.append(self._main)
             return template
         return super()._create_view()
+
+    def _trigger_source_agent(self, event=None):
+        if self._source_agent:
+            param.parameterized.async_executor(partial(self._source_agent.respond, []))
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -484,22 +519,6 @@ class ExplorerUI(UI):
         self._idle.set()
         self._last_synced = None
         self._output.param.watch(self._update_conversation, 'active')
-
-        tables = set()
-        for source in memory.get("sources", []):
-            tables |= set(source.get_tables())
-        if len(tables) == 1:
-            suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
-            self._coordinator._add_suggestions_to_footer(
-                suggestions=suggestions
-            )
-        elif len(tables) > 1:
-            table_list_agent = next(
-                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
-                None
-            )
-            if table_list_agent:
-                param.parameterized.async_executor(partial(table_list_agent.respond, []))
 
     def _destroy(self, session_context):
         """
@@ -654,9 +673,7 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
-        controls.param.watch(explore_table_if_single, "add")
-        tabs = Tabs(controls, dynamic=True, sizing_mode='stretch_both', design=Material)
+        tabs = Tabs(dynamic=True, sizing_mode='stretch_both', design=Material)
 
         @param.depends(explore_button, watch=True)
         def get_explorers(load):
@@ -678,7 +695,7 @@ class ExplorerUI(UI):
                     )
                     explorers.append(walker)
 
-                tabs.objects = explorers + [controls]
+                tabs.objects = explorers
                 table_select.value = []
 
         return Column(

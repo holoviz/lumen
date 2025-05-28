@@ -168,7 +168,7 @@ class VectorLookupToolUser(ToolUser):
         # If the tool is already instantiated and has a vector_store, use it
         if isinstance(tool, VectorLookupTool) and tool.vector_store is not None:
             return kwargs
-        elif tool._item_type_name == "document" and self.document_vector_store is not None:
+        elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
             return kwargs
         elif self.vector_store is not None:
