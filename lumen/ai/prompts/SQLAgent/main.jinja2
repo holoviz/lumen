@@ -27,6 +27,7 @@ Checklist:
 - String literals are delimited using single quotes (', apostrophe) and result in STRING_LITERAL values. Note that
 double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted
 identifiers.
+- Be sure to reference the full table slug, e.g. `source {{ separator }} table`
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.

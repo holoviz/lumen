@@ -8,7 +8,7 @@ import param
 from panel.layout import (
     Column, FlexBox, Row, Tabs,
 )
-from panel.pane.markup import Markdown
+from panel.pane.markup import HTML
 from panel.viewable import Viewer
 from panel.widgets import (
     Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
@@ -121,6 +121,11 @@ class SourceControls(Viewer):
 
     select_existing = param.Boolean(default=True, doc="Select existing table")
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias.""")
+
     _last_table = param.String(default="", doc="Last table added")
 
     def __init__(self, **params):
@@ -128,7 +133,7 @@ class SourceControls(Viewer):
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
         self._markitdown = None
         self._file_input = FileDropper(
-            height=100,
+            layout="compact",
             multiple=self.param.multiple,
             margin=(10, 10, 0, 10),
             sizing_mode="stretch_width",
@@ -172,16 +177,12 @@ class SourceControls(Viewer):
             visible=self.param.cancellable,
         )
 
-        self._error_placeholder = Markdown(
-            "", css_classes=["message"] if self.replace_controls else [], visible=False, margin=(0, 10))
-        self._message_placeholder = Markdown(
-            css_classes=["message"] if self.replace_controls else [], visible=False, margin=(0, 10)
-        )
+        self._error_placeholder = HTML("", visible=False, margin=(0, 10))
+        self._message_placeholder = HTML("", visible=False, margin=(0, 10))
 
         self.menu = Column(
             self._input_tabs if self.select_existing else self._input_tabs[0],
-            self._add_button,
-            self._cancel_button,
+            Row(self._add_button, self._cancel_button),
             self.tables_tabs,
             self._error_placeholder,
             self._message_placeholder,
@@ -195,18 +196,19 @@ class SourceControls(Viewer):
         return memory if self.memory is None else self.memory
 
     def _generate_media_controls(self, event):
+        table_extensions = TABLE_EXTENSIONS + tuple(key.lstrip(".").lower() for key in self.table_upload_callbacks.keys())
         if self._input_tabs.active == 0:
             self._upload_tabs.clear()
             self._media_controls.clear()
             for filename, file in self._file_input.value.items():
-
-                if pathlib.Path(filename).suffix.lower() == ".csv":
+                suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
+                if suffix == "csv":
                     encoding = detect_file_encoding(file_obj=file)
                     file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
                 else:
                     file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
 
-                if filename.lower().endswith(TABLE_EXTENSIONS):
+                if suffix in table_extensions:
                     table_controls = TableControls(
                         file_obj,
                         filename=filename,
@@ -341,9 +343,18 @@ class SourceControls(Viewer):
             source = None
             n_tables = 0
             n_docs = 0
+            table_upload_callbacks = {
+                key.lstrip("."): value
+                for key, value in self.table_upload_callbacks.items()
+            }
+            custom_table_extensions = tuple(table_upload_callbacks)
             for i in range(len(self._upload_tabs)):
                 media_controls = self._media_controls[i]
-                if media_controls.extension.endswith(TABLE_EXTENSIONS):
+                if media_controls.extension.endswith(custom_table_extensions):
+                    n_tables += int(table_upload_callbacks[media_controls.extension](
+                        media_controls.file_obj, media_controls.alias
+                    ))
+                elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
                     n_tables += self._add_table(source, media_controls.file_obj, media_controls)
@@ -354,7 +365,7 @@ class SourceControls(Viewer):
                 src = self._memory.get("source")
                 if src:
                     self.tables_tabs[:] = [
-                        (t, Tabulator(src.get(t), sizing_mode="stretch_both"))
+                        (t, Tabulator(src.get(t), sizing_mode="stretch_both", pagination="remote"))
                         for t in src.get_tables()
                     ]
                 self.menu[0].visible = False
@@ -376,10 +387,11 @@ class SourceControls(Viewer):
 
             # Clear uploaded files from memory
             self._file_input.value = {}
-            self._message_placeholder.param.update(
-                object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
-                visible=True,
-            )
+            if (n_tables + n_docs) > 0:
+                self._message_placeholder.param.update(
+                    object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
+                    visible=True,
+                )
             self._error_placeholder.object = self._error_placeholder.object.strip()
 
     def __panel__(self):

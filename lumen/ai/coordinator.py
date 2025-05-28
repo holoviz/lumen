@@ -63,7 +63,6 @@ If unsatisfied with the results...
 
 Click the toggle, or drag the edge, to expand the sidebar and...
 
-📚 Upload sources (tables and documents) by dragging or selecting files
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
 💾 Access all generated tables and visualizations under tabs
 📤 Export your session as a reproducible notebook

@@ -189,6 +189,12 @@ class SourceAgent(Agent):
             "Do not use to see if there are any relevant data sources available",
         ])
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
+
     purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
 
     requires = param.List(default=[], readonly=True)
@@ -203,7 +209,7 @@ class SourceAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        source_controls = SourceControls(multiple=True, replace_controls=True, select_existing=False, memory=self.memory)
+        source_controls = SourceControls(multiple=True, replace_controls=False, select_existing=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:
@@ -211,7 +217,7 @@ class SourceAgent(Agent):
         else:
             help_message = "**Please upload new dataset(s)/document(s) to continue**, or click cancel if this was unintended..."
         output.insert(0, help_message)
-        self.interface.send(output, respond=False, user="SourceAgent")
+        self.interface.send(output, respond=False, user="Assistant")
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
@@ -570,8 +576,15 @@ class SQLAgent(LumenBaseAgent):
 
         join_required = len(tables_to_source) > 1
         comments = comments if join_required else ""  # comments are about joins
-        system_prompt = await self._render_prompt("main", messages, join_required=join_required, dialect=dialect, comments=comments, **errors_context)
-        sql_query = None
+        system_prompt = await self._render_prompt(
+            "main",
+            messages,
+            join_required=join_required,
+            dialect=dialect,
+            comments=comments,
+            separator=SOURCE_TABLE_SEPARATOR,
+            **errors_context
+        )
         with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
@@ -661,8 +674,13 @@ class SQLAgent(LumenBaseAgent):
             vector_metaset.selected_columns or vector_metaset.vector_metadata_map
         )
         if len(selected_slugs) == 0:
+            source = next(iter(sources.values()))
+            selected_slugs = source.get_tables()[:10]
+
+        if len(selected_slugs) == 0:
             raise ValueError("No tables found in memory.")
 
+        tables_to_source = {}
         chain_of_thought = ""
         with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
             if len(selected_slugs) > 1:
@@ -690,12 +708,12 @@ class SQLAgent(LumenBaseAgent):
                     stream_details("\n".join(slug.split(SOURCE_TABLE_SEPARATOR)[-1] for slug in selected_slugs), step, title="Relevant tables", auto=False)
                     step.success_title = f"Found {len(selected_slugs)} relevant table(s)"
 
-            tables_to_source = {}
             step.stream("Planning to use:")
             for table_slug in selected_slugs:
                 a_source_obj, a_table = parse_table_slug(table_slug, sources)
                 tables_to_source[a_table] = a_source_obj
                 step.stream(f"\n\n{a_table!r}")
+
         return tables_to_source, chain_of_thought
 
     async def respond(
