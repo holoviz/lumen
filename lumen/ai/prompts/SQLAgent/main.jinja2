@@ -15,11 +15,9 @@ Checklist:
 - Pretty print the SQL output with newlines and indentation.
 - When plotting, select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations, unless explicitly stated not to.
 - When filtering categorical fields, only use values that exist in the provided enumerated list--if truncated, make an educated guess to fill in the gaps.
-{%- if join_required -%}
-- Please perform a join between the necessary tables.
+- If the user query cannot be answered by a single table, please perform a join between the necessary tables.
 - If the join's values do not align based on the min/max lowest common denominator, then perform a join based on the closest match, or resample and aggregate the data to align the values.
 - Very important to transform the values to ensure they align correctly, especially for acronyms and dates.
-{%- endif -%}
 {%- if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table' or 'table.csv'
@@ -41,10 +39,6 @@ Additionally, only if applicable:
 - If the date columns are separated, e.g. year, month, day, then join them into a single date column.
 - If plotting, be sure to select all the columns that are required for the plot, including the x and y columns and any tooltips.
 
-{% if comments is defined and comments -%}
-Here's additional guidance:
-{{ comments }}
-{%- endif -%}
 {{ memory["sql_metaset"].selected_context }}
 {%- endblock -%}
 
