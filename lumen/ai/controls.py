@@ -174,7 +174,7 @@ class SourceControls(Viewer):
             self.param.cancel,
             name="Cancel",
             icon="circle-x",
-            visible=self.param.cancellable,
+            visible=self.param.cancellable.rx().rx.bool() and self._add_button.param.clicks.rx() == 0,
         )
 
         self._error_placeholder = HTML("", visible=False, margin=(0, 10))
