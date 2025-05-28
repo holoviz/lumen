@@ -12,6 +12,7 @@ Ground Rules:
 - It's often unnecessary to use the same actor multiple times in a single plan
 - Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions.
+- When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}
@@ -91,7 +92,7 @@ Then, selected:
 
 However, the plan didn't satisfy: `{{ unmet_dependencies }}`
 
-Consider incorporating the following to address unmet dependencies if applicable:
+Consider incorporating the following to address unmet dependencies, only if the previous plan is relevant and if the following actors are applicable:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] }}`
 {%- endfor %}

@@ -1211,7 +1211,10 @@ class IterativeTableLookup(TableLookup):
                         selected_slugs = output.selected_slugs or []
                         chain_of_thought = output.chain_of_thought
                         step.stream(chain_of_thought)
-                        stream_details('\n'.join(selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
+                        stream_details(
+                            '\n\n'.join(f'`{slug}`' for slug in selected_slugs),
+                            step, title=f"Selected {len(selected_slugs)} tables", auto=False
+                        )
 
                         # Check if we're done with table selection (do not allow on 1st iteration)
                         if (output.is_done and iteration != 1) or not available_slugs:

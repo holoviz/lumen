@@ -185,7 +185,7 @@ class SourceAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Use when user wants to upload or connect to new data sources, otherwise do not use",
+            "Use when user wants to upload or connect to new data sources",
             "Do not use to see if there are any relevant data sources available",
         ])
 
@@ -378,14 +378,14 @@ class TableListAgent(ListAgent):
     """
 
     conditions = param.List(default=[
-        "For listing available data tables in source to the user, but not for planning",
+        "For listing available data tables & datasets in source to the user, but not for planning",
         "Not for showing data table contents",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available tables in memory.""")
+        Displays a list of all available tables & datasets in memory.""")
 
     requires = param.List(default=["source"], readonly=True)
 
