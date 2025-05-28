@@ -159,39 +159,6 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
     )
 
 
-def make_find_tables_model(tables):
-    table_model = create_model(
-        "Table",
-        chain_of_thought=(str, FieldInfo(
-            description="""
-            Concisely consider which tables are necessary to answer the user query.
-            If there are tables that provide the same info, do not include them all; instead, pick the most relevant one.
-            """
-        )),
-        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
-            description="""
-            The most relevant tables based on the user query; if none are relevant,
-            use the first table. At least one table must be provided.
-            If a join is necessary, include all the tables that will be used in the join.
-            """
-        )),
-       potential_join_issues=(str, FieldInfo(
-           description="""
-           If no join is necessary, return an empty string--else
-           list potential join issues between tables:
-           - Data type mismatches (int vs string, numeric precision)
-           - Format differences (case, leading zeros, dates/times, timezones)
-           - Semantic differences (IDs vs names, codes vs full text)
-           - Quality issues (nulls, duplicates, validation rules)
-           Return specific issues found in current tables, and how you plan to address them
-           in the most easiest, but accurate way possible.
-           """
-       )),
-        __base__=PartialBaseModel
-    )
-    return table_model
-
-
 def make_iterative_selection_model(table_slugs):
     """
     Creates a model for table selection in the coordinator.

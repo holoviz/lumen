@@ -40,7 +40,6 @@ from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
     DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
-    make_find_tables_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -537,7 +536,6 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
-            "find_tables": {"response_model": make_find_tables_model, "template": PROMPTS_DIR / "SQLAgent" / "find_tables.jinja2"},
         }
     )
 
