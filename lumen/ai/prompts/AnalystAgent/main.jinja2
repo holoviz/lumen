@@ -19,7 +19,7 @@ Keep your response under three paragraphs top, unless elaboration is requested.
 {% endblock %}
 
 {%- block examples -%}
-{%- if memory.get('data') and memory.data|length == 0 -%}
+{%- if memory.get('data') is not none and memory.data|length == 0 -%}
 Here's an example of a good reply...
 User Query:
 What are all the Category 3 hurricanes in the East Pacific since 2000?
@@ -92,7 +92,7 @@ Here was the plan that was executed:
 """
 {% endif %}
 
-{%- if memory.get('data') %}
+{%- if memory.get('data') is not none %}
 Here is the current dataset:
 {% if memory.data|length == 0 %}
 The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt
