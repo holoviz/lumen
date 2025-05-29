@@ -635,8 +635,13 @@ class SQLAgent(LumenBaseAgent):
                 sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
                 break
             except Exception as e:
-                sql_query = await self._retry_output_by_line(e, messages, self._memory, sql_query, language="sql")
                 report_error(e, step, status="running")
+                with self._add_step(title="Re-attempted SQL query", steps_layout=self._steps_layout) as step:
+                    sql_query = clean_sql(
+                        await self._retry_output_by_line(e, messages, self._memory, sql_query, language="sql"),
+                        dialect=dialect,
+                    )
+                    step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 if i == 2:
                     raise e
 
@@ -960,7 +965,13 @@ class BaseViewAgent(LumenBaseAgent):
                     traceback.print_exception(e)
                     context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
                     report_error(e, step, language="json", context=context, status="running")
-                    spec = yaml.safe_load(await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language=""))
+                    with self._add_step(
+                        title="Re-attempted view generation",
+                        steps_layout=self._steps_layout,
+                    ) as retry_step:
+                        view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
+                        retry_step.stream(f"\n\n```json\n{view}\n```")
+                    spec = yaml.safe_load(view)
                     if i == 2:
                         raise
 
