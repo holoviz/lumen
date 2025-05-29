@@ -39,7 +39,11 @@ Additionally, only if applicable:
 - If the date columns are separated, e.g. year, month, day, then join them into a single date column.
 - If plotting, be sure to select all the columns that are required for the plot, including the x and y columns and any tooltips.
 
+{% if errors is defined and errors %}
+{{ memory["sql_metaset"].max_context }}
+{% else %}
 {{ memory["sql_metaset"].selected_context }}
+{% endif %}
 {%- endblock -%}
 
 {%- block errors %}
