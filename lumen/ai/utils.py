@@ -36,6 +36,7 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
+    from lumen.ai.models import LineChange
     from lumen.sources.base import Source
 
 
@@ -778,3 +779,10 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def apply_changes(original_lines: list[str], changes: list[LineChange]) -> str:
+    """Apply line changes to text."""
+    for change in changes:
+        original_lines[change.line_no - 1] = change.replacement
+    return "\n".join(original_lines)
