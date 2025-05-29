@@ -636,7 +636,7 @@ class SQLAgent(LumenBaseAgent):
                 break
             except Exception as e:
                 sql_query = await self._retry_output_by_line(e, messages, self._memory, sql_query, language="sql")
-                report_error(e, step)
+                report_error(e, step, status="running")
                 if i == 2:
                     raise e
 
@@ -959,7 +959,7 @@ class BaseViewAgent(LumenBaseAgent):
                     error = str(e)
                     traceback.print_exception(e)
                     context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
-                    report_error(e, step, language="json", context=context)
+                    report_error(e, step, language="json", context=context, status="running")
                     spec = yaml.safe_load(await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language=""))
                     if i == 2:
                         raise
