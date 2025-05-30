@@ -1,18 +1,22 @@
+import asyncio
 import io
 import pathlib
 import zipfile
 
+from urllib.parse import urlparse
+
+import aiohttp
 import pandas as pd
 import param
 
+from panel.chat import ChatAreaInput
 from panel.layout import (
     Column, FlexBox, Row, Tabs,
 )
 from panel.pane.markup import HTML
 from panel.viewable import Viewer
 from panel.widgets import (
-    Button, FileDropper, NestedSelect, Select, Tabulator, TextInput,
-    ToggleIcon,
+    Button, FileDropper, Select, Tabulator, TextInput, ToggleIcon, Tqdm,
 )
 
 from ..sources.duckdb import DuckDBSource
@@ -109,7 +113,7 @@ class SourceControls(Viewer):
 
     cancellable = param.Boolean(default=True, doc="Show cancel button")
 
-    clear_uploads = param.Boolean(default=False, doc="Clear uploaded file tabs")
+    clear_uploads = param.Boolean(default=True, doc="Clear uploaded file tabs")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
@@ -118,8 +122,6 @@ class SourceControls(Viewer):
     multiple = param.Boolean(default=False, doc="Allow multiple files")
 
     replace_controls = param.Boolean(default=False, doc="Replace controls")
-
-    select_existing = param.Boolean(default=True, doc="Select existing table")
 
     table_upload_callbacks = param.Dict(default={}, doc="""
         Dictionary mapping from file extensions to callback function,
@@ -142,31 +144,27 @@ class SourceControls(Viewer):
         self._file_input.param.watch(self._generate_media_controls, "value")
         self._upload_tabs = Tabs(sizing_mode="stretch_width", closable=True)
 
-        self._input_tabs = Tabs(
-            ("Upload", Column(self._file_input, self._upload_tabs)),
-            sizing_mode="stretch_both",
+        # URL input for downloading files
+        self._url_input = ChatAreaInput(
+            placeholder="Enter URLs, one per line, and press <Enter> to download.",
+            rows=4,
+            margin=(10, 10, 0, 10),
+            sizing_mode="stretch_width",
         )
+        self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
-        if self.select_existing:
-            nested_sources_tables = {
-                source.name: source.get_tables() for source in self._memory["sources"]
-            }
-            first_table = {k: nested_sources_tables[k][0] for k in list(nested_sources_tables)[:1]}
-            self._select_table = NestedSelect(
-                name="Table",
-                value=first_table,
-                options=nested_sources_tables,
-                levels=["source", "table"],
-                sizing_mode="stretch_width",
-            )
-            self._input_tabs.append(("Select", self._select_table))
-            self._select_table.param.watch(self._generate_media_controls, "value")
+        self._input_tabs = Tabs(
+            ("File Input", self._file_input),
+            ("Text Input", self._url_input),
+            sizing_mode="stretch_both",
+            dynamic=True,
+        )
 
         self._add_button = Button.from_param(
             self.param.add,
             name="Use file(s)",
             icon="table-plus",
-            visible=False,
+            visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
             button_type="success",
         )
 
@@ -176,57 +174,324 @@ class SourceControls(Viewer):
             icon="circle-x",
             visible=self.param.cancellable.rx().rx.bool() and self._add_button.param.clicks.rx() == 0,
         )
+        self._cancel_button.param.watch(self._handle_cancel, "clicks")
 
         self._error_placeholder = HTML("", visible=False, margin=(0, 10))
         self._message_placeholder = HTML("", visible=False, margin=(0, 10))
 
+        # Progress bar for downloads
+        self._progress_bar = Tqdm(
+            visible=False,
+            margin=(0, 10, 0, 10),
+            sizing_mode="stretch_width"
+        )
+
         self.menu = Column(
-            self._input_tabs if self.select_existing else self._input_tabs[0],
+            self._input_tabs,
+            self._upload_tabs,
             Row(self._add_button, self._cancel_button),
             self.tables_tabs,
             self._error_placeholder,
             self._message_placeholder,
+            self._progress_bar,
             sizing_mode="stretch_width",
         )
 
         self._media_controls = []
+        self._downloaded_media_controls = []  # Track downloaded file controls separately
+        self._active_download_task = None  # Track active download task for cancellation
 
     @property
     def _memory(self):
         return memory if self.memory is None else self.memory
 
+    def _handle_cancel(self, event):
+        """Handle cancel button click by cancelling active download task"""
+        if self._active_download_task and not self._active_download_task.done():
+            self._active_download_task.cancel()
+            self._progress_bar.visible = False
+            self._message_placeholder.param.update(
+                object="Download cancelled by user.",
+                visible=True
+            )
+
+    def _is_valid_url(self, url):
+        """Basic URL validation"""
+        try:
+            result = urlparse(url.strip())
+            return all([result.scheme, result.netloc]) and result.scheme in ['http', 'https']
+        except Exception:
+            return False
+
+    def _format_bytes(self, bytes_size):
+        """Convert bytes to human readable format"""
+        if bytes_size == 0:
+            return "0 B"
+        size_names = ["B", "KB", "MB", "GB", "TB"]
+        i = 0
+        while bytes_size >= 1024 and i < len(size_names) - 1:
+            bytes_size /= 1024.0
+            i += 1
+        return f"{bytes_size:.1f} {size_names[i]}"
+
+    async def _download_file(self, url):
+        """Download file from URL with progress bar and return (filename, file_content, error)"""
+        try:
+            # Extract filename from URL
+            parsed = urlparse(url)
+            filename = parsed.path.split('/')[-1] if parsed.path else 'downloaded_file'
+
+            # Remove query parameters from filename if present
+            if '?' in filename:
+                filename = filename.split('?')[0]
+
+            # If no valid filename or extension, try to infer from content-type or use default
+            if not filename or '.' not in filename:
+                filename = f"data_{abs(hash(url)) % 10000}.json"
+
+            timeout = aiohttp.ClientTimeout(total=300)
+            chunk_size = 1024 * 1024  # Use 1MB chunks for better performance
+            progress_update_interval = 50  # Update progress every 50 chunks
+
+            connector = aiohttp.TCPConnector(
+                limit=100,
+                limit_per_host=30,
+                keepalive_timeout=30,
+                enable_cleanup_closed=True
+            )
+
+            async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+                async with session.get(url) as response:
+                    response.raise_for_status()
+
+                    # Try to get a better filename from content-disposition header
+                    if 'content-disposition' in response.headers:
+                        import re
+                        cd = response.headers['content-disposition']
+                        matches = re.findall('filename="?([^"]+)"?', cd)
+                        if matches:
+                            suggested_name = matches[0]
+                            if '.' in suggested_name:  # Only use if it has an extension
+                                filename = suggested_name
+
+                    # Get content length for progress bar
+                    content_length = response.headers.get('content-length')
+                    if content_length:
+                        total_size = int(content_length)
+                        self._progress_bar.max = total_size
+                        self._progress_bar.visible = True
+                        self._progress_bar.value = 0
+                    else:
+                        # Unknown size, show indeterminate progress
+                        self._progress_bar.max = None
+                        self._progress_bar.visible = True
+                        self._progress_bar.value = None
+
+                    # Download in chunks
+                    downloaded_data = io.BytesIO()
+                    downloaded_size = 0
+                    chunk_count = 0
+
+                    async for chunk in response.content.iter_chunked(chunk_size):
+                        # Check for cancellation during download
+                        if asyncio.current_task().cancelled():
+                            raise asyncio.CancelledError()
+
+                        downloaded_data.write(chunk)
+                        downloaded_size += len(chunk)
+                        chunk_count += 1
+
+                        # Update progress bar only periodically for better performance
+                        if chunk_count % progress_update_interval == 0:
+                            if content_length:
+                                self._progress_bar.value = downloaded_size
+                                progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
+                            else:
+                                progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}"
+
+                            # Update progress description
+                            self._progress_bar.desc = progress_desc
+
+                            # Minimal UI update interval
+                            await asyncio.sleep(0)
+
+                    # Final progress update to show completion
+                    if content_length:
+                        self._progress_bar.value = downloaded_size
+                        self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
+                    else:
+                        self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}"
+
+                    # Reset and get the data
+                    downloaded_data.seek(0)
+                    content = downloaded_data.read()
+
+                    # Hide progress bar
+                    self._progress_bar.visible = False
+
+                    return filename, content, None
+
+        except aiohttp.ClientError as e:
+            self._progress_bar.visible = False
+            return None, None, f"Network error: {e!s}"
+        except asyncio.TimeoutError:
+            self._progress_bar.visible = False
+            return None, None, "Download timeout (300s exceeded)"
+        except asyncio.CancelledError:
+            self._progress_bar.visible = False
+            return None, None, "Download cancelled"
+        except Exception as e:
+            self._progress_bar.visible = False
+            return None, None, f"Download failed: {e!s}"
+
+    def _handle_urls(self, event):
+        """Handle URL input and trigger downloads"""
+        # Get the current value from the input widget
+        url_text = self._url_input.value
+        if not url_text:
+            return
+
+        urls = [line.strip() for line in url_text.split('\n') if line.strip()]
+        valid_urls = [url for url in urls if self._is_valid_url(url)]
+
+        if not valid_urls:
+            return
+
+        # Clear previous errors and show loading message
+        self._error_placeholder.visible = False
+        self._message_placeholder.param.update(
+            object=f"Preparing to download {len(valid_urls)} file(s)...",
+            visible=True
+        )
+
+        # Cancel any existing download task
+        if self._active_download_task and not self._active_download_task.done():
+            self._active_download_task.cancel()
+
+        self._active_download_task = asyncio.create_task(self._download_and_process_urls(valid_urls))
+        self._active_download_task.add_done_callback(
+            lambda t: self._message_placeholder.param.update(
+                object="Download complete." if not t.cancelled() else "Download cancelled.",
+                visible=True
+            ) if not t.cancelled() or t.exception() is None else None
+        )
+
+    async def _download_and_process_urls(self, urls):
+        """Download URLs and add them to file input for processing"""
+        downloaded_files = {}
+        errors = []
+
+        try:
+            for i, url in enumerate(urls, 1):
+                # Check if task was cancelled
+                if asyncio.current_task().cancelled():
+                    break
+
+                self._message_placeholder.object = f"Processing {i} of {len(urls)}: {url[:50]}{'...' if len(url) > 50 else ''}"
+                filename, content, error = await self._download_file(url)
+
+                if error:
+                    if "cancelled" in error.lower():
+                        # Stop processing if download was cancelled
+                        break
+                    errors.append(f"{url}: {error}")
+                else:
+                    downloaded_files[filename] = content
+
+        except asyncio.CancelledError:
+            # Clean up and re-raise
+            self._progress_bar.visible = False
+            raise
+
+        # Add downloaded files as individual tabs to the main input tabs
+        if downloaded_files:
+            self._add_downloaded_files_as_tabs(downloaded_files)
+
+        # Update status messages
+        if errors:
+            error_msg = "\n".join(errors)
+            self._error_placeholder.param.update(
+                object=f"Download errors:\n{error_msg}",
+                visible=True
+            )
+
+        success_count = len(downloaded_files)
+        if success_count > 0:
+            self._message_placeholder.object = f"Successfully downloaded {success_count} file(s)"
+        else:
+            self._message_placeholder.visible = False
+
+    def _add_downloaded_files_as_tabs(self, downloaded_files):
+        """Add downloaded files as individual tabs in the main input tabs"""
+        table_extensions = TABLE_EXTENSIONS + tuple(key.lstrip(".").lower() for key in self.table_upload_callbacks.keys())
+
+        for filename, file in downloaded_files.items():
+            suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
+
+            # Create file object
+            if suffix == "csv":
+                encoding = detect_file_encoding(file_obj=file)
+                file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
+            else:
+                file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
+
+            # Create appropriate media controls
+            if suffix in table_extensions:
+                media_controls = TableControls(
+                    file_obj,
+                    filename=filename,
+                )
+            else:
+                media_controls = DocumentControls(
+                    file_obj,
+                    filename=filename,
+                )
+
+            # Add as a new tab to the main input tabs
+            # Use just the filename without extension for cleaner tab names
+            display_name = pathlib.Path(filename).stem
+            self._upload_tabs.append((display_name, media_controls))
+
+            # Keep track of downloaded media controls separately
+            self._downloaded_media_controls.append(media_controls)
+
+        # Show add button since we have files to process
+        self._add_button.visible = True
+
     def _generate_media_controls(self, event):
         table_extensions = TABLE_EXTENSIONS + tuple(key.lstrip(".").lower() for key in self.table_upload_callbacks.keys())
-        if self._input_tabs.active == 0:
-            self._upload_tabs.clear()
-            self._media_controls.clear()
-            for filename, file in self._file_input.value.items():
-                suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
-                if suffix == "csv":
-                    encoding = detect_file_encoding(file_obj=file)
-                    file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
-                else:
-                    file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
 
-                if suffix in table_extensions:
-                    table_controls = TableControls(
-                        file_obj,
-                        filename=filename,
-                    )
-                else:
-                    table_controls = DocumentControls(
-                        file_obj,
-                        filename=filename,
-                    )
-                self._upload_tabs.append((filename, table_controls))
-                self._media_controls.append(table_controls)
+        self._upload_tabs.clear()
+        self._media_controls.clear()
 
-            if len(self._upload_tabs) > 0:
-                self._add_button.visible = True
+        if not self._file_input.value:
+            self._add_button.visible = len(self._downloaded_media_controls) > 0
+            return
+
+        for filename, file in self._file_input.value.items():
+            suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
+
+            if suffix == "csv":
+                encoding = detect_file_encoding(file_obj=file)
+                file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
             else:
-                self._add_button.visible = False
-        elif self._input_tabs.active == 1:
-            self._add_button.visible = True
+                file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
+
+            if suffix in table_extensions:
+                table_controls = TableControls(
+                    file_obj,
+                    filename=filename,
+                )
+            else:
+                table_controls = DocumentControls(
+                    file_obj,
+                    filename=filename,
+                )
+            self._upload_tabs.append((filename, table_controls))
+            self._media_controls.append(table_controls)
+
+        # Show add button if we have files to process (either uploaded or downloaded)
+        self._add_button.visible = len(self._upload_tabs) > 0 or len(self._downloaded_media_controls) > 0
 
     def _add_table(
         self,
@@ -327,18 +592,14 @@ class SourceControls(Viewer):
 
     @param.depends("add", watch=True)
     def add_medias(self):
-        if self._input_tabs.active == 1 and not self.select_existing:
+        # Combine both uploaded files and downloaded files for processing
+        all_media_controls = self._media_controls + self._downloaded_media_controls
+
+        # Only proceed if we have files to process
+        if len(all_media_controls) == 0:
             return
+
         with self.menu.param.update(loading=True):
-            if self._input_tabs.active == 1:
-                duckdb_source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
-                table = self._select_table.value["table"]
-                duckdb_source.tables[table] = f"SELECT * FROM {table}"
-                self._memory["source"] = duckdb_source
-                self._memory["table"] = table
-                self._memory["sources"].append(duckdb_source)
-                self._last_table = table
-                return
 
             source = None
             n_tables = 0
@@ -348,8 +609,8 @@ class SourceControls(Viewer):
                 for key, value in self.table_upload_callbacks.items()
             }
             custom_table_extensions = tuple(table_upload_callbacks)
-            for i in range(len(self._upload_tabs)):
-                media_controls = self._media_controls[i]
+
+            for media_controls in all_media_controls:
                 if media_controls.extension.endswith(custom_table_extensions):
                     n_tables += int(table_upload_callbacks[media_controls.extension](
                         media_controls.file_obj, media_controls.alias
@@ -379,17 +640,23 @@ class SourceControls(Viewer):
                 # Clear uploaded files from view
                 self._upload_tabs.clear()
                 self._media_controls.clear()
+                # Also clear downloaded file tabs (anything beyond the first 2 tabs)
+                while len(self._input_tabs) > 2:
+                    self._input_tabs.pop()
+                self._downloaded_media_controls.clear()
                 self._add_button.visible = False
+                self._file_input.value = {}
+                self._url_input.value = ""
 
             if n_docs > 0:
                 # Rather than triggering document sources on every upload, trigger it once
                 self._memory.trigger("document_sources")
 
-            # Clear uploaded files from memory
-            self._file_input.value = {}
+            # Clear uploaded files and URLs from memory
             if (n_tables + n_docs) > 0:
+                total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
                 self._message_placeholder.param.update(
-                    object=f"Successfully uploaded {len(self._upload_tabs)} files ({n_tables} table(s), {n_docs} document(s)).",
+                    object=f"Successfully processed {total_files} files ({n_tables} table(s), {n_docs} document(s)).",
                     visible=True,
                 )
             self._error_placeholder.object = self._error_placeholder.object.strip()
