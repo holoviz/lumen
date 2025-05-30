@@ -25,6 +25,19 @@ from .memory import _Memory, memory
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
+# Download configuration constants
+class DownloadConfig:
+    CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+    TIMEOUT_SECONDS = 300     # 5 minutes
+    PROGRESS_UPDATE_INTERVAL = 50  # Update every 50 chunks
+    DEFAULT_HASH_MODULO = 10000
+    UNKNOWN_SIZE_MAX = 1000000000  # 1GB max for unknown file sizes
+
+    # Connection settings
+    CONNECTION_LIMIT = 100
+    CONNECTION_LIMIT_PER_HOST = 30
+    KEEPALIVE_TIMEOUT = 30
+
 
 class MediaControls(Viewer):
 
@@ -223,6 +236,69 @@ class SourceControls(Viewer):
         except Exception:
             return False
 
+    def _extract_filename_from_url(self, url: str) -> str:
+        """Extract filename from URL with fallback logic"""
+        parsed = urlparse(url)
+        filename = parsed.path.split('/')[-1] if parsed.path else 'downloaded_file'
+
+        # Remove query parameters from filename if present
+        if '?' in filename:
+            filename = filename.split('?')[0]
+
+        # If no valid filename or extension, use default
+        if not filename or '.' not in filename:
+            filename = f"data_{abs(hash(url)) % DownloadConfig.DEFAULT_HASH_MODULO}.json"
+
+        return filename
+
+    def _extract_filename_from_headers(self, response_headers: dict, default_filename: str) -> str:
+        """Extract filename from HTTP headers if available"""
+        if 'content-disposition' not in response_headers:
+            return default_filename
+
+        import re
+        cd = response_headers['content-disposition']
+        matches = re.findall('filename="?([^"]+)"?', cd)
+        if matches:
+            suggested_name = matches[0]
+            if '.' in suggested_name:  # Only use if it has an extension
+                return suggested_name
+
+        return default_filename
+
+    def _setup_progress_bar(self, content_length: str) -> int:
+        """Setup progress bar based on content length"""
+        if content_length:
+            total_size = int(content_length)
+            self._progress_bar.max = max(total_size, 1)  # Ensure minimum of 1
+            self._progress_bar.visible = True
+            self._progress_bar.value = 0
+            return total_size
+        else:
+            # Unknown size, use large number for indeterminate progress
+            self._progress_bar.max = DownloadConfig.UNKNOWN_SIZE_MAX
+            self._progress_bar.visible = True
+            self._progress_bar.value = 0
+            return 0
+
+    def _update_download_progress(self, filename: str, downloaded_size: int, total_size: int, chunk_count: int):
+        """Update progress bar if it's time for an update"""
+        if chunk_count % DownloadConfig.PROGRESS_UPDATE_INTERVAL == 0:
+            if total_size > 0:
+                # Only set value if downloaded size is reasonable compared to max
+                if downloaded_size <= self._progress_bar.max:
+                    self._progress_bar.value = downloaded_size
+                    progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
+                else:
+                    # Don't update value if it would exceed max (compressed content case)
+                    progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}"
+            else:
+                # Unknown size - just show downloaded amount and update progress
+                self._progress_bar.value = min(downloaded_size, self._progress_bar.max)
+                progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}"
+
+            self._progress_bar.desc = progress_desc
+
     def _format_bytes(self, bytes_size):
         """Convert bytes to human readable format"""
         if bytes_size == 0:
@@ -234,29 +310,61 @@ class SourceControls(Viewer):
             i += 1
         return f"{bytes_size:.1f} {size_names[i]}"
 
+    def _finalize_download_progress(self, filename: str, downloaded_size: int, total_size: int):
+        """Show final progress update when download completes"""
+        if total_size > 0:
+            # Set final value if it doesn't exceed max
+            if downloaded_size <= self._progress_bar.max:
+                self._progress_bar.value = downloaded_size
+                self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
+            else:
+                # Size mismatch - show final size without updating value
+                self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}"
+        else:
+            # Unknown size - set value safely and show final size
+            self._progress_bar.value = min(downloaded_size, self._progress_bar.max)
+            self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}"
+
+    def _format_download_error(self, error: Exception) -> str:
+        """Format download error messages consistently"""
+        if isinstance(error, aiohttp.ClientError):
+            return f"Network error: {error!s}"
+        elif isinstance(error, asyncio.TimeoutError):
+            return f"Download timeout ({DownloadConfig.TIMEOUT_SECONDS}s exceeded)"
+        elif isinstance(error, asyncio.CancelledError):
+            return "Download cancelled"
+        else:
+            return f"Download failed: {error!s}"
+
+    def _create_file_object(self, file_data: bytes, suffix: str):
+        """Create appropriate file object based on file type"""
+        if suffix == "csv":
+            encoding = detect_file_encoding(file_obj=file_data)
+            return io.BytesIO(file_data.decode(encoding).encode("utf-8")) if isinstance(file_data, bytes) else io.StringIO(file_data)
+        else:
+            return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
+
+    def _create_media_controls(self, file_obj: io.BytesIO, filename: str):
+        """Factory method to create appropriate media controls"""
+        suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
+        table_extensions = TABLE_EXTENSIONS + tuple(key.lstrip(".").lower() for key in self.table_upload_callbacks.keys())
+
+        if suffix in table_extensions:
+            return TableControls(file_obj, filename=filename)
+        else:
+            return DocumentControls(file_obj, filename=filename)
+
     async def _download_file(self, url):
         """Download file from URL with progress bar and return (filename, file_content, error)"""
         try:
             # Extract filename from URL
-            parsed = urlparse(url)
-            filename = parsed.path.split('/')[-1] if parsed.path else 'downloaded_file'
+            filename = self._extract_filename_from_url(url)
 
-            # Remove query parameters from filename if present
-            if '?' in filename:
-                filename = filename.split('?')[0]
-
-            # If no valid filename or extension, try to infer from content-type or use default
-            if not filename or '.' not in filename:
-                filename = f"data_{abs(hash(url)) % 10000}.json"
-
-            timeout = aiohttp.ClientTimeout(total=300)
-            chunk_size = 1024 * 1024  # Use 1MB chunks for better performance
-            progress_update_interval = 50  # Update progress every 50 chunks
-
+            timeout = aiohttp.ClientTimeout(total=DownloadConfig.TIMEOUT_SECONDS)
             connector = aiohttp.TCPConnector(
-                limit=100,
-                limit_per_host=30,
-                keepalive_timeout=30,
+                limit=DownloadConfig.CONNECTION_LIMIT,
+                limit_per_host=DownloadConfig.CONNECTION_LIMIT_PER_HOST,
+                keepalive_timeout=DownloadConfig.KEEPALIVE_TIMEOUT,
                 enable_cleanup_closed=True
             )
 
@@ -264,35 +372,20 @@ class SourceControls(Viewer):
                 async with session.get(url) as response:
                     response.raise_for_status()
 
-                    # Try to get a better filename from content-disposition header
-                    if 'content-disposition' in response.headers:
-                        import re
-                        cd = response.headers['content-disposition']
-                        matches = re.findall('filename="?([^"]+)"?', cd)
-                        if matches:
-                            suggested_name = matches[0]
-                            if '.' in suggested_name:  # Only use if it has an extension
-                                filename = suggested_name
+                    # Try to get filename from headers
+                    filename = self._extract_filename_from_headers(response.headers, filename)
 
-                    # Get content length for progress bar
+                    # Setup progress bar
                     content_length = response.headers.get('content-length')
-                    if content_length:
-                        total_size = int(content_length)
-                        self._progress_bar.max = total_size
-                        self._progress_bar.visible = True
-                        self._progress_bar.value = 0
-                    else:
-                        # Unknown size, show indeterminate progress
-                        self._progress_bar.max = None
-                        self._progress_bar.visible = True
-                        self._progress_bar.value = None
+                    total_size = self._setup_progress_bar(content_length)
 
                     # Download in chunks
                     downloaded_data = io.BytesIO()
                     downloaded_size = 0
                     chunk_count = 0
+                    size_mismatch_detected = False
 
-                    async for chunk in response.content.iter_chunked(chunk_size):
+                    async for chunk in response.content.iter_chunked(DownloadConfig.CHUNK_SIZE):
                         # Check for cancellation during download
                         if asyncio.current_task().cancelled():
                             raise asyncio.CancelledError()
@@ -301,48 +394,31 @@ class SourceControls(Viewer):
                         downloaded_size += len(chunk)
                         chunk_count += 1
 
-                        # Update progress bar only periodically for better performance
-                        if chunk_count % progress_update_interval == 0:
-                            if content_length:
-                                self._progress_bar.value = downloaded_size
-                                progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
-                            else:
-                                progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}"
+                        # Check if we've exceeded the expected total size (compressed content issue)
+                        if not size_mismatch_detected and total_size > 0 and downloaded_size > total_size:
+                            # Switch to indeterminate progress - Content-Length was wrong
+                            # Use a large max value and don't update progress bar value anymore
+                            self._progress_bar.max = max(downloaded_size * 2, DownloadConfig.UNKNOWN_SIZE_MAX)
+                            total_size = 0  # Treat as unknown size from now on
+                            size_mismatch_detected = True
 
-                            # Update progress description
-                            self._progress_bar.desc = progress_desc
+                        # Update progress periodically
+                        self._update_download_progress(filename, downloaded_size, total_size, chunk_count)
+                        await asyncio.sleep(0)  # Allow UI updates
 
-                            # Minimal UI update interval
-                            await asyncio.sleep(0)
+                    # Final progress update
+                    self._finalize_download_progress(filename, downloaded_size, total_size)
 
-                    # Final progress update to show completion
-                    if content_length:
-                        self._progress_bar.value = downloaded_size
-                        self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
-                    else:
-                        self._progress_bar.desc = f"Downloaded {filename}: {self._format_bytes(downloaded_size)}"
-
-                    # Reset and get the data
+                    # Get the downloaded data
                     downloaded_data.seek(0)
                     content = downloaded_data.read()
 
-                    # Hide progress bar
                     self._progress_bar.visible = False
-
                     return filename, content, None
 
-        except aiohttp.ClientError as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, asyncio.CancelledError, Exception) as e:
             self._progress_bar.visible = False
-            return None, None, f"Network error: {e!s}"
-        except asyncio.TimeoutError:
-            self._progress_bar.visible = False
-            return None, None, "Download timeout (300s exceeded)"
-        except asyncio.CancelledError:
-            self._progress_bar.visible = False
-            return None, None, "Download cancelled"
-        except Exception as e:
-            self._progress_bar.visible = False
-            return None, None, f"Download failed: {e!s}"
+            return None, None, self._format_download_error(e)
 
     def _handle_urls(self, event):
         """Handle URL input and trigger downloads"""
@@ -423,44 +499,25 @@ class SourceControls(Viewer):
 
     def _add_downloaded_files_as_tabs(self, downloaded_files):
         """Add downloaded files as individual tabs in the main input tabs"""
-        table_extensions = TABLE_EXTENSIONS + tuple(key.lstrip(".").lower() for key in self.table_upload_callbacks.keys())
-
-        for filename, file in downloaded_files.items():
+        for filename, file_data in downloaded_files.items():
             suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
 
-            # Create file object
-            if suffix == "csv":
-                encoding = detect_file_encoding(file_obj=file)
-                file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
-            else:
-                file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
+            # Create file object using helper
+            file_obj = self._create_file_object(file_data, suffix)
 
-            # Create appropriate media controls
-            if suffix in table_extensions:
-                media_controls = TableControls(
-                    file_obj,
-                    filename=filename,
-                )
-            else:
-                media_controls = DocumentControls(
-                    file_obj,
-                    filename=filename,
-                )
+            # Create media controls using helper
+            media_controls = self._create_media_controls(file_obj, filename)
 
-            # Add as a new tab to the main input tabs
-            # Use just the filename without extension for cleaner tab names
+            # Add as a new tab
             display_name = pathlib.Path(filename).stem
             self._upload_tabs.append((display_name, media_controls))
-
-            # Keep track of downloaded media controls separately
             self._downloaded_media_controls.append(media_controls)
 
         # Show add button since we have files to process
         self._add_button.visible = True
 
     def _generate_media_controls(self, event):
-        table_extensions = TABLE_EXTENSIONS + tuple(key.lstrip(".").lower() for key in self.table_upload_callbacks.keys())
-
+        """Generate media controls for uploaded files"""
         self._upload_tabs.clear()
         self._media_controls.clear()
 
@@ -468,29 +525,17 @@ class SourceControls(Viewer):
             self._add_button.visible = len(self._downloaded_media_controls) > 0
             return
 
-        for filename, file in self._file_input.value.items():
+        for filename, file_data in self._file_input.value.items():
             suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
 
-            if suffix == "csv":
-                encoding = detect_file_encoding(file_obj=file)
-                file_obj = io.BytesIO(file.decode(encoding).encode("utf-8")) if isinstance(file, bytes) else io.StringIO(file)
-            else:
-                file_obj = io.BytesIO(file) if isinstance(file, bytes) else io.StringIO(file)
+            # Create file object and media controls using helpers
+            file_obj = self._create_file_object(file_data, suffix)
+            media_controls = self._create_media_controls(file_obj, filename)
 
-            if suffix in table_extensions:
-                table_controls = TableControls(
-                    file_obj,
-                    filename=filename,
-                )
-            else:
-                table_controls = DocumentControls(
-                    file_obj,
-                    filename=filename,
-                )
-            self._upload_tabs.append((filename, table_controls))
-            self._media_controls.append(table_controls)
+            self._upload_tabs.append((filename, media_controls))
+            self._media_controls.append(media_controls)
 
-        # Show add button if we have files to process (either uploaded or downloaded)
+        # Show add button if we have files to process
         self._add_button.visible = len(self._upload_tabs) > 0 or len(self._downloaded_media_controls) > 0
 
     def _add_table(
