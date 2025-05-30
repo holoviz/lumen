@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import traceback
 
 from copy import deepcopy
@@ -47,9 +46,9 @@ from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
-    clean_sql, describe_data, get_data, get_pipeline, get_schema, load_json,
-    log_debug, mutate_user_message, parse_table_slug, report_error,
-    retry_llm_output, stream_details,
+    apply_changes, clean_sql, describe_data, get_data, get_pipeline,
+    get_schema, load_json, log_debug, mutate_user_message, parse_table_slug,
+    report_error, retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -456,47 +455,57 @@ class LumenBaseAgent(Agent):
         Update the specification in memory.
         """
 
+    async def _retry_output_by_line(
+        self,
+        feedback: str,
+        messages: list[Message],
+        memory: _Memory,
+        original_output: str,
+        language: str | None = None,
+    ) -> str:
+        """
+        Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
+        """
+        modified_messages = mutate_user_message(
+            f"New feedback: {feedback!r}.\n\nThese were the previous instructions to use as reference:",
+            deepcopy(messages), wrap='\n"""\n', suffix=False
+        )
+        original_lines = original_output.splitlines()
+        with self.param.update(memory=memory):
+            # TODO: only input the inner spec to retry
+            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(original_lines, 1))
+            system = await self._render_prompt(
+                "retry_output",
+                messages=modified_messages,
+                numbered_text=numbered_text,
+                language=language,
+            )
+        retry_model = self._lookup_prompt_key("retry_output", "response_model")
+        invoke_kwargs = dict(
+            messages=modified_messages,
+            system=system,
+            response_model=retry_model,
+            model_spec="reasoning",
+        )
+        result = await self.llm.invoke(**invoke_kwargs)
+        return apply_changes(original_lines, result.lines_changes)
+
     def _render_lumen(
         self,
         component: Component,
-        message: pn.chat.ChatMessage = None,
         messages: list | None = None,
         render_output: bool = False,
         title: str | None = None,
         **kwargs,
     ):
-        memory = self._memory
-
-        async def retry_invoke(event: param.parameterized.Event):
-            reason = event.new
-            modified_messages = mutate_user_message(
-                f"New feedback: {reason!r}.\n\nThese were the previous instructions to use as reference:", deepcopy(messages), wrap='\n"""\n', suffix=False
-            )
-            with self.param.update(memory=memory):
-                # TODO: only input the inner spec to retry
-                system = await self._render_prompt(
-                    "retry_output",
-                    messages=modified_messages,
-                    spec=out.spec,
-                    language=out.language,
-                )
-            retry_model = self._lookup_prompt_key("retry_output", "response_model")
+        async def _retry_invoke(event: param.parameterized.Event):
             with out.param.update(loading=True):
-                result = await self.llm.invoke(
-                    modified_messages,
-                    system=system,
-                    response_model=retry_model,
-                    model_spec="reasoning",
-                )
-                if "```" in result:
-                    spec = re.search(r"(?s)```(\w+)?\s*(.*?)```", result.corrected_spec, re.DOTALL)
-                else:
-                    spec = result.corrected_spec
-                out.spec = spec
+                out.spec = await self._retry_output_by_line(event.new, messages, memory, out.spec, language=out.language)
 
+        memory = self._memory
         retry_controls = RetryControls()
-        retry_controls.param.watch(retry_invoke, "reason")
         out = self._output_type(component=component, footer=[retry_controls], render_output=render_output, title=title, **kwargs)
+        retry_controls.param.watch(_retry_invoke, "reason")
         out.param.watch(partial(self._update_spec, self._memory), "spec")
         if "outputs" in self._memory:
             # We have to create a new list to trigger an event
@@ -504,7 +513,7 @@ class LumenBaseAgent(Agent):
             # and won't allow diffing between old and new values
             self._memory["outputs"] = self._memory["outputs"] + [out]
         message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(message=message, **message_kwargs, replace=True, max_width=self._max_width)
+        self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
 
 
 class SQLAgent(LumenBaseAgent):
@@ -621,28 +630,31 @@ class SQLAgent(LumenBaseAgent):
 
         # check whether the SQL query is valid
         expr_slug = output.expr_slug
-        try:
-            # TODO: if original sql expr matches, don't recreate a new one!
-            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
-            sql_query = sql_expr_source.tables[expr_slug]
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-            transformed_sql_query = sql_query
-            for sql_transform in sql_transforms:
-                transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
-                if transformed_sql_query != sql_query:
-                    stream_details(f"```sql\n{transformed_sql_query}\n```", step, title=f"{sql_transform.__class__.__name__} Applied")
-            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-        except Exception as e:
-            report_error(e, step)
-            raise e
+        for i in range(3):
+            try:
+                # TODO: if original sql expr matches, don't recreate a new one!
+                sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+                break
+            except Exception as e:
+                report_error(e, step, status="running")
+                with self._add_step(title="Re-attempted SQL query", steps_layout=self._steps_layout) as step:
+                    sql_query = clean_sql(
+                        await self._retry_output_by_line(e, messages, self._memory, sql_query, language="sql"),
+                        dialect=dialect,
+                    )
+                    step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
+                if i == 2:
+                    raise e
 
-        try:
-            df = await get_data(pipeline)
-        except Exception as e:
-            if isinstance(source, DuckDBSource):
-                source._connection.execute(f'DROP TABLE IF EXISTS "{expr_slug}"')
-            report_error(e, step)
-            raise e
+        sql_query = sql_expr_source.tables[expr_slug]
+        sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+        transformed_sql_query = sql_query
+        for sql_transform in sql_transforms:
+            transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
+            if transformed_sql_query != sql_query:
+                stream_details(f"```sql\n{transformed_sql_query}\n```", step, title=f"{sql_transform.__class__.__name__} Applied")
+        pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+        df = await get_data(pipeline)
 
         self._memory["data"] = await describe_data(df)
         if isinstance(self._memory["sources"], dict):
@@ -943,15 +955,28 @@ class BaseViewAgent(LumenBaseAgent):
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
 
-            self._last_output = dict(output)
-            try:
-                spec = await self._extract_spec(self._last_output)
-            except Exception as e:
-                error = str(e)
-                traceback.print_exception(e)
-                context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
-                report_error(e, step, language="json", context=context)
+            self._last_output = spec = dict(output)
 
+            for i in range(3):
+                try:
+                    spec = await self._extract_spec(spec)
+                    break
+                except Exception as e:
+                    error = str(e)
+                    traceback.print_exception(e)
+                    context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
+                    report_error(e, step, language="json", context=context, status="running")
+                    with self._add_step(
+                        title="Re-attempted view generation",
+                        steps_layout=self._steps_layout,
+                    ) as retry_step:
+                        view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
+                        retry_step.stream(f"\n\n```json\n{view}\n```")
+                    spec = yaml.safe_load(view)
+                    if i == 2:
+                        raise
+
+        self._last_output = spec
 
         if error:
             raise ValueError(error)
