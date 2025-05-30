@@ -404,7 +404,8 @@ class OpenAI(Llm):
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4o-mini"},
         "sql": {"model": "gpt-4.1-mini"},
-        "reasoning": {"model": "gpt-4o"},
+        "vega_lite": {"model": "gpt-4.1-mini"},
+        "reasoning": {"model": "gpt-4.1-mini"},
     })
 
     use_logfire = param.Boolean(default=False, doc="""

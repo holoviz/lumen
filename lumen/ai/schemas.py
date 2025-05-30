@@ -25,9 +25,9 @@ class VectorMetadata:
 
     table_slug: str  # Combined source_name and table_name with separator
     similarity: float
+    columns: list[Column]
     description: str | None = None
     base_sql: str | None = None
-    columns: list[Column] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
