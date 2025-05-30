@@ -128,6 +128,8 @@ class SourceControls(Viewer):
 
     _last_table = param.String(default="", doc="Last table added")
 
+    _count = param.Integer(default=0, doc="Count of sources added")
+
     def __init__(self, **params):
         super().__init__(**params)
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
@@ -356,7 +358,8 @@ class SourceControls(Viewer):
                     ))
                 elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
-                        source = DuckDBSource(uri=":memory:", ephemeral=True, name='Uploaded', tables={})
+                        source_id = f"UploadedSource{self._count:06d}"
+                        source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
                     n_tables += self._add_table(source, media_controls.file_obj, media_controls)
                 else:
                     n_docs += self._add_document(media_controls.file_obj, media_controls)
@@ -393,6 +396,8 @@ class SourceControls(Viewer):
                     visible=True,
                 )
             self._error_placeholder.object = self._error_placeholder.object.strip()
+
+        self._count += 1
 
     def __panel__(self):
         return self.menu
