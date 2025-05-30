@@ -132,7 +132,7 @@ class VectorStore(LLMUser):
             for key, value in metadata.items()
             if key not in self.excluded_metadata
         )
-        return f"{text} {metadata_str}"
+        return f"{text}\nMetadata: {metadata_str}\n"
 
     async def _generate_context(self, document: str, chunk: str, previous_context: str | None = None, metadata: dict | None = None) -> str:
         """Generate contextual description for a chunk using LLM.
