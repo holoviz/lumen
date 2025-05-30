@@ -606,7 +606,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["vector_metaset"], readonly=True, doc="""
+    provides = param.List(default=["tables_metadata", "vector_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     enable_select_columns = param.Boolean(default=True, doc="""
@@ -645,7 +645,8 @@ class TableLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._tables_metadata = {}  # used for storing table metadata for LLM
+        if "tables_metadata" not in self._memory:
+            self._memory["tables_metadata"] = {}  # used for storing table metadata for LLM
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._previous_state = None  # used for tracking previous state for _should...
@@ -676,7 +677,7 @@ class TableLookup(VectorLookupTool):
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
-            if tables_vector_data := self._tables_metadata.get(table_slug):
+            if tables_vector_data := self._memory["tables_metadata"].get(table_slug):
                 if table_description := tables_vector_data.get("description"):
                     description += f"\n  Info: {table_description}"
             formatted_results.append(description)
@@ -713,8 +714,8 @@ class TableLookup(VectorLookupTool):
         # IMPORTANT: re-insert using table slug
         # we need to store a copy of tables_vector_data so it can be used to inject context into the LLM
         table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        self._tables_metadata[table_slug] = vector_info.copy()
-        self._tables_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
+        self._memory["tables_metadata"][table_slug] = vector_info.copy()
+        self._memory["tables_metadata"][table_slug]["source_name"] = source.name  # need this to rebuild the slug
 
         # Create column schema objects
         columns = []
@@ -1039,7 +1040,7 @@ class TableLookup(VectorLookupTool):
             columns = []
             table_description = None
 
-            if table_metadata := self._tables_metadata.get(table_slug):
+            if table_metadata := self._memory["tables_metadata"].get(table_slug):
                 table_description = table_metadata.get("description")
                 column_metadata = table_metadata.get("columns", {})
 
@@ -1058,12 +1059,12 @@ class TableLookup(VectorLookupTool):
                 description=table_description,
                 base_sql=sql,
                 columns=columns,
-                metadata=self._tables_metadata.get(table_slug, {}).copy()
+                metadata=self._memory["tables_metadata"].get(table_slug, {}).copy()
             )
             vector_metadata_map[table_slug] = vector_metadata
 
         # If query contains an exact table name, mark it as max similarity
-        for table_slug in self._tables_metadata:
+        for table_slug in self._memory["tables_metadata"]:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
@@ -1251,7 +1252,7 @@ class IterativeTableLookup(TableLookup):
                     stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
-                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""),
+                            self._memory["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
                             max_length=300
                         )
 
