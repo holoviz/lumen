@@ -58,17 +58,19 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification based on the user input and chain of thought. Do not include description")
 
 
+class LineChange(BaseModel):
+    line_no: int = Field(description="The line number in the original text that needs to be changed.")
+    replacement: str = Field(description="""
+        The new line that replaces the original line, and if applicable, ensuring the indentation matches the original.
+        To remove a line set this to an empty string."""
+    )
+
 
 class RetrySpec(BaseModel):
+    """Represents a revision of text with its content and changes."""
 
-    chain_of_thought: str = Field(
-        description="Explain why the previous spec failed to address the user query and what you will do differently this time to ensure it is correct."
-    )
-
-    corrected_spec: str = Field(
-        description="The corrected version of the previous spec without any additional comments, additions or code examples."
-    )
-
+    chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
+    lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
 
 def make_plan_models(agents: list[str], tools: list[str]):
     # TODO: make this inherit from PartialBaseModel
