@@ -1004,7 +1004,21 @@ class TableLookup(VectorLookupTool):
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
-        results = await self._perform_search_with_refinement(query)
+
+        # Count total number of tables available across all sources
+        total_tables = 0
+        for source in self._memory.get("sources", []):
+            total_tables += len(source.get_tables())
+
+        # Skip query refinement if there are fewer than 5 tables
+        if total_tables < 5:
+            # Perform search without refinement
+            filters = {}
+            if self._item_type_name and "type" not in filters:
+                filters["type"] = self._item_type_name
+            results = await self.vector_store.query(query, top_k=self.n, filters=filters)
+        else:
+            results = await self._perform_search_with_refinement(query)
 
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
