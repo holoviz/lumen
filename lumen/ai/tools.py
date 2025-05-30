@@ -1005,7 +1005,6 @@ class TableLookup(VectorLookupTool):
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
-        print(self._memory["tables_metadata"], "GATHERINFO3")
 
         # Count total number of tables available across all sources
         total_tables = 0
