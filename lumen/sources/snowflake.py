@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime
 import decimal
@@ -259,6 +260,44 @@ class SnowflakeSource(BaseSQLSource):
         df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
+    async def execute_async(self, sql_query: str, *args, **kwargs):
+        """
+        Execute a Snowflake SQL query asynchronously and return the result as a DataFrame.
+
+        Parameters
+        ----------
+        sql_query : str
+            The SQL query to execute
+        *args : tuple
+            Positional arguments to pass to the query
+        **kwargs : dict
+            Keyword arguments to pass to the query
+
+        Returns
+        -------
+        pd.DataFrame
+            The query result as a pandas DataFrame with supported dtypes
+        """
+        # Execute the query asynchronously
+        query_id = self._cursor.execute_async(sql_query, *args, **kwargs)
+
+        # Poll for query completion
+        while True:
+            status = self._cursor.get_query_status(query_id)
+            if status in ('SUCCESS', 'FAILED_WITH_ERROR', 'ABORTED'):
+                break
+            await asyncio.sleep(0.1)  # Check every 100ms
+
+        # If the query failed, raise an exception
+        if status != 'SUCCESS':
+            raise snowflake.connector.errors.ProgrammingError(
+                f"Query failed with status: {status}"
+            )
+
+        # Fetch the results
+        df = self._cursor.fetch_pandas_all()
+        return self._cast_to_supported_dtypes(df)
+
     def get_tables(self) -> list[str]:
         # limited set of tables was provided
         if isinstance(self.tables, dict | list):
@@ -282,6 +321,32 @@ class SnowflakeSource(BaseSQLSource):
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
+
+    async def get_async(self, table, **query):
+        """
+        Retrieve data from a table asynchronously using the same query logic as get().
+
+        Parameters
+        ----------
+        table : str
+            The name of the table to query
+        **query : dict
+            Query parameters and filters to apply
+
+        Returns
+        -------
+        pd.DataFrame
+            The query result as a pandas DataFrame
+        """
+        query.pop('__dask', None)
+        sql_expr = self.get_sql_expr(table)
+        sql_transforms = query.pop('sql_transforms', [])
+        conditions = list(query.items())
+        if self.filter_in_sql:
+            sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
+        for st in sql_transforms:
+            sql_expr = st.apply(sql_expr)
+        return await self.execute_async(sql_expr)
 
     @contextlib.contextmanager
     def _timeout_context(self, seconds=None):
