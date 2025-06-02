@@ -4,6 +4,7 @@ import asyncio
 import logging
 import traceback
 
+from functools import partial
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,7 +40,6 @@ from .agents import (
 )
 from .components import SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME
-from .controls import SourceControls
 from .coordinator import Coordinator, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
@@ -107,6 +107,12 @@ class UI(Viewer):
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
+    table_upload_callbacks = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to callback function,
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
+        table alias, add or modify the `source` in memory, and return a bool
+        (True if the table was successfully uploaded).""")
+
     template = param.Selector(
         default=config.param.template.names['fast'],
         objects=config.param.template.names, doc="""
@@ -155,7 +161,7 @@ class UI(Viewer):
 
         if self.interface is None:
             self.interface = ChatInterface(
-                load_buffer=5, sizing_mode="stretch_both"
+                load_buffer=5, sizing_mode="stretch_both", show_button_tooltips=True, show_button_name=False,
             )
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
@@ -195,43 +201,90 @@ class UI(Viewer):
             sizing_mode='stretch_width'
         )
         self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
-        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending")
+        self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
+        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending", description="Pending initialization")
+        self._table_lookup_tool = None  # Will be set after coordinator is initialized
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
-        state.onload(self._verify_llm)
+        state.onload(self._setup_llm_and_watchers)
 
-    async def _verify_llm(self):
+        tables = set()
+        for source in memory.get("sources", []):
+            tables |= set(source.get_tables())
+        if len(tables) == 1:
+            suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
+            self._coordinator._add_suggestions_to_footer(
+                suggestions=suggestions
+            )
+        elif len(tables) > 1:
+            table_list_agent = next(
+                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
+                None
+            )
+            if table_list_agent:
+                param.parameterized.async_executor(partial(table_list_agent.respond, []))
+        elif self._source_agent and len(memory.get("document_sources", [])) == 0:
+            param.parameterized.async_executor(partial(self._source_agent.respond, []))
+
+    async def _setup_llm_and_watchers(self):
+        """Initialize LLM and set up reactive watchers for TableLookup readiness."""
         try:
             await self.llm.initialize(log_level=self.log_level)
             self.interface.disabled = False
         except Exception:
             traceback.print_exc()
 
+        # Find the TableLookup tool and set up reactive watching
         for tool in self._coordinator._tools["main"]:
             if isinstance(tool, TableLookup):
-                table_lookup = tool
+                self._table_lookup_tool = tool
                 break
 
-        if not table_lookup:
+        if not self._table_lookup_tool:
             self._vector_store_status_badge.param.update(
-                status="success", name='Tables Vector Store Ready')
+                status="success", name='Tables Vector Store Ready', description="No tables stored.")
             return
 
-        self._vector_store_status_badge.status = "running"
-        while table_lookup._ready is False:
-            await asyncio.sleep(0.5)
+        # Set up reactive watching of the _ready parameter
+        self._table_lookup_tool.param.watch(self._update_vector_store_badge, '_ready')
 
-        if table_lookup._ready:
+        # Set initial badge state
+        self._update_vector_store_badge()
+
+    def _update_vector_store_badge(self, event=None):
+        """Update the vector store badge based on TableLookup readiness state."""
+        if not self._table_lookup_tool:
+            return
+
+        ready_state = self._table_lookup_tool._ready
+
+        if ready_state is False:
+            # Not ready yet - show as running/pending
             self._vector_store_status_badge.param.update(
-                status="success", name='Tables Vector Store Ready')
-        elif table_lookup._ready is None:
+                status="running", name="Tables Vector Store Pending", description="Pending initialization"
+            )
+            self.interface.loading = True
+        elif ready_state is True:
+            # Ready - show as success
+            num_tables = len(memory["tables_metadata"])
             self._vector_store_status_badge.param.update(
-                status="danger", name='Tables Vector Store Error')
+                status="success", name="Tables Vector Store Ready", description=f"Embedded {num_tables} table(s)"
+            )
+            self.interface.loading = False
+        elif ready_state is None:
+            # Error state
+            self._vector_store_status_badge.param.update(
+                status="danger", name="Tables Vector Store Error", description="Error initializing tables vector store"
+            )
+            self.interface.loading = False
 
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
         """
+        # Clean up parameter watchers
+        if self._table_lookup_tool:
+            self._table_lookup_tool.param.unwatch(self._update_vector_store_badge, '_ready')
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
@@ -306,11 +359,23 @@ class UI(Viewer):
                     self._vector_store_status_badge,
                     sizing_mode="stretch_width",
                     align="center",
-                )
+                ),
             )
+            if self._source_agent:
+                self._source_agent.table_upload_callbacks = self.table_upload_callbacks
+                template.header.append(
+                    Row(
+                        Button(name="Upload Data", icon="upload", button_type="success", on_click=self._trigger_source_agent),
+                    )
+                )
             template.main.append(self._main)
             return template
         return super()._create_view()
+
+    def _trigger_source_agent(self, event=None):
+        if self._source_agent:
+            param.parameterized.async_executor(partial(self._source_agent.respond, []))
+            self.interface._chat_log.scroll_to_latest()
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -441,7 +506,7 @@ class ExplorerUI(UI):
             visible=self._explorations.param["objects"].rx.bool().rx.not_()
         )
         self._output = Tabs(
-            ('Overview', self._table_explorer()),
+            ('Raw Tables', self._table_explorer()),
             ('Explorations', Column(self._explorations_intro, self._explorations)),
             design=Material
         )
@@ -572,7 +637,7 @@ class ExplorerUI(UI):
         from panel_gwalker import GraphicWalker
 
         table_select = MultiChoice(
-            placeholder="Select table(s)", sizing_mode='stretch_width',
+            placeholder="Select table(s) to view contents", sizing_mode='stretch_width',
             max_height=200, max_items=5
         )
         explore_button = Button(
@@ -612,9 +677,7 @@ class ExplorerUI(UI):
             if len(table_select.options) == 1:
                 explore_button.param.trigger("value")
 
-        controls = SourceControls(select_existing=False, cancellable=False, clear_uploads=True, multiple=True, name='Upload')
-        controls.param.watch(explore_table_if_single, "add")
-        tabs = Tabs(controls, dynamic=True, sizing_mode='stretch_both', design=Material)
+        tabs = Tabs(dynamic=True, sizing_mode='stretch_both', design=Material)
 
         @param.depends(explore_button, watch=True)
         def get_explorers(load):
@@ -636,7 +699,7 @@ class ExplorerUI(UI):
                     )
                     explorers.append(walker)
 
-                tabs.objects = explorers + [controls]
+                tabs.objects = explorers
                 table_select.value = []
 
         return Column(

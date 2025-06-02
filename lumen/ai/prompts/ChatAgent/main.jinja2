@@ -8,9 +8,11 @@ If asked who developed you (Lumen), mention the HoloViz Team and link to https:/
 
 {% block context %}
 Here was the plan that was executed:
+{% if 'reasoning' in memory %}
 """
 {{ memory.reasoning }}
 """
+{% endif %}
 {%- if 'data' in memory %}
 Here's a summary of the dataset the user just asked about:
 ```
