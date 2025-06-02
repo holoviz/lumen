@@ -1,0 +1,1027 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+            <link rel="manifest" href="../../site.webmanifest"/>
+            
+    <title>GraphicWalker type: graphic_walker &#8212; Lumen 0.10.1 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.4510f1fc1dee50b3e5859aac5469c37c29e427902b24a333a5f9fcb2f0b3ac41.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=aacd715d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/dataframe.css?v=302d74fa" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/pyscript.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/divider.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/floatpanel.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_interface.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_feed.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/katex.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/debugger.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/swipe.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/widgetbox.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/alerts.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/gridbox.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_steps.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/widgets.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_step.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/listpanel.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/gridspec.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/icon.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/regular_table.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/markdown.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/progress.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/booleanstatus.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_message.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/json.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/select.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/editable_slider.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/loading.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_copy_icon.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/button.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/player.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/gridstack.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/layout.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/loadingspinner.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/chat_reaction_icons.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/notifications.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.holoviz.org/panel/1.7.1/dist/css/dataframe.css" type="text/css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=261ea15a"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script src="../../_static/ServiceHandler.js"></script>
+    <script>
+    window.goatcounter = {
+        path: function(p) { return location.host + p }
+    }
+</script>
+    <script async="async" data-goatcounter="https://holoviz.goatcounter.com/count" src="../../_static/js/goatcounter.js"></script>
+    <script type="esms-options">{"shimMode": true}</script>
+    <script src="https://cdn.holoviz.org/panel/1.7.1/dist/bundled/reactiveesm/es-module-shims@^1.10.0/dist/es-module-shims.min.js"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="hvPlotUIView type: hvplot_ui" href="hvPlotUIView.html" />
+    <link rel="prev" title="YdataProfilingView type: ydata_profiling" href="YdataProfilingView.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="0.10.1" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+<aside class="bd-header-announcement" aria-label="Announcement">
+  <div class="bd-header-announcement__content">Lumen 0.10.1 has just been released! Check out the <a href='https://blog.holoviz.org/posts/lumen_ai_announcement/'>announcement blog post</a> and support Lumen by giving it a 🌟 on <a href='https://github.com/holoviz/lumen'>Github</a>.</div>
+</aside>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../_static/logo_horizontal.png" class="logo__image only-light" alt="Lumen 0.10.1 documentation - Home"/>
+    <img src="../../_static/logo_horizontal.png" class="logo__image only-dark pst-js-only" alt="Lumen 0.10.1 documentation - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../lumen_ai/index.html">
+    Lumen AI
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../lumen_spec/index.html">
+    Lumen Spec
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../gallery/index.html">
+    Gallery
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/holoviz/lumen" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://discourse.holoviz.org/c/lumen/14" title="Discourse" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fab fa-discourse fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Discourse</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../lumen_ai/index.html">
+    Lumen AI
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../lumen_spec/index.html">
+    Lumen Spec
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../gallery/index.html">
+    Gallery
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/holoviz/lumen" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://discourse.holoviz.org/c/lumen/14" title="Discourse" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fab fa-discourse fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Discourse</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><!-- Adapted from sidebar-nav-bs.html (1.15.2) with the following changes
+
+  - Commented out the tag that adds the "Section Navigation" title
+  - Call generate_toctree_html with startdepth=0
+
+Please update this file when required when bumping the max pin of pydata-sphinx-theme.
+-->
+
+
+<nav class="bd-docs-nav bd-links"
+      aria-label="Section Navigation">
+  <!-- <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p> -->
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../lumen_ai/index.html">Lumen AI</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../lumen_ai/getting_started/index.html">Getting Started</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/getting_started/using_lumen_ai.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-zap sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M15.716 1.329a1.341 1.341 0 0 1 2.109 1.55L15.147 9h4.161c1.623 0 2.372 2.016 1.143 3.075L8.102 22.721a1.148 1.148 0 0 1-1.81-1.317L8.996 15H4.674c-1.619 0-2.37-2.008-1.148-3.07l12.19-10.6Zm.452 1.595L4.51 13.061a.25.25 0 0 0 .164.439h5.45a.749.749 0 0 1 .692 1.041l-2.559 6.066 11.215-9.668a.25.25 0 0 0-.164-.439H14a.75.75 0 0 1-.687-1.05Z"></path></svg> Using Lumen AI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/getting_started/configuring_lumen_ai.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-gear sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm-1.5 0a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z"></path><path d="M12 1c.266 0 .532.009.797.028.763.055 1.345.617 1.512 1.304l.352 1.45c.019.078.09.171.225.221.247.089.49.19.728.302.13.061.246.044.315.002l1.275-.776c.603-.368 1.411-.353 1.99.147.402.349.78.726 1.128 1.129.501.578.515 1.386.147 1.99l-.776 1.274c-.042.069-.058.185.002.315.112.238.213.481.303.728.048.135.142.205.22.225l1.45.352c.687.167 1.249.749 1.303 1.512.038.531.038 1.063 0 1.594-.054.763-.616 1.345-1.303 1.512l-1.45.352c-.078.019-.171.09-.221.225-.089.248-.19.491-.302.728-.061.13-.044.246-.002.315l.776 1.275c.368.603.353 1.411-.147 1.99-.349.402-.726.78-1.129 1.128-.578.501-1.386.515-1.99.147l-1.274-.776c-.069-.042-.185-.058-.314.002a8.606 8.606 0 0 1-.729.303c-.135.048-.205.142-.225.22l-.352 1.45c-.167.687-.749 1.249-1.512 1.303-.531.038-1.063.038-1.594 0-.763-.054-1.345-.616-1.512-1.303l-.352-1.45c-.019-.078-.09-.171-.225-.221a8.138 8.138 0 0 1-.728-.302c-.13-.061-.246-.044-.315-.002l-1.275.776c-.603.368-1.411.353-1.99-.147-.402-.349-.78-.726-1.128-1.129-.501-.578-.515-1.386-.147-1.99l.776-1.274c.042-.069.058-.185-.002-.314a8.606 8.606 0 0 1-.303-.729c-.048-.135-.142-.205-.22-.225l-1.45-.352c-.687-.167-1.249-.749-1.304-1.512a11.158 11.158 0 0 1 0-1.594c.055-.763.617-1.345 1.304-1.512l1.45-.352c.078-.019.171-.09.221-.225.089-.248.19-.491.302-.728.061-.13.044-.246.002-.315l-.776-1.275c-.368-.603-.353-1.411.147-1.99.349-.402.726-.78 1.129-1.128.578-.501 1.386-.515 1.99-.147l1.274.776c.069.042.185.058.315-.002.238-.112.481-.213.728-.303.135-.048.205-.142.225-.22l.352-1.45c.167-.687.749-1.249 1.512-1.304C11.466 1.01 11.732 1 12 1Zm-.69 1.525c-.055.004-.135.05-.161.161l-.353 1.45a1.832 1.832 0 0 1-1.172 1.277 7.147 7.147 0 0 0-.6.249 1.833 1.833 0 0 1-1.734-.074l-1.274-.776c-.098-.06-.186-.036-.228 0a9.774 9.774 0 0 0-.976.976c-.036.042-.06.131 0 .228l.776 1.274c.314.529.342 1.18.074 1.734a7.147 7.147 0 0 0-.249.6 1.831 1.831 0 0 1-1.278 1.173l-1.45.351c-.11.027-.156.107-.16.162a9.63 9.63 0 0 0 0 1.38c.004.055.05.135.161.161l1.45.353a1.832 1.832 0 0 1 1.277 1.172c.074.204.157.404.249.6.268.553.24 1.204-.074 1.733l-.776 1.275c-.06.098-.036.186 0 .228.301.348.628.675.976.976.042.036.131.06.228 0l1.274-.776a1.83 1.83 0 0 1 1.734-.075c.196.093.396.176.6.25a1.831 1.831 0 0 1 1.173 1.278l.351 1.45c.027.11.107.156.162.16a9.63 9.63 0 0 0 1.38 0c.055-.004.135-.05.161-.161l.353-1.45a1.834 1.834 0 0 1 1.172-1.278 6.82 6.82 0 0 0 .6-.248 1.831 1.831 0 0 1 1.733.074l1.275.776c.098.06.186.036.228 0 .348-.301.675-.628.976-.976.036-.042.06-.131 0-.228l-.776-1.275a1.834 1.834 0 0 1-.075-1.733c.093-.196.176-.396.25-.6a1.831 1.831 0 0 1 1.278-1.173l1.45-.351c.11-.027.156-.107.16-.162a9.63 9.63 0 0 0 0-1.38c-.004-.055-.05-.135-.161-.161l-1.45-.353c-.626-.152-1.08-.625-1.278-1.172a6.576 6.576 0 0 0-.248-.6 1.833 1.833 0 0 1 .074-1.734l.776-1.274c.06-.098.036-.186 0-.228a9.774 9.774 0 0 0-.976-.976c-.042-.036-.131-.06-.228 0l-1.275.776a1.831 1.831 0 0 1-1.733.074 6.88 6.88 0 0 0-.6-.249 1.835 1.835 0 0 1-1.173-1.278l-.351-1.45c-.027-.11-.107-.156-.162-.16a9.63 9.63 0 0 0-1.38 0Z"></path></svg> Configuring Lumen AI</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../lumen_ai/how_to/index.html">How to Guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_ai/how_to/llm/index.html">Configuring LLM Providers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_ai/how_to/llm/openai.html">Use OpenAI with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_ai/how_to/llm/mistral.html">Use Mistral with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_ai/how_to/llm/anthropic.html">Using Anthropic with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_ai/how_to/llm/azure.html">Use Azure AI with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_ai/how_to/llm/llama_cpp.html">Use Llama.cpp</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_ai/how_to/llm/endpoints.html">Use OpenAI compatible endpoints</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/how_to/custom_agents.html">Custom Agents</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/how_to/custom_analyses.html">Custom Analyses</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/how_to/custom_data_source.html">Custom Data Sources</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/how_to/custom_tools.html">Custom Tools</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/how_to/model_prompts.html">Model Prompts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_ai/how_to/template_prompts.html">Template Prompts</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../lumen_spec/index.html">Lumen Spec</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../lumen_spec/getting_started/index.html">Getting Started</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_spec/getting_started/build_dashboard.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-tools sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M7.875 2.292a.114.114 0 0 0-.032.018A7.239 7.239 0 0 0 4.75 8.25a7.248 7.248 0 0 0 3.654 6.297c.57.327.982.955.941 1.682v.002l-.317 6.058a.75.75 0 1 1-1.498-.078l.317-6.062v-.004c.006-.09-.047-.215-.188-.296A8.749 8.749 0 0 1 3.25 8.25a8.738 8.738 0 0 1 3.732-7.169 1.547 1.547 0 0 1 1.709-.064c.484.292.809.835.809 1.46v4.714a.25.25 0 0 0 .119.213l2.25 1.385c.08.05.182.05.262 0l2.25-1.385a.25.25 0 0 0 .119-.213V2.478c0-.626.325-1.169.81-1.461a1.547 1.547 0 0 1 1.708.064 8.741 8.741 0 0 1 3.732 7.17 8.747 8.747 0 0 1-4.41 7.598c-.14.081-.193.206-.188.296v.004l.318 6.062a.75.75 0 1 1-1.498.078l-.317-6.058v-.002c-.041-.727.37-1.355.94-1.682A7.247 7.247 0 0 0 19.25 8.25a7.239 7.239 0 0 0-3.093-5.94.114.114 0 0 0-.032-.018l-.01-.001c-.003 0-.014 0-.031.01-.036.022-.084.079-.084.177V7.19c0 .608-.315 1.172-.833 1.49l-2.25 1.385a1.75 1.75 0 0 1-1.834 0l-2.25-1.384A1.752 1.752 0 0 1 8 7.192V2.477c0-.098-.048-.155-.084-.176a.068.068 0 0 0-.031-.011l-.01.001Z"></path></svg> Build a dashboard</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_spec/getting_started/core_concepts.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-mortar-board sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M12.292 2.06v-.001l11.25 4.75a.749.749 0 0 1 0 1.382L19 10.108V15a.75.75 0 0 1-.11.391h-.001a2.84 2.84 0 0 1-.392.482c-.249.256-.625.58-1.163.896-1.08.638-2.776 1.23-5.334 1.23-.673 0-1.286-.041-1.846-.113a.75.75 0 0 1 .192-1.487c.492.063 1.042.1 1.654.1 2.317 0 3.746-.533 4.572-1.021.31-.178.596-.397.849-.65l.079-.085V10.74l-5.208 2.2a.75.75 0 0 1-.584 0L5.75 10.424v3.17c.502.129.96.391 1.327.758.579.578.923 1.41.923 2.428v4.5a.761.761 0 0 1-.345.634 2.157 2.157 0 0 1-.21.117 3.923 3.923 0 0 1-.52.213A6.121 6.121 0 0 1 5 22.532a6.092 6.092 0 0 1-1.925-.288 4.065 4.065 0 0 1-.52-.213 1.816 1.816 0 0 1-.22-.124.757.757 0 0 1-.335-.624v-4.5c0-1.02.344-1.85.923-2.43a2.904 2.904 0 0 1 1.327-.757V9.793L.458 8.19a.75.75 0 0 1 0-1.38l11.25-4.75a.75.75 0 0 1 .584 0ZM12 11.436 21.322 7.5 12 3.564 2.678 7.5ZM5 15c-.377 0-.745.141-1.017.413-.265.265-.483.7-.483 1.368v4.022c.299.105.797.228 1.5.228s1.201-.123 1.5-.228V16.78c0-.669-.218-1.103-.483-1.368A1.433 1.433 0 0 0 5 15Z"></path></svg> Core Concepts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../lumen_spec/getting_started/pipelines.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-git-commit sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M16.944 11h4.306a.75.75 0 0 1 0 1.5h-4.306a5.001 5.001 0 0 1-9.888 0H2.75a.75.75 0 0 1 0-1.5h4.306a5.001 5.001 0 0 1 9.888 0Zm-1.444.75a3.5 3.5 0 1 0-7 0 3.5 3.5 0 0 0 7 0Z"></path></svg> Building a data pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../lumen_spec/how_to/index.html">How to Guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_spec/how_to/data_intake/index.html">Data Intake</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_intake/files.html">Access Files</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_intake/cache.html">Cache Data</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_spec/how_to/data_processing/index.html">Data Processing</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_processing/pipeline_python.html">Build Pipelines with Python</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_processing/branch_pipeline.html">Branch a Pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_spec/how_to/data_visualization/index.html">Visualize and Deploy</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_visualization/views.html">Define Views</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_visualization/dashboard_python.html">Visualize Dashboards with Python</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_visualization/deploy.html">Deploy</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_spec/how_to/validation/index.html">Validation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/validation/validate.html">Validate Specification</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_spec/how_to/data_output/index.html">Data Output</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/data_output/download_data.html">Enable Data Download</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../lumen_spec/how_to/advanced/index.html">Advanced Topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/advanced/local_components.html">Access Custom Components</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/advanced/auth.html">Configure Authentication</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/advanced/variables_and_references.html">Reference Variables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../lumen_spec/how_to/advanced/callbacks.html">Declare Callbacks</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../gallery/index.html">Gallery</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../gallery/precip.html">Precipitation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../gallery/penguins.html">Penguins</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../gallery/nyc_taxi.html">NYC Taxi Trips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../gallery/bikes.html">London Bike Points</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../gallery/seattle.html">Seattle Weather</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../agent/index.html">Agent</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../agent/SourceAgent.html">SourceAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/ChatAgent.html">ChatAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/LumenBaseAgent.html">LumenBaseAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/AnalystAgent.html">AnalystAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/TableListAgent.html">TableListAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/DocumentListAgent.html">DocumentListAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/SQLAgent.html">SQLAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/DbtslAgent.html">DbtslAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/BaseViewAgent.html">BaseViewAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/AnalysisAgent.html">AnalysisAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/hvPlotAgent.html">hvPlotAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../agent/VegaLiteAgent.html">VegaLiteAgent</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../coordinator/index.html">Coordinator</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../coordinator/DependencyResolver.html">DependencyResolver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../coordinator/Planner.html">Planner</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../tool/index.html">Tool</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../tool/Tool.html">Tool</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tool/FunctionTool.html">FunctionTool</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tool/DocumentLookup.html">DocumentLookup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tool/TableLookup.html">TableLookup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tool/DbtslLookup.html">DbtslLookup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tool/IterativeTableLookup.html">IterativeTableLookup</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../ui/index.html">UI</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../ui/ChatUI.html">ChatUI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../ui/ExplorerUI.html">ExplorerUI</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../variable/index.html">Variable</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../variable/Constant.html">Constant  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: constant</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/EnvVariable.html">EnvVariable  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: env</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/Widget.html">Widget  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: widget</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/Parameter.html">Parameter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: param</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/URLQuery.html">URLQuery  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: url</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/Cookie.html">Cookie  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: cookie</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/UserInfo.html">UserInfo  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: user</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../variable/Header.html">Header  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: header</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../source/index.html">Source</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../source/RESTSource.html">RESTSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: rest</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/InMemorySource.html">InMemorySource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/FileSource.html">FileSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: file</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/BaseSQLSource.html">BaseSQLSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/WebsiteSource.html">WebsiteSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: live</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/PanelSessionSource.html">PanelSessionSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: session_info</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/JoinedSource.html">JoinedSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: join</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/DerivedSource.html">DerivedSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: derived</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/JSONSource.html">JSONSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: json</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/DuckDBSource.html">DuckDBSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: duckdb</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/IntakeSource.html">IntakeSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: intake</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../source/IntakeSQLSource.html">IntakeSQLSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: intake_sql</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../filter/index.html">Filter</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../filter/ConstantFilter.html">ConstantFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: constant</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../filter/FacetFilter.html">FacetFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: facet</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../filter/ParamFilter.html">ParamFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: param</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../filter/WidgetFilter.html">WidgetFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: widget</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../filter/BinFilter.html">BinFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: bins</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../filter/DateFilter.html">DateFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: date</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../filter/DatetimeFilter.html">DatetimeFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: datetime</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../transform/index.html">Transform</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Filter.html">Filter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/HistoryTransform.html">HistoryTransform  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: history</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Aggregate.html">Aggregate  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: aggregate</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Sort.html">Sort  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sort</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Query.html">Query  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: query</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Columns.html">Columns  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: columns</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Astype.html">Astype  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: as_type</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Stack.html">Stack  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: stack</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Unstack.html">Unstack  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: unstack</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Iloc.html">Iloc  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: iloc</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Sample.html">Sample  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sample</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Compute.html">Compute  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: compute</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Pivot.html">Pivot  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: pivot</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/PivotTable.html">PivotTable  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Melt.html">Melt  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: melt</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SetIndex.html">SetIndex  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: set_index</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/ResetIndex.html">ResetIndex  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: reset_index</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Rename.html">Rename  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: rename</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/RenameAxis.html">RenameAxis  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: rename_axis</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Count.html">Count  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: count</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Sum.html">Sum  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sum</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Eval.html">Eval  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: eval</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/DropNA.html">DropNA  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: dropna</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/Corr.html">Corr  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: corr</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/project_lnglat.html">project_lnglat  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: project_lnglat</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLFormat.html">SQLFormat  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_format</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLGroupBy.html">SQLGroupBy  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_group_by</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLLimit.html">SQLLimit  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_limit</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLDistinct.html">SQLDistinct  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_distinct</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLCount.html">SQLCount  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_count</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLMinMax.html">SQLMinMax  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_minmax</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLColumns.html">SQLColumns  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_columns</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLFilter.html">SQLFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_filter</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLOverride.html">SQLOverride  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLSample.html">SQLSample  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_sample</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLRemoveSourceSeparator.html">SQLRemoveSourceSeparator  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../transform/SQLSelectFrom.html">SQLSelectFrom  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_select_from</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="index.html">View</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="Panel.html">Panel  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: panel</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="StringView.html">StringView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: string</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="IndicatorView.html">IndicatorView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: indicator</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="hvOverlayView.html">hvOverlayView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hv_overlay</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="Table.html">Table  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: table</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="DownloadView.html">DownloadView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: download</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="PerspectiveView.html">PerspectiveView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: perspective</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="VegaLiteView.html">VegaLiteView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: vegalite</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="AltairView.html">AltairView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: altair</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="YdataProfilingView.html">YdataProfilingView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: ydata_profiling</span></a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">GraphicWalker  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: graphic_walker</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="hvPlotUIView.html">hvPlotUIView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hvplot_ui</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="hvPlotView.html">hvPlotView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hvplot</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../auth/index.html">Auth</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../auth/Auth.html">Auth</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../auth/YamlAuthMapperPlugin.html">YamlAuthMapperPlugin  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: yaml</span></a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Reference</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">View</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">GraphicWalker  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: graphic_walker</span></span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="graphicwalker-type-graphic-walker">
+<h1>GraphicWalker  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: graphic_walker</span><a class="headerlink" href="#graphicwalker-type-graphic-walker" title="Link to this heading">#</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">lumen.views.base.</span></span><span class="sig-name descname"><span class="pre">GraphicWalker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">ignore_limit</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kernel_computation</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">renderer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tab</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">controls</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">download</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">field</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">loading_indicator</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pipeline</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rerender</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">selection_group</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">title</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lumen.views.base.GraphicWalker" title="Link to this definition">#</a></dt>
+<dd><p>Renders the data using the GraphicWalker panel extension.</p>
+</dd></dl>
+
+<hr class="docutils" />
+<section id="parameters">
+<h2>Parameters<a class="headerlink" href="#parameters" title="Link to this heading">#</a></h2>
+<div class="sd-container-fluid sd-sphinx-override sd-m-0 docutils">
+<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-1 sd-row-cols-md-2 sd-row-cols-lg-2 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-md docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<span style="font-size: 1.25em;"><span class="sd-sphinx-override sd-badge sd-bg-dark sd-bg-text-dark">ignore_limit</span></span></div>
+<p class="sd-card-text"><strong>type</strong>: <code class="docutils literal notranslate"><span class="pre">bool</span></code><br><strong>default</strong>: <code class="docutils literal notranslate"><span class="pre">False</span></code><br><span style="vertical-align: bottom;">Ignore any SQLLimit transform defined on the input pipeline.</span></p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-md docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<span style="font-size: 1.25em;"><span class="sd-sphinx-override sd-badge sd-bg-dark sd-bg-text-dark">kernel_computation</span></span></div>
+<p class="sd-card-text"><strong>type</strong>: <code class="docutils literal notranslate"><span class="pre">bool</span></code><br><strong>default</strong>: <code class="docutils literal notranslate"><span class="pre">False</span></code><br><span style="vertical-align: bottom;">If True the computations will take place on the server or in the Jupyter kernel        instead of the client to scale to larger datasets. Default is False. In Pyodide this will        always be set to False. The ‘chart’ renderer will only work with client side rendering.</span></p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-md docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<span style="font-size: 1.25em;"><span class="sd-sphinx-override sd-badge sd-bg-dark sd-bg-text-dark">renderer</span></span></div>
+<p class="sd-card-text"><strong>type</strong>: <code class="docutils literal notranslate"><span class="pre">Any</span></code><br><strong>default</strong>: <code class="docutils literal notranslate"><span class="pre">'profiler'</span></code><br><strong>Possible values</strong>: <code class="docutils literal notranslate"><span class="pre">'explorer'</span> <span class="pre">|</span> <span class="pre">'profiler'</span> <span class="pre">|</span> <span class="pre">'viewer'</span> <span class="pre">|</span> <span class="pre">'chart'</span></code><br><span style="vertical-align: bottom;">How to display the data. One of ‘explorer’ (default), ‘profiler,        ‘viewer’ or ‘chart’.</span></p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-md docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+<span style="font-size: 1.25em;"><span class="sd-sphinx-override sd-badge sd-bg-dark sd-bg-text-dark">tab</span></span></div>
+<p class="sd-card-text"><strong>type</strong>: <code class="docutils literal notranslate"><span class="pre">Any</span></code><br><strong>default</strong>: <code class="docutils literal notranslate"><span class="pre">'data'</span></code><br><strong>Possible values</strong>: <code class="docutils literal notranslate"><span class="pre">'data'</span> <span class="pre">|</span> <span class="pre">'vis'</span></code><br><span style="vertical-align: bottom;">Set the active tab to ‘data’ or ‘vis’ (default). Only applicable for the ‘explorer’ renderer. Not bi-directionally synced with client.</span></p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="methods">
+<h2>Methods<a class="headerlink" href="#methods" title="Link to this heading">#</a></h2>
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.get_data">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">get_data</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lumen.views.base.GraphicWalker.get_data" title="Link to this definition">#</a></dt>
+<dd><p>Queries the Source for the specified table applying any
+filters and transformations specified on the View. Unlike
+<cite>get_value</cite> this should be used when multiple return values
+are expected.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The queried table after filtering and transformations are
+applied.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>DataFrame</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.get_panel">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">get_panel</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lumen.views.base.GraphicWalker.get_panel" title="Link to this definition">#</a></dt>
+<dd><p>Constructs and returns a Panel object which will represent a
+view of the queried table.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A Panel Viewable object representing a current
+representation of the queried table.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>panel.Viewable</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.get_value">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">get_value</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">field</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lumen.views.base.GraphicWalker.get_value" title="Link to this definition">#</a></dt>
+<dd><p>Queries the Source for the data associated with a particular
+field applying any filters and transformations specified on
+the View. Unlike <cite>get_data</cite> this method returns a single
+scalar value associated with the field and should therefore
+only be used if only a single.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>field</strong> (<em>str</em><em> (</em><em>optional</em><em>)</em>) – The field from the table to return; if None uses
+field defined on the View.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A single scalar value representing the current value of
+the queried field.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>object</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.servable">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">servable</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">title</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">location</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Location</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">area</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'main'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">target</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Viewable</span></span></span><a class="headerlink" href="#lumen.views.base.GraphicWalker.servable" title="Link to this definition">#</a></dt>
+<dd><p>Serves the object or adds it to the configured
+pn.state.template if in a <cite>panel serve</cite> context, writes to the
+DOM if in a pyodide context and returns the Panel object to
+allow it to display itself in a notebook context.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>title</strong> (<em>str</em>) – A string title to give the Document (if served as an app)</p></li>
+<li><p><strong>location</strong> (<em>boolean</em><em> or </em><em>panel.io.location.Location</em>) – Whether to create a Location component to observe and
+set the URL location.</p></li>
+<li><p><strong>area</strong> (<em>str</em><em> (</em><em>deprecated</em><em>)</em>) – The area of a template to add the component too. Only has an
+effect if pn.config.template has been set.</p></li>
+<li><p><strong>target</strong> (<em>str</em>) – Target area to write to. If a template has been configured
+on pn.config.template this refers to the target area in the
+template while in pyodide this refers to the ID of the DOM
+node to write to.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>The Panel object itself</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.show">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">show</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">title</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">address</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">websocket_origin</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">threaded</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">open</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">location</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Location</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">threading.Thread</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Server</span></span></span><a class="headerlink" href="#lumen.views.base.GraphicWalker.show" title="Link to this definition">#</a></dt>
+<dd><p>Starts a Bokeh server and displays the Viewable in a new tab.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>title</strong> (<em>str</em><em> | </em><em>None</em>) – A string title to give the Document (if served as an app)</p></li>
+<li><p><strong>port</strong> (<em>int</em><em> (</em><em>optional</em><em>, </em><em>default=0</em><em>)</em>) – Allows specifying a specific port</p></li>
+<li><p><strong>address</strong> (<em>str</em>) – The address the server should listen on for HTTP requests.</p></li>
+<li><p><strong>websocket_origin</strong> (<em>str</em><em> or </em><em>list</em><em>(</em><em>str</em><em>) </em><em>(</em><em>optional</em><em>)</em>) – A list of hosts that can connect to the websocket.
+This is typically required when embedding a server app in
+an external web site.
+If None, “localhost” is used.</p></li>
+<li><p><strong>threaded</strong> (<em>boolean</em><em> (</em><em>optional</em><em>, </em><em>default=False</em><em>)</em>) – Whether to launch the Server on a separate thread, allowing
+interactive use.</p></li>
+<li><p><strong>verbose</strong> (<em>boolean</em><em> (</em><em>optional</em><em>, </em><em>default=True</em><em>)</em>) – Whether to print the address and port</p></li>
+<li><p><strong>open</strong> (<em>boolean</em><em> (</em><em>optional</em><em>, </em><em>default=True</em><em>)</em>) – Whether to open the server in a new browser tab</p></li>
+<li><p><strong>location</strong> (<em>boolean</em><em> or </em><em>panel.io.location.Location</em>) – Whether to create a Location component to observe and
+set the URL location.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>server</strong> – Returns the Bokeh server instance or the thread the server
+was launched on (if threaded=True)</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bokeh.server.Server or panel.io.server.StoppableThread</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.to_spec">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">to_spec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">context</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></span></span><a class="headerlink" href="#lumen.views.base.GraphicWalker.to_spec" title="Link to this definition">#</a></dt>
+<dd><p>Exports the full specification to reconstruct this component.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>context</strong> (<em>Dict</em><em>[</em><em>str</em><em>, </em><em>Any</em><em>]</em>) – Context contains the specification of all previously serialized components,
+e.g. to allow resolving of references.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>Declarative specification of this component.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lumen.views.base.GraphicWalker.update">
+<span class="sig-prename descclassname"><span class="pre">GraphicWalker.</span></span><span class="sig-name descname"><span class="pre">update</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">events</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Event</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">invalidate_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lumen.views.base.GraphicWalker.update" title="Link to this definition">#</a></dt>
+<dd><p>Triggers an update in the View.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>events</strong> (<em>tuple</em>) – param events that may trigger an update.</p></li>
+<li><p><strong>invalidate_cache</strong> (<em>bool</em>) – Whether to clear the View’s cache.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="YdataProfilingView.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">YdataProfilingView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: ydata_profiling</span></p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="hvPlotUIView.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">hvPlotUIView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hvplot_ui</span></p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker"><code class="docutils literal notranslate"><span class="pre">GraphicWalker</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#parameters">Parameters</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#methods">Methods</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.get_data"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.get_data()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.get_panel"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.get_panel()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.get_value"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.get_value()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.servable"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.servable()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.show"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.show()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.to_spec"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.to_spec()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#lumen.views.base.GraphicWalker.update"><code class="docutils literal notranslate"><span class="pre">GraphicWalker.update()</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../_sources/reference/view/GraphicWalker.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2020-2025, HoloViz Developers.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

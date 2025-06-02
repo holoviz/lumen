@@ -1,0 +1,2019 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Index &#8212; Lumen 0.10.1 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/mystnb.4510f1fc1dee50b3e5859aac5469c37c29e427902b24a333a5f9fcb2f0b3ac41.css" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="_static/runbutton.css?v=81e8930d" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=aacd715d" />
+    <link rel="stylesheet" type="text/css" href="_static/dataframe.css?v=302d74fa" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="_static/documentation_options.js?v=261ea15a"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=f281be69"></script>
+    <script src="_static/run_cell.js?v=da6c9fe8"></script>
+    <script src="_static/WorkerHandler.js"></script>
+    <script src="_static/design-tabs.js?v=f930bc37"></script>
+    <script src="_static/ServiceHandler.js"></script>
+    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.7.3.min.js"></script>
+    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.7.3.min.js"></script>
+    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-3.7.3.min.js"></script>
+    <script src="https://cdn.holoviz.org/panel/1.7.1/dist/panel.min.js"></script>
+    <script>
+    window.goatcounter = {
+        path: function(p) { return location.host + p }
+    }
+</script>
+    <script async="async" data-goatcounter="https://holoviz.goatcounter.com/count" src="_static/js/goatcounter.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'genindex';</script>
+    <script type="esms-options">{"shimMode": true}</script>
+    <script src="https://cdn.holoviz.org/panel/1.7.1/dist/bundled/reactiveesm/es-module-shims@^1.10.0/dist/es-module-shims.min.js"></script>
+    <link rel="icon" href="_static/favicon.ico"/>
+    <link rel="index" title="Index" href="#" />
+    <link rel="search" title="Search" href="search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="0.10.1" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+<aside class="bd-header-announcement" aria-label="Announcement">
+  <div class="bd-header-announcement__content">Lumen 0.10.1 has just been released! Check out the <a href='https://blog.holoviz.org/posts/lumen_ai_announcement/'>announcement blog post</a> and support Lumen by giving it a 🌟 on <a href='https://github.com/holoviz/lumen'>Github</a>.</div>
+</aside>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="_static/logo_horizontal.png" class="logo__image only-light" alt="Lumen 0.10.1 documentation - Home"/>
+    <img src="_static/logo_horizontal.png" class="logo__image only-dark pst-js-only" alt="Lumen 0.10.1 documentation - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="lumen_ai/index.html">
+    Lumen AI
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="lumen_spec/index.html">
+    Lumen Spec
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="gallery/index.html">
+    Gallery
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="reference/index.html">
+    Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/holoviz/lumen" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://discourse.holoviz.org/c/lumen/14" title="Discourse" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fab fa-discourse fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Discourse</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="lumen_ai/index.html">
+    Lumen AI
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="lumen_spec/index.html">
+    Lumen Spec
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="gallery/index.html">
+    Gallery
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="reference/index.html">
+    Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/holoviz/lumen" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://discourse.holoviz.org/c/lumen/14" title="Discourse" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fab fa-discourse fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Discourse</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><!-- Adapted from sidebar-nav-bs.html (1.15.2) with the following changes
+
+  - Commented out the tag that adds the "Section Navigation" title
+  - Call generate_toctree_html with startdepth=0
+
+Please update this file when required when bumping the max pin of pydata-sphinx-theme.
+-->
+
+
+<nav class="bd-docs-nav bd-links"
+      aria-label="Section Navigation">
+  <!-- <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p> -->
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="lumen_ai/index.html">Lumen AI</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="lumen_ai/getting_started/index.html">Getting Started</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/getting_started/using_lumen_ai.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-zap sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M15.716 1.329a1.341 1.341 0 0 1 2.109 1.55L15.147 9h4.161c1.623 0 2.372 2.016 1.143 3.075L8.102 22.721a1.148 1.148 0 0 1-1.81-1.317L8.996 15H4.674c-1.619 0-2.37-2.008-1.148-3.07l12.19-10.6Zm.452 1.595L4.51 13.061a.25.25 0 0 0 .164.439h5.45a.749.749 0 0 1 .692 1.041l-2.559 6.066 11.215-9.668a.25.25 0 0 0-.164-.439H14a.75.75 0 0 1-.687-1.05Z"></path></svg> Using Lumen AI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/getting_started/configuring_lumen_ai.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-gear sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm-1.5 0a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z"></path><path d="M12 1c.266 0 .532.009.797.028.763.055 1.345.617 1.512 1.304l.352 1.45c.019.078.09.171.225.221.247.089.49.19.728.302.13.061.246.044.315.002l1.275-.776c.603-.368 1.411-.353 1.99.147.402.349.78.726 1.128 1.129.501.578.515 1.386.147 1.99l-.776 1.274c-.042.069-.058.185.002.315.112.238.213.481.303.728.048.135.142.205.22.225l1.45.352c.687.167 1.249.749 1.303 1.512.038.531.038 1.063 0 1.594-.054.763-.616 1.345-1.303 1.512l-1.45.352c-.078.019-.171.09-.221.225-.089.248-.19.491-.302.728-.061.13-.044.246-.002.315l.776 1.275c.368.603.353 1.411-.147 1.99-.349.402-.726.78-1.129 1.128-.578.501-1.386.515-1.99.147l-1.274-.776c-.069-.042-.185-.058-.314.002a8.606 8.606 0 0 1-.729.303c-.135.048-.205.142-.225.22l-.352 1.45c-.167.687-.749 1.249-1.512 1.303-.531.038-1.063.038-1.594 0-.763-.054-1.345-.616-1.512-1.303l-.352-1.45c-.019-.078-.09-.171-.225-.221a8.138 8.138 0 0 1-.728-.302c-.13-.061-.246-.044-.315-.002l-1.275.776c-.603.368-1.411.353-1.99-.147-.402-.349-.78-.726-1.128-1.129-.501-.578-.515-1.386-.147-1.99l.776-1.274c.042-.069.058-.185-.002-.314a8.606 8.606 0 0 1-.303-.729c-.048-.135-.142-.205-.22-.225l-1.45-.352c-.687-.167-1.249-.749-1.304-1.512a11.158 11.158 0 0 1 0-1.594c.055-.763.617-1.345 1.304-1.512l1.45-.352c.078-.019.171-.09.221-.225.089-.248.19-.491.302-.728.061-.13.044-.246.002-.315l-.776-1.275c-.368-.603-.353-1.411.147-1.99.349-.402.726-.78 1.129-1.128.578-.501 1.386-.515 1.99-.147l1.274.776c.069.042.185.058.315-.002.238-.112.481-.213.728-.303.135-.048.205-.142.225-.22l.352-1.45c.167-.687.749-1.249 1.512-1.304C11.466 1.01 11.732 1 12 1Zm-.69 1.525c-.055.004-.135.05-.161.161l-.353 1.45a1.832 1.832 0 0 1-1.172 1.277 7.147 7.147 0 0 0-.6.249 1.833 1.833 0 0 1-1.734-.074l-1.274-.776c-.098-.06-.186-.036-.228 0a9.774 9.774 0 0 0-.976.976c-.036.042-.06.131 0 .228l.776 1.274c.314.529.342 1.18.074 1.734a7.147 7.147 0 0 0-.249.6 1.831 1.831 0 0 1-1.278 1.173l-1.45.351c-.11.027-.156.107-.16.162a9.63 9.63 0 0 0 0 1.38c.004.055.05.135.161.161l1.45.353a1.832 1.832 0 0 1 1.277 1.172c.074.204.157.404.249.6.268.553.24 1.204-.074 1.733l-.776 1.275c-.06.098-.036.186 0 .228.301.348.628.675.976.976.042.036.131.06.228 0l1.274-.776a1.83 1.83 0 0 1 1.734-.075c.196.093.396.176.6.25a1.831 1.831 0 0 1 1.173 1.278l.351 1.45c.027.11.107.156.162.16a9.63 9.63 0 0 0 1.38 0c.055-.004.135-.05.161-.161l.353-1.45a1.834 1.834 0 0 1 1.172-1.278 6.82 6.82 0 0 0 .6-.248 1.831 1.831 0 0 1 1.733.074l1.275.776c.098.06.186.036.228 0 .348-.301.675-.628.976-.976.036-.042.06-.131 0-.228l-.776-1.275a1.834 1.834 0 0 1-.075-1.733c.093-.196.176-.396.25-.6a1.831 1.831 0 0 1 1.278-1.173l1.45-.351c.11-.027.156-.107.16-.162a9.63 9.63 0 0 0 0-1.38c-.004-.055-.05-.135-.161-.161l-1.45-.353c-.626-.152-1.08-.625-1.278-1.172a6.576 6.576 0 0 0-.248-.6 1.833 1.833 0 0 1 .074-1.734l.776-1.274c.06-.098.036-.186 0-.228a9.774 9.774 0 0 0-.976-.976c-.042-.036-.131-.06-.228 0l-1.275.776a1.831 1.831 0 0 1-1.733.074 6.88 6.88 0 0 0-.6-.249 1.835 1.835 0 0 1-1.173-1.278l-.351-1.45c-.027-.11-.107-.156-.162-.16a9.63 9.63 0 0 0-1.38 0Z"></path></svg> Configuring Lumen AI</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="lumen_ai/how_to/index.html">How to Guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_ai/how_to/llm/index.html">Configuring LLM Providers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_ai/how_to/llm/openai.html">Use OpenAI with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_ai/how_to/llm/mistral.html">Use Mistral with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_ai/how_to/llm/anthropic.html">Using Anthropic with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_ai/how_to/llm/azure.html">Use Azure AI with Lumen AI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_ai/how_to/llm/llama_cpp.html">Use Llama.cpp</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_ai/how_to/llm/endpoints.html">Use OpenAI compatible endpoints</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/how_to/custom_agents.html">Custom Agents</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/how_to/custom_analyses.html">Custom Analyses</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/how_to/custom_data_source.html">Custom Data Sources</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/how_to/custom_tools.html">Custom Tools</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/how_to/model_prompts.html">Model Prompts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_ai/how_to/template_prompts.html">Template Prompts</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="lumen_spec/index.html">Lumen Spec</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="lumen_spec/getting_started/index.html">Getting Started</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="lumen_spec/getting_started/build_dashboard.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-tools sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M7.875 2.292a.114.114 0 0 0-.032.018A7.239 7.239 0 0 0 4.75 8.25a7.248 7.248 0 0 0 3.654 6.297c.57.327.982.955.941 1.682v.002l-.317 6.058a.75.75 0 1 1-1.498-.078l.317-6.062v-.004c.006-.09-.047-.215-.188-.296A8.749 8.749 0 0 1 3.25 8.25a8.738 8.738 0 0 1 3.732-7.169 1.547 1.547 0 0 1 1.709-.064c.484.292.809.835.809 1.46v4.714a.25.25 0 0 0 .119.213l2.25 1.385c.08.05.182.05.262 0l2.25-1.385a.25.25 0 0 0 .119-.213V2.478c0-.626.325-1.169.81-1.461a1.547 1.547 0 0 1 1.708.064 8.741 8.741 0 0 1 3.732 7.17 8.747 8.747 0 0 1-4.41 7.598c-.14.081-.193.206-.188.296v.004l.318 6.062a.75.75 0 1 1-1.498.078l-.317-6.058v-.002c-.041-.727.37-1.355.94-1.682A7.247 7.247 0 0 0 19.25 8.25a7.239 7.239 0 0 0-3.093-5.94.114.114 0 0 0-.032-.018l-.01-.001c-.003 0-.014 0-.031.01-.036.022-.084.079-.084.177V7.19c0 .608-.315 1.172-.833 1.49l-2.25 1.385a1.75 1.75 0 0 1-1.834 0l-2.25-1.384A1.752 1.752 0 0 1 8 7.192V2.477c0-.098-.048-.155-.084-.176a.068.068 0 0 0-.031-.011l-.01.001Z"></path></svg> Build a dashboard</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_spec/getting_started/core_concepts.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-mortar-board sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M12.292 2.06v-.001l11.25 4.75a.749.749 0 0 1 0 1.382L19 10.108V15a.75.75 0 0 1-.11.391h-.001a2.84 2.84 0 0 1-.392.482c-.249.256-.625.58-1.163.896-1.08.638-2.776 1.23-5.334 1.23-.673 0-1.286-.041-1.846-.113a.75.75 0 0 1 .192-1.487c.492.063 1.042.1 1.654.1 2.317 0 3.746-.533 4.572-1.021.31-.178.596-.397.849-.65l.079-.085V10.74l-5.208 2.2a.75.75 0 0 1-.584 0L5.75 10.424v3.17c.502.129.96.391 1.327.758.579.578.923 1.41.923 2.428v4.5a.761.761 0 0 1-.345.634 2.157 2.157 0 0 1-.21.117 3.923 3.923 0 0 1-.52.213A6.121 6.121 0 0 1 5 22.532a6.092 6.092 0 0 1-1.925-.288 4.065 4.065 0 0 1-.52-.213 1.816 1.816 0 0 1-.22-.124.757.757 0 0 1-.335-.624v-4.5c0-1.02.344-1.85.923-2.43a2.904 2.904 0 0 1 1.327-.757V9.793L.458 8.19a.75.75 0 0 1 0-1.38l11.25-4.75a.75.75 0 0 1 .584 0ZM12 11.436 21.322 7.5 12 3.564 2.678 7.5ZM5 15c-.377 0-.745.141-1.017.413-.265.265-.483.7-.483 1.368v4.022c.299.105.797.228 1.5.228s1.201-.123 1.5-.228V16.78c0-.669-.218-1.103-.483-1.368A1.433 1.433 0 0 0 5 15Z"></path></svg> Core Concepts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="lumen_spec/getting_started/pipelines.html"><svg aria-hidden="true" class="sd-octicon sd-octicon-git-commit sd-mr-1" height="2.0em" version="1.1" viewbox="0 0 24 24" width="2.0em"><path d="M16.944 11h4.306a.75.75 0 0 1 0 1.5h-4.306a5.001 5.001 0 0 1-9.888 0H2.75a.75.75 0 0 1 0-1.5h4.306a5.001 5.001 0 0 1 9.888 0Zm-1.444.75a3.5 3.5 0 1 0-7 0 3.5 3.5 0 0 0 7 0Z"></path></svg> Building a data pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="lumen_spec/how_to/index.html">How to Guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_spec/how_to/data_intake/index.html">Data Intake</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_intake/files.html">Access Files</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_intake/cache.html">Cache Data</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_spec/how_to/data_processing/index.html">Data Processing</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_processing/pipeline_python.html">Build Pipelines with Python</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_processing/branch_pipeline.html">Branch a Pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_spec/how_to/data_visualization/index.html">Visualize and Deploy</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_visualization/views.html">Define Views</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_visualization/dashboard_python.html">Visualize Dashboards with Python</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_visualization/deploy.html">Deploy</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_spec/how_to/validation/index.html">Validation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/validation/validate.html">Validate Specification</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_spec/how_to/data_output/index.html">Data Output</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/data_output/download_data.html">Enable Data Download</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="lumen_spec/how_to/advanced/index.html">Advanced Topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/advanced/local_components.html">Access Custom Components</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/advanced/auth.html">Configure Authentication</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/advanced/variables_and_references.html">Reference Variables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="lumen_spec/how_to/advanced/callbacks.html">Declare Callbacks</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="gallery/index.html">Gallery</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="gallery/precip.html">Precipitation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gallery/penguins.html">Penguins</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gallery/nyc_taxi.html">NYC Taxi Trips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gallery/bikes.html">London Bike Points</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gallery/seattle.html">Seattle Weather</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="reference/index.html">Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/agent/index.html">Agent</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/SourceAgent.html">SourceAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/ChatAgent.html">ChatAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/LumenBaseAgent.html">LumenBaseAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/AnalystAgent.html">AnalystAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/TableListAgent.html">TableListAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/DocumentListAgent.html">DocumentListAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/SQLAgent.html">SQLAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/DbtslAgent.html">DbtslAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/BaseViewAgent.html">BaseViewAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/AnalysisAgent.html">AnalysisAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/hvPlotAgent.html">hvPlotAgent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/agent/VegaLiteAgent.html">VegaLiteAgent</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/coordinator/index.html">Coordinator</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/coordinator/DependencyResolver.html">DependencyResolver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/coordinator/Planner.html">Planner</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/tool/index.html">Tool</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/tool/Tool.html">Tool</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/tool/FunctionTool.html">FunctionTool</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/tool/DocumentLookup.html">DocumentLookup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/tool/TableLookup.html">TableLookup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/tool/DbtslLookup.html">DbtslLookup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/tool/IterativeTableLookup.html">IterativeTableLookup</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/ui/index.html">UI</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/ui/ChatUI.html">ChatUI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/ui/ExplorerUI.html">ExplorerUI</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/variable/index.html">Variable</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/Constant.html">Constant  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: constant</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/EnvVariable.html">EnvVariable  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: env</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/Widget.html">Widget  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: widget</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/Parameter.html">Parameter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: param</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/URLQuery.html">URLQuery  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: url</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/Cookie.html">Cookie  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: cookie</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/UserInfo.html">UserInfo  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: user</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/variable/Header.html">Header  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: header</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/source/index.html">Source</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/RESTSource.html">RESTSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: rest</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/InMemorySource.html">InMemorySource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/FileSource.html">FileSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: file</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/BaseSQLSource.html">BaseSQLSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/WebsiteSource.html">WebsiteSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: live</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/PanelSessionSource.html">PanelSessionSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: session_info</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/JoinedSource.html">JoinedSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: join</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/DerivedSource.html">DerivedSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: derived</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/JSONSource.html">JSONSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: json</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/DuckDBSource.html">DuckDBSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: duckdb</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/IntakeSource.html">IntakeSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: intake</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/source/IntakeSQLSource.html">IntakeSQLSource  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: intake_sql</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/filter/index.html">Filter</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/ConstantFilter.html">ConstantFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: constant</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/FacetFilter.html">FacetFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: facet</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/ParamFilter.html">ParamFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: param</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/WidgetFilter.html">WidgetFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: widget</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/BinFilter.html">BinFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: bins</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/DateFilter.html">DateFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: date</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/filter/DatetimeFilter.html">DatetimeFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: datetime</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/transform/index.html">Transform</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Filter.html">Filter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/HistoryTransform.html">HistoryTransform  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: history</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Aggregate.html">Aggregate  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: aggregate</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Sort.html">Sort  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sort</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Query.html">Query  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: query</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Columns.html">Columns  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: columns</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Astype.html">Astype  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: as_type</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Stack.html">Stack  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: stack</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Unstack.html">Unstack  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: unstack</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Iloc.html">Iloc  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: iloc</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Sample.html">Sample  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sample</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Compute.html">Compute  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: compute</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Pivot.html">Pivot  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: pivot</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/PivotTable.html">PivotTable  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Melt.html">Melt  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: melt</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SetIndex.html">SetIndex  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: set_index</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/ResetIndex.html">ResetIndex  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: reset_index</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Rename.html">Rename  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: rename</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/RenameAxis.html">RenameAxis  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: rename_axis</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Count.html">Count  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: count</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Sum.html">Sum  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sum</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Eval.html">Eval  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: eval</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/DropNA.html">DropNA  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: dropna</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/Corr.html">Corr  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: corr</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/project_lnglat.html">project_lnglat  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: project_lnglat</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLFormat.html">SQLFormat  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_format</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLGroupBy.html">SQLGroupBy  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_group_by</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLLimit.html">SQLLimit  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_limit</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLDistinct.html">SQLDistinct  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_distinct</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLCount.html">SQLCount  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_count</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLMinMax.html">SQLMinMax  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_minmax</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLColumns.html">SQLColumns  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_columns</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLFilter.html">SQLFilter  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_filter</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLOverride.html">SQLOverride  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLSample.html">SQLSample  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_sample</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLRemoveSourceSeparator.html">SQLRemoveSourceSeparator  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: None</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/transform/SQLSelectFrom.html">SQLSelectFrom  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: sql_select_from</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/view/index.html">View</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/Panel.html">Panel  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: panel</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/StringView.html">StringView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: string</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/IndicatorView.html">IndicatorView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: indicator</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/hvOverlayView.html">hvOverlayView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hv_overlay</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/Table.html">Table  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: table</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/DownloadView.html">DownloadView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: download</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/PerspectiveView.html">PerspectiveView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: perspective</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/VegaLiteView.html">VegaLiteView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: vegalite</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/AltairView.html">AltairView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: altair</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/YdataProfilingView.html">YdataProfilingView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: ydata_profiling</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/GraphicWalker.html">GraphicWalker  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: graphic_walker</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/hvPlotUIView.html">hvPlotUIView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hvplot_ui</span></a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/view/hvPlotView.html">hvPlotView  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: hvplot</span></a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="reference/auth/index.html">Auth</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="reference/auth/Auth.html">Auth</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reference/auth/YamlAuthMapperPlugin.html">YamlAuthMapperPlugin  <span class="sd-sphinx-override sd-badge sd-bg-primary sd-bg-text-primary">type: yaml</span></a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none"></div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+
+<h1 id="index">Index</h1>
+
+<div class="genindex-jumpbox">
+ <a href="#A"><strong>A</strong></a>
+ | <a href="#B"><strong>B</strong></a>
+ | <a href="#C"><strong>C</strong></a>
+ | <a href="#D"><strong>D</strong></a>
+ | <a href="#E"><strong>E</strong></a>
+ | <a href="#F"><strong>F</strong></a>
+ | <a href="#G"><strong>G</strong></a>
+ | <a href="#H"><strong>H</strong></a>
+ | <a href="#I"><strong>I</strong></a>
+ | <a href="#J"><strong>J</strong></a>
+ | <a href="#L"><strong>L</strong></a>
+ | <a href="#M"><strong>M</strong></a>
+ | <a href="#N"><strong>N</strong></a>
+ | <a href="#P"><strong>P</strong></a>
+ | <a href="#Q"><strong>Q</strong></a>
+ | <a href="#R"><strong>R</strong></a>
+ | <a href="#S"><strong>S</strong></a>
+ | <a href="#T"><strong>T</strong></a>
+ | <a href="#U"><strong>U</strong></a>
+ | <a href="#V"><strong>V</strong></a>
+ | <a href="#W"><strong>W</strong></a>
+ | <a href="#Y"><strong>Y</strong></a>
+ 
+</div>
+<h2 id="A">A</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.add_filter">add_filter() (lumen.pipeline.Pipeline method)</a>
+</li>
+      <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.add_table">add_table() (lumen.sources.base.InMemorySource method)</a>
+</li>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.add_transform">add_transform() (lumen.pipeline.Pipeline method)</a>
+</li>
+      <li><a href="reference/agent/index.html#lumen.ai.agents.Agent">Agent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/transform/Aggregate.html#lumen.transforms.base.Aggregate">Aggregate (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView">AltairView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/agent/AnalysisAgent.html#lumen.ai.agents.AnalysisAgent">AnalysisAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/agent/AnalystAgent.html#lumen.ai.agents.AnalystAgent">AnalystAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/Defaults.html#lumen.dashboard.Defaults.apply">apply() (lumen.dashboard.Defaults method)</a>
+
+      <ul>
+        <li><a href="reference/transform/Aggregate.html#lumen.transforms.base.Aggregate.apply">(lumen.transforms.base.Aggregate method)</a>
+</li>
+        <li><a href="reference/transform/Astype.html#lumen.transforms.base.Astype.apply">(lumen.transforms.base.Astype method)</a>
+</li>
+        <li><a href="reference/transform/Columns.html#lumen.transforms.base.Columns.apply">(lumen.transforms.base.Columns method)</a>
+</li>
+        <li><a href="reference/transform/Compute.html#lumen.transforms.base.Compute.apply">(lumen.transforms.base.Compute method)</a>
+</li>
+        <li><a href="reference/transform/Corr.html#lumen.transforms.base.Corr.apply">(lumen.transforms.base.Corr method)</a>
+</li>
+        <li><a href="reference/transform/Count.html#lumen.transforms.base.Count.apply">(lumen.transforms.base.Count method)</a>
+</li>
+        <li><a href="reference/transform/DropNA.html#lumen.transforms.base.DropNA.apply">(lumen.transforms.base.DropNA method)</a>
+</li>
+        <li><a href="reference/transform/Eval.html#lumen.transforms.base.Eval.apply">(lumen.transforms.base.Eval method)</a>
+</li>
+        <li><a href="reference/transform/Filter.html#lumen.transforms.base.Filter.apply">(lumen.transforms.base.Filter method)</a>
+</li>
+        <li><a href="reference/transform/HistoryTransform.html#lumen.transforms.base.HistoryTransform.apply">(lumen.transforms.base.HistoryTransform method)</a>
+</li>
+        <li><a href="reference/transform/Iloc.html#lumen.transforms.base.Iloc.apply">(lumen.transforms.base.Iloc method)</a>
+</li>
+        <li><a href="reference/transform/Melt.html#lumen.transforms.base.Melt.apply">(lumen.transforms.base.Melt method)</a>
+</li>
+        <li><a href="reference/transform/Pivot.html#lumen.transforms.base.Pivot.apply">(lumen.transforms.base.Pivot method)</a>
+</li>
+        <li><a href="reference/transform/PivotTable.html#lumen.transforms.base.PivotTable.apply">(lumen.transforms.base.PivotTable method)</a>
+</li>
+        <li><a href="reference/transform/project_lnglat.html#lumen.transforms.base.project_lnglat.apply">(lumen.transforms.base.project_lnglat method)</a>
+</li>
+        <li><a href="reference/transform/Query.html#lumen.transforms.base.Query.apply">(lumen.transforms.base.Query method)</a>
+</li>
+        <li><a href="reference/transform/Rename.html#lumen.transforms.base.Rename.apply">(lumen.transforms.base.Rename method)</a>
+</li>
+        <li><a href="reference/transform/RenameAxis.html#lumen.transforms.base.RenameAxis.apply">(lumen.transforms.base.RenameAxis method)</a>
+</li>
+        <li><a href="reference/transform/ResetIndex.html#lumen.transforms.base.ResetIndex.apply">(lumen.transforms.base.ResetIndex method)</a>
+</li>
+        <li><a href="reference/transform/Sample.html#lumen.transforms.base.Sample.apply">(lumen.transforms.base.Sample method)</a>
+</li>
+        <li><a href="reference/transform/SetIndex.html#lumen.transforms.base.SetIndex.apply">(lumen.transforms.base.SetIndex method)</a>
+</li>
+        <li><a href="reference/transform/Sort.html#lumen.transforms.base.Sort.apply">(lumen.transforms.base.Sort method)</a>
+</li>
+        <li><a href="reference/transform/Stack.html#lumen.transforms.base.Stack.apply">(lumen.transforms.base.Stack method)</a>
+</li>
+        <li><a href="reference/transform/Sum.html#lumen.transforms.base.Sum.apply">(lumen.transforms.base.Sum method)</a>
+</li>
+        <li><a href="reference/transform/index.html#lumen.transforms.base.Transform.apply">(lumen.transforms.base.Transform method)</a>
+</li>
+        <li><a href="reference/transform/Unstack.html#lumen.transforms.base.Unstack.apply">(lumen.transforms.base.Unstack method)</a>
+</li>
+        <li><a href="reference/transform/SQLColumns.html#lumen.transforms.sql.SQLColumns.apply">(lumen.transforms.sql.SQLColumns method)</a>
+</li>
+        <li><a href="reference/transform/SQLCount.html#lumen.transforms.sql.SQLCount.apply">(lumen.transforms.sql.SQLCount method)</a>
+</li>
+        <li><a href="reference/transform/SQLDistinct.html#lumen.transforms.sql.SQLDistinct.apply">(lumen.transforms.sql.SQLDistinct method)</a>
+</li>
+        <li><a href="reference/transform/SQLFilter.html#lumen.transforms.sql.SQLFilter.apply">(lumen.transforms.sql.SQLFilter method)</a>
+</li>
+        <li><a href="reference/transform/SQLFormat.html#lumen.transforms.sql.SQLFormat.apply">(lumen.transforms.sql.SQLFormat method)</a>
+</li>
+        <li><a href="reference/transform/SQLGroupBy.html#lumen.transforms.sql.SQLGroupBy.apply">(lumen.transforms.sql.SQLGroupBy method)</a>
+</li>
+        <li><a href="reference/transform/SQLLimit.html#lumen.transforms.sql.SQLLimit.apply">(lumen.transforms.sql.SQLLimit method)</a>
+</li>
+        <li><a href="reference/transform/SQLMinMax.html#lumen.transforms.sql.SQLMinMax.apply">(lumen.transforms.sql.SQLMinMax method)</a>
+</li>
+        <li><a href="reference/transform/SQLOverride.html#lumen.transforms.sql.SQLOverride.apply">(lumen.transforms.sql.SQLOverride method)</a>
+</li>
+        <li><a href="reference/transform/SQLRemoveSourceSeparator.html#lumen.transforms.sql.SQLRemoveSourceSeparator.apply">(lumen.transforms.sql.SQLRemoveSourceSeparator method)</a>
+</li>
+        <li><a href="reference/transform/SQLSample.html#lumen.transforms.sql.SQLSample.apply">(lumen.transforms.sql.SQLSample method)</a>
+</li>
+        <li><a href="reference/transform/SQLSelectFrom.html#lumen.transforms.sql.SQLSelectFrom.apply">(lumen.transforms.sql.SQLSelectFrom method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/variable/Constant.html#lumen.variables.base.Constant.as_materialized">as_materialized() (lumen.variables.base.Constant method)</a>
+
+      <ul>
+        <li><a href="reference/variable/Cookie.html#lumen.variables.base.Cookie.as_materialized">(lumen.variables.base.Cookie method)</a>
+</li>
+        <li><a href="reference/variable/EnvVariable.html#lumen.variables.base.EnvVariable.as_materialized">(lumen.variables.base.EnvVariable method)</a>
+</li>
+        <li><a href="reference/variable/Header.html#lumen.variables.base.Header.as_materialized">(lumen.variables.base.Header method)</a>
+</li>
+        <li><a href="reference/variable/Parameter.html#lumen.variables.base.Parameter.as_materialized">(lumen.variables.base.Parameter method)</a>
+</li>
+        <li><a href="reference/variable/URLQuery.html#lumen.variables.base.URLQuery.as_materialized">(lumen.variables.base.URLQuery method)</a>
+</li>
+        <li><a href="reference/variable/UserInfo.html#lumen.variables.base.UserInfo.as_materialized">(lumen.variables.base.UserInfo method)</a>
+</li>
+        <li><a href="reference/variable/index.html#lumen.variables.base.Variable.as_materialized">(lumen.variables.base.Variable method)</a>
+</li>
+        <li><a href="reference/variable/Widget.html#lumen.variables.base.Widget.as_materialized">(lumen.variables.base.Widget method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/transform/Astype.html#lumen.transforms.base.Astype">Astype (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/auth/Auth.html#lumen.auth.Auth">Auth (class in lumen.auth)</a>, <a href="reference/auth/index.html#lumen.auth.Auth">[1]</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="B">B</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource">BaseSQLSource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/agent/BaseViewAgent.html#lumen.ai.agents.BaseViewAgent">BaseViewAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/filter/BinFilter.html#lumen.filters.base.BinFilter">BinFilter (class in lumen.filters.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="C">C</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.chain">chain() (lumen.pipeline.Pipeline method)</a>
+</li>
+      <li><a href="reference/agent/ChatAgent.html#lumen.ai.agents.ChatAgent">ChatAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/ui/ChatUI.html#lumen.ai.ui.ChatUI">ChatUI (class in lumen.ai.ui)</a>
+</li>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.clear_cache">clear_cache() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource.clear_cache">(lumen.sources.base.DerivedSource method)</a>
+</li>
+        <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource.clear_cache">(lumen.sources.base.FileSource method)</a>
+</li>
+        <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.clear_cache">(lumen.sources.base.InMemorySource method)</a>
+</li>
+        <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource.clear_cache">(lumen.sources.base.JoinedSource method)</a>
+</li>
+        <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource.clear_cache">(lumen.sources.base.JSONSource method)</a>
+</li>
+        <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource.clear_cache">(lumen.sources.base.PanelSessionSource method)</a>
+</li>
+        <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource.clear_cache">(lumen.sources.base.RESTSource method)</a>
+</li>
+        <li><a href="reference/source/index.html#lumen.sources.base.Source.clear_cache">(lumen.sources.base.Source method)</a>
+</li>
+        <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource.clear_cache">(lumen.sources.base.WebsiteSource method)</a>
+</li>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.clear_cache">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource.clear_cache">(lumen.sources.intake.IntakeSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.clear_cache">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.clone">clone() (lumen.pipeline.Pipeline method)</a>
+</li>
+      <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.close">close() (lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+      <li><a href="reference/transform/Columns.html#lumen.transforms.base.Columns">Columns (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/transform/Compute.html#lumen.transforms.base.Compute">Compute (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/Config.html#lumen.dashboard.Config">Config (class in lumen.dashboard)</a>
+</li>
+      <li><a href="reference/variable/Constant.html#lumen.variables.base.Constant">Constant (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/filter/ConstantFilter.html#lumen.filters.base.ConstantFilter">ConstantFilter (class in lumen.filters.base)</a>
+</li>
+      <li><a href="reference/Config.html#lumen.dashboard.Config.construct_template">construct_template() (lumen.dashboard.Config method)</a>
+</li>
+      <li><a href="reference/variable/Cookie.html#lumen.variables.base.Cookie">Cookie (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/coordinator/index.html#lumen.ai.coordinator.Coordinator">Coordinator (class in lumen.ai.coordinator)</a>
+</li>
+      <li><a href="reference/transform/Corr.html#lumen.transforms.base.Corr">Corr (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/transform/Count.html#lumen.transforms.base.Count">Count (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.create_sql_expr_source">create_sql_expr_source() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.create_sql_expr_source">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.create_sql_expr_source">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="D">D</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/filter/DateFilter.html#lumen.filters.base.DateFilter">DateFilter (class in lumen.filters.base)</a>
+</li>
+      <li><a href="reference/filter/DatetimeFilter.html#lumen.filters.base.DatetimeFilter">DatetimeFilter (class in lumen.filters.base)</a>
+</li>
+      <li><a href="reference/agent/DbtslAgent.html#lumen.ai.agents.DbtslAgent">DbtslAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/tool/DbtslLookup.html#lumen.ai.tools.DbtslLookup">DbtslLookup (class in lumen.ai.tools)</a>
+</li>
+      <li><a href="reference/Defaults.html#lumen.dashboard.Defaults">Defaults (class in lumen.dashboard)</a>
+</li>
+      <li><a href="reference/coordinator/DependencyResolver.html#lumen.ai.coordinator.DependencyResolver">DependencyResolver (class in lumen.ai.coordinator)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource">DerivedSource (class in lumen.sources.base)</a>
+</li>
+      <li><a href="reference/agent/DocumentListAgent.html#lumen.ai.agents.DocumentListAgent">DocumentListAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/tool/DocumentLookup.html#lumen.ai.tools.DocumentLookup">DocumentLookup (class in lumen.ai.tools)</a>
+</li>
+      <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView">DownloadView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/transform/DropNA.html#lumen.transforms.base.DropNA">DropNA (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource">DuckDBSource (class in lumen.sources.duckdb)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="E">E</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/variable/EnvVariable.html#lumen.variables.base.EnvVariable">EnvVariable (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/transform/Eval.html#lumen.transforms.base.Eval">Eval (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.execute">execute() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.execute">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.execute">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/ui/ExplorerUI.html#lumen.ai.ui.ExplorerUI">ExplorerUI (class in lumen.ai.ui)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="F">F</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/filter/FacetFilter.html#lumen.filters.base.FacetFilter">FacetFilter (class in lumen.filters.base)</a>
+</li>
+      <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource">FileSource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/filter/index.html#lumen.filters.base.Filter">Filter (class in lumen.filters.base)</a>
+
+      <ul>
+        <li><a href="reference/transform/Filter.html#lumen.transforms.base.Filter">(class in lumen.transforms.base)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/tool/FunctionTool.html#lumen.ai.tools.FunctionTool">FunctionTool (class in lumen.ai.tools)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="G">G</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.get">get() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource.get">(lumen.sources.base.DerivedSource method)</a>
+</li>
+        <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource.get">(lumen.sources.base.FileSource method)</a>
+</li>
+        <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.get">(lumen.sources.base.InMemorySource method)</a>
+</li>
+        <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource.get">(lumen.sources.base.JoinedSource method)</a>
+</li>
+        <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource.get">(lumen.sources.base.JSONSource method)</a>
+</li>
+        <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource.get">(lumen.sources.base.PanelSessionSource method)</a>
+</li>
+        <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource.get">(lumen.sources.base.RESTSource method)</a>
+</li>
+        <li><a href="reference/source/index.html#lumen.sources.base.Source.get">(lumen.sources.base.Source method)</a>
+</li>
+        <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource.get">(lumen.sources.base.WebsiteSource method)</a>
+</li>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.get">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource.get">(lumen.sources.intake.IntakeSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.get">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/Layout.html#lumen.layout.Layout.get_cards">get_cards() (lumen.layout.Layout method)</a>
+</li>
+      <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.get_data">get_data() (lumen.views.base.AltairView method)</a>
+
+      <ul>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.get_data">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.get_data">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.get_data">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.get_data">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.get_data">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.get_data">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.get_data">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.get_data">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.get_data">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.get_data">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.get_data">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.get_data">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.get_data">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/Layout.html#lumen.layout.Layout.get_filter_panel">get_filter_panel() (lumen.layout.Layout method)</a>
+</li>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.get_metadata">get_metadata() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource.get_metadata">(lumen.sources.base.DerivedSource method)</a>
+</li>
+        <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource.get_metadata">(lumen.sources.base.FileSource method)</a>
+</li>
+        <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.get_metadata">(lumen.sources.base.InMemorySource method)</a>
+</li>
+        <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource.get_metadata">(lumen.sources.base.JoinedSource method)</a>
+</li>
+        <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource.get_metadata">(lumen.sources.base.JSONSource method)</a>
+</li>
+        <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource.get_metadata">(lumen.sources.base.PanelSessionSource method)</a>
+</li>
+        <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource.get_metadata">(lumen.sources.base.RESTSource method)</a>
+</li>
+        <li><a href="reference/source/index.html#lumen.sources.base.Source.get_metadata">(lumen.sources.base.Source method)</a>
+</li>
+        <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource.get_metadata">(lumen.sources.base.WebsiteSource method)</a>
+</li>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.get_metadata">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource.get_metadata">(lumen.sources.intake.IntakeSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.get_metadata">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.get_panel">get_panel() (lumen.views.base.AltairView method)</a>
+
+      <ul>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.get_panel">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.get_panel">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.get_panel">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.get_panel">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.get_panel">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.get_panel">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.get_panel">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.get_panel">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.get_panel">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.get_panel">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.get_panel">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.get_panel">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.get_panel">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.get_plot">get_plot() (lumen.views.base.hvPlotView method)</a>
+</li>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.get_schema">get_schema() (lumen.pipeline.Pipeline method)</a>
+
+      <ul>
+        <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.get_schema">(lumen.sources.base.BaseSQLSource method)</a>
+</li>
+        <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource.get_schema">(lumen.sources.base.DerivedSource method)</a>
+</li>
+        <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource.get_schema">(lumen.sources.base.FileSource method)</a>
+</li>
+        <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.get_schema">(lumen.sources.base.InMemorySource method)</a>
+</li>
+        <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource.get_schema">(lumen.sources.base.JoinedSource method)</a>
+</li>
+        <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource.get_schema">(lumen.sources.base.JSONSource method)</a>
+</li>
+        <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource.get_schema">(lumen.sources.base.PanelSessionSource method)</a>
+</li>
+        <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource.get_schema">(lumen.sources.base.RESTSource method)</a>
+</li>
+        <li><a href="reference/source/index.html#lumen.sources.base.Source.get_schema">(lumen.sources.base.Source method)</a>
+</li>
+        <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource.get_schema">(lumen.sources.base.WebsiteSource method)</a>
+</li>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.get_schema">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource.get_schema">(lumen.sources.intake.IntakeSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.get_schema">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.get_sql_expr">get_sql_expr() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.get_sql_expr">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.get_sql_expr">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.get_tables">get_tables() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource.get_tables">(lumen.sources.base.DerivedSource method)</a>
+</li>
+        <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource.get_tables">(lumen.sources.base.FileSource method)</a>
+</li>
+        <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.get_tables">(lumen.sources.base.InMemorySource method)</a>
+</li>
+        <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource.get_tables">(lumen.sources.base.JoinedSource method)</a>
+</li>
+        <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource.get_tables">(lumen.sources.base.JSONSource method)</a>
+</li>
+        <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource.get_tables">(lumen.sources.base.PanelSessionSource method)</a>
+</li>
+        <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource.get_tables">(lumen.sources.base.RESTSource method)</a>
+</li>
+        <li><a href="reference/source/index.html#lumen.sources.base.Source.get_tables">(lumen.sources.base.Source method)</a>
+</li>
+        <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource.get_tables">(lumen.sources.base.WebsiteSource method)</a>
+</li>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.get_tables">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource.get_tables">(lumen.sources.intake.IntakeSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.get_tables">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.get_value">get_value() (lumen.views.base.AltairView method)</a>
+
+      <ul>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.get_value">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.get_value">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.get_value">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.get_value">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.get_value">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.get_value">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.get_value">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.get_value">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.get_value">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.get_value">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.get_value">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.get_value">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.get_value">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker">GraphicWalker (class in lumen.views.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="H">H</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/variable/Header.html#lumen.variables.base.Header">Header (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/transform/HistoryTransform.html#lumen.transforms.base.HistoryTransform">HistoryTransform (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView">hvOverlayView (class in lumen.views.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/agent/hvPlotAgent.html#lumen.ai.agents.hvPlotAgent">hvPlotAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView">hvPlotUIView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView">hvPlotView (class in lumen.views.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="I">I</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/Iloc.html#lumen.transforms.base.Iloc">Iloc (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView">IndicatorView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource">InMemorySource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource">IntakeSource (class in lumen.sources.intake)</a>
+</li>
+      <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource">IntakeSQLSource (class in lumen.sources.intake_sql)</a>
+</li>
+      <li><a href="reference/tool/IterativeTableLookup.html#lumen.ai.tools.IterativeTableLookup">IterativeTableLookup (class in lumen.ai.tools)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="J">J</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource">JoinedSource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource">JSONSource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="L">L</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/Layout.html#lumen.layout.Layout">Layout (class in lumen.layout)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/agent/LumenBaseAgent.html#lumen.ai.agents.LumenBaseAgent">LumenBaseAgent (class in lumen.ai.agents)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="M">M</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/Melt.html#lumen.transforms.base.Melt">Melt (class in lumen.transforms.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="N">N</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.normalize_table">normalize_table() (lumen.sources.base.BaseSQLSource method)</a>
+
+      <ul>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.normalize_table">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.normalize_table">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="P">P</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/view/Panel.html#lumen.views.base.Panel">Panel (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource">PanelSessionSource (class in lumen.sources.base)</a>
+</li>
+      <li><a href="reference/variable/Parameter.html#lumen.variables.base.Parameter">Parameter (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/filter/ParamFilter.html#lumen.filters.base.ParamFilter">ParamFilter (class in lumen.filters.base)</a>
+</li>
+      <li><a href="reference/transform/SQLColumns.html#lumen.transforms.sql.SQLColumns.parse_sql">parse_sql() (lumen.transforms.sql.SQLColumns method)</a>
+
+      <ul>
+        <li><a href="reference/transform/SQLCount.html#lumen.transforms.sql.SQLCount.parse_sql">(lumen.transforms.sql.SQLCount method)</a>
+</li>
+        <li><a href="reference/transform/SQLDistinct.html#lumen.transforms.sql.SQLDistinct.parse_sql">(lumen.transforms.sql.SQLDistinct method)</a>
+</li>
+        <li><a href="reference/transform/SQLFilter.html#lumen.transforms.sql.SQLFilter.parse_sql">(lumen.transforms.sql.SQLFilter method)</a>
+</li>
+        <li><a href="reference/transform/SQLFormat.html#lumen.transforms.sql.SQLFormat.parse_sql">(lumen.transforms.sql.SQLFormat method)</a>
+</li>
+        <li><a href="reference/transform/SQLGroupBy.html#lumen.transforms.sql.SQLGroupBy.parse_sql">(lumen.transforms.sql.SQLGroupBy method)</a>
+</li>
+        <li><a href="reference/transform/SQLLimit.html#lumen.transforms.sql.SQLLimit.parse_sql">(lumen.transforms.sql.SQLLimit method)</a>
+</li>
+        <li><a href="reference/transform/SQLMinMax.html#lumen.transforms.sql.SQLMinMax.parse_sql">(lumen.transforms.sql.SQLMinMax method)</a>
+</li>
+        <li><a href="reference/transform/SQLOverride.html#lumen.transforms.sql.SQLOverride.parse_sql">(lumen.transforms.sql.SQLOverride method)</a>
+</li>
+        <li><a href="reference/transform/SQLRemoveSourceSeparator.html#lumen.transforms.sql.SQLRemoveSourceSeparator.parse_sql">(lumen.transforms.sql.SQLRemoveSourceSeparator method)</a>
+</li>
+        <li><a href="reference/transform/SQLSample.html#lumen.transforms.sql.SQLSample.parse_sql">(lumen.transforms.sql.SQLSample method)</a>
+</li>
+        <li><a href="reference/transform/SQLSelectFrom.html#lumen.transforms.sql.SQLSelectFrom.parse_sql">(lumen.transforms.sql.SQLSelectFrom method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView">PerspectiveView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline">Pipeline (class in lumen.pipeline)</a>
+</li>
+      <li><a href="reference/transform/Pivot.html#lumen.transforms.base.Pivot">Pivot (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/transform/PivotTable.html#lumen.transforms.base.PivotTable">PivotTable (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/coordinator/Planner.html#lumen.ai.coordinator.Planner">Planner (class in lumen.ai.coordinator)</a>
+</li>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.precache">precache() (lumen.pipeline.Pipeline method)</a>
+</li>
+      <li><a href="reference/transform/project_lnglat.html#lumen.transforms.base.project_lnglat">project_lnglat (class in lumen.transforms.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="Q">Q</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/Query.html#lumen.transforms.base.Query">Query (class in lumen.transforms.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="R">R</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/Rename.html#lumen.transforms.base.Rename">Rename (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/transform/RenameAxis.html#lumen.transforms.base.RenameAxis">RenameAxis (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/agent/index.html#lumen.ai.agents.Agent.requirements">requirements() (lumen.ai.agents.Agent method)</a>
+
+      <ul>
+        <li><a href="reference/agent/AnalysisAgent.html#lumen.ai.agents.AnalysisAgent.requirements">(lumen.ai.agents.AnalysisAgent method)</a>
+</li>
+        <li><a href="reference/agent/AnalystAgent.html#lumen.ai.agents.AnalystAgent.requirements">(lumen.ai.agents.AnalystAgent method)</a>
+</li>
+        <li><a href="reference/agent/BaseViewAgent.html#lumen.ai.agents.BaseViewAgent.requirements">(lumen.ai.agents.BaseViewAgent method)</a>
+</li>
+        <li><a href="reference/agent/ChatAgent.html#lumen.ai.agents.ChatAgent.requirements">(lumen.ai.agents.ChatAgent method)</a>
+</li>
+        <li><a href="reference/agent/DbtslAgent.html#lumen.ai.agents.DbtslAgent.requirements">(lumen.ai.agents.DbtslAgent method)</a>
+</li>
+        <li><a href="reference/agent/DocumentListAgent.html#lumen.ai.agents.DocumentListAgent.requirements">(lumen.ai.agents.DocumentListAgent method)</a>
+</li>
+        <li><a href="reference/agent/hvPlotAgent.html#lumen.ai.agents.hvPlotAgent.requirements">(lumen.ai.agents.hvPlotAgent method)</a>
+</li>
+        <li><a href="reference/agent/LumenBaseAgent.html#lumen.ai.agents.LumenBaseAgent.requirements">(lumen.ai.agents.LumenBaseAgent method)</a>
+</li>
+        <li><a href="reference/agent/SourceAgent.html#lumen.ai.agents.SourceAgent.requirements">(lumen.ai.agents.SourceAgent method)</a>
+</li>
+        <li><a href="reference/agent/SQLAgent.html#lumen.ai.agents.SQLAgent.requirements">(lumen.ai.agents.SQLAgent method)</a>
+</li>
+        <li><a href="reference/agent/TableListAgent.html#lumen.ai.agents.TableListAgent.requirements">(lumen.ai.agents.TableListAgent method)</a>
+</li>
+        <li><a href="reference/agent/VegaLiteAgent.html#lumen.ai.agents.VegaLiteAgent.requirements">(lumen.ai.agents.VegaLiteAgent method)</a>
+</li>
+        <li><a href="reference/tool/DbtslLookup.html#lumen.ai.tools.DbtslLookup.requirements">(lumen.ai.tools.DbtslLookup method)</a>
+</li>
+        <li><a href="reference/tool/DocumentLookup.html#lumen.ai.tools.DocumentLookup.requirements">(lumen.ai.tools.DocumentLookup method)</a>
+</li>
+        <li><a href="reference/tool/FunctionTool.html#lumen.ai.tools.FunctionTool.requirements">(lumen.ai.tools.FunctionTool method)</a>
+</li>
+        <li><a href="reference/tool/IterativeTableLookup.html#lumen.ai.tools.IterativeTableLookup.requirements">(lumen.ai.tools.IterativeTableLookup method)</a>
+</li>
+        <li><a href="reference/tool/TableLookup.html#lumen.ai.tools.TableLookup.requirements">(lumen.ai.tools.TableLookup method)</a>
+</li>
+        <li><a href="reference/tool/Tool.html#lumen.ai.tools.Tool.requirements">(lumen.ai.tools.Tool method)</a>, <a href="reference/tool/index.html#lumen.ai.tools.Tool.requirements">[1]</a>
+</li>
+      </ul></li>
+      <li><a href="reference/transform/ResetIndex.html#lumen.transforms.base.ResetIndex">ResetIndex (class in lumen.transforms.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/agent/index.html#lumen.ai.agents.Agent.respond">respond() (lumen.ai.agents.Agent method)</a>
+
+      <ul>
+        <li><a href="reference/agent/AnalysisAgent.html#lumen.ai.agents.AnalysisAgent.respond">(lumen.ai.agents.AnalysisAgent method)</a>
+</li>
+        <li><a href="reference/agent/AnalystAgent.html#lumen.ai.agents.AnalystAgent.respond">(lumen.ai.agents.AnalystAgent method)</a>
+</li>
+        <li><a href="reference/agent/BaseViewAgent.html#lumen.ai.agents.BaseViewAgent.respond">(lumen.ai.agents.BaseViewAgent method)</a>
+</li>
+        <li><a href="reference/agent/ChatAgent.html#lumen.ai.agents.ChatAgent.respond">(lumen.ai.agents.ChatAgent method)</a>
+</li>
+        <li><a href="reference/agent/DbtslAgent.html#lumen.ai.agents.DbtslAgent.respond">(lumen.ai.agents.DbtslAgent method)</a>
+</li>
+        <li><a href="reference/agent/DocumentListAgent.html#lumen.ai.agents.DocumentListAgent.respond">(lumen.ai.agents.DocumentListAgent method)</a>
+</li>
+        <li><a href="reference/agent/hvPlotAgent.html#lumen.ai.agents.hvPlotAgent.respond">(lumen.ai.agents.hvPlotAgent method)</a>
+</li>
+        <li><a href="reference/agent/LumenBaseAgent.html#lumen.ai.agents.LumenBaseAgent.respond">(lumen.ai.agents.LumenBaseAgent method)</a>
+</li>
+        <li><a href="reference/agent/SourceAgent.html#lumen.ai.agents.SourceAgent.respond">(lumen.ai.agents.SourceAgent method)</a>
+</li>
+        <li><a href="reference/agent/SQLAgent.html#lumen.ai.agents.SQLAgent.respond">(lumen.ai.agents.SQLAgent method)</a>
+</li>
+        <li><a href="reference/agent/TableListAgent.html#lumen.ai.agents.TableListAgent.respond">(lumen.ai.agents.TableListAgent method)</a>
+</li>
+        <li><a href="reference/agent/VegaLiteAgent.html#lumen.ai.agents.VegaLiteAgent.respond">(lumen.ai.agents.VegaLiteAgent method)</a>
+</li>
+        <li><a href="reference/coordinator/index.html#lumen.ai.coordinator.Coordinator.respond">(lumen.ai.coordinator.Coordinator method)</a>
+</li>
+        <li><a href="reference/coordinator/DependencyResolver.html#lumen.ai.coordinator.DependencyResolver.respond">(lumen.ai.coordinator.DependencyResolver method)</a>
+</li>
+        <li><a href="reference/coordinator/Planner.html#lumen.ai.coordinator.Planner.respond">(lumen.ai.coordinator.Planner method)</a>
+</li>
+        <li><a href="reference/tool/DbtslLookup.html#lumen.ai.tools.DbtslLookup.respond">(lumen.ai.tools.DbtslLookup method)</a>
+</li>
+        <li><a href="reference/tool/DocumentLookup.html#lumen.ai.tools.DocumentLookup.respond">(lumen.ai.tools.DocumentLookup method)</a>
+</li>
+        <li><a href="reference/tool/FunctionTool.html#lumen.ai.tools.FunctionTool.respond">(lumen.ai.tools.FunctionTool method)</a>
+</li>
+        <li><a href="reference/tool/IterativeTableLookup.html#lumen.ai.tools.IterativeTableLookup.respond">(lumen.ai.tools.IterativeTableLookup method)</a>
+</li>
+        <li><a href="reference/tool/TableLookup.html#lumen.ai.tools.TableLookup.respond">(lumen.ai.tools.TableLookup method)</a>
+</li>
+        <li><a href="reference/tool/Tool.html#lumen.ai.tools.Tool.respond">(lumen.ai.tools.Tool method)</a>, <a href="reference/tool/index.html#lumen.ai.tools.Tool.respond">[1]</a>
+</li>
+      </ul></li>
+      <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource">RESTSource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="S">S</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/Sample.html#lumen.transforms.base.Sample">Sample (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/agent/index.html#lumen.ai.agents.Agent.servable">servable() (lumen.ai.agents.Agent method)</a>
+
+      <ul>
+        <li><a href="reference/agent/AnalysisAgent.html#lumen.ai.agents.AnalysisAgent.servable">(lumen.ai.agents.AnalysisAgent method)</a>
+</li>
+        <li><a href="reference/agent/AnalystAgent.html#lumen.ai.agents.AnalystAgent.servable">(lumen.ai.agents.AnalystAgent method)</a>
+</li>
+        <li><a href="reference/agent/BaseViewAgent.html#lumen.ai.agents.BaseViewAgent.servable">(lumen.ai.agents.BaseViewAgent method)</a>
+</li>
+        <li><a href="reference/agent/ChatAgent.html#lumen.ai.agents.ChatAgent.servable">(lumen.ai.agents.ChatAgent method)</a>
+</li>
+        <li><a href="reference/agent/DbtslAgent.html#lumen.ai.agents.DbtslAgent.servable">(lumen.ai.agents.DbtslAgent method)</a>
+</li>
+        <li><a href="reference/agent/DocumentListAgent.html#lumen.ai.agents.DocumentListAgent.servable">(lumen.ai.agents.DocumentListAgent method)</a>
+</li>
+        <li><a href="reference/agent/hvPlotAgent.html#lumen.ai.agents.hvPlotAgent.servable">(lumen.ai.agents.hvPlotAgent method)</a>
+</li>
+        <li><a href="reference/agent/LumenBaseAgent.html#lumen.ai.agents.LumenBaseAgent.servable">(lumen.ai.agents.LumenBaseAgent method)</a>
+</li>
+        <li><a href="reference/agent/SourceAgent.html#lumen.ai.agents.SourceAgent.servable">(lumen.ai.agents.SourceAgent method)</a>
+</li>
+        <li><a href="reference/agent/SQLAgent.html#lumen.ai.agents.SQLAgent.servable">(lumen.ai.agents.SQLAgent method)</a>
+</li>
+        <li><a href="reference/agent/TableListAgent.html#lumen.ai.agents.TableListAgent.servable">(lumen.ai.agents.TableListAgent method)</a>
+</li>
+        <li><a href="reference/agent/VegaLiteAgent.html#lumen.ai.agents.VegaLiteAgent.servable">(lumen.ai.agents.VegaLiteAgent method)</a>
+</li>
+        <li><a href="reference/coordinator/index.html#lumen.ai.coordinator.Coordinator.servable">(lumen.ai.coordinator.Coordinator method)</a>
+</li>
+        <li><a href="reference/coordinator/DependencyResolver.html#lumen.ai.coordinator.DependencyResolver.servable">(lumen.ai.coordinator.DependencyResolver method)</a>
+</li>
+        <li><a href="reference/coordinator/Planner.html#lumen.ai.coordinator.Planner.servable">(lumen.ai.coordinator.Planner method)</a>
+</li>
+        <li><a href="reference/ui/ChatUI.html#lumen.ai.ui.ChatUI.servable">(lumen.ai.ui.ChatUI method)</a>
+</li>
+        <li><a href="reference/ui/ExplorerUI.html#lumen.ai.ui.ExplorerUI.servable">(lumen.ai.ui.ExplorerUI method)</a>
+</li>
+        <li><a href="reference/ui/index.html#lumen.ai.ui.UI.servable">(lumen.ai.ui.UI method)</a>
+</li>
+        <li><a href="reference/Layout.html#lumen.layout.Layout.servable">(lumen.layout.Layout method)</a>
+</li>
+        <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.servable">(lumen.pipeline.Pipeline method)</a>
+</li>
+        <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.servable">(lumen.views.base.AltairView method)</a>
+</li>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.servable">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.servable">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.servable">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.servable">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.servable">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.servable">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.servable">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.servable">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.servable">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.servable">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.servable">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.servable">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.servable">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/transform/SetIndex.html#lumen.transforms.base.SetIndex">SetIndex (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/agent/index.html#lumen.ai.agents.Agent.show">show() (lumen.ai.agents.Agent method)</a>
+
+      <ul>
+        <li><a href="reference/agent/AnalysisAgent.html#lumen.ai.agents.AnalysisAgent.show">(lumen.ai.agents.AnalysisAgent method)</a>
+</li>
+        <li><a href="reference/agent/AnalystAgent.html#lumen.ai.agents.AnalystAgent.show">(lumen.ai.agents.AnalystAgent method)</a>
+</li>
+        <li><a href="reference/agent/BaseViewAgent.html#lumen.ai.agents.BaseViewAgent.show">(lumen.ai.agents.BaseViewAgent method)</a>
+</li>
+        <li><a href="reference/agent/ChatAgent.html#lumen.ai.agents.ChatAgent.show">(lumen.ai.agents.ChatAgent method)</a>
+</li>
+        <li><a href="reference/agent/DbtslAgent.html#lumen.ai.agents.DbtslAgent.show">(lumen.ai.agents.DbtslAgent method)</a>
+</li>
+        <li><a href="reference/agent/DocumentListAgent.html#lumen.ai.agents.DocumentListAgent.show">(lumen.ai.agents.DocumentListAgent method)</a>
+</li>
+        <li><a href="reference/agent/hvPlotAgent.html#lumen.ai.agents.hvPlotAgent.show">(lumen.ai.agents.hvPlotAgent method)</a>
+</li>
+        <li><a href="reference/agent/LumenBaseAgent.html#lumen.ai.agents.LumenBaseAgent.show">(lumen.ai.agents.LumenBaseAgent method)</a>
+</li>
+        <li><a href="reference/agent/SourceAgent.html#lumen.ai.agents.SourceAgent.show">(lumen.ai.agents.SourceAgent method)</a>
+</li>
+        <li><a href="reference/agent/SQLAgent.html#lumen.ai.agents.SQLAgent.show">(lumen.ai.agents.SQLAgent method)</a>
+</li>
+        <li><a href="reference/agent/TableListAgent.html#lumen.ai.agents.TableListAgent.show">(lumen.ai.agents.TableListAgent method)</a>
+</li>
+        <li><a href="reference/agent/VegaLiteAgent.html#lumen.ai.agents.VegaLiteAgent.show">(lumen.ai.agents.VegaLiteAgent method)</a>
+</li>
+        <li><a href="reference/coordinator/index.html#lumen.ai.coordinator.Coordinator.show">(lumen.ai.coordinator.Coordinator method)</a>
+</li>
+        <li><a href="reference/coordinator/DependencyResolver.html#lumen.ai.coordinator.DependencyResolver.show">(lumen.ai.coordinator.DependencyResolver method)</a>
+</li>
+        <li><a href="reference/coordinator/Planner.html#lumen.ai.coordinator.Planner.show">(lumen.ai.coordinator.Planner method)</a>
+</li>
+        <li><a href="reference/ui/ChatUI.html#lumen.ai.ui.ChatUI.show">(lumen.ai.ui.ChatUI method)</a>
+</li>
+        <li><a href="reference/ui/ExplorerUI.html#lumen.ai.ui.ExplorerUI.show">(lumen.ai.ui.ExplorerUI method)</a>
+</li>
+        <li><a href="reference/ui/index.html#lumen.ai.ui.UI.show">(lumen.ai.ui.UI method)</a>
+</li>
+        <li><a href="reference/Layout.html#lumen.layout.Layout.show">(lumen.layout.Layout method)</a>
+</li>
+        <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.show">(lumen.pipeline.Pipeline method)</a>
+</li>
+        <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.show">(lumen.views.base.AltairView method)</a>
+</li>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.show">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.show">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.show">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.show">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.show">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.show">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.show">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.show">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.show">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.show">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.show">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.show">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.show">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/Sort.html#lumen.transforms.base.Sort">Sort (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/source/index.html#lumen.sources.base.Source">Source (class in lumen.sources.base)</a>
+</li>
+      <li><a href="reference/agent/SourceAgent.html#lumen.ai.agents.SourceAgent">SourceAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/agent/SQLAgent.html#lumen.ai.agents.SQLAgent">SQLAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/transform/SQLColumns.html#lumen.transforms.sql.SQLColumns">SQLColumns (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLCount.html#lumen.transforms.sql.SQLCount">SQLCount (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLDistinct.html#lumen.transforms.sql.SQLDistinct">SQLDistinct (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLFilter.html#lumen.transforms.sql.SQLFilter">SQLFilter (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLFormat.html#lumen.transforms.sql.SQLFormat">SQLFormat (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLGroupBy.html#lumen.transforms.sql.SQLGroupBy">SQLGroupBy (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLLimit.html#lumen.transforms.sql.SQLLimit">SQLLimit (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLMinMax.html#lumen.transforms.sql.SQLMinMax">SQLMinMax (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLOverride.html#lumen.transforms.sql.SQLOverride">SQLOverride (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLRemoveSourceSeparator.html#lumen.transforms.sql.SQLRemoveSourceSeparator">SQLRemoveSourceSeparator (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLSample.html#lumen.transforms.sql.SQLSample">SQLSample (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/SQLSelectFrom.html#lumen.transforms.sql.SQLSelectFrom">SQLSelectFrom (class in lumen.transforms.sql)</a>
+</li>
+      <li><a href="reference/transform/Stack.html#lumen.transforms.base.Stack">Stack (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/Layout.html#lumen.layout.Layout.start">start() (lumen.layout.Layout method)</a>
+</li>
+      <li><a href="reference/view/StringView.html#lumen.views.base.StringView">StringView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/transform/Sum.html#lumen.transforms.base.Sum">Sum (class in lumen.transforms.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="T">T</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/view/Table.html#lumen.views.base.Table">Table (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/agent/TableListAgent.html#lumen.ai.agents.TableListAgent">TableListAgent (class in lumen.ai.agents)</a>
+</li>
+      <li><a href="reference/tool/TableLookup.html#lumen.ai.tools.TableLookup">TableLookup (class in lumen.ai.tools)</a>
+</li>
+      <li><a href="reference/auth/Auth.html#lumen.auth.Auth.to_spec">to_spec() (lumen.auth.Auth method)</a>, <a href="reference/auth/index.html#lumen.auth.Auth.to_spec">[1]</a>
+
+      <ul>
+        <li><a href="reference/auth/YamlAuthMapperPlugin.html#lumen.auth.YamlAuthMapperPlugin.to_spec">(lumen.auth.YamlAuthMapperPlugin method)</a>
+</li>
+        <li><a href="reference/Config.html#lumen.dashboard.Config.to_spec">(lumen.dashboard.Config method)</a>
+</li>
+        <li><a href="reference/Defaults.html#lumen.dashboard.Defaults.to_spec">(lumen.dashboard.Defaults method)</a>
+</li>
+        <li><a href="reference/filter/BinFilter.html#lumen.filters.base.BinFilter.to_spec">(lumen.filters.base.BinFilter method)</a>
+</li>
+        <li><a href="reference/filter/ConstantFilter.html#lumen.filters.base.ConstantFilter.to_spec">(lumen.filters.base.ConstantFilter method)</a>
+</li>
+        <li><a href="reference/filter/DateFilter.html#lumen.filters.base.DateFilter.to_spec">(lumen.filters.base.DateFilter method)</a>
+</li>
+        <li><a href="reference/filter/DatetimeFilter.html#lumen.filters.base.DatetimeFilter.to_spec">(lumen.filters.base.DatetimeFilter method)</a>
+</li>
+        <li><a href="reference/filter/FacetFilter.html#lumen.filters.base.FacetFilter.to_spec">(lumen.filters.base.FacetFilter method)</a>
+</li>
+        <li><a href="reference/filter/index.html#lumen.filters.base.Filter.to_spec">(lumen.filters.base.Filter method)</a>
+</li>
+        <li><a href="reference/filter/ParamFilter.html#lumen.filters.base.ParamFilter.to_spec">(lumen.filters.base.ParamFilter method)</a>
+</li>
+        <li><a href="reference/filter/WidgetFilter.html#lumen.filters.base.WidgetFilter.to_spec">(lumen.filters.base.WidgetFilter method)</a>
+</li>
+        <li><a href="reference/Layout.html#lumen.layout.Layout.to_spec">(lumen.layout.Layout method)</a>
+</li>
+        <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.to_spec">(lumen.pipeline.Pipeline method)</a>
+</li>
+        <li><a href="reference/source/BaseSQLSource.html#lumen.sources.base.BaseSQLSource.to_spec">(lumen.sources.base.BaseSQLSource method)</a>
+</li>
+        <li><a href="reference/source/DerivedSource.html#lumen.sources.base.DerivedSource.to_spec">(lumen.sources.base.DerivedSource method)</a>
+</li>
+        <li><a href="reference/source/FileSource.html#lumen.sources.base.FileSource.to_spec">(lumen.sources.base.FileSource method)</a>
+</li>
+        <li><a href="reference/source/InMemorySource.html#lumen.sources.base.InMemorySource.to_spec">(lumen.sources.base.InMemorySource method)</a>
+</li>
+        <li><a href="reference/source/JoinedSource.html#lumen.sources.base.JoinedSource.to_spec">(lumen.sources.base.JoinedSource method)</a>
+</li>
+        <li><a href="reference/source/JSONSource.html#lumen.sources.base.JSONSource.to_spec">(lumen.sources.base.JSONSource method)</a>
+</li>
+        <li><a href="reference/source/PanelSessionSource.html#lumen.sources.base.PanelSessionSource.to_spec">(lumen.sources.base.PanelSessionSource method)</a>
+</li>
+        <li><a href="reference/source/RESTSource.html#lumen.sources.base.RESTSource.to_spec">(lumen.sources.base.RESTSource method)</a>
+</li>
+        <li><a href="reference/source/index.html#lumen.sources.base.Source.to_spec">(lumen.sources.base.Source method)</a>
+</li>
+        <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource.to_spec">(lumen.sources.base.WebsiteSource method)</a>
+</li>
+        <li><a href="reference/source/DuckDBSource.html#lumen.sources.duckdb.DuckDBSource.to_spec">(lumen.sources.duckdb.DuckDBSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSource.html#lumen.sources.intake.IntakeSource.to_spec">(lumen.sources.intake.IntakeSource method)</a>
+</li>
+        <li><a href="reference/source/IntakeSQLSource.html#lumen.sources.intake_sql.IntakeSQLSource.to_spec">(lumen.sources.intake_sql.IntakeSQLSource method)</a>
+</li>
+        <li><a href="reference/transform/Aggregate.html#lumen.transforms.base.Aggregate.to_spec">(lumen.transforms.base.Aggregate method)</a>
+</li>
+        <li><a href="reference/transform/Astype.html#lumen.transforms.base.Astype.to_spec">(lumen.transforms.base.Astype method)</a>
+</li>
+        <li><a href="reference/transform/Columns.html#lumen.transforms.base.Columns.to_spec">(lumen.transforms.base.Columns method)</a>
+</li>
+        <li><a href="reference/transform/Compute.html#lumen.transforms.base.Compute.to_spec">(lumen.transforms.base.Compute method)</a>
+</li>
+        <li><a href="reference/transform/Corr.html#lumen.transforms.base.Corr.to_spec">(lumen.transforms.base.Corr method)</a>
+</li>
+        <li><a href="reference/transform/Count.html#lumen.transforms.base.Count.to_spec">(lumen.transforms.base.Count method)</a>
+</li>
+        <li><a href="reference/transform/DropNA.html#lumen.transforms.base.DropNA.to_spec">(lumen.transforms.base.DropNA method)</a>
+</li>
+        <li><a href="reference/transform/Eval.html#lumen.transforms.base.Eval.to_spec">(lumen.transforms.base.Eval method)</a>
+</li>
+        <li><a href="reference/transform/Filter.html#lumen.transforms.base.Filter.to_spec">(lumen.transforms.base.Filter method)</a>
+</li>
+        <li><a href="reference/transform/HistoryTransform.html#lumen.transforms.base.HistoryTransform.to_spec">(lumen.transforms.base.HistoryTransform method)</a>
+</li>
+        <li><a href="reference/transform/Iloc.html#lumen.transforms.base.Iloc.to_spec">(lumen.transforms.base.Iloc method)</a>
+</li>
+        <li><a href="reference/transform/Melt.html#lumen.transforms.base.Melt.to_spec">(lumen.transforms.base.Melt method)</a>
+</li>
+        <li><a href="reference/transform/Pivot.html#lumen.transforms.base.Pivot.to_spec">(lumen.transforms.base.Pivot method)</a>
+</li>
+        <li><a href="reference/transform/PivotTable.html#lumen.transforms.base.PivotTable.to_spec">(lumen.transforms.base.PivotTable method)</a>
+</li>
+        <li><a href="reference/transform/project_lnglat.html#lumen.transforms.base.project_lnglat.to_spec">(lumen.transforms.base.project_lnglat method)</a>
+</li>
+        <li><a href="reference/transform/Query.html#lumen.transforms.base.Query.to_spec">(lumen.transforms.base.Query method)</a>
+</li>
+        <li><a href="reference/transform/Rename.html#lumen.transforms.base.Rename.to_spec">(lumen.transforms.base.Rename method)</a>
+</li>
+        <li><a href="reference/transform/RenameAxis.html#lumen.transforms.base.RenameAxis.to_spec">(lumen.transforms.base.RenameAxis method)</a>
+</li>
+        <li><a href="reference/transform/ResetIndex.html#lumen.transforms.base.ResetIndex.to_spec">(lumen.transforms.base.ResetIndex method)</a>
+</li>
+        <li><a href="reference/transform/Sample.html#lumen.transforms.base.Sample.to_spec">(lumen.transforms.base.Sample method)</a>
+</li>
+        <li><a href="reference/transform/SetIndex.html#lumen.transforms.base.SetIndex.to_spec">(lumen.transforms.base.SetIndex method)</a>
+</li>
+        <li><a href="reference/transform/Sort.html#lumen.transforms.base.Sort.to_spec">(lumen.transforms.base.Sort method)</a>
+</li>
+        <li><a href="reference/transform/Stack.html#lumen.transforms.base.Stack.to_spec">(lumen.transforms.base.Stack method)</a>
+</li>
+        <li><a href="reference/transform/Sum.html#lumen.transforms.base.Sum.to_spec">(lumen.transforms.base.Sum method)</a>
+</li>
+        <li><a href="reference/transform/index.html#lumen.transforms.base.Transform.to_spec">(lumen.transforms.base.Transform method)</a>
+</li>
+        <li><a href="reference/transform/Unstack.html#lumen.transforms.base.Unstack.to_spec">(lumen.transforms.base.Unstack method)</a>
+</li>
+        <li><a href="reference/transform/SQLColumns.html#lumen.transforms.sql.SQLColumns.to_spec">(lumen.transforms.sql.SQLColumns method)</a>
+</li>
+        <li><a href="reference/transform/SQLCount.html#lumen.transforms.sql.SQLCount.to_spec">(lumen.transforms.sql.SQLCount method)</a>
+</li>
+        <li><a href="reference/transform/SQLDistinct.html#lumen.transforms.sql.SQLDistinct.to_spec">(lumen.transforms.sql.SQLDistinct method)</a>
+</li>
+        <li><a href="reference/transform/SQLFilter.html#lumen.transforms.sql.SQLFilter.to_spec">(lumen.transforms.sql.SQLFilter method)</a>
+</li>
+        <li><a href="reference/transform/SQLFormat.html#lumen.transforms.sql.SQLFormat.to_spec">(lumen.transforms.sql.SQLFormat method)</a>
+</li>
+        <li><a href="reference/transform/SQLGroupBy.html#lumen.transforms.sql.SQLGroupBy.to_spec">(lumen.transforms.sql.SQLGroupBy method)</a>
+</li>
+        <li><a href="reference/transform/SQLLimit.html#lumen.transforms.sql.SQLLimit.to_spec">(lumen.transforms.sql.SQLLimit method)</a>
+</li>
+        <li><a href="reference/transform/SQLMinMax.html#lumen.transforms.sql.SQLMinMax.to_spec">(lumen.transforms.sql.SQLMinMax method)</a>
+</li>
+        <li><a href="reference/transform/SQLOverride.html#lumen.transforms.sql.SQLOverride.to_spec">(lumen.transforms.sql.SQLOverride method)</a>
+</li>
+        <li><a href="reference/transform/SQLRemoveSourceSeparator.html#lumen.transforms.sql.SQLRemoveSourceSeparator.to_spec">(lumen.transforms.sql.SQLRemoveSourceSeparator method)</a>
+</li>
+        <li><a href="reference/transform/SQLSample.html#lumen.transforms.sql.SQLSample.to_spec">(lumen.transforms.sql.SQLSample method)</a>
+</li>
+        <li><a href="reference/transform/SQLSelectFrom.html#lumen.transforms.sql.SQLSelectFrom.to_spec">(lumen.transforms.sql.SQLSelectFrom method)</a>
+</li>
+        <li><a href="reference/variable/Constant.html#lumen.variables.base.Constant.to_spec">(lumen.variables.base.Constant method)</a>
+</li>
+        <li><a href="reference/variable/Cookie.html#lumen.variables.base.Cookie.to_spec">(lumen.variables.base.Cookie method)</a>
+</li>
+        <li><a href="reference/variable/EnvVariable.html#lumen.variables.base.EnvVariable.to_spec">(lumen.variables.base.EnvVariable method)</a>
+</li>
+        <li><a href="reference/variable/Header.html#lumen.variables.base.Header.to_spec">(lumen.variables.base.Header method)</a>
+</li>
+        <li><a href="reference/variable/Parameter.html#lumen.variables.base.Parameter.to_spec">(lumen.variables.base.Parameter method)</a>
+</li>
+        <li><a href="reference/variable/URLQuery.html#lumen.variables.base.URLQuery.to_spec">(lumen.variables.base.URLQuery method)</a>
+</li>
+        <li><a href="reference/variable/UserInfo.html#lumen.variables.base.UserInfo.to_spec">(lumen.variables.base.UserInfo method)</a>
+</li>
+        <li><a href="reference/variable/index.html#lumen.variables.base.Variable.to_spec">(lumen.variables.base.Variable method)</a>
+</li>
+        <li><a href="reference/variable/Widget.html#lumen.variables.base.Widget.to_spec">(lumen.variables.base.Widget method)</a>
+</li>
+        <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.to_spec">(lumen.views.base.AltairView method)</a>
+</li>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.to_spec">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.to_spec">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.to_spec">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.to_spec">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.to_spec">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.to_spec">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.to_spec">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.to_spec">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.to_spec">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.to_spec">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.to_spec">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.to_spec">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.to_spec">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/transform/SQLColumns.html#lumen.transforms.sql.SQLColumns.to_sql">to_sql() (lumen.transforms.sql.SQLColumns method)</a>
+
+      <ul>
+        <li><a href="reference/transform/SQLCount.html#lumen.transforms.sql.SQLCount.to_sql">(lumen.transforms.sql.SQLCount method)</a>
+</li>
+        <li><a href="reference/transform/SQLDistinct.html#lumen.transforms.sql.SQLDistinct.to_sql">(lumen.transforms.sql.SQLDistinct method)</a>
+</li>
+        <li><a href="reference/transform/SQLFilter.html#lumen.transforms.sql.SQLFilter.to_sql">(lumen.transforms.sql.SQLFilter method)</a>
+</li>
+        <li><a href="reference/transform/SQLFormat.html#lumen.transforms.sql.SQLFormat.to_sql">(lumen.transforms.sql.SQLFormat method)</a>
+</li>
+        <li><a href="reference/transform/SQLGroupBy.html#lumen.transforms.sql.SQLGroupBy.to_sql">(lumen.transforms.sql.SQLGroupBy method)</a>
+</li>
+        <li><a href="reference/transform/SQLLimit.html#lumen.transforms.sql.SQLLimit.to_sql">(lumen.transforms.sql.SQLLimit method)</a>
+</li>
+        <li><a href="reference/transform/SQLMinMax.html#lumen.transforms.sql.SQLMinMax.to_sql">(lumen.transforms.sql.SQLMinMax method)</a>
+</li>
+        <li><a href="reference/transform/SQLOverride.html#lumen.transforms.sql.SQLOverride.to_sql">(lumen.transforms.sql.SQLOverride method)</a>
+</li>
+        <li><a href="reference/transform/SQLRemoveSourceSeparator.html#lumen.transforms.sql.SQLRemoveSourceSeparator.to_sql">(lumen.transforms.sql.SQLRemoveSourceSeparator method)</a>
+</li>
+        <li><a href="reference/transform/SQLSample.html#lumen.transforms.sql.SQLSample.to_sql">(lumen.transforms.sql.SQLSample method)</a>
+</li>
+        <li><a href="reference/transform/SQLSelectFrom.html#lumen.transforms.sql.SQLSelectFrom.to_sql">(lumen.transforms.sql.SQLSelectFrom method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/tool/Tool.html#lumen.ai.tools.Tool">Tool (class in lumen.ai.tools)</a>, <a href="reference/tool/index.html#lumen.ai.tools.Tool">[1]</a>
+</li>
+      <li><a href="reference/transform/index.html#lumen.transforms.base.Transform">Transform (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/auth/Auth.html#lumen.auth.Auth.transform">transform() (lumen.auth.Auth method)</a>, <a href="reference/auth/index.html#lumen.auth.Auth.transform">[1]</a>
+
+      <ul>
+        <li><a href="reference/auth/YamlAuthMapperPlugin.html#lumen.auth.YamlAuthMapperPlugin.transform">(lumen.auth.YamlAuthMapperPlugin method)</a>
+</li>
+      </ul></li>
+      <li><a href="reference/Pipeline.html#lumen.pipeline.Pipeline.traverse">traverse() (lumen.pipeline.Pipeline method)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="U">U</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/ui/index.html#lumen.ai.ui.UI">UI (class in lumen.ai.ui)</a>
+</li>
+      <li><a href="reference/transform/Unstack.html#lumen.transforms.base.Unstack">Unstack (class in lumen.transforms.base)</a>
+</li>
+      <li><a href="reference/Layout.html#lumen.layout.Layout.update">update() (lumen.layout.Layout method)</a>
+
+      <ul>
+        <li><a href="reference/view/AltairView.html#lumen.views.base.AltairView.update">(lumen.views.base.AltairView method)</a>
+</li>
+        <li><a href="reference/view/DownloadView.html#lumen.views.base.DownloadView.update">(lumen.views.base.DownloadView method)</a>
+</li>
+        <li><a href="reference/view/GraphicWalker.html#lumen.views.base.GraphicWalker.update">(lumen.views.base.GraphicWalker method)</a>
+</li>
+        <li><a href="reference/view/hvOverlayView.html#lumen.views.base.hvOverlayView.update">(lumen.views.base.hvOverlayView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotUIView.html#lumen.views.base.hvPlotUIView.update">(lumen.views.base.hvPlotUIView method)</a>
+</li>
+        <li><a href="reference/view/hvPlotView.html#lumen.views.base.hvPlotView.update">(lumen.views.base.hvPlotView method)</a>
+</li>
+        <li><a href="reference/view/IndicatorView.html#lumen.views.base.IndicatorView.update">(lumen.views.base.IndicatorView method)</a>
+</li>
+        <li><a href="reference/view/Panel.html#lumen.views.base.Panel.update">(lumen.views.base.Panel method)</a>
+</li>
+        <li><a href="reference/view/PerspectiveView.html#lumen.views.base.PerspectiveView.update">(lumen.views.base.PerspectiveView method)</a>
+</li>
+        <li><a href="reference/view/StringView.html#lumen.views.base.StringView.update">(lumen.views.base.StringView method)</a>
+</li>
+        <li><a href="reference/view/Table.html#lumen.views.base.Table.update">(lumen.views.base.Table method)</a>
+</li>
+        <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView.update">(lumen.views.base.VegaLiteView method)</a>
+</li>
+        <li><a href="reference/view/index.html#lumen.views.base.View.update">(lumen.views.base.View method)</a>
+</li>
+        <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView.update">(lumen.views.base.YdataProfilingView method)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/variable/URLQuery.html#lumen.variables.base.URLQuery">URLQuery (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/variable/UserInfo.html#lumen.variables.base.UserInfo">UserInfo (class in lumen.variables.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="V">V</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/variable/index.html#lumen.variables.base.Variable">Variable (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/agent/VegaLiteAgent.html#lumen.ai.agents.VegaLiteAgent">VegaLiteAgent (class in lumen.ai.agents)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/view/VegaLiteView.html#lumen.views.base.VegaLiteView">VegaLiteView (class in lumen.views.base)</a>
+</li>
+      <li><a href="reference/view/index.html#lumen.views.base.View">View (class in lumen.views.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="W">W</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/source/WebsiteSource.html#lumen.sources.base.WebsiteSource">WebsiteSource (class in lumen.sources.base)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/variable/Widget.html#lumen.variables.base.Widget">Widget (class in lumen.variables.base)</a>
+</li>
+      <li><a href="reference/filter/WidgetFilter.html#lumen.filters.base.WidgetFilter">WidgetFilter (class in lumen.filters.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="Y">Y</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/auth/YamlAuthMapperPlugin.html#lumen.auth.YamlAuthMapperPlugin">YamlAuthMapperPlugin (class in lumen.auth)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="reference/view/YdataProfilingView.html#lumen.views.base.YdataProfilingView">YdataProfilingView (class in lumen.views.base)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2020-2025, HoloViz Developers.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
