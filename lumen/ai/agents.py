@@ -208,7 +208,7 @@ class SourceAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        source_controls = SourceControls(multiple=True, replace_controls=False, select_existing=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
+        source_controls = SourceControls(multiple=True, replace_controls=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:
