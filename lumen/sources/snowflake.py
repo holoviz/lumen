@@ -291,8 +291,10 @@ class SnowflakeSource(BaseSQLSource):
         # If the query failed, raise an exception
         if status != 'SUCCESS':
             raise snowflake.connector.errors.ProgrammingError(
-                f"Query failed with status: {status}"
-            )
+                f"Query failed with status: {status}")
+
+        # Retrieve the results of the completed query
+        self._cursor.get_results_from_sfqid(query_id)
 
         # Fetch the results
         df = self._cursor.fetch_pandas_all()
