@@ -278,25 +278,20 @@ class SnowflakeSource(BaseSQLSource):
         pd.DataFrame
             The query result as a pandas DataFrame with supported dtypes
         """
-        # Execute the query asynchronously
         query_id = self._cursor.execute_async(sql_query, *args, **kwargs)
 
-        # Poll for query completion
         while True:
             status = self._cursor.get_query_status(query_id)
             if status in ('SUCCESS', 'FAILED_WITH_ERROR', 'ABORTED'):
                 break
             await asyncio.sleep(0.1)  # Check every 100ms
 
-        # If the query failed, raise an exception
         if status != 'SUCCESS':
             raise snowflake.connector.errors.ProgrammingError(
                 f"Query failed with status: {status}")
 
-        # Retrieve the results of the completed query
         self._cursor.get_results_from_sfqid(query_id)
 
-        # Fetch the results
         df = self._cursor.fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
