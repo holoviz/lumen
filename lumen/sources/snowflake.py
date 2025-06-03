@@ -17,6 +17,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.serialization import (
     Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
 )
+from snowflake.connector.constants import QueryStatus
 
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached, cached_schema
@@ -278,15 +279,16 @@ class SnowflakeSource(BaseSQLSource):
         pd.DataFrame
             The query result as a pandas DataFrame with supported dtypes
         """
-        query_id = self._cursor.execute_async(sql_query, *args, **kwargs)
+        self._cursor.execute_async(sql_query, *args, **kwargs)
+        query_id = self._cursor.sfqid
 
         while True:
             status = self._cursor.get_query_status(query_id)
-            if status in ('SUCCESS', 'FAILED_WITH_ERROR', 'ABORTED'):
+            if status in (QueryStatus.SUCCESS, QueryStatus.FAILED_WITH_ERROR, QueryStatus.ABORTED, QueryStatus.FAILED_WITH_INCIDENT):
                 break
             await asyncio.sleep(0.1)  # Check every 100ms
 
-        if status != 'SUCCESS':
+        if status != QueryStatus.SUCCESS:
             raise snowflake.connector.errors.ProgrammingError(
                 f"Query failed with status: {status}")
 
