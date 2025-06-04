@@ -23,7 +23,7 @@ Here are your previous thoughts:
 {%- endif %}
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
-{%- for table_slug in available_slugs -%}
+{% for table_slug in available_slugs -%}
 {{ table_slug }} (Similarity: {{ vector_metadata_map[table_slug].similarity | round(3) }})
 {%- if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description -%}
   Description: {{ vector_metadata_map[table_slug].description }}

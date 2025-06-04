@@ -25,9 +25,9 @@ class VectorMetadata:
 
     table_slug: str  # Combined source_name and table_name with separator
     similarity: float
+    columns: list[Column]
     description: str | None = None
     base_sql: str | None = None
-    columns: list[Column] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -91,11 +91,7 @@ class VectorMetaset:
                 col_name = truncate_string(col.name) if truncate else col.name
                 context += f"{orig_idx}. {col_name!r}"
                 if col.description:
-                    col_desc = (
-                        truncate_string(col.description, max_length=100)
-                        if truncate
-                        else col.description
-                    )
+                    col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
                     context += f": {col_desc}"
                 context += "\n"
         return context
@@ -179,7 +175,8 @@ class SQLMetaset:
 
             max_length = 20
             cols_to_show = vector_metadata.columns or []
-            if truncate is not None and vector_metaset.selected_columns:
+            # Ensure that we subset at least some columns
+            if truncate is not None and any(len(cols) > 0 for cols in vector_metaset.selected_columns.values()):
                 cols_to_show = [col for col in cols_to_show if col.name in vector_metaset.selected_columns.get(table_slug, [])]
 
             original_indices = []
@@ -247,6 +244,7 @@ class SQLMetaset:
         """String representation is the formatted context."""
         return self.selected_context
 
+
 @dataclass
 class PreviousState:
     """Schema for previous state data."""
@@ -309,16 +307,17 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         try:
             metadata = source.get_metadata(table_name)
         except Exception as e:
-            log_debug(
-                f"Failed to get metadata for table {table_name} in source {source_name}: {e}"
-            )
+            log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
             metadata = {}
         tables_metadata[table_name] = VectorMetadata(
             table_slug=table_slug,
             similarity=1,
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
             description=metadata.get("description"),
-            columns=metadata.get("columns")
+            columns=[
+                Column(name=col_name, description=col_values.pop("description"), metadata=col_values)
+                for col_name, col_values in metadata.get("columns").items()
+            ],
         )
     vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
     return SQLMetaset(
@@ -329,7 +328,6 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
 
 @dataclass
 class DbtslMetadata:
-
     name: str
     similarity: float
     description: str | None = None
@@ -352,9 +350,9 @@ class DbtslMetadata:
             f"Granularities: {', '.join(self.queryable_granularities)}\n\n"
         )
 
+
 @dataclass
 class DbtslMetaset:
-
     query: str
     metrics: dict[str, DbtslMetadata]
 

@@ -36,6 +36,7 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
+    from lumen.ai.models import LineChange
     from lumen.sources.base import Source
 
 
@@ -525,15 +526,17 @@ def clean_sql(sql_expr: str, dialect: str | None = None) -> str:
     return cleaned_sql.strip().rstrip(";")
 
 
-def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = ""):
+def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = "", status: str = "failed"):
     error_msg = str(exc)
     stream_details(f'\n\n```{language}\n{error_msg}\n```\n', step, title="Error")
     if context:
         step.stream(context)
     if len(error_msg) > 50:
         error_msg = error_msg[:50] + "..."
-    step.failed_title = error_msg
-    step.status = "failed"
+
+    if status == "failed":
+        step.failed_title = error_msg
+        step.status = "failed"
 
 
 def stream_details(content: Any, step: Any, title: str = "Expand for details", auto: bool = True, **stream_kwargs) -> str:
@@ -778,3 +781,10 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def apply_changes(original_lines: list[str], changes: list[LineChange]) -> str:
+    """Apply line changes to text."""
+    for change in changes:
+        original_lines[change.line_no - 1] = change.replacement
+    return "\n".join(original_lines)

@@ -19,7 +19,7 @@ Keep your response under three paragraphs top, unless elaboration is requested.
 {% endblock %}
 
 {%- block examples -%}
-{%- if memory.data|length == 0 -%}
+{%- if memory.get('data') is not none and memory.data|length == 0 -%}
 Here's an example of a good reply...
 User Query:
 What are all the Category 3 hurricanes in the East Pacific since 2000?
@@ -86,25 +86,26 @@ collection issue or seasonal effect that requires validation before making strat
 
 {% block context %}
 Here was the plan that was executed:
+{% if memory.get('reasoning') %}
 """
 {{ memory.reasoning }}
 """
-
-Here is the current dataset:
-{% if memory.data|length == 0 %}
-The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt the user to click the rerun button below if they'd like to try again.
-{% else %}
-{{ memory.data }}
 {% endif %}
 
-{% if 'sql' in memory %}
+{%- if memory.get('data') is not none %}
+Here is the current dataset:
+{% if memory.data|length == 0 %}
+The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt
+the user to click the rerun button below if they'd like to try again.
+{% else %}
+{{ memory.data }}
+{%- endif %}
+{%- endif -%}
+
+{% if memory.get('sql') %}
 Here is the current SQL query:
 ```sql
 {{ memory.sql }}
 ```
-{%- endif -%}
-{%- if memory.data|length == 0 -%}
-The dataset is empty. As the subject matter expert, if this is unexpected, analyze the SQL query,
-and try to make educated guess what other columns or values should be used instead.
 {%- endif -%}
 {%- endblock -%}

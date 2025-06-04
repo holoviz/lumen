@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 try:
@@ -497,6 +499,30 @@ class VectorStoreTestKit:
 
         # Verify no new entries were created
         assert count_after_first == count_after_second, "No new items should be added on second upsert"
+
+    async def test_add_directory(self, empty_store):
+        """
+        Verifies that adding a directory of files works correctly.
+        """
+        import warnings
+        warnings.filterwarnings("ignore", category=RuntimeWarning, message="Couldn't find ffmpeg or avconv - defaulting to ffmpeg")
+        dir_path = Path(__file__).parent / "test_dir"
+
+        # Add the directory to the store
+        ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
+        assert len(ids) > 0, "Should add at least one document"
+
+        # Query for a specific term in the added documents
+        assert len(await empty_store.query("Sed elementum")) > 0, "Should find the term in the added documents"
+
+        # Try upserting again
+        same_ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
+        assert ids == same_ids, "Should return the same IDs when upserting identical content"
+
+        # Increment version
+        new_ids = await empty_store.add_directory(dir_path, metadata={"version": 2}, upsert=True)
+        assert len(new_ids) > 0, "Should add at least one document"
+        assert len(set(new_ids) & set(ids)) == 0, "Should return different IDs when version changes"
 
 
 class TestNumpyVectorStore(VectorStoreTestKit):

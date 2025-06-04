@@ -68,7 +68,7 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
-        self._status = StatusBadge(name="LLM Pending", align="center")
+        self._status = StatusBadge(name="LLM Pending", description="Waiting for LLM to initialize", align="center")
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -173,7 +173,7 @@ class Llm(param.Parameterized):
                 model_spec="ui",
                 response_model=YesNo
             )
-            self._status.param.update(status="success", name='LLM Ready')
+            self._status.param.update(status="success", name='LLM Ready', description=f"Ready to use LLM from {self.__class__.__name__} (default: {self.model_kwargs['default'].get('model', 'unknown')}).")
         except Exception as e:
             self._status.param.update(
                 status="failed",
@@ -404,7 +404,8 @@ class OpenAI(Llm):
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4o-mini"},
         "sql": {"model": "gpt-4.1-mini"},
-        "reasoning": {"model": "gpt-4o"},
+        "vega_lite": {"model": "gpt-4.1-mini"},
+        "reasoning": {"model": "gpt-4.1-mini"},
     })
 
     use_logfire = param.Boolean(default=False, doc="""

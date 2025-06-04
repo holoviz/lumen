@@ -58,17 +58,19 @@ class VegaLiteSpec(BaseModel):
     json_spec: str = Field(description="A vega-lite JSON specification based on the user input and chain of thought. Do not include description")
 
 
+class LineChange(BaseModel):
+    line_no: int = Field(description="The line number in the original text that needs to be changed.")
+    replacement: str = Field(description="""
+        The new line that replaces the original line, and if applicable, ensuring the indentation matches the original.
+        To remove a line set this to an empty string."""
+    )
+
 
 class RetrySpec(BaseModel):
+    """Represents a revision of text with its content and changes."""
 
-    chain_of_thought: str = Field(
-        description="Explain why the previous spec failed to address the user query and what you will do differently this time to ensure it is correct."
-    )
-
-    corrected_spec: str = Field(
-        description="The corrected version of the previous spec without any additional comments, additions or code examples."
-    )
-
+    chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
+    lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
 
 def make_plan_models(agents: list[str], tools: list[str]):
     # TODO: make this inherit from PartialBaseModel
@@ -156,39 +158,6 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
             FieldInfo(default=..., description=description)
         ),
     )
-
-
-def make_find_tables_model(tables):
-    table_model = create_model(
-        "Table",
-        chain_of_thought=(str, FieldInfo(
-            description="""
-            Concisely consider which tables are necessary to answer the user query.
-            If there are tables that provide the same info, do not include them all; instead, pick the most relevant one.
-            """
-        )),
-        selected_tables=(list[Literal[tuple(tables)]], FieldInfo(
-            description="""
-            The most relevant tables based on the user query; if none are relevant,
-            use the first table. At least one table must be provided.
-            If a join is necessary, include all the tables that will be used in the join.
-            """
-        )),
-       potential_join_issues=(str, FieldInfo(
-           description="""
-           If no join is necessary, return an empty string--else
-           list potential join issues between tables:
-           - Data type mismatches (int vs string, numeric precision)
-           - Format differences (case, leading zeros, dates/times, timezones)
-           - Semantic differences (IDs vs names, codes vs full text)
-           - Quality issues (nulls, duplicates, validation rules)
-           Return specific issues found in current tables, and how you plan to address them
-           in the most easiest, but accurate way possible.
-           """
-       )),
-        __base__=PartialBaseModel
-    )
-    return table_model
 
 
 def make_iterative_selection_model(table_slugs):

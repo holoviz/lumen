@@ -168,7 +168,7 @@ class VectorLookupToolUser(ToolUser):
         # If the tool is already instantiated and has a vector_store, use it
         if not isinstance(tool, VectorLookupTool) or (isinstance(tool, VectorLookupTool) and tool.vector_store is not None):
             return kwargs
-        elif tool._item_type_name == "document" and self.document_vector_store is not None:
+        elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
             return kwargs
         elif self.vector_store is not None:
@@ -608,7 +608,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["vector_metaset"], readonly=True, doc="""
+    provides = param.List(default=["tables_metadata", "vector_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     enable_select_columns = param.Boolean(default=True, doc="""
@@ -647,7 +647,8 @@ class TableLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._tables_metadata = {}  # used for storing table metadata for LLM
+        if "tables_metadata" not in self._memory:
+            self._memory["tables_metadata"] = {}  # used for storing table metadata for LLM
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._previous_state = None  # used for tracking previous state for _should...
@@ -678,7 +679,7 @@ class TableLookup(VectorLookupTool):
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
-            if tables_vector_data := self._tables_metadata.get(table_slug):
+            if tables_vector_data := self._memory["tables_metadata"].get(table_slug):
                 if table_description := tables_vector_data.get("description"):
                     description += f"\n  Info: {table_description}"
             formatted_results.append(description)
@@ -706,6 +707,7 @@ class TableLookup(VectorLookupTool):
             key for key in (table_name.upper(), table_name.lower(), table_name)
             if key in source_metadata), None
         )
+
         if not table_name_key:
             return None
         table_name = table_name_key
@@ -714,8 +716,8 @@ class TableLookup(VectorLookupTool):
         # IMPORTANT: re-insert using table slug
         # we need to store a copy of tables_vector_data so it can be used to inject context into the LLM
         table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        self._tables_metadata[table_slug] = vector_info.copy()
-        self._tables_metadata[table_slug]["source_name"] = source.name  # need this to rebuild the slug
+        self._memory["tables_metadata"][table_slug] = vector_info.copy()
+        self._memory["tables_metadata"][table_slug]["source_name"] = source.name  # need this to rebuild the slug
 
         # Create column schema objects
         columns = []
@@ -753,6 +755,7 @@ class TableLookup(VectorLookupTool):
         return {"text": enriched_text, "metadata": vector_metadata}
 
     async def _update_vector_store(self, _, __, sources):
+        self._ready = False
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
         processed_sources = []
@@ -1004,7 +1007,21 @@ class TableLookup(VectorLookupTool):
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
-        results = await self._perform_search_with_refinement(query)
+
+        # Count total number of tables available across all sources
+        total_tables = 0
+        for source in self._memory.get("sources", []):
+            total_tables += len(source.get_tables())
+
+        # Skip query refinement if there are fewer than 5 tables
+        if total_tables < 5:
+            # Perform search without refinement
+            filters = {}
+            if self._item_type_name and "type" not in filters:
+                filters["type"] = self._item_type_name
+            results = await self.vector_store.query(query, top_k=self.n, filters=filters)
+        else:
+            results = await self._perform_search_with_refinement(query)
 
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
@@ -1025,7 +1042,7 @@ class TableLookup(VectorLookupTool):
             columns = []
             table_description = None
 
-            if table_metadata := self._tables_metadata.get(table_slug):
+            if table_metadata := self._memory["tables_metadata"].get(table_slug):
                 table_description = table_metadata.get("description")
                 column_metadata = table_metadata.get("columns", {})
 
@@ -1044,12 +1061,12 @@ class TableLookup(VectorLookupTool):
                 description=table_description,
                 base_sql=sql,
                 columns=columns,
-                metadata=self._tables_metadata.get(table_slug, {}).copy()
+                metadata=self._memory["tables_metadata"].get(table_slug, {}).copy()
             )
             vector_metadata_map[table_slug] = vector_metadata
 
         # If query contains an exact table name, mark it as max similarity
-        for table_slug in self._tables_metadata:
+        for table_slug in self._memory["tables_metadata"]:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
@@ -1215,7 +1232,10 @@ class IterativeTableLookup(TableLookup):
                         selected_slugs = output.selected_slugs or []
                         chain_of_thought = output.chain_of_thought
                         step.stream(chain_of_thought)
-                        stream_details('\n'.join(selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
+                        stream_details(
+                            '\n\n'.join(f'`{slug}`' for slug in selected_slugs),
+                            step, title=f"Selected {len(selected_slugs)} tables", auto=False
+                        )
 
                         # Check if we're done with table selection (do not allow on 1st iteration)
                         if (output.is_done and iteration != 1) or not available_slugs:
@@ -1238,7 +1258,7 @@ class IterativeTableLookup(TableLookup):
                     stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
-                            self._tables_metadata.get(table_slug, {}).get("view_definition", ""),
+                            self._memory["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
                             max_length=300
                         )
 
