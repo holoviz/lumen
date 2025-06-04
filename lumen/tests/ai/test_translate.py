@@ -1,14 +1,16 @@
 import param
 import pytest
 
+from pydantic import BaseModel, Field
+
+from lumen.ai.translate import param_to_pydantic, pydantic_to_param_instance
+
 try:
     import lumen.ai
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from pydantic import BaseModel, Field
 
-from lumen.ai.translate import param_to_pydantic, pydantic_to_param_instance
 
 try:
     import lumen.ai  # noqa
@@ -543,3 +545,42 @@ def test_round_trip_with_default_values():
     # Verify param behavior is preserved
     with pytest.raises(ValueError):
         round_trip_settings.max_connections = 5  # Below minimum
+
+
+def test_round_trip_with_no_instantiate():
+    class SubTest(param.Parameterized):
+
+        a = param.String(default="a")
+
+
+    class Test(param.Parameterized):
+
+        subtest = param.ClassSelector(class_=SubTest, is_instance=False, instantiate=False)
+
+    models = param_to_pydantic(Test)
+    test_pydantic = models["Test"]
+    subtest_pydantic = models["SubTest"]
+
+    test = pydantic_to_param_instance(test_pydantic(subtest=subtest_pydantic))
+    assert isinstance(test, Test)
+    assert test.subtest is SubTest
+
+
+
+def test_excluded():
+    class SubTest(param.Parameterized):
+
+        a = param.String(default="a")
+
+
+    class Test(param.Parameterized):
+
+        b = param.String(default="b")
+
+        subtest = param.ClassSelector(class_=SubTest, is_instance=False, instantiate=False)
+
+    models = param_to_pydantic(Test, excluded=["subtest"])
+    assert "subtest" not in models
+
+    test_pydantic = models["Test"]
+    assert "subtest" not in test_pydantic.model_fields
