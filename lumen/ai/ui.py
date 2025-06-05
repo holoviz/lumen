@@ -161,7 +161,7 @@ class UI(Viewer):
 
         if self.interface is None:
             self.interface = ChatInterface(
-                load_buffer=5, sizing_mode="stretch_both"
+                load_buffer=5, sizing_mode="stretch_both", show_button_tooltips=True, show_button_name=False,
             )
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
@@ -502,7 +502,7 @@ class ExplorerUI(UI):
             visible=self._explorations.param["objects"].rx.bool().rx.not_()
         )
         self._output = Tabs(
-            ('Overview', self._table_explorer()),
+            ('Raw Tables', self._table_explorer()),
             ('Explorations', Column(self._explorations_intro, self._explorations)),
             design=Material
         )
@@ -633,7 +633,7 @@ class ExplorerUI(UI):
         from panel_gwalker import GraphicWalker
 
         table_select = MultiChoice(
-            placeholder="Select table(s)", sizing_mode='stretch_width',
+            placeholder="Select table(s) to view contents", sizing_mode='stretch_width',
             max_height=200, max_items=5
         )
         explore_button = Button(

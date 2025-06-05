@@ -175,7 +175,8 @@ class SQLMetaset:
 
             max_length = 20
             cols_to_show = vector_metadata.columns or []
-            if truncate is not None and vector_metaset.selected_columns:
+            # Ensure that we subset at least some columns
+            if truncate is not None and any(len(cols) > 0 for cols in vector_metaset.selected_columns.values()):
                 cols_to_show = [col for col in cols_to_show if col.name in vector_metaset.selected_columns.get(table_slug, [])]
 
             original_indices = []

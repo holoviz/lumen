@@ -40,7 +40,7 @@ from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
     DbtslQueryParams, MCPToolExecution, PartialBaseModel, RetrySpec, Sql,
-    VegaLiteSpec, make_find_tables_model,
+    VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -409,7 +409,7 @@ class TableListAgent(ListAgent):
             tables += source.get_tables()
 
         # remove duplicates, keeps order in which they were added
-        return pd.unique(tables).tolist()
+        return pd.unique(pd.Series(tables)).tolist()
 
 
 class DocumentListAgent(ListAgent):
@@ -537,7 +537,6 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
-            "find_tables": {"response_model": make_find_tables_model, "template": PROMPTS_DIR / "SQLAgent" / "find_tables.jinja2"},
         }
     )
 
@@ -553,7 +552,7 @@ class SQLAgent(LumenBaseAgent):
     _output_type = SQLOutput
 
     @retry_llm_output()
-    async def _create_valid_sql(self, messages: list[Message], dialect: str, comments: str, title: str, tables_to_source: dict[str, BaseSQLSource], errors=None):
+    async def _create_valid_sql(self, messages: list[Message], dialect: str, title: str, tables_to_source: dict[str, BaseSQLSource], errors=None):
         errors_context = {}
         if errors:
             # get the head of the tables
@@ -574,14 +573,10 @@ class SQLAgent(LumenBaseAgent):
                 "columns_context": columns_context,
             }
 
-        join_required = len(tables_to_source) > 1
-        comments = comments if join_required else ""  # comments are about joins
         system_prompt = await self._render_prompt(
             "main",
             messages,
-            join_required=join_required,
             dialect=dialect,
-            comments=comments,
             separator=SOURCE_TABLE_SEPARATOR,
             **errors_context
         )
@@ -662,8 +657,13 @@ class SQLAgent(LumenBaseAgent):
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
-    @retry_llm_output()
-    async def _find_tables(self, messages: list[Message], errors: list | None = None) -> tuple[dict[str, BaseSQLSource], str]:
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        dialect = self._memory["source"].dialect
         if isinstance(self._memory["sources"], dict):
             sources = self._memory["sources"]
         else:
@@ -673,59 +673,13 @@ class SQLAgent(LumenBaseAgent):
             #  if no tables/cols are subset
             vector_metaset.selected_columns or vector_metaset.vector_metadata_map
         )
-        if len(selected_slugs) == 0:
-            source = next(iter(sources.values()))
-            selected_slugs = source.get_tables()[:10]
-
-        if len(selected_slugs) == 0:
-            raise ValueError("No tables found in memory.")
-
         tables_to_source = {}
-        chain_of_thought = ""
-        with self._add_step(title="Determining tables to use", steps_layout=self._steps_layout) as step:
-            if len(selected_slugs) > 1:
-                system = await self._render_prompt(
-                    "find_tables",
-                    messages,
-                    separator=SOURCE_TABLE_SEPARATOR,
-                    errors=errors,
-                )
-                find_tables_model = self._get_model("find_tables", tables=selected_slugs)
-                model_spec = self.prompts["find_tables"].get("llm_spec", self.llm_spec_key)
-                response = self.llm.stream(
-                    messages,
-                    system=system,
-                    model_spec=model_spec,
-                    response_model=find_tables_model,
-                )
-                async for output in response:
-                    chain_of_thought = output.chain_of_thought or ""
-                    if output.potential_join_issues is not None:
-                        chain_of_thought += output.potential_join_issues
-                    step.stream(chain_of_thought, replace=True)
+        for table_slug in selected_slugs:
+            a_source_obj, a_table = parse_table_slug(table_slug, sources)
+            tables_to_source[a_table] = a_source_obj
 
-                if selected_slugs := output.selected_tables:
-                    stream_details("\n".join(slug.split(SOURCE_TABLE_SEPARATOR)[-1] for slug in selected_slugs), step, title="Relevant tables", auto=False)
-                    step.success_title = f"Found {len(selected_slugs)} relevant table(s)"
-
-            step.stream("Planning to use:")
-            for table_slug in selected_slugs:
-                a_source_obj, a_table = parse_table_slug(table_slug, sources)
-                tables_to_source[a_table] = a_source_obj
-                step.stream(f"\n\n{a_table!r}")
-
-        return tables_to_source, chain_of_thought
-
-    async def respond(
-        self,
-        messages: list[Message],
-        render_output: bool = False,
-        step_title: str | None = None,
-    ) -> Any:
-        tables_to_source, comments = await self._find_tables(messages)
-        dialect = self._memory["source"].dialect
         try:
-            sql_query = await self._create_valid_sql(messages, dialect, comments, step_title, tables_to_source)
+            sql_query = await self._create_valid_sql(messages, dialect, step_title, tables_to_source)
             pipeline = self._memory["pipeline"]
         except RetriesExceededError as e:
             traceback.print_exception(e)
