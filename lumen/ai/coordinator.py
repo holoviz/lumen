@@ -430,8 +430,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            with plan.param.update(history=messages, memory=self._memory, interface=self.interface, steps_layout=self.steps_layout):
-                await plan.execute()
+            with self.interface.param.update(callback_exception="raise"):
+                with plan.param.update(
+                    history=messages, memory=self._memory, interface=self.interface, steps_layout=self.steps_layout
+                ):
+                    await plan.execute()
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
@@ -709,7 +712,9 @@ class Planner(Coordinator):
             await self._execute_planner_tools(messages)
         else:
             log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
-            with self.interface.add_step(title="Using existing data context...", user="Assistant") as step:
+            with self.interface.add_step(
+                title="Using existing data context...", user="Assistant", steps_layout=self.steps_layout
+            ) as step:
                 step.stream("Detected that this is a follow-up question related to the previous dataset.")
                 step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
                 step.success_title = "Using existing data for follow-up question"
@@ -743,7 +748,6 @@ class Planner(Coordinator):
         # also filter out agents where excluded keys exist in memory
         agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0]
         tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]
-
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
@@ -904,8 +908,7 @@ class Planner(Coordinator):
         plan = None
         with self.interface.param.update(callback_exception="raise"):
             with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
-                if self.steps_layout is None:
-                    self.steps_layout = self.interface.objects[-1].object
+                self.steps_layout = self.interface.objects[-1].object
                 while not planned:
                     if attempts > 0:
                         log_debug(f"\033[91m!! Attempt {attempts}\033[0m")

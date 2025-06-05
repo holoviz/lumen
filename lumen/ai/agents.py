@@ -283,10 +283,9 @@ class AnalystAgent(ChatAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        messages = await super().respond(messages, render_output, step_title)
+        messages = await super().respond(messages, step_title)
         if len(self._memory.get("data", [])) == 0 and self._memory.get("sql"):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
         return messages
