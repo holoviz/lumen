@@ -37,6 +37,31 @@ Ground Rules:
 {% endblock %}
 
 {%- block context %}
+{% if unmet_dependencies %}
+# Previous failures:
+
+In your previous attempt, you thought:
+"""
+{{ previous_plans[-1] }}
+"""
+
+Then, selected:
+{%- for actor in previous_actors %}
+- `{{ actor }}`
+{%- endfor %}
+
+However, the plan didn't satisfy: `{{ unmet_dependencies }}`
+
+Consider incorporating the following to address unmet dependencies, only if the previous plan is relevant and if the following actors are applicable:
+{%- for candidate in candidates %}
+- `{{ candidate.name[:-5] }}`
+{%- endfor %}
+
+Either devise an entirely new plan or, if the previous plan is nearly complete but lacks key dependencies, adjust it to incorporate the missing elements.
+{% endif %}
+
+# Available Actors
+
 Below are the available actors. Respect the conditions and exclusions.
 
 Provides: Outputs this actor adds to memory
@@ -94,27 +119,4 @@ You already have these provided in memory so you can use them directly in your p
 
 Build your plan in dependency order - ensure each actor's requirements are met by previous steps and
 ensure you don't use incompatible actors together.
-
-{% if unmet_dependencies %}
-# Previous failures:
-
-In your previous attempt, you thought:
-"""
-{{ previous_plans[-1] }}
-"""
-
-Then, selected:
-{%- for actor in previous_actors %}
-- `{{ actor }}`
-{%- endfor %}
-
-However, the plan didn't satisfy: `{{ unmet_dependencies }}`
-
-Consider incorporating the following to address unmet dependencies, only if the previous plan is relevant and if the following actors are applicable:
-{%- for candidate in candidates %}
-- `{{ candidate.name[:-5] }}`
-{%- endfor %}
-
-Either devise an entirely new plan or, if the previous plan is nearly complete but lacks key dependencies, adjust it to incorporate the missing elements.
-{% endif %}
 {%- endblock -%}

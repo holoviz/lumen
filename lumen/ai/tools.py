@@ -1609,7 +1609,7 @@ class MCPLookupTool(VectorLookupTool):
                     items_to_upsert.append({
                         "text": enriched_text,
                         "metadata": {
-                            "type": "tool",
+                            "type": "mcp_tool",
                             "name": tool_name,
                             "server_name": server.name,
                             "transport": server.transport
@@ -1635,7 +1635,7 @@ class MCPLookupTool(VectorLookupTool):
                     items_to_upsert.append({
                         "text": enriched_text,
                         "metadata": {
-                            "type": "resource",
+                            "type": "mcp_resource",
                             "uri": resource_uri,
                             "server_name": server.name,
                             "transport": server.transport
@@ -1651,17 +1651,12 @@ class MCPLookupTool(VectorLookupTool):
         query = messages[-1]["content"]
 
         with self._add_step(title="Searching for relevant MCP capabilities") as step:
-            # Search for tools
-            step.stream(f"\n\nSearching for MCP tools relevant to: '{query}'")
-            tool_results = await self._perform_search_with_refinement(
-                query,
-                filters={"type": "tool"}
-            )
-
-            # Search for resources
-            step.stream(f"\n\nSearching for MCP resources relevant to: '{query}'")
-            resource_results = await self._perform_search_with_refinement(
-                query, filters={"type": "resource"}
+            # Search for tools and resources in parallel
+            step.stream(f"\n\nSearching for MCP tools and resources relevant to: '{query}'")
+            # Run tool and resource searches concurrently
+            tool_results, resource_results = await asyncio.gather(
+                self._perform_search_with_refinement(query, filters={"type": "mcp_tool"}),
+                self._perform_search_with_refinement(query, filters={"type": "mcp_resource"}),
             )
 
             # Create MCPMetaset
