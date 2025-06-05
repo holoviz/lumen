@@ -1215,25 +1215,7 @@ class MCPAgent(Agent):
             raise ImportError("Please install the fastmcp package to use MCPAgent")
 
         if server_url not in self._clients:
-            # Select the appropriate transport
-            transport_kwargs = {}
-            if transport_type == "sse":
-                from fastmcp.client.transports import SSETransport
-                transport = SSETransport(server_url)
-                transport_kwargs["transport"] = transport
-            elif transport_type == "stdio":
-                from fastmcp.client.transports import PythonStdioTransport
-                transport = PythonStdioTransport(server_url)
-                transport_kwargs["transport"] = transport
-            elif transport_type == "websocket":
-                from fastmcp.client.transports import WSTransport
-                transport = WSTransport(server_url)
-                transport_kwargs["transport"] = transport
-            else:  # auto
-                transport_kwargs["url"] = server_url
-
-            # Create the client
-            self._clients[server_url] = Client(**transport_kwargs)
+            self._clients[server_url] = Client(server_url)
 
         return self._clients[server_url]
 
@@ -1246,7 +1228,9 @@ class MCPAgent(Agent):
                 "main",
                 messages,
                 metaset=metaset,
-                errors=errors
+                errors=errors,
+                selected_tool=None,
+                tool_result=None
             )
 
             # Get the model
@@ -1294,14 +1278,49 @@ class MCPAgent(Agent):
             try:
                 client = await self._get_client(server_url)
 
-                # Call the tool
-                result = await client.call_tool(selected_tool, parameters)
+                # Call the tool using async context manager
+                async with client:
+                    result = await client.call_tool(selected_tool, parameters)
+
+                # Extract content from MCP response objects
+                processed_result = []
+                if isinstance(result, list):
+                    for item in result:
+                        if hasattr(item, 'text'):
+                            # TextContent object
+                            processed_result.append(item.text)
+                        elif hasattr(item, 'data'):
+                            # ImageContent or other data content
+                            processed_result.append(f"[{type(item).__name__}]: {getattr(item, 'mimeType', 'unknown')}")
+                        else:
+                            # Fallback for other content types
+                            processed_result.append(str(item))
+                elif hasattr(result, 'text'):
+                    processed_result = result.text
+                elif hasattr(result, 'data'):
+                    processed_result = f"[{type(result).__name__}]: {getattr(result, 'mimeType', 'unknown')}"
+                else:
+                    processed_result = str(result)
 
                 # Format the result for display
-                if isinstance(result, (dict, list)):
-                    formatted_result = json.dumps(result, indent=2)
+                if isinstance(processed_result, list):
+                    # Try to parse as JSON if it looks like structured data
+                    if len(processed_result) == 1:
+                        try:
+                            import json as json_module
+                            parsed = json_module.loads(processed_result[0])
+                            formatted_result = json.dumps(parsed, indent=2)
+                        except (json_module.JSONDecodeError, TypeError):
+                            formatted_result = processed_result[0]
+                    else:
+                        formatted_result = "\n".join(processed_result)
                 else:
-                    formatted_result = str(result)
+                    try:
+                        import json as json_module
+                        parsed = json_module.loads(processed_result)
+                        formatted_result = json.dumps(parsed, indent=2)
+                    except (json_module.JSONDecodeError, TypeError):
+                        formatted_result = str(processed_result)
 
                 stream_details(
                     formatted_result,
@@ -1311,7 +1330,7 @@ class MCPAgent(Agent):
                 )
 
                 step.success_title = f"Successfully executed MCP tool: {selected_tool}"
-                return selected_tool, result
+                return selected_tool, processed_result
 
             except Exception as e:
                 step.failed_title = f"Error executing MCP tool: {selected_tool}"

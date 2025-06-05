@@ -277,7 +277,7 @@ class MCPToolExecution(BaseModel):
     """
     Model for selecting and executing an MCP tool.
     """
-    chain_of_thought: str | None = Field(
+    chain_of_thought: str = Field(
         None,
         description="Your reasoning process for selecting the appropriate MCP tool and extracting parameters"
     )

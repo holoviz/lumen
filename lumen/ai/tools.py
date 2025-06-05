@@ -1633,7 +1633,7 @@ class MCPLookupTool(VectorLookupTool):
                         }
 
                         # Prepare for vector store
-                        enriched_text = f"Resource: {resource_uri}\nInfo: {resource_desc}"
+                        enriched_text = f"\n\nResource: {resource_uri}\nInfo: {resource_desc}"
 
                         items_to_upsert.append({
                             "text": enriched_text,
@@ -1647,7 +1647,7 @@ class MCPLookupTool(VectorLookupTool):
 
             # Upsert all items at once
             if items_to_upsert:
-                step.stream(f"Indexing {len(items_to_upsert)} MCP capabilities")
+                step.stream(f"\n\nIndexing {len(items_to_upsert)} MCP capabilities")
                 await self.vector_store.upsert(items_to_upsert)
                 step.success_title = f"Indexed {len(items_to_upsert)} MCP capabilities"
             else:
@@ -1690,7 +1690,7 @@ class MCPLookupTool(VectorLookupTool):
                             name=name,
                             description=tool_data["description"],
                             similarity=result['similarity'],
-                            transport=transport,
+                            server_url=transport,
                             parameters=tool_data["parameters"]
                         )
 
@@ -1710,7 +1710,7 @@ class MCPLookupTool(VectorLookupTool):
                             uri=uri,
                             description=resource_data["description"],
                             similarity=result['similarity'],
-                            transport=transport
+                            server_url=transport
                         )
 
             # Store in memory
