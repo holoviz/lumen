@@ -1,5 +1,22 @@
 # Gallery
 
+## Lumen AI
+
+::::{grid} 2 2 3 3
+:gutter: 1
+
+:::{grid-item-card} Windturbines
+:link: ai_windturbines
+:link-type: doc
+
+```{image} ../_static/ai_windturbines.png
+```
+:::
+
+::::
+
+## Lumen Spec
+
 ::::{grid} 2 2 3 3
 :gutter: 1
 
@@ -58,6 +75,7 @@
 ---
 hidden: true
 ---
+Wind Turbines <ai_windturbines>
 Precipitation <precip>
 Penguins <penguins>
 NYC Taxi Trips <nyc_taxi>
