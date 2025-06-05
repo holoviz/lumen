@@ -25,6 +25,17 @@ Ground Rules:
 3. **"Always use when X" Override**: Agents with "Always use when X is available" conditions take precedence when X exists in memory
 {% endblock -%}
 
+{%- block examples %}
+# Examples
+**Query: "What are the available channels?"**
+- ✓ `mcp_metaset` exists → Use MCP related agents (can query external systems)
+- ✗ Ignore MCP capabilities and use ChatAgent/TableListAgent
+
+**Query: "Show me sales data"**
+- ✓ `sources` + `sql_metaset` exist → Use SQLAgent
+- ✗ Don't recreate existing capabilities
+{% endblock %}
+
 {%- block context %}
 Below are the available actors. Respect the conditions and exclusions.
 
@@ -80,15 +91,6 @@ You already have these provided in memory so you can use them directly in your p
 {%- elif 'vector_metaset' in memory and not is_follow_up %}
 👉 New query with existing metadata - evaluate if current data is sufficient before requesting more
 {%- endif %}
-
-## Decision Framework Example:
-**Query: "What are the available channels?"**
-- ✓ `mcp_metaset` exists → Use MCP related agents (can query external systems)
-- ✗ Ignore MCP capabilities and use ChatAgent/TableListAgent
-
-**Query: "Show me sales data"**
-- ✓ `sources` + `sql_metaset` exist → Use SQLAgent
-- ✗ Don't recreate existing capabilities
 
 Build your plan in dependency order - ensure each actor's requirements are met by previous steps and
 ensure you don't use incompatible actors together.

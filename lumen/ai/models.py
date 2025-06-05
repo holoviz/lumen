@@ -274,33 +274,44 @@ def make_refined_query_model(item_type_name: str = "items"):
     )
 
 
-class MCPToolExecution(BaseModel):
-    """
-    Model for selecting and executing an MCP tool.
-    """
-    chain_of_thought: str = Field(
-        None,
-        description="Your reasoning process for selecting the appropriate MCP tool and extracting parameters"
-    )
+class MCPTool(BaseModel):
+    """Model for MCP tool selection with execution parameters."""
+
     tool_name: str = Field(
-        ...,
-        description="The name of the selected MCP tool that is most appropriate for this query"
+        description="The name of the MCP tool to execute"
     )
+
     parameters: dict[str, Any] = Field(
-        {},
-        description="The parameters to pass to the MCP tool, extracted from the user query"
+        default_factory=dict,
+        description="Parameters to pass to the MCP tool"
     )
 
 
-class MCPResourceSelection(BaseModel):
-    """
-    Model for selecting an MCP resource to read.
-    """
+class MCPResource(BaseModel):
+    """Model for MCP resource selection."""
+
+    uri: str = Field(
+        description="The URI of the MCP resource to read"
+    )
+
+
+class MCPOperations(BaseModel):
+    """Model for selecting MCP tools and resources to execute."""
+
     chain_of_thought: str = Field(
-        None,
-        description="Your reasoning process for selecting the appropriate MCP resource"
+        description="""
+        Analyze the user query to determine which MCP tools need to be executed
+        and which resources need to be read. Consider the capabilities of each
+        tool and the content of each resource to make the best selection.
+        """
     )
-    resource_uri: str = Field(
-        ...,
-        description="The URI of the selected MCP resource that is most appropriate for this query"
+
+    selected_tools: list[MCPTool] = Field(
+        default_factory=list,
+        description="List of MCP tools to execute with their parameters"
+    )
+
+    selected_resources: list[str] = Field(
+        default_factory=list,
+        description="List of MCP resource URIs to read"
     )
