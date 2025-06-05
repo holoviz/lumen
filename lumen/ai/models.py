@@ -89,7 +89,8 @@ def make_plan_models(agents: list[str], tools: list[str]):
                 description="""
                     Briefly summarize the user's goal and categorize the question type:
                     high-level, data-focused, or other. Identify the most relevant and compatible actors,
-                    explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
+                    explaining their requirements, and what you already have satisfied.
+                    If there were previous failures, discuss them.
                     """
             ),
         ),
@@ -288,4 +289,18 @@ class MCPToolExecution(BaseModel):
     parameters: dict[str, Any] = Field(
         {},
         description="The parameters to pass to the MCP tool, extracted from the user query"
+    )
+
+
+class MCPResourceSelection(BaseModel):
+    """
+    Model for selecting an MCP resource to read.
+    """
+    chain_of_thought: str = Field(
+        None,
+        description="Your reasoning process for selecting the appropriate MCP resource"
+    )
+    resource_uri: str = Field(
+        ...,
+        description="The URI of the selected MCP resource that is most appropriate for this query"
     )

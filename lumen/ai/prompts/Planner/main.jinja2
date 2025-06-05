@@ -16,6 +16,13 @@ Ground Rules:
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}
+
+## Priority Planning Framework:
+1. **Check Available Resources FIRST**: Before interpreting query intent, check what specialized resources exist in memory
+2. **Resource-Capability Matching**:
+   - If `mcp_metaset` exists → MCPAgent should be strongly favored for most queries
+   - If `dbtsl_metaset` exists → DbtslAgent should be strongly favored for data queries
+3. **"Always use when X" Override**: Agents with "Always use when X is available" conditions take precedence when X exists in memory
 {% endblock -%}
 
 {%- block context %}
@@ -25,11 +32,6 @@ Provides: Outputs this actor adds to memory
 Requires: Inputs this actor needs from memory or others
 Conditions: When to use this actor
 Not with: agents that can't be used alongside this expert
-
-You already have these keys satisfied in memory:
-{%- for key in memory.keys() %}
-- `{{ key }}`
-{%- endfor %}
 
 {% if tools %}
 🛠️ Tools:
@@ -66,6 +68,11 @@ From query: "{{ memory['vector_metaset'].query }}"
 📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
 
+You already have these provided in memory so you can use them directly in your plan:
+{%- for key in memory.keys() %}
+- `{{ key }}`
+{%- endfor %}
+
 # Planning guidelines:
 
 {%- if is_follow_up and 'vector_metaset' in memory %}
@@ -73,6 +80,15 @@ From query: "{{ memory['vector_metaset'].query }}"
 {%- elif 'vector_metaset' in memory and not is_follow_up %}
 👉 New query with existing metadata - evaluate if current data is sufficient before requesting more
 {%- endif %}
+
+## Decision Framework Example:
+**Query: "What are the available channels?"**
+- ✓ `mcp_metaset` exists → Use MCP related agents (can query external systems)
+- ✗ Ignore MCP capabilities and use ChatAgent/TableListAgent
+
+**Query: "Show me sales data"**
+- ✓ `sources` + `sql_metaset` exist → Use SQLAgent
+- ✗ Don't recreate existing capabilities
 
 Build your plan in dependency order - ensure each actor's requirements are met by previous steps and
 ensure you don't use incompatible actors together.

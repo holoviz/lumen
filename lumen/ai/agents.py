@@ -16,7 +16,7 @@ import yaml
 from panel.chat import ChatInterface
 from panel.layout import Column
 from panel.viewable import Viewable, Viewer
-from pydantic import BaseModel, create_model
+from pydantic import AnyUrl, BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
@@ -38,8 +38,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    DbtslQueryParams, MCPToolExecution, PartialBaseModel, RetrySpec, Sql,
-    VegaLiteSpec,
+    DbtslQueryParams, MCPResourceSelection, MCPToolExecution, PartialBaseModel,
+    RetrySpec, Sql, VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -184,7 +184,7 @@ class SourceAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Use when user wants to upload or connect to new data sources",
+            "Use only when user wants to upload or connect to new data sources",
             "Do not use to see if there are any relevant data sources available",
         ])
 
@@ -194,7 +194,8 @@ class SourceAgent(Agent):
         table alias, add or modify the `source` in memory, and return a bool
         (True if the table was successfully uploaded).""")
 
-    purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="""
+        The SourceAgent allows a user to upload new datasets, tables, or documents if requested.""")
 
     requires = param.List(default=[], readonly=True)
 
@@ -235,9 +236,10 @@ class ChatAgent(Agent):
     conditions = param.List(
         default=[
             "Best for high-level information about data or general conversation",
-            "Can be used to describe available tables",
+            "Can be used to describe available tables, datasets, or resources",
             "Not useful for answering data specific questions",
             "Must be paired with TableLookup or DocumentLookup",
+            "Can answer general queries, especially if a source is unavailable",
         ]
     )
 
@@ -1176,69 +1178,130 @@ class VegaLiteAgent(BaseViewAgent):
 
 class MCPAgent(Agent):
     """
-    Agent responsible for executing MCP tools based on the MCPMetaset.
+    Base agent class for Model Context Protocol (MCP) operations.
 
-    MCPAgent uses an LLM to select the most appropriate tool based on the user query,
-    extract parameters from the query, execute the selected MCP tool, and interpret
-    the results.
+    Provides common functionality for interacting with MCP servers,
+    including client management, content processing, and LLM-based
+    selection and execution patterns.
     """
-    conditions = param.List(default=[
-        "Use when MCP tools are available and relevant to the query",
-        "Used for executing external tools and retrieving resources",
-    ])
-
-    purpose = param.String(default="""
-        Executes Model Context Protocol (MCP) tools to integrate with external
-        systems and capabilities. MCPAgent can call tools from various MCP
-        servers to perform actions based on the user query.""")
 
     requires = param.List(default=["mcp_metaset"], readonly=True)
-
-    provides = param.List(default=["mcp_result"], readonly=True)
-
-    prompts = param.Dict(
-        default={
-            "main": {
-                "response_model": MCPToolExecution,
-                "template": PROMPTS_DIR / "MCPAgent" / "main.jinja2",
-            },
-        }
-    )
+    provides = param.List(default=["data"], readonly=True)
 
     _clients = {}
+
+    # Subclasses should override these for selection/execution pattern
+    _operation_type = None  # e.g., "tools" or "resources"
+    _item_type_name = None  # e.g., "tool" or "resource"
+    _selection_field = None  # e.g., "tool_name" or "resource_uri"
+    _requires_url_key = False  # True for resources that need AnyUrl conversion
+
+    __abstract = True
 
     async def _get_client(self, server_url: str, transport_type: str = "auto"):
         """Get or create a client for the specified server URL."""
         try:
             from fastmcp import Client
         except ImportError:
-            raise ImportError("Please install the fastmcp package to use MCPAgent")
+            raise ImportError("Please install the fastmcp package to use MCP agents")
 
         if server_url not in self._clients:
             self._clients[server_url] = Client(server_url)
 
         return self._clients[server_url]
 
+    def _process_mcp_content(self, content):
+        """Process MCP content objects into readable format."""
+        if isinstance(content, list):
+            processed = []
+            for item in content:
+                if hasattr(item, 'text'):
+                    processed.append(item.text)
+                elif hasattr(item, 'data'):
+                    processed.append(f"[{type(item).__name__}]: {getattr(item, 'mimeType', 'unknown')}")
+                else:
+                    processed.append(str(item))
+            return processed
+        elif hasattr(content, 'text'):
+            return content.text
+        elif hasattr(content, 'data'):
+            return f"[{type(content).__name__}]: {getattr(content, 'mimeType', 'unknown')}"
+        else:
+            return str(content)
+
+    def _format_content_for_display(self, content):
+        """Format content for user-friendly display."""
+        if isinstance(content, list):
+            if len(content) == 1:
+                try:
+                    parsed = json.loads(content[0])
+                    return json.dumps(parsed, indent=2)
+                except (json.JSONDecodeError, TypeError):
+                    return content[0]
+            else:
+                return "\n".join(content)
+        else:
+            try:
+                parsed = json.loads(content)
+                return json.dumps(parsed, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                return str(content)
+
+    # LLM-based selection and execution pattern (for subclasses that need it)
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        """Check if this agent should be used based on available items."""
+        metaset = memory.get("mcp_metaset")
+        if not metaset or not cls._operation_type:
+            return False
+        items = getattr(metaset, cls._operation_type, {})
+        return bool(items)
+
+    def _get_available_items(self, metaset):
+        """Get the relevant items (tools or resources) from the metaset."""
+        return getattr(metaset, self._operation_type, {})
+
+    def _get_and_validate_selection(self, llm_output, available_items):
+        """Extract and validate the selected item from LLM output."""
+        selected_item = getattr(llm_output, self._selection_field)
+        if not selected_item:
+            return None, False
+
+        # Convert to AnyUrl if needed (for resources)
+        lookup_key = AnyUrl(selected_item) if self._requires_url_key else selected_item
+        is_valid = lookup_key in available_items
+
+        return selected_item, is_valid
+
+    def _format_operation_details(self, selected_item, item_details, result=None, **kwargs):
+        """Format selection details and prepare memory data."""
+        raise NotImplementedError("Subclasses must implement _format_operation_details")
+
+    async def _execute_operation(self, selected_item, metaset, step, **kwargs):
+        """Execute the specific operation (tool call or resource read)."""
+        raise NotImplementedError("Subclasses must implement _execute_operation")
+
     @retry_llm_output()
-    async def _select_and_execute_tool(self, messages: list[Message], metaset, errors: list | None = None):
-        """Use LLM to select the appropriate tool, extract parameters, and execute it."""
-        with self._add_step(title="Selecting and executing MCP tool") as step:
-            # Render the prompt template for tool selection and parameter extraction
+    async def _select_and_execute_operation(self, messages: list[Message], metaset, errors: list | None = None):
+        """Use LLM to select the appropriate item and execute the operation."""
+        with self._add_step(title=f"Processing MCP {self._item_type_name}") as step:
+            # Render the prompt template for selection
             system_prompt = await self._render_prompt(
                 "main",
                 messages,
                 metaset=metaset,
                 errors=errors,
                 selected_tool=None,
-                tool_result=None
+                tool_result=None,
+                selected_resource_uri=None,
+                resource_content=None
             )
 
-            # Get the model
+            # Get the model and invoke LLM
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response_model = self._get_model("main")
 
-            # Invoke the LLM to select a tool and extract parameters
-            step.stream("Analyzing query to select appropriate MCP tool...")
+            step.stream(f"Analyzing query to select appropriate MCP {self._item_type_name}...")
 
             response = self.llm.stream(
                 messages,
@@ -1251,91 +1314,54 @@ class MCPAgent(Agent):
                 if output.chain_of_thought:
                     step.stream(output.chain_of_thought, replace=True)
 
-            # Get the final output
-            selected_tool = output.tool_name
-            parameters = output.parameters
+            # Validate selection
+            available_items = self._get_available_items(metaset)
+            selected_item, is_valid = self._get_and_validate_selection(output, available_items)
 
-            if not selected_tool or selected_tool not in metaset.tools:
-                step.failed_title = "Could not identify a suitable MCP tool"
-                step.stream("\nNo suitable MCP tool found for this query", replace=False)
+            if not is_valid:
+                step.failed_title = f"Could not identify a suitable MCP {self._item_type_name}"
+                step.stream(f"\nNo suitable MCP {self._item_type_name} found for this query", replace=False)
                 return None, None
 
-            # Get the tool details
-            tool = metaset.tools[selected_tool]
-            server_url = tool.server_url
+            # Get item details
+            lookup_key = AnyUrl(selected_item) if self._requires_url_key else selected_item
+            item_details = available_items[lookup_key]
 
-            # Format parameters for display
-            formatted_params = json.dumps(parameters, indent=2)
+            # Format and display selection details
+            operation_info = self._format_operation_details(selected_item, item_details, output=output)
+
             stream_details(
-                f"Tool: {selected_tool}\nParameters:\n{formatted_params}",
+                operation_info['selection_details'],
                 step,
-                title="Selected MCP Tool",
+                title=f"Selected MCP {self._item_type_name.title()}",
                 auto=False
             )
 
-            # Execute the tool
-            step.stream(f"\nExecuting MCP tool: {selected_tool}...")
+            # Execute the operation
+            step.stream(f"\nProcessing MCP {self._item_type_name}: {selected_item}...")
             try:
-                client = await self._get_client(server_url)
+                result = await self._execute_operation(selected_item, metaset, step, output=output)
 
-                # Call the tool using async context manager
-                async with client:
-                    result = await client.call_tool(selected_tool, parameters)
+                if isinstance(result, dict) and "error" in result:
+                    step.failed_title = f"Error processing MCP {self._item_type_name}: {selected_item}"
+                    return selected_item, result
 
-                # Extract content from MCP response objects
-                processed_result = []
-                if isinstance(result, list):
-                    for item in result:
-                        if hasattr(item, 'text'):
-                            # TextContent object
-                            processed_result.append(item.text)
-                        elif hasattr(item, 'data'):
-                            # ImageContent or other data content
-                            processed_result.append(f"[{type(item).__name__}]: {getattr(item, 'mimeType', 'unknown')}")
-                        else:
-                            # Fallback for other content types
-                            processed_result.append(str(item))
-                elif hasattr(result, 'text'):
-                    processed_result = result.text
-                elif hasattr(result, 'data'):
-                    processed_result = f"[{type(result).__name__}]: {getattr(result, 'mimeType', 'unknown')}"
-                else:
-                    processed_result = str(result)
-
-                # Format the result for display
-                if isinstance(processed_result, list):
-                    # Try to parse as JSON if it looks like structured data
-                    if len(processed_result) == 1:
-                        try:
-                            import json as json_module
-                            parsed = json_module.loads(processed_result[0])
-                            formatted_result = json.dumps(parsed, indent=2)
-                        except (json_module.JSONDecodeError, TypeError):
-                            formatted_result = processed_result[0]
-                    else:
-                        formatted_result = "\n".join(processed_result)
-                else:
-                    try:
-                        import json as json_module
-                        parsed = json_module.loads(processed_result)
-                        formatted_result = json.dumps(parsed, indent=2)
-                    except (json_module.JSONDecodeError, TypeError):
-                        formatted_result = str(processed_result)
-
+                # Format and display result
+                formatted_result = self._format_content_for_display(result)
                 stream_details(
                     formatted_result,
                     step,
-                    title="MCP Tool Result",
+                    title=f"MCP {self._item_type_name.title()} Result",
                     auto=False
                 )
 
-                step.success_title = f"Successfully executed MCP tool: {selected_tool}"
-                return selected_tool, processed_result
+                step.success_title = f"Successfully processed MCP {self._item_type_name}: {selected_item}"
+                return selected_item, result
 
             except Exception as e:
-                step.failed_title = f"Error executing MCP tool: {selected_tool}"
+                step.failed_title = f"Error processing MCP {self._item_type_name}: {selected_item}"
                 step.stream(f"\nError: {e!s}")
-                return selected_tool, {"error": str(e)}
+                return selected_item, {"error": str(e)}
 
     async def respond(
         self,
@@ -1343,34 +1369,175 @@ class MCPAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        """Select and execute an MCP tool based on the user query."""
+        """Execute an MCP operation based on the user query."""
         # Get the MCPMetaset from memory
         metaset = self._memory.get("mcp_metaset")
         if not metaset:
             raise ValueError("No MCP metaset found in memory")
 
-        # Select and execute the appropriate tool
-        tool_name, tool_result = await self._select_and_execute_tool(messages, metaset)
+        available_items = self._get_available_items(metaset)
+        if not available_items:
+            return f"No MCP {self._operation_type} are available."
 
-        if tool_name and tool_result:
-            # Store the result in memory
-            self._memory["mcp_result"] = {
-                "tool": tool_name,
-                "result": tool_result
-            }
+        # Execute the operation
+        selected_item, result = await self._select_and_execute_operation(messages, metaset)
 
-            # Format and stream the response
-            system_prompt = await self._render_prompt(
-                "main",
-                messages,
-                metaset=metaset,
-                selected_tool=tool_name,
-                tool_result=tool_result
-            )
+        # Store the result in memory using the consolidated formatting
+        if selected_item and result:
+            # Get the operation info again to prepare memory data
+            available_items = self._get_available_items(metaset)
+            lookup_key = AnyUrl(selected_item) if self._requires_url_key else selected_item
+            item_details = available_items[lookup_key]
+            operation_info = self._format_operation_details(selected_item, item_details, result=result)
+            self._memory["data"] = operation_info['memory_data']
 
-            return await self._stream(messages, system_prompt)
-        else:
-            return "No suitable MCP tool could be found or executed for this query."
+        return await self._stream(
+            messages,
+            f"Successfully processed MCP {self._item_type_name} '{selected_item}': {self._format_content_for_display(result)}",
+        )
+
+
+class MCPToolAgent(MCPAgent):
+    """
+    Agent responsible for executing MCP tools based on the MCPMetaset.
+
+    MCPToolAgent uses an LLM to select the most appropriate tool based on the user query,
+    extract parameters from the query, and execute the selected MCP tool.
+    """
+
+    conditions = param.List(
+        default=[
+            "Use when user wants to execute actions or perform operations",
+            "For MCP tool execution when mcp_metaset contains tools",
+            "When user query implies an action rather than information retrieval",
+        ]
+    )
+
+    purpose = param.String(default="""
+        Executes Model Context Protocol (MCP) tools to perform actions and operations.
+        Selects appropriate tools based on user queries and executes them with
+        extracted parameters.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "response_model": MCPToolExecution,
+                "template": PROMPTS_DIR / "MCPToolAgent" / "main.jinja2",
+            },
+        }
+    )
+
+    # Override base class attributes
+    _operation_type = "tools"
+    _item_type_name = "tool"
+    _selection_field = "tool_name"
+    _requires_url_key = False
+
+    def _format_operation_details(self, selected_item, item_details, result=None, **kwargs):
+        """Format tool operation details and prepare memory data."""
+        output = kwargs.get('output')
+        parameters = output.parameters if output else {}
+
+        # Format selection details for display
+        formatted_params = json.dumps(parameters, indent=2)
+        selection_details = f"Tool: {selected_item}\nParameters:\n{formatted_params}"
+
+        # Prepare memory data
+        memory_data = {
+            "tool": selected_item,
+            "result": result
+        }
+
+        return {
+            'selection_details': selection_details,
+            'memory_data': memory_data
+        }
+
+    async def _execute_operation(self, selected_item, metaset, step, **kwargs):
+        """Execute the selected MCP tool."""
+        output = kwargs.get('output')
+        parameters = output.parameters if output else {}
+
+        # Get the tool details
+        tool = metaset.tools[selected_item]
+        server_url = tool.server_url
+
+        # Execute the tool
+        client = await self._get_client(server_url)
+
+        # Call the tool using async context manager
+        async with client:
+            result = await client.call_tool(selected_item, parameters)
+
+        # Process the result using base class method
+        return self._process_mcp_content(result)
+
+
+class MCPResourceAgent(MCPAgent):
+    """
+    Agent responsible for reading MCP resources based on the MCPMetaset.
+
+    MCPResourceAgent selects and reads appropriate resources to provide
+    information to the user based on their query.
+    """
+
+    conditions = param.List(
+        default=[
+            "Use when user wants to read or retrieve information",
+            "For MCP resource reading when mcp_metaset contains resources",
+            "When user query implies information retrieval rather than actions",
+        ]
+    )
+
+    purpose = param.String(default="""
+        Reads Model Context Protocol (MCP) resources to retrieve information.
+        Selects appropriate resources based on user queries and presents
+        their content in a readable format.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "response_model": MCPResourceSelection,
+                "template": PROMPTS_DIR / "MCPResourceAgent" / "main.jinja2",
+            },
+        }
+    )
+
+    # Override base class attributes
+    _operation_type = "resources"
+    _item_type_name = "resource"
+    _selection_field = "resource_uri"
+    _requires_url_key = True
+
+    def _format_operation_details(self, selected_item, item_details, result=None, **kwargs):
+        """Format resource operation details and prepare memory data."""
+        # Format selection details for display
+        selection_details = f"Resource: {selected_item}\nDescription: {item_details.description}"
+
+        # Prepare memory data
+        memory_data = {
+            "resource": str(selected_item),
+            "content": result
+        }
+
+        return {
+            'selection_details': selection_details,
+            'memory_data': memory_data
+        }
+
+    async def _execute_operation(self, selected_item, metaset, step, **kwargs):
+        """Read the selected MCP resource."""
+        # Get the resource details
+        resource = metaset.resources[AnyUrl(selected_item)]
+        server_url = resource.server_url
+
+        # Read the resource
+        client = await self._get_client(server_url)
+
+        async with client:
+            content_result = await client.read_resource(selected_item)
+
+        return self._process_mcp_content(content_result)
 
 
 class AnalysisAgent(LumenBaseAgent):

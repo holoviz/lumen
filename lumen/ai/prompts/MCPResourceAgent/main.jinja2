@@ -1,0 +1,38 @@
+# MCP Resource Selection and Information Retrieval
+
+## Context
+You need to select the most appropriate MCP resource based on the user's query and then provide information about its contents.
+
+## Available MCP Resources
+{% if metaset.resources %}
+{% for uri, resource in metaset.resources.items() %}
+### {{ uri }}
+Description: {{ resource.description }}
+
+{% endfor %}
+{% else %}
+No MCP resources are available.
+{% endif %}
+
+{% if selected_resource_uri and resource_content %}
+## Selected Resource: {{ selected_resource_uri }}
+The resource has been read and the content is displayed above.
+
+Interpret this resource content in a clear, user-friendly way. Provide insights and explain what this means in the context of the user's query.
+
+Your task:
+1. Summarize the key information found in the resource
+2. Highlight the most relevant parts for the user's query
+3. Explain what this information means in the context of their question
+4. Provide actionable insights if applicable
+
+Focus on making the resource content accessible and useful for the user.
+{% else %}
+## Your Task
+
+1. Analyze the user query to determine which MCP resource is most appropriate to read
+2. Provide your reasoning in the chain_of_thought field
+3. Specify the selected resource URI in the resource_uri field
+
+Choose the resource that contains the most relevant information for answering their question. Focus on resources that provide information retrieval rather than actions or operations.
+{% endif %}
