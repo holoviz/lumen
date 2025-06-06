@@ -262,6 +262,11 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
+        if "vector_metaset" not in self._memory and "source" in self._memory and "table" in self._memory:
+            source = self._memory["source"]
+            self._memory["vector_metaset"] = await get_metaset(
+                {source.name: source}, [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
+            )
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
 
@@ -393,10 +398,13 @@ class TableListAgent(ListAgent):
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
-        source = memory.get("source")
-        if not source:
-            return True  # source not loaded yet; always apply
-        return len(source.get_tables()) > 1
+        # Check all sources' tables in memory and see if they have greater than 1 table
+        tables_count = 0
+        for source in memory.get("sources", []):
+            tables_count += len(source.get_tables())
+            if tables_count > 1:
+                return True
+        return False
 
     def _get_items(self) -> list[str]:
         tables = []
