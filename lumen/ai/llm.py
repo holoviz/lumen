@@ -659,7 +659,7 @@ class GoogleAI(Llm):
 
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
-    temperature = param.Number(default=0.5, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gemini-2.0-flash"},  # Cost-optimized, low latency
@@ -670,36 +670,7 @@ class GoogleAI(Llm):
 
     @property
     def _client_kwargs(self):
-        return {}  # couldn't get temperature to work
-
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        try:
-            from google import genai
-        except ImportError:
-            raise ImportError(
-                "Please install the `google-generativeai` package to use Google AI models. "
-                "You can install it with `pip install -U google-genai`."
-            )
-
-        model_kwargs = self._get_model_kwargs(model_spec)
-        model = model_kwargs.pop("model")
-        mode = model_kwargs.pop("mode", self.mode)
-
-        llm = genai.Client(api_key=self.api_key, **model_kwargs)
-
-        if self.interceptor:
-            self.interceptor.patch_client_response(llm)
-
-        client = instructor.from_genai(llm, mode=mode, use_async=True)
-        return partial(client.chat.completions.create, model=model, **self.create_kwargs)
-
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
-        # For Gemini, system messages can be handled as the first message or via system instruction
-        if system:
-            # Add system message as the first message if not already present
-            if not messages or messages[0]["role"] != "system":
-                messages = [{"role": "system", "content": system}] + messages
-        return messages, input_kwargs
+        return {}
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
@@ -710,24 +681,49 @@ class GoogleAI(Llm):
             return chunk.content
         return ""
 
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        from google import genai
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
+
+        llm = genai.Client(api_key=self.api_key, **model_kwargs)
+
+        if response_model:
+            client = instructor.from_genai(llm, mode=mode, use_async=True)
+            return partial(client.chat.completions.create, model=model, **self.create_kwargs)
+        else:
+            chat = llm.aio.models
+            if kwargs.pop("stream"):
+                return partial(chat.generate_content_stream, model=model, **self.create_kwargs)
+            else:
+                return partial(chat.generate_content, model=model, **self.create_kwargs)
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
+        try:
+            from google.genai.types import GenerateContentConfig
+        except ImportError:
+            raise ImportError(
+                "Please install the `google-generativeai` package to use Google AI models. "
+                "You can install it with `pip install -U google-genai`."
+            )
+
         client = await self.get_client(model_spec, **kwargs)
 
-        # Convert messages to Gemini format if not using structured outputs
-        if not kwargs.get("response_model"):
-            # For direct Gemini API calls, convert message format
-            content_parts = []
-            for message in messages:
-                if message["role"] == "system":
-                    continue  # System messages handled separately
-                content_parts.append(f"{message['role']}: {message['content']}")
-
-            combined_content = "\n\n".join(content_parts)
-            return await client(combined_content, **kwargs)
+        if kwargs.get("response_model"):
+            config = GenerateContentConfig(temperature=self.temperature)
+            return await client(messages=messages, config=config, **kwargs)
         else:
-            # For structured outputs via instructor, use the standard format
-            return await client(messages=messages, **kwargs)
+            kwargs.pop("stream")
+            system_instruction = next(
+                message["content"] for message in messages if message["role"] == "system"
+            )
+            print(system_instruction)
+            breakpoint()
+            config = GenerateContentConfig(temperature=self.temperature, system_instruction=system_instruction)
+            prompt = messages.pop(-1)["content"]
+            return await client(contents=[prompt], **kwargs)
 
 
 class AINavigator(OpenAI):
