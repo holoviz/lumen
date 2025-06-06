@@ -628,11 +628,12 @@ class AnthropicAI(Llm):
 
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
 
         llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
 
         if response_model:
-            client = instructor.from_anthropic(llm)
+            client = instructor.from_anthropic(llm, mode=mode)
             return partial(client.messages.create, model=model, **self.create_kwargs)
         else:
             return partial(llm.messages.create, model=model, **self.create_kwargs)
@@ -647,6 +648,86 @@ class AnthropicAI(Llm):
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         input_kwargs["system"] = system
         return messages, input_kwargs
+
+
+class GoogleAI(Llm):
+    """
+    A LLM implementation that calls Google's Gemini models.
+    """
+
+    api_key = param.String(default=os.getenv("GEMINI_API_KEY"), doc="The Google API key.")
+
+    mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
+
+    temperature = param.Number(default=0.5, bounds=(0, 1), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gemini-2.0-flash"},  # Cost-optimized, low latency
+        "reasoning": {"model": "gemini-2.5-flash-preview-05-20"},  # Thinking model, balanced price/performance
+    })
+
+    _supports_model_stream = True
+
+    @property
+    def _client_kwargs(self):
+        return {}  # couldn't get temperature to work
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        try:
+            from google import genai
+        except ImportError:
+            raise ImportError(
+                "Please install the `google-generativeai` package to use Google AI models. "
+                "You can install it with `pip install -U google-genai`."
+            )
+
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
+
+        llm = genai.Client(api_key=self.api_key, **model_kwargs)
+
+        if self.interceptor:
+            self.interceptor.patch_client_response(llm)
+
+        client = instructor.from_genai(llm, mode=mode, use_async=True)
+        return partial(client.chat.completions.create, model=model, **self.create_kwargs)
+
+    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+        # For Gemini, system messages can be handled as the first message or via system instruction
+        if system:
+            # Add system message as the first message if not already present
+            if not messages or messages[0]["role"] != "system":
+                messages = [{"role": "system", "content": system}] + messages
+        return messages, input_kwargs
+
+    @classmethod
+    def _get_delta(cls, chunk: Any) -> str:
+        """Extract delta content from streaming response."""
+        if hasattr(chunk, 'text'):
+            return chunk.text
+        elif hasattr(chunk, 'content') and chunk.content:
+            return chunk.content
+        return ""
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        """Override to handle Gemini-specific message format conversion."""
+        client = await self.get_client(model_spec, **kwargs)
+
+        # Convert messages to Gemini format if not using structured outputs
+        if not kwargs.get("response_model"):
+            # For direct Gemini API calls, convert message format
+            content_parts = []
+            for message in messages:
+                if message["role"] == "system":
+                    continue  # System messages handled separately
+                content_parts.append(f"{message['role']}: {message['content']}")
+
+            combined_content = "\n\n".join(content_parts)
+            return await client(combined_content, **kwargs)
+        else:
+            # For structured outputs via instructor, use the standard format
+            return await client(messages=messages, **kwargs)
 
 
 class AINavigator(OpenAI):
