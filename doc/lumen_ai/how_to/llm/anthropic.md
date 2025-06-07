@@ -36,7 +36,7 @@ set ANTHROPIC_API_KEY=your-anthropic-api-key
 
 2. Simply run your Lumen AI application, and it will automatically use Anthropic as the LLM provider. If you have environment variables for multiple providers override it.
 
-```python
+```bash
 lumen-ai serve <your-data-file-or-url> [--provider anthropic]
 ```
 
@@ -71,11 +71,51 @@ You can find the latest list of Anthropic models [in their documentation](https:
 import lumen.ai as lmai
 
 config = {
-    "default": "claude-3-opus-latest",
-    "reasoning": "claude-3-5-sonnet-latest"
+    "default": {"model": "claude-3-opus-latest"},
+    "reasoning": {"model": "claude-3-5-sonnet-latest"}
 }
 
 llm = lmai.llm.AnthropicAI(model_kwargs=config)
 
 lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm).servable()
 ```
+
+## Additional Configuration Options
+
+The AnthropicAI wrapper supports several additional configuration parameters:
+
+```python
+import lumen.ai as lmai
+
+llm = lmai.llm.AnthropicAI(
+    api_key='your-anthropic-api-key',
+    temperature=0.7,  # Controls randomness (0-1)
+    mode='ANTHROPIC_TOOLS',  # Instructor mode: 'ANTHROPIC_TOOLS' or 'ANTHROPIC_JSON'
+    create_kwargs={}  # Additional kwargs for messages.create
+)
+
+ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
+ui.servable()
+```
+
+### Environment Variables
+
+The AnthropicAI wrapper will automatically detect the `ANTHROPIC_API_KEY` environment variable if it is set:
+
+```python
+import lumen.ai as lmai
+
+# Will use ANTHROPIC_API_KEY from environment
+llm = lmai.llm.AnthropicAI()
+
+ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
+ui.servable()
+```
+
+### System Messages
+
+**Note:** Anthropic's API handles system messages differently than OpenAI. The AnthropicAI wrapper automatically converts system messages in the message list to the `system` parameter required by the Anthropic API.
+
+### Interceptor Support
+
+**Important:** The AnthropicAI wrapper does not currently support interceptors for logging LLM calls. If you need logging functionality, consider using a different provider or implementing custom logging around the LLM calls.
