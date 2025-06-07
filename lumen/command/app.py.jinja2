@@ -4,7 +4,7 @@ import lumen.ai as lmai
 {%- if agents is defined -%}
 {% for agent in agents %}
 from lumen.ai.agents import {{ agent }}
-{%- endfor %}
+{% endfor %}
 {%- endif %}
 
 {%- if llm_provider is defined %}
