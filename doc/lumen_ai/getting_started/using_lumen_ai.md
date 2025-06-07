@@ -32,7 +32,33 @@ Upon loading the page, users have a few options to get started, but [Option D: C
 
 ![](../../_static/getting_started/using_lumen_ai_01.png)
 
-### Option A: Upload Files
+### Option A: Chat
+
+Users can also type their own queries and send them to the LLM by pressing the "Send" button or pressing "Enter". This is the main way for the user to interact with the LLM.
+
+![](../../_static/getting_started/using_lumen_ai_05.png)
+
+The LLM will respond to the user's messages, providing insights, answering questions, and generating visualizations.
+
+### Option B: Use Suggestions
+
+Start a conversation with the LLM by selecting a suggestion button, such as "Tell me about the dataset."
+
+![](../../_static/getting_started/using_lumen_ai_04.png)
+
+Selecting a suggestion will automatically send the message, and the LLM will respond accordingly.
+
+### Option C: Explore Table(s)
+
+If a dataset is available, whether pre-loaded or later uploaded, expand the right sidebar.
+
+Then, enter the name of the dataset and click "Explore table(s)".
+
+![](../../_static/getting_started/using_lumen_ai_03.png)
+
+This will allow users to create dynamic visualizations, analyze datasets, and build dashboards with [panel-graphic-walker](https://github.com/panel-extensions/panel-graphic-walker).
+
+### Option D: Upload Files
 
 Upload additional files, such as datasets (CSVs, XLSX, Parquet, etc) and documents (DOCX, PDF, MD, etc), by dragging and dropping files or selecting them from the file browser.
 
@@ -41,30 +67,6 @@ Datasets will be loaded into the LLM's memory and can be referred to in the chat
 ![](../../_static/getting_started/using_lumen_ai_02.png)
 
 A prompt will appear during upload that asks the user to specify aliases for each file and any additional metadata. These aliases will be used to refer to the files in the chat, while the metadata will be used to provide additional context to the LLMs on when to refer to the files.
-
-### Option B: Explore Table(s)
-
-If a dataset is available, whether pre-loaded or later uploaded, enter the name of the dataset and click "Explore table(s)".
-
-![](../../_static/getting_started/using_lumen_ai_03.png)
-
-This will allow users to create dynamic visualizations, analyze datasets, and build dashboards with [panel-graphic-walker](https://github.com/panel-extensions/panel-graphic-walker).
-
-### Option C: Use Suggestions
-
-Start a conversation with the LLM by selecting a suggestion button, such as "Tell me about the dataset."
-
-![](../../_static/getting_started/using_lumen_ai_04.png)
-
-Selecting a suggestion will automatically send the message, and the LLM will respond accordingly.
-
-### Option D: Chat
-
-Users can also type their own queries and send them to the LLM by pressing the "Send" button or pressing "Enter". This is the main way for the user to interact with the LLM.
-
-![](../../_static/getting_started/using_lumen_ai_05.png)
-
-The LLM will respond to the user's messages, providing insights, answering questions, and generating visualizations.
 
 ### Message Examples
 
@@ -148,12 +150,18 @@ Wildcards are also supported:
 lumen-ai serve path/to/datasets/*.csv
 ```
 
+URLs can also be used to load datasets directly from the web:
+
+```bash
+lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
+```
+
 ### Agents
 
 Additional agents can be provided with the `--agents` option:
 
 ```bash
-lumen-ai serve --agents TableListAgent chatagent Sql
+lumen-ai serve --agents TableListAgent chatagent
 ```
 
 :::{admonition} Tip

@@ -1,17 +1,41 @@
 # {octicon}`gear;2em;sd-mr-1` Configuring Lumen AI
 
-Lumen AI is designed to be highly customizable and composable. Users can easily modify the default behavior of Lumen AI by providing custom data sources, LLM providers, agents, and prompts. This guide will walk users through the basic and advanced customization options available in Lumen AI.
+Lumen AI is designed to be highly customizable and composable. Users can easily modify the default behavior of Lumen AI by providing custom data sources, LLM providers, agents, and prompts. This guide will walk you through the basic and advanced customization options available in Lumen AI.
 
 ## Data Sources
 
-In a script, users can initialize Lumen AI with specific datasets by injecting `current_source` into `lmai.memory`:
+There are several ways to provide data to Lumen AI:
 
+**Method 1: Direct data parameter (recommended):**
+```python
+import lumen.ai as lmai
+
+# Single file
+ui = lmai.ExplorerUI(data='https://datasets.holoviz.org/penguins/v1/penguins.csv')
+ui.servable()
+
+# Multiple files with mixed types
+ui = lmai.ExplorerUI(data=[
+    'https://raw.githubusercontent.com/vega/vega-datasets/master/data/cars.json',
+    'https://raw.githubusercontent.com/vega/vega-datasets/master/data/stocks.csv'
+])
+ui.servable()
+```
+
+**Method 2: Using memory with source object:**
 ```python
 from lumen.sources.duckdb import DuckDBSource
 
-lmai.memory["current_source"] = DuckDBSource(
-    tables=["path/to/table.csv", "dir/data.parquet"]
-)
+# Create source and add to memory
+source = DuckDBSource(tables=[
+    'https://raw.githubusercontent.com/vega/vega-datasets/master/data/airports.csv',
+    'https://raw.githubusercontent.com/vega/vega-datasets/master/data/flights-5k.json'
+])
+lmai.memory["source"] = source
+
+# Initialize UI
+ui = lmai.ExplorerUI()
+ui.servable()
 ```
 
 :::{admonition} Tip
@@ -30,36 +54,44 @@ There are a couple options available:
 
 - **`DependencyResolver`** chooses the agent to answer the user's query and then recursively resolves all the information required for that agent until the answer is available.
 
-- **`Planner`** develops a plan to solve the user's query step-by-step and then executes it.
+- **`Planner`** develops a plan to solve the user's query step-by-step and then executes it. This is the default coordinator used by Lumen AI.
 
 ## Agents
 
 `Agent`s are the core components of Lumen AI that solve some sub-task in an effort to address the user query. It has certain dependencies that it requires and provides certain context for other `Agent`s to use. It may also request additional context through the use of context tools.
 
-To provide additional agents, pass desired `Agent`s to the `ExplorerUI`:
+To provide additional agents, pass desired `Agent`s to the `ExplorerUI`. For example, Lumen AI uses VegaLite for visualizations, but you can also use hvPlot:
 
 ```python
+import lumen.ai as lmai
+
 agents = [lmai.agents.hvPlotAgent]
 ui = lmai.ExplorerUI(agents=agents)
 ```
 
-Or, to override the default list of agents:
+Or if you'd like to only use hvPlot for visualize, you may override the default list of agents:
 
 ```python
+import lumen.ai as lmai
 default_agents = [
     lmai.agents.TableListAgent, lmai.agents.ChatAgent, lmai.agents.SQLAgent, lmai.agents.hvPlotAgent
 ]
+ui = lmai.ExplorerUI(default_agents=default_agents)
 ```
 
-By default, the `TableListAgent`, `ChatAgent`, `ChatDetailsAgent`, `SourceAgent`, `SQLAgent`, `VegaLiteAgent` are used in `default_agents`.
+These are the `default_agents`: `TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent`.
 
 The following `Agent`s are built-in:
 
+- **`AnalystAgent`** is a specialized agent that can perform complex analyses and provide insights based on the data available to the LLM.
+
 - **`ChatAgent`** provides high-level information about user's datasets, including details about available tables, columns, and statistics, and can also provide suggestions on what to explore.
 
-- **`SourceAgent`** helps users upload and import their data sources so that the LLM has access to the desired datasets.
+- **`DocumentListAgent`** lists all the documents available to the LLM, allowing users to explore and select relevant documents for their queries.
 
 - **`TableListAgent`** provides an overview of all the tables available to the LLM.
+
+- **`SourceAgent`** helps users upload and import their data sources so that the LLM has access to the desired datasets.
 
 - **`SQLAgent`** translates user's natural language queries into SQL queries, returning a table view of the results.
 
@@ -107,4 +139,29 @@ The following are built-in:
 
 - **FunctionTool**: wraps arbitrary functions and makes them available as a tool for an LLM to call.
 
-See [Custom Tools](../how_to/ai_config/custom_tools) for more information on creating custom tools.
+See [Custom Tools](../how_to/custom_tools) for more information on creating custom tools.
+
+## Environment Variables
+
+Lumen AI supports configuration through environment variables for convenient setup:
+
+**LLM Provider API Keys:**
+```bash
+# Set one or more of these
+export OPENAI_API_KEY='your-openai-key'
+export ANTHROPIC_API_KEY='your-anthropic-key'
+export MISTRAL_API_KEY='your-mistral-key'
+export AZUREAI_ENDPOINT_KEY='your-azure-key'
+export AZUREAI_ENDPOINT_URL='your-azure-endpoint'
+```
+
+Lumen AI will automatically detect and use the first available API key.
+
+## Advanced Configuration
+
+For more advanced customization options, see:
+
+- **[LLM Configuration](../how_to/llm/index)** - Detailed LLM setup and model selection
+- **[Custom Agents](../how_to/custom_agents)** - Building your own agents
+- **[Custom Tools](../how_to/custom_tools)** - Creating custom function tools
+- **[Custom Analyses](../how_to/custom_analyses)** - Implementing domain-specific analyses
