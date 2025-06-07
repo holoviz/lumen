@@ -183,8 +183,8 @@ class SourceAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Use when user wants to upload or connect to new data sources",
-            "Do not use to see if there are any relevant data sources available",
+            "Use ONLY when user explicitly asks to upload or connect to NEW data sources",
+            "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
         ])
 
     table_upload_callbacks = param.Dict(default={}, doc="""
