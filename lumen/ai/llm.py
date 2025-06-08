@@ -719,8 +719,6 @@ class GoogleAI(Llm):
             system_instruction = next(
                 message["content"] for message in messages if message["role"] == "system"
             )
-            print(system_instruction)
-            breakpoint()
             config = GenerateContentConfig(temperature=self.temperature, system_instruction=system_instruction)
             prompt = messages.pop(-1)["content"]
             return await client(contents=[prompt], **kwargs)
