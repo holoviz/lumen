@@ -1,0 +1,6 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate the plot the user requested. Note that `kdims`, `vdims`, `groupby` fields MUST ALL be unique columns;
+no repeated columns are allowed. Do not arbitrarily set `groupby` fields unless explicitly requested. Do not use the 'by' field.
+{% endblock %}
