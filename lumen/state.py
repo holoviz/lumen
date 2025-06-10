@@ -144,7 +144,7 @@ class _session_state:
 
     def to_spec(
         self, auth=None, config=None, defaults=None,
-        pipelines={}, sources={}, layouts=[], variables=None,
+        pipelines=None, sources=None, layouts=None, variables=None,
     ):
         """
         Exports the full specification of the supplied components including
@@ -164,6 +164,12 @@ class _session_state:
         -------
         Declarative specification of all the supplied components.
         """
+        if layouts is None:
+            layouts = []
+        if sources is None:
+            sources = {}
+        if pipelines is None:
+            pipelines = {}
         variables = variables or self.variables
         context = {}
         if auth:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from functools import partial
@@ -345,8 +344,7 @@ class LlamaCpp(Llm):
             return
 
         from huggingface_hub import hf_hub_download
-        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")
-        for model, kwargs in model_kwargs.items():
+        for kwargs in model_kwargs.values():
             repo = kwargs.get('repo', kwargs.get('repo_id'))
             model_file = kwargs.get('model_file')
             hf_hub_download(repo, model_file)
@@ -703,11 +701,11 @@ class GoogleAI(Llm):
         """Override to handle Gemini-specific message format conversion."""
         try:
             from google.genai.types import GenerateContentConfig
-        except ImportError:
+        except ImportError as exc:
             raise ImportError(
                 "Please install the `google-generativeai` package to use Google AI models. "
                 "You can install it with `pip install -U google-genai`."
-            )
+            ) from exc
 
         client = await self.get_client(model_spec, **kwargs)
 

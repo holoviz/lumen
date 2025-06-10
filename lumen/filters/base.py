@@ -342,10 +342,10 @@ class WidgetFilter(BaseWidgetFilter):
     def _validate_widget(cls, widget: str, spec: dict[str, Any], context: dict[str, Any]) -> str:
         try:
             resolve_module_reference(widget, pn.widgets.Widget)
-        except Exception:
+        except Exception as e:
             raise ValidationError(
                 f'{cls.__name__} could not resolve widget module reference {widget!r}.', spec
-            )
+            ) from e
         else:
             return widget
 
@@ -411,7 +411,7 @@ class BinFilter(BaseWidgetFilter):
         else:
             widget = pn.widgets.Select
         if self.labels:
-            options = dict(zip(self.labels, [tuple(b) for b in self.bins]))
+            options = dict(zip(self.labels, [tuple(b) for b in self.bins], strict=False))
         else:
             options = {f'{l} - {u}': (l, u) for l, u in self.bins}
         options[' '] = None

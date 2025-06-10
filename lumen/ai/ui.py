@@ -192,7 +192,7 @@ class UI(Viewer):
             self._notebook_export, *(
                 Button(
                     name=label, button_type='primary',
-                    on_click=lambda _: e(self.interface),
+                    on_click=lambda _, e=e: e(self.interface),
                     stylesheets=['.bk-btn { padding: 4.5px 6px;']
                 )
                 for label, e in self.export_functions.items()
@@ -591,7 +591,7 @@ class ExplorerUI(UI):
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
-        for i, (old, new) in enumerate(zip(event.old, event.new)):
+        for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
             self._contexts.pop(i)
