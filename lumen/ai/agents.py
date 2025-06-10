@@ -273,13 +273,10 @@ class ChatAgent(Agent):
 class AnalystAgent(ChatAgent):
     conditions = param.List(
         default=[
-            "Use ONLY after SQLAgent or DbtslAgent has generated results/data",
             "Use for interpreting and analyzing results from executed queries",
-            "Use when user asks for insights, analysis, or interpretation of existing results",
             "Use to explain trends, patterns, or relationships in query results",
             "NOT for initial data queries or table exploration",
             "NOT for technical programming questions",
-            "NOT when no data results exist yet",
         ]
     )
 
@@ -390,7 +387,6 @@ class TableListAgent(ListAgent):
         "Use for listing available data tables & datasets in source to the user, but not for planning",
         "NOT for showing actual table contents or data within tables",
         "NOT when user wants to query or analyze table data",
-        "NOT when user asks about specific table contents",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
@@ -432,7 +428,6 @@ class DocumentListAgent(ListAgent):
         default=[
             "Use when user explicitly asks to 'list documents', 'show available documents', or 'what documents do you have'",
             "Use when user wants to see all uploaded documents",
-            "NOT for analyzing document contents",
             "NOT when user asks about specific document content",
         ]
     )
@@ -550,7 +545,6 @@ class SQLAgent(LumenBaseAgent):
             "NOT for technical questions about programming, functions, or libraries",
             "NOT for questions that don't require data table access",
             "NOT useful if the user is using the same data for plotting",
-            "NOT the default choice - only use when specifically working with data tables",
         ]
     )
 
@@ -1045,7 +1039,6 @@ class hvPlotAgent(BaseViewAgent):
     conditions = param.List(
         default=[
             "Use for exploratory data analysis and interactive plots",
-            "Use when user wants to explore and interact with data",
             "Use for quick, iterative data visualization during analysis",
             "Use when user requests plots or charts for data exploration",
             "Use for interactive widgets and dynamic filtering",
@@ -1111,7 +1104,6 @@ class VegaLiteAgent(BaseViewAgent):
             "Use for explanatory, publication-ready visualizations",
             "Use when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
-            "Use when user wants static, well-designed visualizations",
             "Use for final charts in reports, dashboards, or publications",
         ]
     )
@@ -1227,7 +1219,6 @@ class AnalysisAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
             "Use when user requests custom analysis or advanced analytics",
-            "Use when user asks for statistical analysis, modeling, or specialized computations",
             "Use when built-in SQL/visualization agents are insufficient",
             "Use when user wants to apply domain-specific analysis methods",
             "NOT for simple queries or basic visualizations",
