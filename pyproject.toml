@@ -107,7 +107,7 @@ line-length = 165
 
 [tool.ruff.lint]
 select = [
-    # "B",
+    "B",   # flake8-bugbear (includes T20 for print detection)
     "E",
     "F",
     "FLY",
@@ -119,6 +119,7 @@ select = [
     "PLR",
     "PLW",
     "RUF",
+    "T20", # flake8-print (detects print statements)
     "UP",
     "W",
 ]
