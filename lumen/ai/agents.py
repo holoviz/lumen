@@ -661,10 +661,9 @@ class SQLAgent(LumenBaseAgent):
             try:
                 # TODO: if original sql expr matches, don't recreate a new one!
                 sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
-                step.status = "failed"
                 break
             except Exception as e:
-                report_error(e, step, status="running")
+                report_error(e, step, status="failed")
                 with self._add_step(title="Re-attempted SQL query", steps_layout=self._steps_layout) as step:
                     sql_query = clean_sql(
                         await self._retry_output_by_line(e, messages, self._memory, sql_query, language="sql"),
@@ -990,11 +989,10 @@ class BaseViewAgent(LumenBaseAgent):
                     spec = await self._extract_spec(spec)
                     break
                 except Exception as e:
-                    step.status = "failed"
                     error = str(e)
                     traceback.print_exception(e)
                     context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
-                    report_error(e, step, language="json", context=context, status="running")
+                    report_error(e, step, language="json", context=context, status="failed")
                     with self._add_step(
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
