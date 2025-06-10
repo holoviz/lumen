@@ -235,15 +235,19 @@ class ChatAgent(Agent):
         default=[
             "Best for high-level information about data or general conversation",
             "Can be used to describe available tables",
-            "Not useful for answering data specific questions",
-            "Must be paired with TableLookup or DocumentLookup",
+            "Use for technical questions about programming, functions, methods, or libraries",
+            "Use for 'how to' questions about specific functions or code usage",
+            "Use for questions about software tools, APIs, or programming concepts",
+            "Not useful for answering data specific questions that require querying tables",
         ]
     )
 
     purpose = param.String(
         default="""
-        Engages in conversations about high-level data topics,
-        offering suggestions or insights to get started.""")
+        Engages in conversations about high-level data topics, programming questions,
+        technical documentation, and general conversation. Handles questions about
+        specific functions, methods, libraries, and provides coding guidance and
+        technical explanations.""")
 
     prompts = param.Dict(
         default={
@@ -269,7 +273,13 @@ class ChatAgent(Agent):
 class AnalystAgent(ChatAgent):
     conditions = param.List(
         default=[
-            "Best for interpreting query results from data output",
+            "Use ONLY after SQLAgent or DbtslAgent has generated results/data",
+            "Use for interpreting and analyzing results from executed queries",
+            "Use when user asks for insights, analysis, or interpretation of existing results",
+            "Use to explain trends, patterns, or relationships in query results",
+            "NOT for initial data queries or table exploration",
+            "NOT for technical programming questions",
+            "NOT when no data results exist yet",
         ]
     )
 
@@ -376,8 +386,11 @@ class TableListAgent(ListAgent):
     """
 
     conditions = param.List(default=[
-        "For listing available data tables & datasets in source to the user, but not for planning",
-        "Not for showing data table contents",
+        "Use when user explicitly asks to 'list tables', 'show available tables', or 'what tables do you have'",
+        "Use for listing available data tables & datasets in source to the user, but not for planning",
+        "NOT for showing actual table contents or data within tables",
+        "NOT when user wants to query or analyze table data",
+        "NOT when user asks about specific table contents",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
@@ -414,6 +427,15 @@ class DocumentListAgent(ListAgent):
     """
     The DocumentListAgent lists all available documents provided by the user.
     """
+
+    conditions = param.List(
+        default=[
+            "Use when user explicitly asks to 'list documents', 'show available documents', or 'what documents do you have'",
+            "Use when user wants to see all uploaded documents",
+            "NOT for analyzing document contents",
+            "NOT when user asks about specific document content",
+        ]
+    )
 
     purpose = param.String(default="""
         Displays a list of all available documents in memory.""")
@@ -518,11 +540,17 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Start with this agent if you are unsure what to use",
+            "Use for queries that need to access, filter, join, or aggregate existing data tables",
+            "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
+            "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
+            "Use when user wants to display or examine table contents",
             "For existing tables, only use if additional calculations are needed",
             "When reusing tables, reference by name rather than regenerating queries",
             "Commonly used with IterativeTableLookup and AnalystAgent",
-            "Not useful if the user is using the same data for plotting",
+            "NOT for technical questions about programming, functions, or libraries",
+            "NOT for questions that don't require data table access",
+            "NOT useful if the user is using the same data for plotting",
+            "NOT the default choice - only use when specifically working with data tables",
         ]
     )
 
@@ -633,6 +661,7 @@ class SQLAgent(LumenBaseAgent):
             try:
                 # TODO: if original sql expr matches, don't recreate a new one!
                 sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+                step.status = "failed"
                 break
             except Exception as e:
                 report_error(e, step, status="running")
@@ -961,6 +990,7 @@ class BaseViewAgent(LumenBaseAgent):
                     spec = await self._extract_spec(spec)
                     break
                 except Exception as e:
+                    step.status = "failed"
                     error = str(e)
                     traceback.print_exception(e)
                     context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
@@ -1014,6 +1044,16 @@ class BaseViewAgent(LumenBaseAgent):
 
 
 class hvPlotAgent(BaseViewAgent):
+    conditions = param.List(
+        default=[
+            "Use for exploratory data analysis and interactive plots",
+            "Use when user wants to explore and interact with data",
+            "Use for quick, iterative data visualization during analysis",
+            "Use when user requests plots or charts for data exploration",
+            "Use for interactive widgets and dynamic filtering",
+        ]
+    )
+
     purpose = param.String(default="Generates a plot of the data given a user prompt.")
 
     prompts = param.Dict(
@@ -1068,6 +1108,16 @@ class hvPlotAgent(BaseViewAgent):
 
 
 class VegaLiteAgent(BaseViewAgent):
+    conditions = param.List(
+        default=[
+            "Use for explanatory, publication-ready visualizations",
+            "Use when user specifically requests Vega-Lite charts",
+            "Use for polished charts intended for presentation or sharing",
+            "Use when user wants static, well-designed visualizations",
+            "Use for final charts in reports, dashboards, or publications",
+        ]
+    )
+
     purpose = param.String(default="Generates a vega-lite specification of the plot the user requested.")
 
     prompts = param.Dict(
@@ -1175,6 +1225,16 @@ class VegaLiteAgent(BaseViewAgent):
 
 class AnalysisAgent(LumenBaseAgent):
     analyses = param.List([])
+
+    conditions = param.List(
+        default=[
+            "Use when user requests custom analysis or advanced analytics",
+            "Use when user asks for statistical analysis, modeling, or specialized computations",
+            "Use when built-in SQL/visualization agents are insufficient",
+            "Use when user wants to apply domain-specific analysis methods",
+            "NOT for simple queries or basic visualizations",
+        ]
+    )
 
     purpose = param.String(default="Perform custom analyses on the data.")
 
