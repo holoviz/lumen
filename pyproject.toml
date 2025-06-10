@@ -57,6 +57,7 @@ ai-openai = ['lumen[ai]', 'openai']
 ai-mistralai = ['lumen[ai]', 'mistralai']
 ai-anthropic = ['lumen[ai]', 'anthropic']
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.0']
+ai-google = ['lumen[ai]', 'google-genai']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 
 [project.scripts]
@@ -98,6 +99,7 @@ filterwarnings = [
     "ignore:datetime.datetime.utcfromtimestamp():DeprecationWarning:dateutil.tz.tz", # https://github.com/dateutil/dateutil/pull/1285
     "ignore:Couldn't find ffmpeg or avconv - defaulting to ffmpeg:RuntimeWarning",
     "ignore:Unsupported Windows version",
+    "ignore:unclosed <socket.socket:ResourceWarning", # Windows Python 3.10 test-example
 ]
 
 [tool.ruff]

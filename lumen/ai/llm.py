@@ -628,11 +628,12 @@ class AnthropicAI(Llm):
 
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
 
         llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
 
         if response_model:
-            client = instructor.from_anthropic(llm)
+            client = instructor.from_anthropic(llm, mode=mode)
             return partial(client.messages.create, model=model, **self.create_kwargs)
         else:
             return partial(llm.messages.create, model=model, **self.create_kwargs)
@@ -647,6 +648,80 @@ class AnthropicAI(Llm):
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         input_kwargs["system"] = system
         return messages, input_kwargs
+
+
+class GoogleAI(Llm):
+    """
+    A LLM implementation that calls Google's Gemini models.
+    """
+
+    api_key = param.String(default=os.getenv("GEMINI_API_KEY"), doc="The Google API key.")
+
+    mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
+
+    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gemini-2.0-flash"},  # Cost-optimized, low latency
+        "reasoning": {"model": "gemini-2.5-flash-preview-05-20"},  # Thinking model, balanced price/performance
+    })
+
+    _supports_model_stream = True
+
+    @property
+    def _client_kwargs(self):
+        return {}
+
+    @classmethod
+    def _get_delta(cls, chunk: Any) -> str:
+        """Extract delta content from streaming response."""
+        if hasattr(chunk, 'text'):
+            return chunk.text
+        elif hasattr(chunk, 'content') and chunk.content:
+            return chunk.content
+        return ""
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        from google import genai
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
+
+        llm = genai.Client(api_key=self.api_key, **model_kwargs)
+
+        if response_model:
+            client = instructor.from_genai(llm, mode=mode, use_async=True)
+            return partial(client.chat.completions.create, model=model, **self.create_kwargs)
+        else:
+            chat = llm.aio.models
+            if kwargs.pop("stream"):
+                return partial(chat.generate_content_stream, model=model, **self.create_kwargs)
+            else:
+                return partial(chat.generate_content, model=model, **self.create_kwargs)
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        """Override to handle Gemini-specific message format conversion."""
+        try:
+            from google.genai.types import GenerateContentConfig
+        except ImportError:
+            raise ImportError(
+                "Please install the `google-generativeai` package to use Google AI models. "
+                "You can install it with `pip install -U google-genai`."
+            )
+
+        client = await self.get_client(model_spec, **kwargs)
+
+        if kwargs.get("response_model"):
+            config = GenerateContentConfig(temperature=self.temperature)
+            return await client(messages=messages, config=config, **kwargs)
+        else:
+            kwargs.pop("stream")
+            system_instruction = next(
+                message["content"] for message in messages if message["role"] == "system"
+            )
+            config = GenerateContentConfig(temperature=self.temperature, system_instruction=system_instruction)
+            prompt = messages.pop(-1)["content"]
+            return await client(contents=[prompt], **kwargs)
 
 
 class AINavigator(OpenAI):
