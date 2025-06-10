@@ -319,6 +319,7 @@ class BigQuerySource(BaseSQLSource):
             elif column_type == "BOOLEAN":
                 schema[column_name] = {"type": column_type.lower()}
             elif column_type == "RECORD":
+                print(f"{column_name} is of type {column_type}, which we currently ignore.")  # noqa: T201
                 continue
 
         sql_expr = self.get_sql_expr(table)

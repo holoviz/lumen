@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 
 from functools import partial
@@ -344,6 +345,7 @@ class LlamaCpp(Llm):
             return
 
         from huggingface_hub import hf_hub_download
+        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
         for kwargs in model_kwargs.values():
             repo = kwargs.get('repo', kwargs.get('repo_id'))
             model_file = kwargs.get('model_file')
