@@ -34,7 +34,7 @@ set MISTRAL_API_KEY=your-mistral-api-key
 
 ::::
 
-2. Simply run your Lumen AI application, and it will automatically use Anthropic as the LLM provider. If you have environment variables for multiple providers override it.
+2. Simply run your Lumen AI application, and it will automatically use Mistral as the LLM provider. If you have environment variables for multiple providers override it.
 
 ```bash
 lumen-ai serve <your-data-file-or-url> [--provider mistral]
@@ -55,7 +55,7 @@ In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.MistralAI` and 
 ```python
 import lumen.ai as lmai
 
-mistral_llm = lmai.llm.Mistral(api_key='your-mistral-api-key')
+mistral_llm = lmai.llm.MistralAI(api_key='your-mistral-api-key')
 
 ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=mistral_llm)
 ui.servable()
@@ -71,11 +71,47 @@ You can find the latest list of Mistral models [in their documentation](https://
 import lumen.ai as lmai
 
 config = {
-    "default": "ministral-8b-latest",
-    "reasoning": "mistral-large-latest"
+    "default": {"model": "ministral-8b-latest"},
+    "reasoning": {"model": "mistral-large-latest"}
 }
 
 llm = lmai.llm.MistralAI(model_kwargs=config)
 
 lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm).servable()
 ```
+
+## Additional Configuration Options
+
+The MistralAI wrapper supports several additional configuration parameters:
+
+```python
+import lumen.ai as lmai
+
+llm = lmai.llm.MistralAI(
+    api_key='your-mistral-api-key',
+    temperature=0.7,  # Controls randomness (0-1)
+    mode='MISTRAL_TOOLS',  # Instructor mode: 'MISTRAL_TOOLS' or 'JSON_SCHEMA'
+    create_kwargs={}  # Additional kwargs for chat.completions.create
+)
+
+ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
+ui.servable()
+```
+
+### Environment Variables
+
+The MistralAI wrapper will automatically detect the `MISTRAL_API_KEY` environment variable if it is set:
+
+```python
+import lumen.ai as lmai
+
+# Will use MISTRAL_API_KEY from environment
+llm = lmai.llm.MistralAI()
+
+ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
+ui.servable()
+```
+
+### Streaming Support
+
+**Note:** The MistralAI wrapper has limited streaming support. While it supports streaming for text generation, it does not support streaming for structured output (Pydantic models) due to instructor limitations with Mistral's streaming API.
