@@ -105,6 +105,7 @@ filterwarnings = [
 [tool.ruff]
 fix = true
 line-length = 165
+exclude = ["tests"]
 
 [tool.ruff.lint]
 select = [
