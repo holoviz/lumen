@@ -18,6 +18,8 @@ Here's a summary of the dataset the user just asked about:
 ```
 {{ memory['data'] }}
 ```
+{% else %}
+No dataset has been loaded yet. Please ask the user to load a dataset or provide more context.
 {%- endif %}
 {%- if 'vector_metaset' not in memory and 'agent_tool_contexts' not in memory %}
 The user has not provided any data or documents to chat about. Please prompt the user
