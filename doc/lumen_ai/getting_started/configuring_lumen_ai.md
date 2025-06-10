@@ -60,48 +60,54 @@ There are a couple options available:
 
 `Agent`s are the core components of Lumen AI that solve some sub-task in an effort to address the user query. It has certain dependencies that it requires and provides certain context for other `Agent`s to use. It may also request additional context through the use of context tools.
 
-To provide additional agents, pass desired `Agent`s to the `ExplorerUI`. For example, Lumen AI uses VegaLite for visualizations, but you can also use hvPlot:
+### Default Agents
+
+The following agents are included by default in Lumen AI and are always added unless you explicitly override them:
+
+- **`TableListAgent`** provides an overview of all the tables available to the LLM.
+- **`ChatAgent`** provides high-level information about user's datasets, including details about available tables, columns, and statistics, and can also provide suggestions on what to explore.
+- **`DocumentListAgent`** lists all the documents available to the LLM, allowing users to explore and select relevant documents for their queries.
+- **`AnalystAgent`** is a specialized agent that can perform complex analyses and provide insights based on the data available to the LLM.
+- **`SourceAgent`** helps users upload and import their data sources so that the LLM has access to the desired datasets.
+- **`SQLAgent`** translates user's natural language queries into SQL queries, returning a table view of the results.
+- **`VegaLiteAgent`** generates visualizations ready to export--perfect for presentations and reports.
+
+### Non-Default Built-in Agents
+
+These agents are available in Lumen AI but are not included by default. You can add them by passing them to the `ExplorerUI`:
+
+- **`hvPlotAgent`** creates interactive visualizations of the data and query results so users can continue dive into the visuals from various perspectives.
+- **`AnalysisAgent`** allows users to plug in their own custom analyses and views.
+
+#### Adding Non-Default Agents
+
+To add additional agents to the default set:
 
 ```python
 import lumen.ai as lmai
 
+# Add hvPlotAgent to the default agents
 agents = [lmai.agents.hvPlotAgent]
 ui = lmai.ExplorerUI(agents=agents)
 ```
 
-Or if you'd like to only use hvPlot for visualize, you may override the default list of agents:
+#### Overriding Default Agents
+
+You can also override the entire default agent list. For example, to use hvPlot instead of VegaLite for visualizations:
 
 ```python
 import lumen.ai as lmai
+
 default_agents = [
-    lmai.agents.TableListAgent, lmai.agents.ChatAgent, lmai.agents.SQLAgent, lmai.agents.hvPlotAgent
+    lmai.agents.TableListAgent, lmai.agents.ChatAgent, lmai.agents.SQLAgent,
+    lmai.agents.hvPlotAgent
 ]
 ui = lmai.ExplorerUI(default_agents=default_agents)
 ```
 
-These are the `default_agents`: `TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent`.
+### Custom Agents
 
-The following `Agent`s are built-in:
-
-- **`AnalystAgent`** is a specialized agent that can perform complex analyses and provide insights based on the data available to the LLM.
-
-- **`ChatAgent`** provides high-level information about user's datasets, including details about available tables, columns, and statistics, and can also provide suggestions on what to explore.
-
-- **`DocumentListAgent`** lists all the documents available to the LLM, allowing users to explore and select relevant documents for their queries.
-
-- **`TableListAgent`** provides an overview of all the tables available to the LLM.
-
-- **`SourceAgent`** helps users upload and import their data sources so that the LLM has access to the desired datasets.
-
-- **`SQLAgent`** translates user's natural language queries into SQL queries, returning a table view of the results.
-
-- **`hvPlotAgent`** creates interactive visualizations of the data and query results so users can continue dive into the visuals from various perspectives.
-
-- **`VegaLiteAgent`** generates visualizations ready to export--perfect for presentations and reports.
-
-- **`AnalysisAgent`** allows users to plug in their own custom analyses and views.
-
-See [Custom Agents](../how_to/ai_config/custom_agents) for more information on creating custom agents.
+You can write your own agents if none of the built-in agents suit your needs. See [Custom Agents](../how_to/ai_config/custom_agents) for more information on creating custom agents.
 
 ## LLM Providers
 
