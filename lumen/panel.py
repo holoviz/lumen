@@ -148,8 +148,10 @@ class IconButton(ReactiveHTML):
     def on_click(self, callback):
         self._callbacks.append(callback)
 
-    def js_on_click(self, args={}, code=""):
+    def js_on_click(self, args=None, code=""):
         from panel.links import Callback
+        if args is None:
+            args = {}
         return Callback(self, code={'event:'+self._event: code}, args=args)
 
     def _button_click(self, event=None):

@@ -852,6 +852,9 @@ class Planner(Coordinator):
             all_provides |= set(provider.provides)
         all_provides |= set(self._memory.keys())
 
+        # filter agents using applies
+        agents = [agent for agent in agents if await agent.applies(self._memory)]
+
         # ensure these candidates are satisfiable
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset

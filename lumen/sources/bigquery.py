@@ -107,12 +107,12 @@ class BigQuerySource(BaseSQLSource):
         """
         try:
             self._credentials, project_id = google.auth.default()  # pyright: ignore [reportAttributeAccessIssue]
-        except DefaultCredentialsError:
+        except DefaultCredentialsError as exc:
             msg = (
                 "No default credentials can be found. Please run `gcloud init` at least once "
                 "to create default credentials to your Google Cloud project."
             )
-            raise DefaultCredentialsError(msg)
+            raise DefaultCredentialsError(msg) from exc
 
         if self.project_id == "":
             self.project_id = project_id
@@ -319,7 +319,7 @@ class BigQuerySource(BaseSQLSource):
             elif column_type == "BOOLEAN":
                 schema[column_name] = {"type": column_type.lower()}
             elif column_type == "RECORD":
-                print(f"{column_name} is of type {column_type}, which we currently ignore.")
+                print(f"{column_name} is of type {column_type}, which we currently ignore.")  # noqa: T201
                 continue
 
         sql_expr = self.get_sql_expr(table)

@@ -69,6 +69,13 @@ Requires: Inputs this actor needs from memory or others
 Conditions: When to use this actor
 Not with: agents that can't be used alongside this expert
 
+You already have these keys satisfied in memory:
+{%- for key in memory.keys() %}
+{%- if memory[key] != [] and memory[key] is not none %}
+- `{{ key }}`
+{%- endif %}
+{%- endfor %}
+
 {% if tools %}
 🛠️ Tools:
 {%- for tool in tools %}

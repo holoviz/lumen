@@ -81,7 +81,7 @@ class VectorMetaset:
                 original_indices = list(range(len(cols_to_show)))
                 show_ellipsis = False
 
-            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
+            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices, strict=False)):
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
 
@@ -188,7 +188,7 @@ class SQLMetaset:
                 original_indices = list(range(len(cols_to_show)))
                 show_ellipsis = False
 
-            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
+            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices, strict=False)):
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
 

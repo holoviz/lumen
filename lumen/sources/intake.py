@@ -53,10 +53,10 @@ class IntakeBaseSource(Source):
         dask = query.pop('__dask', self.dask)
         try:
             entry = self.cat[table]
-        except KeyError:
+        except KeyError as exc:
             raise KeyError(f"'{table}' table could not be found in Intake "
                            "catalog. Available tables include: "
-                           f"{list(self.cat)}.")
+                           f"{list(self.cat)}.") from exc
         df = self._read(entry, dask)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
