@@ -2,7 +2,7 @@ import argparse
 
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore
 
 from bokeh.command.subcommand import Argument, Subcommand
 
