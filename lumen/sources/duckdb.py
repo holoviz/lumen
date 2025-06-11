@@ -343,7 +343,7 @@ class DuckDBSource(BaseSQLSource):
                 "description": "",
                 "columns": {
                     col: {"data_type": str(dtype), "description": ""}
-                    for col, dtype in zip(schema_result.columns, schema_result.dtypes)
+                    for col, dtype in zip(schema_result.columns, schema_result.dtypes, strict=False)
                 },
                 "rows": count,
                 "updated_at": None,

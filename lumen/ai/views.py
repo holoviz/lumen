@@ -164,7 +164,7 @@ class LumenOutput(Viewer):
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if self.render_output and (self.active != (len(self._main)-1)) or self.spec is None:
+        if (self.render_output and (self.active != (len(self._main)-1))) or self.spec is None:
             return
 
         if self.spec in self._last_output:
@@ -235,8 +235,8 @@ class VegaLiteOutput(LumenOutput):
                 # $.encoding.x.sort: '-host_count' is not one of ..
                 #$.encoding.x: 'value' is a required property
                 if (
-                    last_path != path
-                    and last_path.split(path)[-1].count(".") <= 1
+                    (last_path != path
+                    and last_path.split(path)[-1].count(".") <= 1)
                     or path in rejected_paths
                 ):
                     rejected_paths.add(path)
@@ -271,7 +271,7 @@ class VegaLiteOutput(LumenOutput):
             spec_copy.pop("params", None)
             vega_lite_validator.validate(spec_copy)
         except ValidationError as e:
-            raise ValidationError(cls._format_validation_error(e))
+            raise ValidationError(cls._format_validation_error(e)) from e
         return super()._validate_spec(spec)
 
     def __str__(self):

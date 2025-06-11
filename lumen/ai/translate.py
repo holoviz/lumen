@@ -510,8 +510,8 @@ def pydantic_to_param_instance(model: BaseModel) -> param.Parameterized:
     try:
         parameterized_class = model._parameterized  # type: ignore
         valid_param_names = set(parameterized_class.param)
-    except AttributeError:
-        raise ValueError("The provided model does not have a _parameterized attribute, indicating it was not created from a param.Parameterized class.")
+    except AttributeError as exc:
+        raise ValueError("The provided model does not have a _parameterized attribute, indicating it was not created from a param.Parameterized class.") from exc
 
     kwargs = {}
     for key, value in model:
@@ -590,7 +590,7 @@ def function_to_model(function: FunctionType, skipped: list[str] | None = None) 
     fields: dict[str, tuple[Any, FieldInfo]] = {}  # Changed core_schema.TypedDictField to tuple[Any, FieldInfo] for create_model
     description, field_descriptions = doc_descriptions(function, sig)
 
-    for index, (name, p) in enumerate(sig.parameters.items()):
+    for _index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:
             annotation = Any
         else:

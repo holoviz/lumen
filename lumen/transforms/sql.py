@@ -285,7 +285,7 @@ class SQLSelectFrom(SQLFormat):
             Column
         )
         if isinstance(self.tables, list):
-            for existing_table, renamed_table in zip(existing_tables, self.tables):
+            for existing_table, renamed_table in zip(existing_tables, self.tables, strict=False):
                 if isinstance(renamed_table, Table):
                     tables[existing_table] = renamed_table
                 else:

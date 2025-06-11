@@ -318,7 +318,7 @@ async def get_schema(
     count = schema.pop("__len__", None)
 
     if not include_type:
-        for field, spec in schema.items():
+        for spec in schema.values():
             if "type" in spec:
                 spec.pop("type")
 
@@ -387,7 +387,7 @@ async def get_schema(
                 continue
 
     # Format any other numeric values in the schema
-    for field, spec in schema.items():
+    for spec in schema.values():
         for key, value in spec.items():
             if isinstance(value, (int, float)) and key not in ['type']:
                 spec[key] = format_float(value)

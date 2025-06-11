@@ -53,7 +53,6 @@ class MockLLM(Llm):
 
     async def stream(self, messages, system="", response_model=None, field=None, model_spec="default", **kwargs):
         if response_model:
-            print(f"Response model: {response_model.__name__}")
             if response_model.__name__ == "Sql":
                 yield response_model(
                     query=f"(SELECT * FROM READ_CSV('{root + '/test.csv'}'))",
