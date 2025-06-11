@@ -36,7 +36,7 @@ from .tools import (
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, stream_details,
 )
-from .views import LumenOutput
+from .views import AnalysisOutput, LumenOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -362,6 +362,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
     async def _add_analysis_suggestions(self):
         pipeline = self._memory["pipeline"]
         current_analysis = self._memory.get("analysis")
+
+        # Clear current_analysis unless the last message is the same AnalysisOutput
+        if current_analysis and self.interface.objects:
+            last_message_obj = self.interface.objects[-1].object
+            if not (isinstance(last_message_obj, AnalysisOutput) and last_message_obj.analysis is current_analysis):
+                current_analysis = None
+
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
         applicable_analyses = []
         for analysis in self._analyses:
