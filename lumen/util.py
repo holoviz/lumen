@@ -259,7 +259,7 @@ def is_ref(value):
 def extract_refs(spec, ref_type=None):
     refs = []
     if isinstance(spec, dict):
-        for _k, v in spec.items():
+        for v in spec.values():
             for ref in extract_refs(v, ref_type):
                 if ref not in refs:
                     refs.append(ref)

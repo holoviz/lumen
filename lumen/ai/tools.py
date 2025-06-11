@@ -529,7 +529,7 @@ class DocumentLookup(VectorLookupTool):
             Formatted description of document results
         """
         formatted_results = []
-        for _i, result in enumerate(results):
+        for result in results:
             metadata = result.get('metadata', {})
             filename = metadata.get('filename', 'Unknown document')
             text_preview = truncate_string(result.get('text', ''), max_length=150)
@@ -670,7 +670,7 @@ class TableLookup(VectorLookupTool):
             Formatted description of table results
         """
         formatted_results = []
-        for _i, result in enumerate(results):
+        for result in results:
             source_name = result['metadata'].get("source", "unknown")
             table_name = result['metadata'].get("table_name", "unknown")
             text = result["text"]

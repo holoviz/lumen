@@ -386,7 +386,7 @@ class Source(MultiTypeComponent):
             for table, tschema in json_schema.items():
                 if table in schema:
                     continue
-                for _col, cschema in tschema.items():
+                for cschema in tschema.values():
                     if isinstance(cschema, int):
                         continue
                     if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':

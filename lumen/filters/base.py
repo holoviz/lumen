@@ -342,10 +342,10 @@ class WidgetFilter(BaseWidgetFilter):
     def _validate_widget(cls, widget: str, spec: dict[str, Any], context: dict[str, Any]) -> str:
         try:
             resolve_module_reference(widget, pn.widgets.Widget)
-        except Exception as e:
+        except Exception as exc:
             raise ValidationError(
                 f'{cls.__name__} could not resolve widget module reference {widget!r}.', spec
-            ) from e
+            ) from exc
         else:
             return widget
 
