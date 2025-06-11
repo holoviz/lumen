@@ -291,10 +291,7 @@ class AnalysisOutput(LumenOutput):
 
         # Set title based on analysis name if not provided
         if 'title' not in params or params['title'] is None:
-            analysis_name = getattr(params['analysis'], '__name__',
-                                   getattr(params['analysis'], 'name',
-                                          type(params['analysis']).__name__))
-            params['title'] = analysis_name
+            params['title'] = type(params['analysis']).__name__
 
         super().__init__(**params)
         controls = self.analysis.controls()
