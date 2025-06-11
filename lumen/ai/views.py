@@ -288,6 +288,11 @@ class AnalysisOutput(LumenOutput):
     def __init__(self, **params):
         if not params['analysis'].autorun:
             params['active'] = 0
+
+        # Set title based on analysis name if not provided
+        if 'title' not in params or params['title'] is None:
+            params['title'] = type(params['analysis']).__name__
+
         super().__init__(**params)
         controls = self.analysis.controls()
         if controls is not None or not self.analysis.autorun:
@@ -310,7 +315,7 @@ class AnalysisOutput(LumenOutput):
                 )
                 self._main.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
-                self._main.active = 1 if self.analysis.autorun else 0
+                self._main.active = 0 if self.analysis.autorun else 1
         self._rendered = True
 
     async def _rerun(self, event):
@@ -324,7 +329,7 @@ class AnalysisOutput(LumenOutput):
             spec = view.to_spec()
             self.param.update(
                 spec=yaml.dump(spec),
-                active=2
+                active=0
             )
 
 
