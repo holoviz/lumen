@@ -1055,7 +1055,7 @@ class DuckDBVectorStore(VectorStore):
             "class": self.embeddings.__class__.__module__ + "." + self.embeddings.__class__.__name__,
             "params": {}
         }
-        for param_name, _param_obj in self.embeddings.param.objects().items():
+        for param_name in self.embeddings.param.objects().keys():
             if param_name not in ['name']:
                 value = getattr(self.embeddings, param_name)
                 if isinstance(value, (str, int, float, bool, list, dict)) or value is None:

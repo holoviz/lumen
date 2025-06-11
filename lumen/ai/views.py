@@ -164,7 +164,7 @@ class LumenOutput(Viewer):
             value=True, name="Rendering component...", height=50, width=50
         )
 
-        if (self.render_output and (self.active != (len(self._main)-1))) or self.spec is None:
+        if (self.render_output and (self.active != (len(self._main) - 1))) or self.spec is None:
             return
 
         if self.spec in self._last_output:
