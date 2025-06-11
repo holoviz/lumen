@@ -111,11 +111,6 @@ From query: "{{ memory['vector_metaset'].query }}"
 📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
 
-You already have these provided in memory so you can use them directly in your plan:
-{%- for key in memory.keys() %}
-- `{{ key }}`
-{%- endfor %}
-
 # Planning guidelines:
 
 {%- if is_follow_up and 'vector_metaset' in memory %}
