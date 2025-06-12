@@ -18,10 +18,12 @@ class YesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
-class ThinkingYesNo(YesNo):
+class ThinkingYesNo(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain concisely how you arrived at your answer in under a sentence, or even a phrase.")
+        description="Explain your reasoning as to why you will be answering yes or no.")
+
+    yes: bool = Field(description="True if yes, otherwise False.")
 
 
 class Sql(BaseModel):
