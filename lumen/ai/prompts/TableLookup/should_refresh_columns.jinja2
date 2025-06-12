@@ -9,8 +9,8 @@ First, compare the two queries. Consider whether:
 3. The new query is asking about different attributes or metrics
 4. The new query has a fundamentally different intent
 
-If the new query has a significantly different intent or asks for different attributes/columns than the previous query, respond with "yes".
-If the new query is essentially asking for the same information, just phrased differently, respond with "no".
+Return yes=True if the new query has a significantly different intent or asks for different attributes/columns than the previous query.
+Return yes=False if the new query is essentially asking for the same information, just phrased differently.
 
 Provide a response indicating whether to rerun column selection (yes/no).
 {% endblock %}

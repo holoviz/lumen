@@ -263,20 +263,17 @@ class UI(Viewer):
             self._vector_store_status_badge.param.update(
                 status="running", name="Tables Vector Store Pending", description="Pending initialization"
             )
-            self.interface.loading = True
         elif ready_state is True:
             # Ready - show as success
             num_tables = len(memory["tables_metadata"])
             self._vector_store_status_badge.param.update(
                 status="success", name="Tables Vector Store Ready", description=f"Embedded {num_tables} table(s)"
             )
-            self.interface.loading = False
         elif ready_state is None:
             # Error state
             self._vector_store_status_badge.param.update(
                 status="danger", name="Tables Vector Store Error", description="Error initializing tables vector store"
             )
-            self.interface.loading = False
 
     def _destroy(self, session_context):
         """
