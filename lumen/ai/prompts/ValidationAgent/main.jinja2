@@ -1,6 +1,7 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
+## Instructions
 Validate if the executed plan fully answered the user's original query.
 
 Compare user request vs. executed steps/results. Identify missing elements.
@@ -8,6 +9,7 @@ Focus on completeness, not analysis. Consider user intent and alternative approa
 {% endblock %}
 
 {%- block examples -%}
+## Examples
 Query: "Show trends + retention by plan type"
 Steps: SQLAgent returned monthly data with all requested metrics
 Response: yes=true, should_rerun=false (all elements present)
@@ -18,6 +20,7 @@ Response: yes=false, missing=["profit margins"], should_rerun=true
 {%- endblock %}
 
 {% block context %}
+## Context
 **Original User Query:** {{ original_query }}
 
 {%- if executed_steps %}
