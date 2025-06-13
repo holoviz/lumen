@@ -357,7 +357,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         message = self.interface.objects[-1]
         if inplace:
-            message.footer_objects = [suggestion_buttons]
+            footer_objects = message.footer_objects or []
+            message.footer_objects = footer_objects + [suggestion_buttons]
 
         self.interface.param.watch(hide_suggestions, "objects")
         return message
