@@ -9,7 +9,7 @@ Reference the base sql if there is no specific column selection mentioned in the
 {% block context -%}
 Checklist:
 - Use only `{{ dialect }}` SQL syntax.
-- Never quote column names in a WHERE clause
+- Use double quotes (") for column names and single quotes (') for string literal values
 - Do NOT include inlined comments in the SQL code, e.g. `-- comment`
 - Quote column names to ensure they do not clash with valid identifiers.
 - Pretty print the SQL output with newlines and indentation.
