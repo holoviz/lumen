@@ -375,8 +375,11 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample
     if isinstance(file_obj, (str, Path)):
         # File path
         file_path = Path(file_obj)
-        with file_path.open("rb") as f:
-            data = f.read(sample_size)
+        if not file_path.exists():
+            data = None
+        else:
+            with file_path.open("rb") as f:
+                data = f.read(sample_size)
     elif isinstance(file_obj, io.BytesIO):
         # BytesIO - preserve position
         pos = file_obj.tell()
