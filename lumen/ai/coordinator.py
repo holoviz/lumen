@@ -865,7 +865,7 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in memory
-        agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0]
+        agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]
 
         reasoning = None
@@ -1021,6 +1021,25 @@ class Planner(Coordinator):
                 )
             )
             actors_in_graph.add(actor)
+
+        if "ValidationAgent" in agents:
+            validation_step = type(step)(
+                actor="ValidationAgent",
+                instruction='Validate whether the executed plan fully answered the user\'s original query.',
+                title='Validating results',
+                render_output=False
+            )
+            steps.append(validation_step)
+            execution_graph.append(
+                ExecutionNode(
+                    actor=agents["ValidationAgent"],
+                    provides=agents["ValidationAgent"].provides,
+                    instruction=validation_step.instruction,
+                    title=validation_step.title,
+                    render_output=validation_step.render_output
+                )
+            )
+            actors_in_graph.add("ValidationAgent")
 
         plan.steps = steps
         previous_actors = actors
