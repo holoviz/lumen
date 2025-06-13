@@ -218,7 +218,7 @@ class SQLMetaset:
 
                 context += "\n"
 
-        return context
+        return context.replace("'type': 'str', ", "")  # Remove type info for lower token
 
     @property
     def max_context(self) -> str:
