@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib
+import io
 import os
 import re
 import sys
@@ -354,14 +355,14 @@ def slugify(value, allow_unicode=False) -> str:
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
-def detect_file_encoding(file_path: Path | str, sample_size: int = 8192) -> str:
+def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample_size: int = 8192) -> str:
     """
     Simple, fast file encoding detection.
 
     Parameters
     ----------
-    file_path : Path | str
-        File path to detect encoding
+    file_obj : Path | str | io.BytesIO | io.StringIO
+        File path or file-like object to detect encoding
     sample_size : int, default=8192
         Bytes to read for detection
 
@@ -370,13 +371,25 @@ def detect_file_encoding(file_path: Path | str, sample_size: int = 8192) -> str:
     str
         Detected encoding
     """
-    # Convert to Path if needed
-    if isinstance(file_path, str):
-        file_path = Path(file_path)
-
-    # Read sample
-    with file_path.open("rb") as f:
-        data = f.read(sample_size)
+    # Get bytes data from different input types
+    if isinstance(file_obj, (str, Path)):
+        # File path
+        file_path = Path(file_obj)
+        with file_path.open("rb") as f:
+            data = f.read(sample_size)
+    elif isinstance(file_obj, io.BytesIO):
+        # BytesIO - preserve position
+        pos = file_obj.tell()
+        data = file_obj.read(sample_size)
+        file_obj.seek(pos)
+    elif isinstance(file_obj, io.StringIO):
+        # StringIO - read and encode
+        pos = file_obj.tell()
+        content = file_obj.read(sample_size)
+        file_obj.seek(pos)
+        data = content.encode('utf-8')[:sample_size]
+    else:
+        raise ValueError(f"Unsupported file object type: {type(file_obj)}")
 
     if not data:
         return "utf-8"

@@ -307,7 +307,7 @@ class UI(Viewer):
                 if src.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{src}')"
                 elif src.endswith(".csv"):
-                    encoding = detect_file_encoding(file_obj=src)
+                    encoding = detect_file_encoding(src)
                     table = f"read_csv('{src}', encoding='{encoding}')"
                 elif src.endswith(".json"):
                     table = f"read_json_auto('{src}')"
