@@ -33,7 +33,7 @@ You already have these keys satisfied in memory:
 {%- endif %}
 {%- endfor %}
 
-{% if tools %}
+{%- if tools %}
 🛠️ Tools:
 {%- for tool in tools %}
 {{ tool }}
@@ -44,12 +44,23 @@ You already have these keys satisfied in memory:
 {{ agent }}
 {%- endfor %}
 
-{% if memory.get('document_sources') %}
-📂 Documents:
+{%- if memory.get('document_sources') %}
+📂 Documents available:
 {%- for document_source in memory['document_sources'] %}
 - '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
 {%- endfor %}
 {% endif %}
+
+{%- if memory.get('tables_metadata') %}
+📊 Tables available:
+{%- for table in memory['tables_metadata'] %}
+- {{ table }}
+{%- endfor %}
+{% endif %}
+
+{%- if 'table' in memory %}
+📋 Selected table: `{{ memory['table'] }}`
+{%- endif %}
 
 {%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
 📃 Selected columns:
@@ -62,10 +73,6 @@ From query: "{{ memory['vector_metaset'].query }}"
 ```sql
 {{ memory['sql'] }}
 ```
-{%- endif %}
-
-{%- if 'table' in memory %}
-📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
 
 # Planning guidelines:
