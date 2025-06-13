@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib
-import io
 import os
 import re
 import sys
@@ -355,47 +354,57 @@ def slugify(value, allow_unicode=False) -> str:
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
-def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO | str | bytes) -> str:
+def detect_file_encoding(file_path: Path | str, sample_size: int = 8192) -> str:
     """
-    Detects the given file object's encoding.
+    Simple, fast file encoding detection.
 
     Parameters
     ----------
-    file_obj : Path | io.BytesIO | io.StringIO | str | bytes
-        File object or path object to detect encoding.
+    file_path : Path | str
+        File path to detect encoding
+    sample_size : int, default=8192
+        Bytes to read for detection
 
     Returns
     -------
     str
+        Detected encoding
     """
-    import chardet
+    # Convert to Path if needed
+    if isinstance(file_path, str):
+        file_path = Path(file_path)
 
-    if isinstance(file_obj, str):
-        try:
-            path_exists = Path(file_obj).exists()
-            if path_exists:
-                file_obj = Path(file_obj)
-        except OSError:
-            pass
+    # Read sample
+    with file_path.open("rb") as f:
+        data = f.read(sample_size)
 
-    # Handle if a path is given.
-    if isinstance(file_obj, Path):
-        with file_obj.open("rb") as f:
-            data = f.read()
-        detected_encoding = chardet.detect(data)
-        encoding = detected_encoding["encoding"]
+    if not data:
+        return "utf-8"
 
-    # Handle if a string or bytes object is given.
-    if isinstance(file_obj, bytes):
-        detected_encoding = chardet.detect(file_obj)
-    elif isinstance(file_obj, str):
-        detected_encoding = chardet.detect(file_obj.encode())
+    # Check BOM first (instant detection)
+    if data.startswith(b'\xef\xbb\xbf'):
+        return 'utf-8-sig'
+    elif data.startswith(b'\xff\xfe'):
+        return 'utf-16-le'
+    elif data.startswith(b'\xfe\xff'):
+        return 'utf-16-be'
 
-    encoding = detected_encoding["encoding"]
+    # Try UTF-8 (most common)
+    try:
+        data.decode('utf-8')
+        return 'utf-8'
+    except UnicodeDecodeError:
+        pass
 
-    if encoding == "ISO-8859-1":
-        encoding = "latin-1"
-    elif encoding == "ascii":
-        encoding = "utf-8"
-
-    return encoding.lower()
+    # Use chardet if available, otherwise fallback
+    try:
+        import chardet
+        result = chardet.detect(data)
+        encoding = result.get('encoding', 'latin-1')
+        # Clean up common names
+        if encoding and encoding.lower() in ['iso-8859-1', 'ascii']:
+            return 'utf-8' if encoding.lower() == 'ascii' else 'latin-1'
+        return encoding.lower() if encoding else 'latin-1'
+    except ImportError:
+        # Simple fallback without chardet
+        return 'latin-1'  # Can decode any byte sequence
