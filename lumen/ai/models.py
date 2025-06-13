@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Literal
 
 from instructor.dsl.partial import PartialLiteralMixin
@@ -24,6 +22,30 @@ class ThinkingYesNo(BaseModel):
         description="Explain your reasoning as to why you will be answering yes or no.")
 
     yes: bool = Field(description="True if yes, otherwise False.")
+
+
+class ReplanDecision(ThinkingYesNo):
+    """Decision on whether replanning is needed after an actor execution"""
+    reason_for_replan: str = Field(
+        default="",
+        description="If replanning is needed, explain what changed and why the current plan should be adjusted"
+    )
+    affected_steps: list[str] = Field(
+        default_factory=list,
+        description="List of future step actor names that would be affected by replanning"
+    )
+    discovery_complete: bool = Field(
+        default=False,
+        description="Whether sufficient information has been discovered to create a comprehensive plan"
+    )
+    answers_user_query: bool = Field(
+        default=True,
+        description="Whether the current plan, if executed, would answer the user's original query"
+    )
+    replan_priority: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Priority of replanning: high (critical - plan won't work), medium (suboptimal but functional), low (minor improvements)"
+    )
 
 
 class Sql(BaseModel):
@@ -248,6 +270,22 @@ class DbtslQueryParams(BaseModel):
     order_by: list[str] = Field(
         default_factory=list,
         description="A list of columns or expressions to order the results by, e.g. ['metric_time__month']"
+    )
+
+
+class QueryCompletionValidation(ThinkingYesNo):
+    """Validation of whether the executed plan answered the user's query"""
+    missing_elements: list[str] = Field(
+        default_factory=list,
+        description="List of specific elements from the user's query that weren't addressed"
+    )
+    suggestions: list[str] = Field(
+        default_factory=list,
+        description="Suggestions for additional steps that could complete the query if not fully answered"
+    )
+    should_rerun: bool = Field(
+        default=False,
+        description="Whether the query should be rerun due to significant gaps or missing elements"
     )
 
 

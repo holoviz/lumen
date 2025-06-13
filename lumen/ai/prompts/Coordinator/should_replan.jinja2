@@ -1,0 +1,82 @@
+You are helping coordinate the execution of a multi-step plan. An actor just completed its task.
+
+Actor that just executed: {{ actor_name }}
+Execution successful: {{ execution_success }}
+{% if has_error %}
+Error occurred: {{ error_message }}
+{% endif %}
+{% if missing_provides %}
+Missing expected outputs: {{ missing_provides|join(', ') }}
+{% endif %}
+Actual outputs provided: {{ actual_provides|join(', ') }}
+
+Remaining planned steps:
+{% for step in next_steps %}
+- {{ step }}
+{% endfor %}
+
+{% if critical_missing is defined and critical_missing %}
+Critical requirements missing for future steps: {{ critical_missing|join(', ') }}
+{% endif %}
+
+{% if table_not_found is defined and table_not_found %}
+Special case detected: Table lookup failed to find the requested table, but SQL queries are planned next.
+{% endif %}
+
+## What was discovered:
+{% if 'vector_metaset' in memory_keys and memory and 'vector_metaset' in memory and memory.vector_metaset %}
+Vector metadata discovered:
+- Query: "{{ memory.vector_metaset.query }}"
+- Number of tables found: {{ memory.vector_metaset.vector_metadata_map|length }}
+{% if memory.vector_metaset.selected_columns %}
+- Selected columns: {{ memory.vector_metaset.selected_columns|length }} columns
+{% endif %}
+{% endif %}
+
+{% if 'sql_metaset' in memory_keys and memory and 'sql_metaset' in memory and memory.sql_metaset %}
+SQL metadata discovered:
+- Tables available: {{ memory.sql_metaset.vector_metaset.vector_metadata_map.keys()|list|join(', ') }}
+{% endif %}
+
+{% if 'closest_tables' in memory_keys and memory and 'closest_tables' in memory %}
+Closest tables found: {{ memory.closest_tables|join(', ') }}
+{% endif %}
+
+{% if 'table' in memory_keys and memory and 'table' in memory %}
+Current table: {{ memory.table }}
+{% endif %}
+
+{% if 'data' in memory_keys and memory and 'data' in memory and memory.data is not none %}
+Data loaded:
+- Shape: {{ memory.data.get('shape', 'Unknown') }}
+- Columns: {{ memory.data.get('columns', [])|join(', ') }}
+{% endif %}
+
+Current memory contains: {{ memory_keys|join(', ') }}
+
+Based on the execution result and current state, determine if the remaining plan should be reconsidered.
+
+Reasons to replan:
+1. The actor failed to provide expected outputs that future steps depend on
+2. An error occurred that makes the current plan invalid
+3. The actor discovered the requested resource doesn't exist (e.g., table not found)
+4. New information fundamentally changes what should be done next
+5. The data or context is significantly different than expected
+6. Critical requirements for future steps are missing and cannot be satisfied by the current plan
+
+Reasons NOT to replan:
+1. The actor succeeded and provided expected outputs
+2. Minor variations in data that don't affect the plan
+3. Expected errors that are already handled by the plan
+4. The remaining steps can adapt to the current state
+5. All requirements for future steps are satisfied
+
+Make your decision and explain your reasoning. If replanning is needed, also identify which future steps would be affected.
+
+## Additional Validation:
+
+Consider whether the current plan will successfully answer the user's original query given what has been discovered. If the discovered information suggests the current approach won't work (e.g., required tables don't exist, data structure is different than expected), replanning is essential.
+
+Also assess:
+- Has enough information been discovered to create a comprehensive plan?
+- Does the current plan, if executed to completion, answer what the user asked for?

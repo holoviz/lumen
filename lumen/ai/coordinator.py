@@ -29,7 +29,9 @@ from .agents import (
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import ThinkingYesNo, make_agent_model, make_plan_models
+from .models import (
+    ReplanDecision, ThinkingYesNo, make_agent_model, make_plan_models,
+)
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
@@ -106,6 +108,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": ThinkingYesNo,
             },
+            "should_replan": {
+                "template": PROMPTS_DIR / "Coordinator" / "should_replan.jinja2",
+                "response_model": ReplanDecision,
+            },
         },
     )
 
@@ -129,6 +135,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
+
+
 
     __abstract = True
 
@@ -418,7 +426,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
         messages: list[Message],
         execution_graph: list[ExecutionNode] | None = None,
         allow_missing: bool = False,
-    ) -> bool:
+        enable_replanning: bool = False,
+        agents: dict[str, Agent] | None = None,
+        tools: dict[str, Tool] | None = None,
+        pre_plan_output: dict[str, Any] | None = None,
+    ) -> bool | list[ExecutionNode]:
         subagent = node.actor
         instruction = node.instruction
         title = node.title.capitalize()
@@ -503,7 +515,45 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     message_kwargs = dict(value=out, user=subagent.name)
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
-        return step.status == "success"
+
+        # Check if we should replan (only for Planner and if enabled)
+        if not (enable_replanning and execution_graph and isinstance(self, Planner)):
+            return step.status == "success"
+
+        # Get remaining nodes efficiently
+        current_index = len(execution_graph) - len([n for n in execution_graph if n == node]) - 1
+        remaining_nodes = execution_graph[current_index + 1:] if current_index >= 0 else []
+
+        if not remaining_nodes:
+            return step.status == "success"
+
+        replan_decision = await self._should_replan(
+            node,
+            remaining_nodes,
+            messages,
+            step.status == "success"
+        )
+
+        if not replan_decision.yes:
+            return step.status == "success"
+
+        # Log discovery and validation status
+        if not replan_decision.discovery_complete:
+            log_debug("Replanning because discovery is incomplete")
+        if not replan_decision.answers_user_query:
+            log_debug("Replanning because current plan won't answer user query")
+
+        # Return new execution graph instead of just success status
+        new_graph = await self._replan_execution(
+            remaining_nodes,
+            messages,
+            agents,
+            tools,
+            pre_plan_output,
+            replan_decision
+        )
+
+        return new_graph if new_graph else step.status == "success"
 
     def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
         if isinstance(obj, (Column, Card, Tabs)):
@@ -559,13 +609,35 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
-                if not succeeded:
-                    break
+            if isinstance(self, Planner) and self.enable_replanning:
+                # Execute with replanning capability
+                i = 0
+                while i < len(execution_graph):
+                    result = await self._execute_graph_node(
+                        execution_graph[i],
+                        messages,
+                        execution_graph=execution_graph,
+                        enable_replanning=True,
+                        agents=agents,
+                        tools=tools,
+                        pre_plan_output=pre_plan_output
+                    )
+
+                    # Handle replanning result
+                    if isinstance(result, list):
+                        execution_graph = execution_graph[:i+1] + result
+                    elif not result:
+                        break  # Failed
+                    i += 1
+            else:
+                # Standard execution without replanning
+                for node in execution_graph:
+                    if not await self._execute_graph_node(node, messages, execution_graph=execution_graph):
+                        break
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
+
             log_debug("\033[92mCompleted: Coordinator\033[0m", show_sep="below")
 
         for message_obj in self.interface.objects[::-1]:
@@ -644,6 +716,75 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 # Store the tool output in agent's context
                 self._memory["agent_tool_contexts"][agent.name][tool.name] = result
                 log_debug(f"Added {tool.name} output to {agent.name}'s context")
+
+    async def _should_replan(
+        self,
+        node: ExecutionNode,
+        remaining_nodes: list[ExecutionNode],
+        messages: list[Message],
+        execution_result: bool,
+    ) -> ReplanDecision:
+        """Check if replanning is needed after executing a node."""
+
+        # Early exit - no replanning for last node
+        if not remaining_nodes:
+            return ReplanDecision(yes=False, chain_of_thought="Last node executed")
+
+        actor = node.actor
+        actor_name = type(actor).name
+
+        # Gather only essential context
+        expected_provides = set(node.provides or actor.provides)
+        actual_provides = {p for p in expected_provides if p in self._memory}
+        missing_provides = expected_provides - actual_provides
+
+        # Early exit - all requirements met
+        if execution_result and not missing_provides and "__error__" not in self._memory:
+            # Quick check if next steps have their requirements
+            next_requirements = set()
+            for next_node in remaining_nodes[:2]:  # Check only first 2 steps
+                next_requirements.update(next_node.actor.requires)
+
+            if next_requirements.issubset(self._memory.keys()):
+                return ReplanDecision(
+                    yes=False,
+                    chain_of_thought="Success with all requirements met"
+                )
+
+        # Build minimal context for decision
+        has_error = "__error__" in self._memory
+
+        # Special case: table lookup failure
+        if (actor_name == "IterativeTableLookup" and
+            "table" in missing_provides and
+            any(isinstance(n.actor, type) and "SQLAgent" in n.actor.__name__
+                for n in remaining_nodes[:2])):
+            return ReplanDecision(
+                yes=True,
+                chain_of_thought="Table lookup failed, SQL cannot proceed",
+                reason_for_replan="Required table not found",
+                affected_steps=["SQLAgent"],
+                replan_priority="high"
+            )
+
+        # Only compute expensive context if needed
+        result = await self._invoke_prompt(
+            "should_replan",
+            messages,
+            actor_name=actor_name,
+            execution_success=execution_result,
+            has_error=has_error,
+            error_message=self._memory.get("__error__", "") if has_error else "",
+            missing_provides=list(missing_provides),
+            actual_provides=list(actual_provides),
+            next_steps=[f"{type(n.actor).name}: {n.instruction}" for n in remaining_nodes[:3]],
+            memory_keys=list(self._memory.keys()),
+            memory=self._memory,
+            critical_missing=[],  # Add missing variables to prevent template errors
+            table_not_found=False,
+        )
+
+        return result
 
 
 class DependencyResolver(Coordinator):
@@ -751,6 +892,12 @@ class Planner(Coordinator):
         List of tools to use to provide context for the planner prior
         to making a plan.""")
 
+    enable_replanning = param.Boolean(default=True, doc="""
+        Whether to enable dynamic replanning after each actor execution.""")
+
+    max_replans = param.Integer(default=3, doc="""
+        Maximum number of replanning attempts to prevent infinite loops.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -768,6 +915,65 @@ class Planner(Coordinator):
         if 'planner_tools' in params:
             params["planner_tools"] = self._initialize_tools_for_prompt(params["planner_tools"], **params)
         super().__init__(**params)
+        self._replan_count = 0
+
+    async def _replan_execution(
+        self,
+        remaining_nodes: list[ExecutionNode],
+        messages: list[Message],
+        agents: dict[str, Agent],
+        tools: dict[str, Tool],
+        pre_plan_output: dict[str, Any],
+        replan_decision: ReplanDecision,
+    ) -> list[ExecutionNode] | None:
+        """Replan the execution based on current state and remaining work."""
+
+        if self._replan_count >= self.max_replans:
+            log_debug(f"Reached maximum replanning attempts ({self.max_replans})")
+            return None
+
+        self._replan_count += 1
+
+        with self.interface.add_step(
+            title=f"Adjusting plan (attempt {self._replan_count}/{self.max_replans})...",
+            user="Assistant"
+        ) as step:
+            step.stream(f"Reason: {replan_decision.reason_for_replan}")
+
+            if replan_decision.affected_steps:
+                step.stream(f"\n\nAffected: {', '.join(replan_decision.affected_steps)}")
+
+            # Update context for replanning
+            updated_agents, updated_tools, _ = await self._pre_plan(messages, agents, tools)
+            updated_pre_plan_output = {
+                **pre_plan_output,
+                "replan_reason": replan_decision.reason_for_replan
+            }
+
+            try:
+                new_graph = await self._compute_execution_graph(
+                    messages,
+                    updated_agents,
+                    updated_tools,
+                    updated_pre_plan_output
+                )
+
+                if not new_graph:
+                    step.failed_title = "Could not create new plan"
+                    return None
+
+                step.success_title = f"Adjusted plan: {len(new_graph)} steps"
+
+                # Show new steps concisely
+                step.stream("\n\nNew steps: " +
+                    ", ".join(f"{type(n.actor).name}" for n in new_graph[:3]) +
+                    (f" +{len(new_graph)-3} more" if len(new_graph) > 3 else ""))
+
+                return new_graph
+
+            except Exception as e:
+                step.failed_title = f"Replanning failed: {e!s}"
+                return None
 
     async def _check_follow_up_question(self, messages: list[Message]) -> bool:
         """Check if the user's query is a follow-up question about the previous dataset."""
@@ -850,6 +1056,8 @@ class Planner(Coordinator):
         plan_model: type[BaseModel],
         step: ChatStep,
         is_follow_up: bool = False,
+        already_executed: list[str] | None = None,
+        replan_reason: str | None = None,
     ) -> BaseModel:
         agents = list(agents.values())
         tools = list(tools.values())
@@ -890,6 +1098,8 @@ class Planner(Coordinator):
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up,
+                already_executed=already_executed,
+                replan_reason=replan_reason,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             async for reasoning in self.llm.stream(
@@ -1069,9 +1279,12 @@ class Planner(Coordinator):
                     plan = None
                     try:
                         plan = await self._make_plan(
-                            messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
-                            reason_model, plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
-                        )
+                        messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
+                        reason_model, plan_model, istep,
+                            is_follow_up=pre_plan_output.get("is_follow_up", False),
+                    already_executed=pre_plan_output.get("already_executed"),
+                    replan_reason=pre_plan_output.get("replan_reason")
+                )
                     except asyncio.CancelledError as e:
                         istep.failed_title = 'Planning was cancelled, please try again.'
                         traceback.print_exception(e)
