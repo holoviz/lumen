@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Literal
 
 from instructor.dsl.partial import PartialLiteralMixin
@@ -248,6 +246,22 @@ class DbtslQueryParams(BaseModel):
     order_by: list[str] = Field(
         default_factory=list,
         description="A list of columns or expressions to order the results by, e.g. ['metric_time__month']"
+    )
+
+
+class QueryCompletionValidation(ThinkingYesNo):
+    """Validation of whether the executed plan answered the user's query"""
+    missing_elements: list[str] = Field(
+        default_factory=list,
+        description="List of specific elements from the user's query that weren't addressed"
+    )
+    suggestions: list[str] = Field(
+        default_factory=list,
+        description="Suggestions for additional steps that could complete the query if not fully answered"
+    )
+    should_rerun: bool = Field(
+        default=False,
+        description="Whether the query should be rerun due to significant gaps or missing elements"
     )
 
 
