@@ -50,12 +50,19 @@ You already have these keys satisfied in memory:
 - '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
 {%- endfor %}
 {% endif %}
-
 {%- if memory.get('tables_metadata') %}
 📊 Tables available:
-{%- for table in memory['tables_metadata'] %}
+{%- set tables = memory['tables_metadata'] %}
+{%- if tables|length > 10 %}
+- (showing first 10 of {{ tables|length }} tables)
+{%- for table in tables[:10] %}
 - {{ table }}
 {%- endfor %}
+{%- else %}
+{%- for table in tables %}
+- {{ table }}
+{%- endfor %}
+{%- endif %}
 {% endif %}
 
 {%- if 'table' in memory %}
