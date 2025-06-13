@@ -1381,6 +1381,10 @@ class ValidationAgent(Agent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
+        def on_click(event):
+            suggestions_list = '\n- '.join(result.suggestions)
+            self.interface.send(f"Follow these suggestions: {suggestions_list}")
+
         if messages:
             user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
             original_query = user_messages[0].get("content", "")
@@ -1403,22 +1407,19 @@ class ValidationAgent(Agent):
 
         response_parts = []
         if result.yes:
-            response_parts.append(f"**Query Validation: ✓ Complete** - {result.chain_of_thought}")
-        else:
-            response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
-            if result.missing_elements:
-                response_parts.append(f"**Missing Elements:** {', '.join(result.missing_elements)}")
-            if result.suggestions:
-                response_parts.append("**Suggested Next Steps:**")
-                for i, suggestion in enumerate(result.suggestions, 1):
-                    response_parts.append(f"{i}. {suggestion}")
+            return result
 
-        footer_objects = []
-        if result.should_rerun:
-            def on_click(event):
-                self.interface.send(f"Follow these suggestions: {'\n- '.join(result.suggestions)}")
-            button = pn.widgets.Button(name="Rerun", on_click=on_click)
-            footer_objects.append(button)
+
+        response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
+        if result.missing_elements:
+            response_parts.append(f"**Missing Elements:** {', '.join(result.missing_elements)}")
+        if result.suggestions:
+            response_parts.append("**Suggested Next Steps:**")
+            for i, suggestion in enumerate(result.suggestions, 1):
+                response_parts.append(f"{i}. {suggestion}")
+
+        button = pn.widgets.Button(name="Rerun", on_click=on_click)
+        footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
         return result

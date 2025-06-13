@@ -285,6 +285,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         append_demo: bool = True,
         hide_after_use: bool = True
     ):
+        if not suggestions:
+            return
+
         async def hide_suggestions(_=None):
             if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False

@@ -249,8 +249,12 @@ class DbtslQueryParams(BaseModel):
     )
 
 
-class QueryCompletionValidation(ThinkingYesNo):
+class QueryCompletionValidation(PartialBaseModel):
     """Validation of whether the executed plan answered the user's query"""
+
+    chain_of_thought: str = Field(
+        description="Explain your reasoning succinctly as to why you will be answering yes or no.")
+
     missing_elements: list[str] = Field(
         default_factory=list,
         description="List of specific elements from the user's query that weren't addressed"
@@ -259,10 +263,7 @@ class QueryCompletionValidation(ThinkingYesNo):
         default_factory=list,
         description="Suggestions for additional steps that could complete the query if not fully answered"
     )
-    should_rerun: bool = Field(
-        default=False,
-        description="Whether the query should be rerun due to significant gaps or missing elements"
-    )
+    yes: bool = Field(description="True if query successfully completed, otherwise False.")
 
 
 def make_refined_query_model(item_type_name: str = "items"):
