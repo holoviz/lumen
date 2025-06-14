@@ -36,7 +36,7 @@ from ..transforms.sql import SQLLimit
 from ..util import detect_file_encoding, log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
-    SQLAgent, TableListAgent, VegaLiteAgent,
+    SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .components import SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME
@@ -86,7 +86,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent
+        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent, ValidationAgent
     ], doc="""List of default agents which will always be added.""")
 
     export_functions = param.Dict(default={}, doc="""
